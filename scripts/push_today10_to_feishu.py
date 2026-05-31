@@ -27,8 +27,8 @@ REQUIRED_FIELDS = [
     "选题标题",
     "推荐日期",
     "今日排名",
-    "是否今日Top10",
-    "我的选题标题",
+    "状态",
+    "推荐动作",
     "原始来源标题",
     "来源类型",
     "来源链接",
@@ -40,10 +40,6 @@ REQUIRED_FIELDS = [
     "可展示结果",
     "可沉淀资产",
     "推荐理由",
-    "推荐动作",
-    "状态",
-    "推荐分",
-    "内容指纹",
     "相关来源",
 ]
 ACTION_STATUS = {
@@ -115,8 +111,8 @@ def map_row(row: dict[str, str], rank: int, date: str) -> dict[str, str]:
         "选题标题": row.get("我的选题标题", ""),
         "推荐日期": date,
         "今日排名": str(rank),
-        "是否今日Top10": "是",
-        "我的选题标题": row.get("我的选题标题", ""),
+        "状态": status,
+        "推荐动作": row.get("推荐动作", ""),
         "原始来源标题": row.get("来源内容", ""),
         "来源类型": row.get("来源类型", ""),
         "来源链接": row.get("来源链接", ""),
@@ -128,10 +124,6 @@ def map_row(row: dict[str, str], rank: int, date: str) -> dict[str, str]:
         "可展示结果": row.get("可展示结果", ""),
         "可沉淀资产": row.get("可沉淀资产", ""),
         "推荐理由": row.get("推荐理由", ""),
-        "推荐动作": row.get("推荐动作", ""),
-        "状态": status,
-        "推荐分": row.get("推荐分", ""),
-        "内容指纹": row.get("内容指纹", ""),
         "相关来源": row.get("相关来源", ""),
     }
 
@@ -140,7 +132,7 @@ def dry_run_print(rows: list[dict[str, str]]) -> None:
     print("DRY-RUN: will write 10 今日Top10 rows to 03 分析与选题")
     for row in rows:
         print(
-            f"{row['今日排名']}. {row['我的选题标题']} | "
+            f"{row['今日排名']}. {row['选题标题']} | "
             f"{row['对应栏目']} / {row['热点切入方式']} | "
             f"{row['业务场景']} | {row['推荐动作']} -> {row['状态']}"
         )
@@ -188,10 +180,10 @@ def main() -> int:
 
     existing = all_records(token, app_token, table_id)
     existing_keys = {
-        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("我的选题标题", "")))
+        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("选题标题", "")))
         for record in existing
     }
-    to_create = [row for row in mapped if (row["推荐日期"], row["我的选题标题"]) not in existing_keys]
+    to_create = [row for row in mapped if (row["推荐日期"], row["选题标题"]) not in existing_keys]
     created_records = batch_create(token, app_token, table_id, to_create) if to_create else 0
     print(json.dumps({
         "ok": True,
