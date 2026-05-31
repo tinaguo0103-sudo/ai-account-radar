@@ -1,0 +1,38 @@
+.DS_Store
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.venv/
+venv/
+env/
+
+# Local environment and secrets
+.env
+.env.*
+!.env.example
+*secret*
+*secrets*
+*token*
+*cookie*
+*cookies*
+*credential*
+*credentials*
+feishu_created_base.json
+
+# Generated runtime outputs
+output/
+output_no_fetch_test/
+*.log
+*.tmp
+*.cache
+
+# Large local artifacts
+*.zip
+*.tar
+*.tar.gz
+*.tgz
+*.dmg

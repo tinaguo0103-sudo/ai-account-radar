@@ -1,0 +1,422 @@
+# AI账号信息雷达来源配置示例
+# 抓取边界：不绕过登录/验证码/反爬；抖音、小红书、视频号等以手动采样为主。
+sources:
+  - id: aihot_selected
+    source_type: ai_hotspot
+    platform: AIHOT
+    name: AIHOT精选
+    homepage_url: https://aihot.virxact.com
+    fetch_method: aihot_api
+    feed_url: https://aihot.virxact.com/api/public/items?mode=selected&take=30
+    priority: high
+    frequency: daily
+    focus: 模型、产品、行业、论文、技巧中与内容团队、品牌增长、Agent、AI视频、业务流程有关的条目
+    notes: 匿名公开API；需要浏览器User-Agent；失败时降级为手动粘贴AIHOT页面或日报内容。
+
+  - id: aihot_daily
+    source_type: ai_hotspot
+    platform: AIHOT
+    name: AIHOT日报
+    homepage_url: https://aihot.virxact.com
+    fetch_method: aihot_daily_api
+    feed_url: https://aihot.virxact.com/api/public/daily
+    priority: medium
+    frequency: daily
+    focus: 每日固定版块中的模型发布、产品更新、行业动态、论文研究、技巧观点
+    notes: 只有需要日报结构时使用；默认雷达优先拉精选条目。
+
+  - id: openai_blog
+    source_type: official
+    platform: 官方博客
+    name: OpenAI官网动态
+    homepage_url: https://openai.com/news/
+    fetch_method: rss_or_manual
+    feed_url: https://openai.com/news/rss.xml
+    priority: high
+    frequency: weekly
+    focus: 模型、产品、API、治理、安全、企业案例中可转译为业务流程的内容
+    notes: 官方源优先；引用前回原文核对。
+
+  - id: anthropic_news
+    source_type: official
+    platform: 官方博客
+    name: Anthropic Newsroom
+    homepage_url: https://www.anthropic.com/news
+    fetch_method: rss_or_manual
+    feed_url: https://www.anthropic.com/news
+    priority: high
+    frequency: weekly
+    focus: Claude、Claude Code、Agent、企业工作流、模型能力边界
+    notes: 无稳定RSS时可以手动贴链接。
+
+  - id: product_hunt_ai
+    source_type: tool_rank
+    platform: Product Hunt
+    name: Product Hunt AI工具
+    homepage_url: https://www.producthunt.com/topics/artificial-intelligence
+    fetch_method: manual_link
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 新工具是否能进入内容生产、营销、资料整理、客户承接流程
+    notes: 先手动采样，不做登录抓取。
+
+  - id: hacker_news_ai
+    source_type: tech_community
+    platform: Hacker News
+    name: HN AI相关讨论
+    homepage_url: https://news.ycombinator.com
+    fetch_method: rss_or_manual
+    feed_url: https://hnrss.org/newest?q=AI
+    priority: medium
+    frequency: weekly
+    focus: 技术社区真实讨论、开发者工具、Agent工程实践
+    notes: 适合补充英文信息前哨。
+
+  - id: manual_links
+    source_type: manual
+    platform: 手动导入
+    name: 手动链接/粘贴/截图转文字
+    homepage_url:
+    fetch_method: manual_jsonl
+    feed_url: data/manual/manual_items.example.jsonl
+    priority: high
+    frequency: daily
+    focus: 小红书、抖音、视频号、公众号、AIHOT页面复制内容、飞书群转发
+    notes: 高风险平台只做人工提供内容后的分析。
+
+  - id: qiuzhi_2046
+    source_type: competitor
+    platform: 抖音
+    name: 秋芝2046
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAwbbVuf1W2DdgRe0xCa0oxg1ZIHbzuiTzyjq3NcOVgBuu6qIidYlMYqbL3ZFY2swu
+    fetch_method: manual_sample
+    feed_url:
+    priority: high
+    frequency: weekly
+    focus: 工具评测如何做成大众可理解的判断；转译成“工具进入业务哪一步”
+    notes: 不强抓抖音；每周人工记录爆款标题、开头、结构、评论需求。
+
+  - id: naye_ai
+    source_type: competitor
+    platform: 抖音
+    name: 纳爷AI笔记
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAjDkUelG1hGQNQRZrX-U0JQhJDohbJo-AObXgmG57XTMuJfUv5yyE1i4zAF-E-ztL
+    fetch_method: manual_sample
+    feed_url:
+    priority: high
+    frequency: weekly
+    focus: 老板能直接抄的AI提效动作；适合B端内容转化
+    notes: 学表达结构，不学泛工具搬运。
+
+  - id: ai_director_chenhuan
+    source_type: competitor
+    platform: 抖音
+    name: AI导演陈欢
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAEsRG6paNRUiBPEchrzkV3q3wh_Yfy2G1RvNNFVscrQA
+    fetch_method: manual_sample
+    feed_url:
+    priority: high
+    frequency: weekly
+    focus: 真人艺术背景、编剧、导演经验如何转成AI导演人设
+    notes: 重点拆brief、分镜、镜头、成片质量、幕后方法。
+
+  - id: jiangge_workflow
+    source_type: competitor
+    platform: 抖音
+    name: 自说自话的江哥
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAA-UjgFb0Tbmhd_AzOuSyMxq390Q3NjVQpgefxXEDzTMA
+    fetch_method: manual_sample
+    feed_url:
+    priority: high
+    frequency: weekly
+    focus: AI工作流、企业提效、AI咨询服务表达
+    notes: 最接近未来工作流共建商业化路径。
+
+  - id: tech_papaxia
+    source_type: competitor
+    platform: 抖音
+    name: 技术爬爬虾
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAFSp1EdCLJkoMieKaEVgSj2uoZpVw9ZDyymICRsuR3SQ
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: Agent、AI编程、Codex/Claude Code内容密度
+    notes: 作为技术密度上限；输出时翻译成业务任务。
+
+  - id: zhangzala
+    source_type: competitor
+    platform: 小红书/播客
+    name: 张咋啦
+    homepage_url:
+    fetch_method: manual_sample
+    feed_url:
+    priority: high
+    frequency: weekly
+    focus: 非技术背景转AI产品化、Build in Public、产品复盘
+    notes: 学成长叙事和产品化，不写情绪流水账。
+
+  - id: mao_bubai
+    source_type: competitor
+    platform: 抖音
+    name: 猫不白
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAA8mQKMw90JGNVkD-Vu5keKZwOgXvMxYVZ1vOPGcEkHDZxZGoeFj5-gIolEJjv7gtZ
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 创业者视角拆AI案例；案例判断人格；商业价值判断
+    notes: 学案例判断，不直接复述其创业人设。
+
+  - id: aike_ai
+    source_type: competitor
+    platform: 抖音
+    name: 艾克ai分享
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAWE1WbVCh480oBsLc4NhX4wkkKWqHNsI9wNP82e-CuFU
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: AI前沿动态、工具变化、时效性热点雷达
+    notes: 只当热点雷达，不学习快讯搬运节奏。
+
+  - id: xiaoye_ai_diary
+    source_type: competitor
+    platform: 抖音
+    name: 小野AI实战日记
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAU_0ToeBem1YeZhyBH2ObNXZF6-gzBYY-o90Y-i8BSi-Jitbm4ziOhp1Ubme5gaDK
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 职场人AI实操、工具库、低门槛教学、学习入口
+    notes: 观察职场人如何被AI实战内容转化。
+
+  - id: zhangduozhe_ai_lab
+    source_type: competitor
+    platform: 抖音
+    name: 掌舵者AI实验室
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAcRBovvYQmxCrmQeU-ED6-iH8mISWFIq_u5KUICGcD9Y
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 工作场景AI内容颗粒度、实验室感栏目、入门应用
+    notes: 学选题颗粒度，不停留在工具好用。
+
+  - id: aigc_zixiushi
+    source_type: competitor
+    platform: 抖音
+    name: AIGC自修室
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAXlxmRP992FSTao4bZ6K_pxkIDDHcnNwrYkGvXe0xyxI
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 工具教程体系化、AIGC自学路径、视频制作工具链
+    notes: 学自修体系结构，输出时升级为业务SOP。
+
+  - id: huimeng_aigc
+    source_type: competitor
+    platform: 抖音
+    name: 荟梦AIGC
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAsQT1JdOd2ZEbyNaWYV94giK18XGcUtkPVdqooJ6Ub60
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 高频视觉钩子、AI世界观、AI短片创意
+    notes: 学视觉吸引力，不学单纯炫技。
+
+  - id: ai_trainer_dayu
+    source_type: competitor
+    platform: 抖音
+    name: Ai训练师大宇
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAq88f7-bGK0rGhXKUJuqHn1Gu6EfHJfv2mPrH5o39UD4
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: AIGC视频教程、训练师人格、教程型账号商业转化
+    notes: 学教程转化方式，避免只教按钮步骤。
+
+  - id: ai_video_workshop
+    source_type: competitor
+    platform: 抖音
+    name: AI短视频工坊
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAA8BARpMJSKWVumPk4XqfqGzxG_V9RiDMzazaK9C_xkI83ajlNZ6dg3S0iVPf9tE3I
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 视觉Demo拉新、AI短视频成片、未来感内容
+    notes: 只学拉新方式，必须补业务交付标准。
+
+  - id: wai_fos
+    source_type: competitor
+    platform: 抖音/媒体
+    name: FOS / WAI-FOS / WAI-你听
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAo5qemWNlVw9SSx3fcmsPrQOpSqyLUlAdmuYLWJUyATb-4F5Cf2L68QJVTdFgI9ba
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 情绪叙事、精品AI短片、幕后方法、品牌级传播
+    notes: 学情绪叙事和幕后方法，不做纯作品展示。
+
+  - id: zimu_ai_agent
+    source_type: competitor
+    platform: 抖音
+    name: 子木AI智能体
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAU5DQU18lXBnQH5p5Nd120T5N97jCKjaciE7EX-ukk6AgEEpNoew3QdlSvlgGyCmB
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 智能体内容如何导向技术咨询、直播教学和学习社群
+    notes: 学服务入口，输出时讲适合谁、不适合谁、产出什么。
+
+  - id: liangzai_ai
+    source_type: competitor
+    platform: 抖音
+    name: 靓仔AI进化论
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAIWO6shMYNDpTCExBmIk3zjnrhByLjP67tLEL5QAYE-s
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 产品经理视角、职场转型、AI智能体和AI编程
+    notes: 接近非工程师表达路径，适合学业务语言。
+
+  - id: ai_coding_xiaozhu
+    source_type: competitor
+    platform: 抖音
+    name: AI编程小朱
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAA61iWunAdQU865-fUEzVO7Lf8AUNVuoa3pUHZmtFhDOKfSP5jCZJ05dGBqZIZ0rnz
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: Claude Code、AI编程框架、工具对比、实操教程
+    notes: 拆技术内容短视频化表达，输出时改成业务任务语言。
+
+  - id: dawei_frontend_ai
+    source_type: competitor
+    platform: 抖音
+    name: 大伟聊前端（全栈AI）
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAA8QUJd4uIDW7LiACoHAqzoxRNDovw-9dttxAyBb6hIWI
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: LangGraph项目实战、Agent技术选型、全栈AI项目结构
+    notes: 吸收项目结构，不输出底层术语堆砌。
+
+  - id: bao_yucheng_ai
+    source_type: competitor
+    platform: 抖音
+    name: 鲍俞成AI获客
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAzwm-lKztoMD4YcVGPhXVCTBFSD06Pi4RlzP_VwHkcwQ
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: AI获客、短视频放大生意、线下课、陪跑咨询
+    notes: 学AI如何绑定获客结果，不学夸张营销口吻。
+
+  - id: qianyun_yaojie
+    source_type: competitor
+    platform: 抖音
+    name: 潜云说-姚捷
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAA2pjPKbcb84iIdlFJJbkxDdqIqbb0taT8GVUffxqSEn8
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 品牌策略、设计服务、降低营销传播成本、专业可信度
+    notes: 学品牌咨询型账号如何建立专业可信度。
+
+  - id: yusen_ai_ip
+    source_type: competitor
+    platform: 抖音
+    name: 羽森说AI赋能IP
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAnGsjMU49J54lfXk7KgbsXPkk7b_W39MpAipNo_leniQ
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: AI赋能个人IP、内容系统、镜头表现、企业线上获客
+    notes: 适合拆AI+个人IP+镜头表达的转化结构。
+
+  - id: qiong_wanche
+    source_type: competitor
+    platform: 抖音
+    name: 琼玩车
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAA_TtDnWn4KE6uhNrCzrmzwzYnI55fMUxyh9u3hRPC_So
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 汽车真实体验、强人格表达、汽车商业合作
+    notes: 学汽车内容的人设信任，不做泛汽车评测。
+
+  - id: udg_garage
+    source_type: competitor
+    platform: 抖音
+    name: UDG终极梦想车库
+    homepage_url: https://www.douyin.com/user/MS4wLjABAAAAZoeJSESAOgnjenVAXj3yE3igbCcfQgtgbt57iV8wcTrlQ5iz7wYMEmdkkhqnfYNJ
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 汽车生活方式、主理人IP、场景资产、直播经营
+    notes: 学主理人+场景资产结构。
+
+  - id: runyu_startup
+    source_type: competitor
+    platform: 抖音
+    name: 润宇创业笔记
+    homepage_url:
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: 内容创业、直播操盘、营销复盘、企业服务
+    notes: 非纯AI账号；学创业复盘与营销服务人设。
+
+  - id: tiechuiman
+    source_type: competitor
+    platform: X/GitHub
+    name: 铁锤人
+    homepage_url: https://x.com/lxfater
+    fetch_method: manual_sample
+    feed_url:
+    priority: medium
+    frequency: weekly
+    focus: AI协助创业、独立开发、项目复盘、社群和咨询转化
+    notes: 高阶参照，需要本地化到抖音/公众号表达。
+
+  - id: guizang_ai
+    source_type: competitor
+    platform: X/GitHub
+    name: 歸藏 guizang.ai
+    homepage_url: https://x.com/op7418/status/2005960962906407391
+    fetch_method: manual_sample
+    feed_url: https://github.com/op7418/guizang-s-prompt
+    priority: medium
+    frequency: weekly
+    focus: 信息密度、提示词库、AI图像视频案例、审美资料库
+    notes: 学资料组织和审美信号，不比工具数量和速度。
+
+  - id: khazix_digital_life
+    source_type: competitor
+    platform: 公众号/X/AIHOT
+    name: 数字生命卡兹克
+    homepage_url: https://x.com/Khazix0918
+    fetch_method: manual_sample
+    feed_url: https://aihot.virxact.com
+    priority: high
+    frequency: weekly
+    focus: 好奇心、AI产品测评、行业判断、活人感、AIHOT信息机制
+    notes: 学判断力和信源机制；你的二筛必须落到业务交付现场。
