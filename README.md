@@ -27,6 +27,7 @@
 - `scripts/run_radar.py`：采集与分析脚本。
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和今日10选题。
 - `scripts/daily_pipeline.py`：日常总入口，默认 dry-run；显式传入 `--write-feishu` 才写入飞书。
+- `scripts/intake_urls.py`：把你粘贴的公众号文章、抖音、小红书、视频号或普通网页 URL 转成内容对象 JSONL。
 - `scripts/push_today10_to_feishu.py`：只把今日10写入飞书 `03 分析与选题`，不写后台全部候选。
 - `scripts/simplify_feishu_workspace.py`：按 v0.1 白名单清理飞书视图和 `02/03` 字段，保持每张表一个主视图。
 - `output/`：运行后生成 CSV 和 Excel。
@@ -50,6 +51,14 @@ python3 scripts/daily_pipeline.py
 ```bash
 python3 scripts/daily_pipeline.py --no-fetch-aihot
 ```
+
+你只丢 URL 的用法：
+
+```bash
+python3 scripts/daily_pipeline.py --urls data/manual/urls.example.txt
+```
+
+这会先把 URL 解析成 `data/manual/url_intake.jsonl`，再进入内容拆解和今日10。支持公众号文章、公开网页，以及抖音/小红书/视频号的浅层公开页面采样；解析失败会记录失败原因，不会中断全流程。
 
 确认 dry-run 输出没问题后，显式写入飞书 `03 分析与选题` 并刷新 `00 主控台`：
 

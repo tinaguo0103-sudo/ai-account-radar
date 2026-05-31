@@ -1,0 +1,4 @@
+# One URL per line. You can paste公众号文章、抖音、小红书、视频号、普通网页链接 here.
+# The parser only reads public visible content and records failures instead of bypassing platform limits.
+
+https://example.com/article

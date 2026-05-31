@@ -12,6 +12,7 @@ import json
 import os
 import subprocess
 import sys
+import csv
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -21,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
 LOG_DIR = OUT / "logs"
 DEFAULT_MANUAL = ROOT / "data" / "manual" / "content_items.example.jsonl"
+URL_INTAKE = ROOT / "data" / "manual" / "url_intake.jsonl"
 
 
 def run_step(name: str, command: list[str], env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -65,11 +67,20 @@ def write_run_log(steps: list[dict[str, Any]], mode: str) -> Path:
     return path
 
 
+def today10_count() -> int:
+    path = OUT / "today_10_topics.csv"
+    if not path.exists() or not path.read_text(encoding="utf-8-sig").strip():
+        return 0
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return len(list(csv.DictReader(handle)))
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the daily AI account radar pipeline.")
     parser.add_argument("--write-feishu", action="store_true", help="Write only 今日10 to Feishu and refresh 00 主控台.")
     parser.add_argument("--no-fetch-aihot", action="store_true", help="Skip AIHOT network fetch and use manual samples only.")
     parser.add_argument("--manual", default=str(DEFAULT_MANUAL), help="Path to JSONL manual content items.")
+    parser.add_argument("--urls", help="Text file with pasted URLs. Parsed into data/manual/url_intake.jsonl before sampling.")
     args = parser.parse_args()
 
     if args.write_feishu:
@@ -77,8 +88,18 @@ def main() -> int:
 
     py = sys.executable
     steps: list[dict[str, Any]] = []
+    manual_path = args.manual
 
-    sampler_cmd = [py, str(ROOT / "scripts" / "content_sampler.py"), "--manual", args.manual]
+    if args.urls:
+        intake_cmd = [py, str(ROOT / "scripts" / "intake_urls.py"), args.urls, "--out", str(URL_INTAKE)]
+        steps.append(run_step("parse pasted URLs into manual content items", intake_cmd))
+        if steps[-1]["returncode"] != 0:
+            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
+            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
+            return steps[-1]["returncode"]
+        manual_path = str(URL_INTAKE)
+
+    sampler_cmd = [py, str(ROOT / "scripts" / "content_sampler.py"), "--manual", manual_path]
     if args.no_fetch_aihot:
         sampler_cmd.append("--no-fetch-aihot")
     steps.append(run_step("generate content breakdowns and 今日10", sampler_cmd))
@@ -86,6 +107,19 @@ def main() -> int:
         log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
         print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return steps[-1]["returncode"]
+
+    generated_count = today10_count()
+    if generated_count == 0:
+        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
+        print(json.dumps({
+            "ok": True,
+            "mode": "write-feishu" if args.write_feishu else "dry-run",
+            "today_10_topics": 0,
+            "wrote_feishu": False,
+            "log": str(log_path),
+            "note": "No 今日10 topics generated. Check URL parsing failures in output/content_items.csv and output/content_breakdowns.csv.",
+        }, ensure_ascii=False, indent=2))
+        return 0
 
     dry_run_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py")]
     steps.append(run_step("dry-run 今日10 Feishu write", dry_run_cmd))
