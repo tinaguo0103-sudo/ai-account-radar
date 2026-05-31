@@ -28,6 +28,7 @@
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和今日10选题。
 - `scripts/daily_pipeline.py`：日常总入口，默认 dry-run；显式传入 `--write-feishu` 才写入飞书。
 - `scripts/intake_urls.py`：把你粘贴的公众号文章、抖音、小红书、视频号或普通网页 URL 转成内容对象 JSONL。
+- `scripts/feishu_url_intake.py`：创建/读取飞书临时表 `06 URL投喂入口`，把表里的 URL 导出给解析管道。
 - `scripts/push_today10_to_feishu.py`：只把今日10写入飞书 `03 分析与选题`，不写后台全部候选。
 - `scripts/simplify_feishu_workspace.py`：按 v0.1 白名单清理飞书视图和 `02/03` 字段，保持每张表一个主视图。
 - `output/`：运行后生成 CSV 和 Excel。
@@ -59,6 +60,26 @@ python3 scripts/daily_pipeline.py --urls data/manual/urls.example.txt
 ```
 
 这会先把 URL 解析成 `data/manual/url_intake.jsonl`，再进入内容拆解和今日10。支持公众号文章、公开网页，以及抖音/小红书/视频号的浅层公开页面采样；解析失败会记录失败原因，不会中断全流程。
+
+更推荐的飞书投喂方式：
+
+```bash
+FEISHU_APP_ID=xxx \
+FEISHU_APP_SECRET=xxx \
+FEISHU_BASE_APP_TOKEN=xxx \
+python3 scripts/feishu_url_intake.py --setup-only
+```
+
+这会创建临时表 `06 URL投喂入口`。你以后只需要在这张表的 `URL` 字段粘贴链接，然后运行：
+
+```bash
+FEISHU_APP_ID=xxx \
+FEISHU_APP_SECRET=xxx \
+FEISHU_BASE_APP_TOKEN=xxx \
+python3 scripts/daily_pipeline.py --feishu-urls
+```
+
+默认仍是 dry-run，不写入飞书 `03`。确认今日10后再加 `--write-feishu`。`06 URL投喂入口` 只作为临时链接入口，解析完你可以手动删除里面的记录，不需要长期保留。
 
 确认 dry-run 输出没问题后，显式写入飞书 `03 分析与选题` 并刷新 `00 主控台`：
 
@@ -197,12 +218,13 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 - `00 主控台 / 今日工作台`
 - `01 来源与采样 / 来源与URL入口`
 - `02 内容收件箱 / 内容收件箱`
+- `06 URL投喂入口 / URL投喂入口`
 - `03 分析与选题 / 今日Top10`
 - `04 Brief与制作 / Brief制作后台`
 - `05 资产与复盘 / 资产复盘后台`
 - `99 规则与字典 / 规则与字典`
 
-其中 `02 内容收件箱` 是所有采集内容的后台池；`03 分析与选题 / 今日Top10` 是你每天真正看的选题决策区。
+其中 `06 URL投喂入口` 是临时链接入口；`02 内容收件箱` 是所有采集内容的后台池；`03 分析与选题 / 今日Top10` 是你每天真正看的选题决策区。
 
 ## 每天打开什么
 

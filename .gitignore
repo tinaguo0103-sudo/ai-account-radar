@@ -26,6 +26,8 @@ feishu_created_base.json
 # Generated runtime outputs
 output/
 output_no_fetch_test/
+data/manual/url_intake*.jsonl
+data/manual/feishu_url_intake.txt
 *.log
 *.tmp
 *.cache

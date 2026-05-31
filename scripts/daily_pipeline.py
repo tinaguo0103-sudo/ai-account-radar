@@ -23,6 +23,7 @@ OUT = ROOT / "output"
 LOG_DIR = OUT / "logs"
 DEFAULT_MANUAL = ROOT / "data" / "manual" / "content_items.example.jsonl"
 URL_INTAKE = ROOT / "data" / "manual" / "url_intake.jsonl"
+FEISHU_URLS = ROOT / "data" / "manual" / "feishu_url_intake.txt"
 
 
 def run_step(name: str, command: list[str], env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -81,17 +82,28 @@ def main() -> int:
     parser.add_argument("--no-fetch-aihot", action="store_true", help="Skip AIHOT network fetch and use manual samples only.")
     parser.add_argument("--manual", default=str(DEFAULT_MANUAL), help="Path to JSONL manual content items.")
     parser.add_argument("--urls", help="Text file with pasted URLs. Parsed into data/manual/url_intake.jsonl before sampling.")
+    parser.add_argument("--feishu-urls", action="store_true", help="Read URLs from Feishu 06 URL投喂入口 before sampling.")
     args = parser.parse_args()
 
-    if args.write_feishu:
+    if args.write_feishu or args.feishu_urls:
         require_feishu_env()
 
     py = sys.executable
     steps: list[dict[str, Any]] = []
     manual_path = args.manual
 
-    if args.urls:
-        intake_cmd = [py, str(ROOT / "scripts" / "intake_urls.py"), args.urls, "--out", str(URL_INTAKE)]
+    urls_file = args.urls
+    if args.feishu_urls:
+        feishu_urls_cmd = [py, str(ROOT / "scripts" / "feishu_url_intake.py"), "--out", str(FEISHU_URLS)]
+        steps.append(run_step("read URLs from Feishu 06 URL投喂入口", feishu_urls_cmd, env=os.environ.copy()))
+        if steps[-1]["returncode"] != 0:
+            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
+            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
+            return steps[-1]["returncode"]
+        urls_file = str(FEISHU_URLS)
+
+    if urls_file:
+        intake_cmd = [py, str(ROOT / "scripts" / "intake_urls.py"), urls_file, "--out", str(URL_INTAKE)]
         steps.append(run_step("parse pasted URLs into manual content items", intake_cmd))
         if steps[-1]["returncode"] != 0:
             log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")

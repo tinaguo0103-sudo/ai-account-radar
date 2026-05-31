@@ -19,6 +19,7 @@ import push_to_feishu as feishu
 TABLE_VIEW_PLAN = {
     "00 主控台": "今日工作台",
     "01 来源与采样": "来源与URL入口",
+    "06 URL投喂入口": "URL投喂入口",
     "02 内容收件箱": "内容收件箱",
     "03 分析与选题": "今日Top10",
     "04 Brief与制作": "Brief制作后台",
