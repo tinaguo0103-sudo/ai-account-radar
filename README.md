@@ -28,6 +28,7 @@
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和今日10选题。
 - `scripts/daily_pipeline.py`：日常总入口，默认 dry-run；显式传入 `--write-feishu` 才写入飞书。
 - `scripts/push_today10_to_feishu.py`：只把今日10写入飞书 `03 分析与选题`，不写后台全部候选。
+- `scripts/simplify_feishu_workspace.py`：按 v0.1 白名单清理飞书视图和 `02/03` 字段，保持每张表一个主视图。
 - `output/`：运行后生成 CSV 和 Excel。
 - `docs/schedule_local.md`：macOS 本机定时运行说明；当前只记录，不启用定时任务。
 - `prompt_templates.md`：对标分析、热点分析、转选题、生成 Brief 的 Prompt。
@@ -179,6 +180,18 @@ python3 scripts/sync_rules_dictionary.py --sync-feishu
 6. 不需要每天打开 `02 内容收件箱`，它是后台数据表；状态只使用 `待分析`、`已分析`、`已转选题`、`跳过`、`重复`。
 
 CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.csv`、`content_briefs.csv` 当作主要工作台。
+
+当前每张飞书表只保留一个主视图：
+
+- `00 主控台 / 今日工作台`
+- `01 来源与采样 / 来源与URL入口`
+- `02 内容收件箱 / 内容收件箱`
+- `03 分析与选题 / 今日Top10`
+- `04 Brief与制作 / Brief制作后台`
+- `05 资产与复盘 / 资产复盘后台`
+- `99 规则与字典 / 规则与字典`
+
+其中 `02 内容收件箱` 是所有采集内容的后台池；`03 分析与选题 / 今日Top10` 是你每天真正看的选题决策区。
 
 ## 每天打开什么
 

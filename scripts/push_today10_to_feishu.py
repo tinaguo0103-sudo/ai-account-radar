@@ -24,6 +24,7 @@ OUT = ROOT / "output"
 TODAY10 = OUT / "today_10_topics.csv"
 TARGET_TABLE = "03 分析与选题"
 REQUIRED_FIELDS = [
+    "选题标题",
     "推荐日期",
     "今日排名",
     "是否今日Top10",
@@ -111,6 +112,7 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 def map_row(row: dict[str, str], rank: int, date: str) -> dict[str, str]:
     status = ACTION_STATUS.get(row.get("推荐动作", ""), "待判断")
     return {
+        "选题标题": row.get("我的选题标题", ""),
         "推荐日期": date,
         "今日排名": str(rank),
         "是否今日Top10": "是",
