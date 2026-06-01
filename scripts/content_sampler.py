@@ -38,17 +38,43 @@ BUSINESS_KEYWORDS = {
     "内容团队选题到Brief流程": ["内容", "选题", "脚本", "Brief", "写作", "公众号", "小红书", "素材"],
     "AI导演工作流与视频交付": ["视频", "镜头", "分镜", "导演", "成片", "画面", "剪辑", "prompt"],
     "非技术Agent处理重复业务任务": ["Agent", "智能体", "Codex", "Claude Code", "MCP", "自动化", "任务"],
-    "品牌增长与获客承接": ["品牌", "营销", "获客", "转化", "私域", "客户", "销售", "增长"],
+    "汽车与内容营销流程": ["汽车", "品牌", "营销", "带货", "素材", "审核", "信任", "增长"],
     "项目复盘与能力产品化": ["复盘", "创业", "产品", "服务", "咨询", "案例", "Build"],
 }
 
 COLUMN_BY_SCENE = {
     "内容团队选题到Brief流程": "真实工作流改造",
     "AI导演工作流与视频交付": "AI导演工作流",
-    "非技术Agent处理重复业务任务": "非技术Agent实战",
-    "品牌增长与获客承接": "AI汽车与品牌增长",
+    "非技术Agent处理重复业务任务": "真实工作流改造",
+    "汽车与内容营销流程": "汽车与内容营销",
     "项目复盘与能力产品化": "AI项目复盘",
 }
+
+COLUMN_ALIASES = {
+    "AI汽车与品牌增长": "汽车与内容营销",
+    "非技术Agent实战": "真实工作流改造",
+}
+
+SOURCE_TYPE_ALIASES = {
+    "competitor_article": "公众号文章",
+    "competitor_video": "对标视频",
+}
+
+TOP10_COLUMN_LIMITS = {
+    "AI业务定调": (1, 2),
+    "真实工作流改造": (2, 3),
+    "汽车与内容营销": (2, 3),
+    "AI导演工作流": (2, 3),
+    "AI项目复盘": (0, 1),
+}
+
+
+def normalize_column(column: str) -> str:
+    return COLUMN_ALIASES.get(column, column)
+
+
+def normalize_source_type(source_type: str) -> str:
+    return SOURCE_TYPE_ALIASES.get(source_type, source_type)
 
 
 @dataclass
@@ -279,7 +305,7 @@ def aihot_items(source: dict[str, Any], fetch: bool) -> tuple[list[ContentItem],
             fetch_status="ok",
             failure_reason="",
             fingerprint=fingerprint(url, title, source_name),
-            column=source.get("column", ""),
+            column=normalize_column(source.get("column", "")),
             learn_focus=source.get("learn_focus", ""),
             do_not_copy=source.get("do_not_copy", ""),
             convert_direction=source.get("convert_direction", ""),
@@ -309,16 +335,20 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
     source_by_name = {source["account_name"]: source for source in sources}
 
     for source in sources:
-        if source["source_type"] == "AIHOT热点":
+        if not source.get("default_enabled", True):
+            continue
+        if normalize_source_type(source["source_type"]) == "AIHOT热点":
             rows, source_logs = aihot_items(source, fetch_aihot)
             items.extend(rows)
             logs.extend(source_logs)
 
     for raw in load_manual_items(manual_path):
-        source_type = raw.get("来源类型", raw.get("source_type", "手动补充"))
+        source_type = normalize_source_type(raw.get("来源类型", raw.get("source_type", "手动补充")))
         url = raw.get("内容链接", raw.get("url", ""))
         account = raw.get("账号名/公众号名", raw.get("account_name", ""))
         source_meta = source_by_name.get(account, {})
+        if source_meta.get("default_enabled") is False:
+            source_meta = {}
         if source_type == "公众号文章" and url:
             item = extract_article(url, raw)
         elif source_type == "对标视频":
@@ -342,7 +372,8 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
                 failure_reason=raw.get("失败原因", ""),
                 fingerprint=fp,
             )
-        item.column = item.column or source_meta.get("column", "")
+        item.source_type = normalize_source_type(item.source_type)
+        item.column = normalize_column(item.column or source_meta.get("column", ""))
         item.learn_focus = item.learn_focus or source_meta.get("learn_focus", "")
         item.do_not_copy = item.do_not_copy or source_meta.get("do_not_copy", "")
         item.convert_direction = item.convert_direction or source_meta.get("convert_direction", "")
@@ -373,8 +404,8 @@ def choose_scene(text: str) -> str:
         return "AI导演工作流与视频交付" if any(k.lower() in lower for k in ["runway", "kling", "luma", "seedance", "视频", "分镜", "镜头", "成片"]) else "内容团队选题到Brief流程"
     if any(k.lower() in lower for k in ["llamaindex", "openrouter", "codex", "claude code", "agent", "guardrails", "mcp", "自动化", "api", "智能体", "文档自动化"]):
         return "非技术Agent处理重复业务任务"
-    if any(k.lower() in lower for k in ["shein", "ai假人", "虚假广告", "带货", "品牌", "营销", "信任", "合规", "审核", "骗子"]):
-        return "品牌增长与获客承接"
+    if any(k.lower() in lower for k in ["shein", "ai假人", "虚假广告", "带货", "品牌", "营销", "信任", "合规", "审核", "骗子", "汽车"]):
+        return "汽车与内容营销流程"
     if any(k.lower() in lower for k in ["build in public", "产品化", "服务入口", "模板包", "咨询", "项目搭建"]):
         return "项目复盘与能力产品化"
     scores = {
@@ -433,7 +464,7 @@ def asset_for_scene(scene: str) -> str:
         "内容团队选题到Brief流程": "内容选题评分表和Brief模板",
         "AI导演工作流与视频交付": "AI视频Brief与分镜验收清单",
         "非技术Agent处理重复业务任务": "非技术Agent任务拆解模板",
-        "品牌增长与获客承接": "品牌内容到线索承接流程图",
+        "汽车与内容营销流程": "品牌AI素材审核清单 / 汽车内容营销SOP",
         "项目复盘与能力产品化": "AI项目复盘与服务化检查表",
     }.get(scene, "业务流程改造清单")
 
@@ -443,7 +474,7 @@ def old_pain(scene: str) -> str:
         "内容团队选题到Brief流程": "追热点和看对标很多，但选题缺判断，Brief缺业务场景，发布后难复盘。",
         "AI导演工作流与视频交付": "只会写prompt和展示画面，缺Brief、分镜、修改逻辑和验收标准。",
         "非技术Agent处理重复业务任务": "把Agent当聊天机器人，任务边界、输入输出和验收标准不清。",
-        "品牌增长与获客承接": "内容有热闹但承接弱，资料包、私信、咨询和复盘路径断裂。",
+        "汽车与内容营销流程": "AI素材、卖点表达和带货内容进入投放前，缺少品牌一致性、真实性、合规性和风险审核。",
         "项目复盘与能力产品化": "只记录动作和情绪，没有把能力沉淀成模板、案例和服务入口。",
     }[scene]
 
@@ -453,7 +484,7 @@ def ai_entry(scene: str) -> str:
         "内容团队选题到Brief流程": "用AI做资料筛选、内容拆解、选题评分和Brief提纲，但最终判断由人完成。",
         "AI导演工作流与视频交付": "AI生成素材，人负责Brief、分镜、节奏、修改和验收。",
         "非技术Agent处理重复业务任务": "把重复任务拆成输入、步骤、输出、验收和异常处理，再交给Agent执行可重复部分。",
-        "品牌增长与获客承接": "用AI连接用户问题、内容资产、资料包和线索动作。",
+        "汽车与内容营销流程": "用AI辅助识别素材风险、提炼产品卖点、检查品牌调性和生成投放前审核清单，但最终由人确认。",
         "项目复盘与能力产品化": "用AI整理项目过程、失败点、可复用模板和服务入口。",
     }[scene]
 
@@ -463,7 +494,7 @@ def show_result(scene: str) -> str:
         "内容团队选题到Brief流程": "旧流程/新流程对比表 + 可领取Brief模板",
         "AI导演工作流与视频交付": "一页Brief + 三个镜头节点 + 修改前后对比",
         "非技术Agent处理重复业务任务": "任务拆解表 + Agent输入输出样例 + 验收清单",
-        "品牌增长与获客承接": "内容资产到私信/资料包/咨询的承接流程图",
+        "汽车与内容营销流程": "AI素材审核流程图 + 汽车/品牌内容投放前风险清单",
         "项目复盘与能力产品化": "项目复盘卡 + 能力产品化清单",
     }[scene]
 
@@ -589,12 +620,12 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "影响对象": "内容团队、品牌运营、图文生产、素材复用和投放复盘。",
             "标题": f"{title}发布后，内容团队最该重排的是哪一步",
         }
-    if scene == "品牌增长与获客承接":
+    if scene == "汽车与内容营销流程":
         return {
             "角度类型": "商业化机会",
-            "我的蹭热点角度": f"这个热点要看它能不能变成咨询、模板包、工作流共建或AI服务的新入口。",
-            "影响对象": "咨询服务、模板包、工作流共建、品牌内容到线索承接。",
-            "标题": f"{title}背后，哪类AI服务会更容易成立",
+            "我的蹭热点角度": f"这个热点要看它如何改变汽车与品牌内容团队的素材生产、审核、卖点表达和信任建立。",
+            "影响对象": "汽车内容团队、品牌营销、素材审核、投放前风控和产品卖点表达。",
+            "标题": f"{title}背后，品牌内容团队该重做哪条审核线",
         }
     return {
         "角度类型": "暂存观察",
@@ -612,8 +643,8 @@ def regular_topic_title(item: ContentItem, scene: str) -> str:
         return "AI视频不是prompt，而是从Brief到分镜到验收的交付流程"
     if scene == "非技术Agent处理重复业务任务":
         return "非技术人做Agent，先别聊工具，先把任务拆成输入输出和验收"
-    if scene == "品牌增长与获客承接":
-        return "AI内容不是发完就结束，而是要接到资料包、私信和诊断流程"
+    if scene == "汽车与内容营销流程":
+        return "AI营销素材越容易生成，品牌团队越要先补审核流程"
     if scene == "项目复盘与能力产品化":
         return "做AI项目不能只复盘情绪，要把过程沉淀成模板和服务入口"
     return "一个内容团队如何把AI热点和对标内容转成可执行Brief"
@@ -681,7 +712,10 @@ def breakdown(item: ContentItem) -> dict[str, Any]:
     score = score_item(item, scene)
     action = recommend_action(item, score, scene)
     worth = "是" if action in {"立即蹭热点", "进入Brief", "本周做"} else "否"
-    column = item.column or COLUMN_BY_SCENE.get(scene, "真实工作流改造")
+    if item.source_type == "AIHOT热点":
+        column = normalize_column(COLUMN_BY_SCENE.get(scene, "真实工作流改造"))
+    else:
+        column = normalize_column(item.column or COLUMN_BY_SCENE.get(scene, "真实工作流改造"))
     hot = hotspot_angle(item, scene) if item.source_type == "AIHOT热点" else {
         "角度类型": "对标内容拆解",
         "我的蹭热点角度": "不是热点切入，而是学习对标内容的钩子、结构、专业证明和转化方式。",
@@ -694,7 +728,7 @@ def breakdown(item: ContentItem) -> dict[str, Any]:
         "账号名/公众号名": item.account_name,
         "内容标题": item.title,
         "内容链接": item.url,
-        "对应栏目": COLUMN_BY_SCENE.get(scene, column),
+        "对应栏目": column,
         "热点切入方式": hot["角度类型"],
         "这条内容讲了什么": item.body_snippet[:280] or item.cover_text or "待补内容文本",
         "标题/前三秒钩子": hook,
@@ -719,7 +753,7 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
     scene = choose_scene(item_text(item))
     topic_title = regular_topic_title(item, scene)
     profile = business_profile(scene, row["热点切入方式"])
-    column = row["对应栏目"]
+    column = normalize_column(row["对应栏目"])
     if row["热点切入方式"] == "产品生死线":
         column = "AI业务定调"
     if "AI公司讲幕后故事" in topic_title:
@@ -745,7 +779,7 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "来源内容": row["内容标题"],
         "来源链接": item.url,
         "来源类型": row["来源类型"],
-        "对应栏目": column,
+        "对应栏目": normalize_column(column),
         "热点切入方式": row["热点切入方式"],
         "这个热点为什么值得蹭": row["这个热点为什么值得蹭"],
         "普通AI资讯号会怎么讲": row["普通AI资讯号会怎么讲"],
@@ -792,7 +826,7 @@ def item_row(item: ContentItem) -> dict[str, Any]:
         "抓取状态": item.fetch_status,
         "失败原因": item.failure_reason,
         "内容指纹": item.fingerprint,
-        "对应栏目": item.column,
+        "对应栏目": normalize_column(item.column),
         "重点学习": item.learn_focus,
         "不能照搬": item.do_not_copy,
         "转化方向": item.convert_direction,
@@ -933,6 +967,45 @@ def merge_same_theme(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return merged
 
 
+def select_today10(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Select a diverse Top10 with soft column quotas from config/system rules."""
+    sorted_candidates = merge_same_theme(sorted(candidates, key=lambda row: int(row["推荐分"]), reverse=True))
+    buckets: dict[str, list[dict[str, Any]]] = {}
+    for row in sorted_candidates:
+        row["对应栏目"] = normalize_column(row["对应栏目"])
+        buckets.setdefault(row["对应栏目"], []).append(row)
+
+    selected: list[dict[str, Any]] = []
+    seen_fp: set[str] = set()
+
+    def add(row: dict[str, Any]) -> bool:
+        if row["内容指纹"] in seen_fp or len(selected) >= 10:
+            return False
+        selected.append(row)
+        seen_fp.add(row["内容指纹"])
+        return True
+
+    for column, (minimum, maximum) in TOP10_COLUMN_LIMITS.items():
+        column_rows = buckets.get(column, [])
+        for row in column_rows[:maximum]:
+            if len([item for item in selected if item["对应栏目"] == column]) >= minimum:
+                break
+            add(row)
+
+    for column, (_minimum, maximum) in TOP10_COLUMN_LIMITS.items():
+        for row in buckets.get(column, []):
+            if len([item for item in selected if item["对应栏目"] == column]) >= maximum:
+                break
+            add(row)
+
+    for row in sorted_candidates:
+        add(row)
+        if len(selected) >= 10:
+            break
+
+    return selected[:10]
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-fetch-aihot", action="store_true")
@@ -948,34 +1021,7 @@ def main() -> int:
         for row in breakdown_rows
         if row["是否进入今日10选题"] == "是"
     ]
-    sorted_candidates = merge_same_theme(sorted(candidates, key=lambda row: int(row["推荐分"]), reverse=True))
-    hotspot_candidates = [row for row in sorted_candidates if row["来源类型"] == "AIHOT热点"]
-    non_hotspot_candidates = [row for row in sorted_candidates if row["来源类型"] != "AIHOT热点"]
-    today10: list[dict[str, Any]] = []
-    seen_fp: set[str] = set()
-    for row in hotspot_candidates[:4]:
-        today10.append(row)
-        seen_fp.add(row["内容指纹"])
-    for row in non_hotspot_candidates[:2]:
-        if row["内容指纹"] in seen_fp:
-            continue
-        today10.append(row)
-        seen_fp.add(row["内容指纹"])
-    for row in sorted_candidates:
-        if row["内容指纹"] in seen_fp:
-            continue
-        today10.append(row)
-        seen_fp.add(row["内容指纹"])
-        if len(today10) >= 10:
-            break
-    if len(today10) < 10:
-        for row in non_hotspot_candidates:
-            if row["内容指纹"] in seen_fp:
-                continue
-            today10.append(row)
-            seen_fp.add(row["内容指纹"])
-            if len(today10) >= 10:
-                break
+    today10 = select_today10(candidates)
     today10 = assign_action_quotas(today10)
 
     write_csv(OUT / "content_items.csv", item_rows)
