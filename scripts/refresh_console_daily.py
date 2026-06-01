@@ -310,10 +310,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
 
 
 def sync_console_cards(token: str, app_token: str, table_id: str, cards: list[dict[str, str]]) -> dict[str, Any]:
-    try:
-        records = all_records(token, app_token, table_id)
-    except Exception as exc:
-        return {"skipped": "could_not_read_console_records", "error": str(exc)}
+    records = all_records(token, app_token, table_id)
     by_action = {record.get("fields", {}).get("动作"): record for record in records}
     expected = {card["动作"] for card in cards}
     updated = created = deleted = 0
