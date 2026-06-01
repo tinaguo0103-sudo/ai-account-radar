@@ -7,7 +7,7 @@ import json
 import os
 import time
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -26,12 +26,22 @@ APP_TOKEN_ENV = "FEISHU_BASE_APP_TOKEN"
 TABLE_KEYS = list(LOGICAL_TABLES)
 
 CONSOLE_FIELDS = [
+    ("卡片类型", 3),
     ("数量/摘要", 1),
+    ("入口表", 1),
+    ("入口视图", 1),
     ("入口说明", 1),
     ("最后更新时间", 1),
 ]
 
 VIEW_PLAN = {table_name(key): views for key, views in VIEW_NAMES.items()}
+VIEW_PLAN[table_name("console")] = ["今日工作台", "系统导航"]
+
+CARD_TYPE_OPTIONS = ["今日工作", "预警提醒", "进度统计", "系统导航", "规则说明", "临时入口"]
+DAILY_CARD_TYPES = {"今日工作", "预警提醒", "进度统计", "临时入口"}
+NAV_CARD_TYPES = {"系统导航", "规则说明"}
+DAILY_VIEW_VISIBLE_FIELDS = ["动作", "卡片类型", "优先级", "工作区", "状态", "数量/摘要", "下一步", "入口表", "入口视图", "最后更新时间"]
+NAV_VIEW_VISIBLE_FIELDS = ["动作", "卡片类型", "优先级", "工作区", "状态", "数量/摘要", "下一步", "入口表", "入口视图", "最后更新时间"]
 
 
 def require_env() -> str:
@@ -84,11 +94,19 @@ def ensure_fields(token: str, app_token: str, table_id: str) -> list[str]:
     for name, field_type in CONSOLE_FIELDS:
         if name in existing:
             continue
+        body: dict[str, Any] = {"field_name": name, "type": field_type}
+        if name == "卡片类型":
+            body["property"] = {
+                "options": [
+                    {"name": option, "color": index % 10}
+                    for index, option in enumerate(CARD_TYPE_OPTIONS)
+                ]
+            }
         feishu.request_json(
             "POST",
             f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
             token=token,
-            body={"field_name": name, "type": field_type},
+            body=body,
         )
         created.append(name)
         time.sleep(0.1)
@@ -103,23 +121,89 @@ def ensure_views(token: str, app_token: str, tables: dict[str, str]) -> dict[str
             result[table_name] = {"status": "missing_table"}
             continue
         payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views", token=token)
-        existing = {view.get("view_name") for view in payload.get("data", {}).get("items", [])}
+        existing = {view.get("view_name"): view for view in payload.get("data", {}).get("items", [])}
         created: list[str] = []
         skipped: list[str] = []
         for view_name in view_names:
             if view_name in existing:
                 skipped.append(view_name)
                 continue
-            feishu.request_json(
+            response = feishu.request_json(
                 "POST",
                 f"/bitable/v1/apps/{app_token}/tables/{table_id}/views",
                 token=token,
                 body={"view_name": view_name, "view_type": "grid"},
             )
+            view = response.get("data", {}).get("view", response.get("data", {}))
+            existing[view_name] = view
             created.append(view_name)
             time.sleep(0.1)
         result[table_name] = {"created": created, "skipped": skipped}
+        if table_name == table_name_for_console():
+            result[table_name]["configured"] = configure_console_views(token, app_token, table_id, existing)
     return result
+
+
+def table_name_for_console() -> str:
+    return table_name("console")
+
+
+def configure_console_views(token: str, app_token: str, table_id: str, views_by_name: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    fields = fields_by_name(token, app_token, table_id)
+    card_type = fields.get("卡片类型")
+    if not card_type:
+        return {"status": "missing_card_type_field"}
+    option_ids = {
+        option.get("name"): option.get("id")
+        for option in card_type.get("property", {}).get("options", [])
+    }
+
+    def patch_view(view_name: str, allowed_types: set[str], visible_fields: list[str]) -> dict[str, Any]:
+        view = views_by_name.get(view_name)
+        if not view or not view.get("view_id"):
+            return {"status": "missing_view"}
+        allowed_option_ids = [option_ids[name] for name in sorted(allowed_types) if option_ids.get(name)]
+        missing_options = sorted(name for name in allowed_types if not option_ids.get(name))
+        if missing_options:
+            return {"status": "missing_options", "missing": missing_options}
+        hidden_fields = [
+            field["field_id"]
+            for name, field in fields.items()
+            if name not in visible_fields
+        ]
+        conditions = [
+            {
+                "field_id": card_type["field_id"],
+                "operator": "is",
+                "value": json.dumps([option_id], ensure_ascii=False),
+            }
+            for option_id in allowed_option_ids
+        ]
+        body = {
+            "view_name": view_name,
+            "property": {
+                "filter_info": {
+                    "conditions": conditions,
+                    "conjunction": "or",
+                },
+                "hidden_fields": hidden_fields,
+            },
+        }
+        try:
+            feishu.request_json(
+                "PATCH",
+                f"/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view['view_id']}",
+                token=token,
+                body=body,
+            )
+            return {"status": "configured", "hidden_fields": len(hidden_fields)}
+        except Exception as exc:
+            return {"status": "failed", "error": str(exc)}
+
+    return {
+        "今日工作台": patch_view("今日工作台", DAILY_CARD_TYPES, DAILY_VIEW_VISIBLE_FIELDS),
+        "系统导航": patch_view("系统导航", NAV_CARD_TYPES, NAV_VIEW_VISIBLE_FIELDS),
+    }
 
 
 def score_value(value: Any) -> float:
@@ -171,226 +255,268 @@ def summarize_sources(records: list[dict[str, Any]]) -> str:
     return "、".join(f"{name} {count}条" for name, count in counter.most_common(4))
 
 
+def date_text(value: Any) -> str:
+    if isinstance(value, list):
+        return " ".join(date_text(item) for item in value)
+    if isinstance(value, dict):
+        return str(value.get("text") or value.get("value") or "")
+    return str(value or "")
+
+
+def has_date(value: Any, day: datetime) -> bool:
+    text = date_text(value)
+    return day.strftime("%Y-%m-%d") in text or day.strftime("%Y/%m/%d") in text
+
+
+def is_open_task(fields: dict[str, Any]) -> bool:
+    return str(fields.get("状态", "")) not in {"完成", "取消"}
+
+
+def task_type_counter(records: list[dict[str, Any]]) -> str:
+    counter = Counter(str(record.get("fields", {}).get("任务类型") or "未分类") for record in records if is_open_task(record.get("fields", {})))
+    if not counter:
+        return "暂无待办任务"
+    return "、".join(f"{name}{count}" for name, count in counter.most_common(4))
+
+
 def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[str, Any], updated_at: str) -> list[dict[str, str]]:
     links = {name: table_url(app_token, table_id) for name, table_id in table_ids.items()}
     return [
         {
             "动作": "系统地图：内容从哪里来，到哪里去",
+            "卡片类型": "系统导航",
             "优先级": "高",
             "工作区": "系统地图",
             "状态": "固定导航",
             "数量/摘要": "01/02 输入 → 03 内容池 → 04 今日10选题 → 05 Brief与平台内容 → 06 今日任务/排期 → 07 复盘资产化",
-            "说明": "这张卡说明整套系统不是一堆孤立表，而是一条从内容输入到选题、制作、任务和复盘的链路。",
-            "下一步": "先看这条，再按今日工作进入对应表。",
+            "说明": "系统不是一堆孤立表，而是一条从内容输入到选题、制作、任务和复盘的链路。",
+            "下一步": "看完地图后回到 今日工作台。",
+            "入口表": "00 主控台",
+            "入口视图": "今日工作台",
             "入口说明": "docs/system_map.md",
             "最后更新时间": updated_at,
         },
         {
-            "动作": "日常只看这四张",
-            "优先级": "高",
-            "工作区": "日常导航",
-            "状态": "固定导航",
-            "数量/摘要": "每天主要看 00 主控台、04 分析与选题、05 Brief与制作、06 内容任务主表；发布后看 07 资产与复盘。",
-            "说明": "01/02/03/99 是输入、后台内容池和规则说明层，不是每天处理任务的地方。",
-            "下一步": "不要每天打开 01/02/03/99。",
-            "入口说明": links.get("00 主控台", ""),
-            "最后更新时间": updated_at,
-        },
-        {
             "动作": "输入层：01/02/03",
+            "卡片类型": "系统导航",
             "优先级": "中",
             "工作区": "输入层",
             "状态": "固定导航",
             "数量/摘要": "01 来源配置；02 链接/OCR/手动内容入口；03 后台内容池。",
-            "说明": "01 来源与采样 是来源配置，02 URL投喂入口 是链接/OCR/手动内容入口，03 内容收件箱 是后台内容池。它们主要给系统用。",
+            "说明": "输入层主要给系统用，不是每天处理任务的地方。",
             "下一步": "只有补链接、排查采集或看原始内容时才打开。",
+            "入口表": "02 URL投喂入口",
+            "入口视图": "URL投喂入口",
             "入口说明": links.get("02 URL投喂入口", ""),
             "最后更新时间": updated_at,
         },
         {
             "动作": "选题层：04 分析与选题",
+            "卡片类型": "系统导航",
             "优先级": "高",
             "工作区": "选题层",
             "状态": "固定导航",
             "数量/摘要": "今日Top10和选题决策区。",
-            "说明": "这里是今日Top10和选题决策。你每天只需要从这里挑 1 条进入 Brief 或本周做。",
+            "说明": "这里决定做、不做、暂存、进入 Brief 或本周做。",
             "下一步": "看 今日Top10 视图，决定 1 条。",
+            "入口表": "04 分析与选题",
+            "入口视图": "今日Top10",
             "入口说明": links.get("04 分析与选题", ""),
             "最后更新时间": updated_at,
         },
         {
             "动作": "制作层：05 Brief与制作",
+            "卡片类型": "系统导航",
             "优先级": "高",
             "工作区": "制作层",
             "状态": "固定导航",
             "数量/摘要": "把选题拆成公众号、抖音、小红书、视频号等平台内容。",
             "说明": "这里承接被选中的选题，拆成平台内容和提纲，不替你生成完整成稿。",
             "下一步": "补 Hook、脚本、封面、CTA，不生成完整成稿。",
+            "入口表": "05 Brief与制作",
+            "入口视图": "Brief制作后台",
             "入口说明": links.get("05 Brief与制作", ""),
             "最后更新时间": updated_at,
         },
         {
             "动作": "执行层：06 内容任务主表",
+            "卡片类型": "系统导航",
             "优先级": "高",
             "工作区": "执行层",
             "状态": "固定导航",
             "数量/摘要": "今天真正要做的写稿、拍摄、剪辑、封面、发布、直播、复盘提醒。",
-            "说明": "这里是今天真正要做的任务，包括写稿、拍摄、剪辑、封面、发布、直播、复盘提醒。",
+            "说明": "这里是今天真正要做的执行任务。",
             "下一步": "每天看 今日待办，只处理今天必须完成的任务。",
+            "入口表": "06 内容任务主表",
+            "入口视图": "今日待办",
             "入口说明": links.get("06 内容任务主表", ""),
             "最后更新时间": updated_at,
         },
         {
             "动作": "复盘层：07 资产与复盘",
+            "卡片类型": "系统导航",
             "优先级": "中高",
             "工作区": "复盘层",
             "状态": "固定导航",
             "数量/摘要": "发布后 24小时、72小时、7天数据，以及复刻、改角度再发、淘汰或资产化判断。",
-            "说明": "这里记录发布后 24小时、72小时、7天数据，判断是否可复刻、改角度再发、淘汰或资产化。",
+            "说明": "发布后看数据和资产化机会，不靠感觉做内容。",
             "下一步": "发布后按提醒复盘，不要靠感觉做内容。",
+            "入口表": "07 资产与复盘",
+            "入口视图": "资产复盘后台",
             "入口说明": links.get("07 资产与复盘", ""),
             "最后更新时间": updated_at,
         },
         {
             "动作": "规则层：99 规则与字典",
+            "卡片类型": "规则说明",
             "优先级": "中",
             "工作区": "规则层",
             "状态": "固定导航",
             "数量/摘要": "系统说明书：字段、状态、评分、AI边界、表逻辑。",
             "说明": "这里是系统说明书。看不懂字段、状态、评分、AI边界时再打开。",
             "下一步": "规则不合理时先改这里和 config/system_rules.yaml。",
+            "入口表": "99 规则与字典",
+            "入口视图": "规则与字典",
             "入口说明": links.get("99 规则与字典", ""),
             "最后更新时间": updated_at,
         },
         {
             "动作": "今日10选题",
+            "卡片类型": "今日工作",
             "优先级": "高",
             "工作区": "分析与选题",
             "状态": "今日工作台",
-            "数量/摘要": f"{stats['today_10_count']} 条已生成；最建议进入Brief：{stats['top_today_topic']}",
-            "说明": "前台只看这里：今日10选题来自 AIHOT 热点、对标视频和公众号文章的内容拆解，不是数据榜单。",
-            "下一步": "打开今日10选题文件，选 1 条进入 04 分析与选题 / 05 Brief与制作。",
-            "入口说明": stats["today_10_report"],
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "URL投喂入口",
-            "优先级": "高",
-            "工作区": "来源与采样",
-            "状态": "临时入口",
-            "数量/摘要": "把公众号、抖音、小红书、视频号链接粘到这里；解析后可手动删除。",
-            "说明": "这是临时链接入口，不是长期业务表。系统只读取公开可见内容，失败会记录原因。",
-            "下一步": "粘贴 URL 后运行 daily_pipeline.py --feishu-urls。",
-            "入口说明": links.get("02 URL投喂入口", ""),
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "今日新增待判断内容",
-            "优先级": "高",
-            "工作区": "内容收件箱",
-            "状态": "今日工作台",
-            "数量/摘要": f"{stats['pending_inbox_count']} 条待分析；主要来源：{stats['source_summary']}",
-            "说明": "不用每天打开收件箱；这里提示是否有新内容需要进入分析。",
-            "下一步": "打开 04 分析与选题 / 今日Top10，先看高分候选。",
-            "入口说明": links["03 内容收件箱"],
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "高分选题池",
-            "优先级": "高",
-            "工作区": "分析与选题",
-            "状态": "今日工作台",
-            "数量/摘要": f"{stats['high_topic_count']} 条待判断高分/AB 选题",
-            "说明": "核心决策区：判断是否进入 Brief、本周做、暂存、归档或不做。",
-            "下一步": "进入 04，把值得做的状态改为 进入Brief 或 本周做。",
+            "数量/摘要": f"今日已生成 {stats['today_10_count']} 条，先选 1 条推进。",
+            "说明": f"最建议优先看：{stats['top_today_topic']}",
+            "下一步": "进入 04 今日Top10，选 1 条进入Brief或本周做。",
+            "入口表": "04 分析与选题",
+            "入口视图": "今日Top10",
             "入口说明": links["04 分析与选题"],
             "最后更新时间": updated_at,
         },
         {
-            "动作": "待生成 Brief",
-            "优先级": "高",
-            "工作区": "分析与选题",
-            "状态": "今日工作台",
-            "数量/摘要": f"{stats['topic_to_brief_count']} 条状态为 进入Brief/本周做 的选题",
-            "说明": "这些选题已经通过决策，下一步应进入 Brief。",
-            "下一步": "打开 05 Brief与制作，补齐对应 Brief。",
-            "入口说明": links["05 Brief与制作"],
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "Brief 待补案例",
-            "优先级": "高",
-            "工作区": "Brief与制作",
-            "状态": "今日工作台",
-            "数量/摘要": f"{stats['brief_need_case_count']} 条待补案例",
-            "说明": "系统只给提纲；真实案例、截图、个人判断必须人工补。",
-            "下一步": "补真实业务现场、视觉建议、CTA 和边界。",
-            "入口说明": links["05 Brief与制作"],
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "可制作内容",
-            "优先级": "中高",
-            "工作区": "Brief与制作",
-            "状态": "今日工作台",
-            "数量/摘要": f"{stats['brief_ready_count']} 条可制作",
-            "说明": "这些内容已经具备制作条件，但仍由你人工完成最终表达。",
-            "下一步": "选择 1 条开拍、写稿或制图；不自动发布。",
-            "入口说明": links["05 Brief与制作"],
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "内容任务主表",
+            "动作": "今日必须完成",
+            "卡片类型": "今日工作",
             "优先级": "高",
             "工作区": "内容任务",
             "状态": "今日工作台",
-            "数量/摘要": f"{stats['task_pending_count']} 个待办/进行中/阻塞任务",
-            "说明": "这里承接写稿、拍摄、封面、发布、直播、复盘、私信跟进和资产化任务；不是输入入口。",
-            "下一步": "打开 06 内容任务主表，只处理今日待办和本周任务。",
+            "数量/摘要": f"{stats['due_today_count']} 个今天必须完成的未完成任务。",
+            "说明": "只看今天到期或标记今天必须完成的任务。",
+            "下一步": "进入 06 今日待办，先处理今天必须完成。",
+            "入口表": "06 内容任务主表",
+            "入口视图": "今日待办",
             "入口说明": links["06 内容任务主表"],
             "最后更新时间": updated_at,
         },
         {
-            "动作": "已发布待复盘",
-            "优先级": "中",
+            "动作": "明日预警",
+            "卡片类型": "预警提醒",
+            "优先级": "高",
+            "工作区": "内容任务",
+            "状态": "今日工作台",
+            "数量/摘要": f"{stats['tomorrow_warning_count']} 个明天发布/复盘/到期任务。",
+            "说明": "提前处理明天发布或复盘任务，避免临时赶。",
+            "下一步": "进入 06 明日预警，提前处理阻塞项。",
+            "入口表": "06 内容任务主表",
+            "入口视图": "明日预警",
+            "入口说明": links["06 内容任务主表"],
+            "最后更新时间": updated_at,
+        },
+        {
+            "动作": "本周内容进度",
+            "卡片类型": "进度统计",
+            "优先级": "中高",
+            "工作区": "内容任务",
+            "状态": "今日工作台",
+            "数量/摘要": f"{stats['task_pending_count']} 个未完成任务；{stats['task_type_summary']}。",
+            "说明": "看内容卡在写稿、拍摄、剪辑、封面还是发布。",
+            "下一步": "进入 06 本周任务，处理卡住的环节。",
+            "入口表": "06 内容任务主表",
+            "入口视图": "本周任务",
+            "入口说明": links["06 内容任务主表"],
+            "最后更新时间": updated_at,
+        },
+        {
+            "动作": "未来7天发布",
+            "卡片类型": "预警提醒",
+            "优先级": "高",
+            "工作区": "内容任务",
+            "状态": "今日工作台",
+            "数量/摘要": f"{stats['next_7_publish_count']} 个未来7天发布任务。",
+            "说明": "检查是否断更或平台排期冲突。",
+            "下一步": "进入 06 发布相关任务，确认未来7天排期。",
+            "入口表": "06 内容任务主表",
+            "入口视图": "发布相关任务",
+            "入口说明": links["06 内容任务主表"],
+            "最后更新时间": updated_at,
+        },
+        {
+            "动作": "待复盘内容",
+            "卡片类型": "今日工作",
+            "优先级": "中高",
             "工作区": "Brief与制作",
             "状态": "今日工作台",
-            "数量/摘要": f"{stats['published_review_count']} 条待复盘",
-            "说明": "发布后只回填真实数据，不伪造、不自动发布。",
-            "下一步": "回填播放/阅读、收藏、评论、私信和复盘结论。",
+            "数量/摘要": f"{stats['published_review_count']} 条发布后待复盘内容。",
+            "说明": "发布后24h/72h/7天未复盘内容。",
+            "下一步": "进入 05，回填真实数据和复盘结论。",
+            "入口表": "05 Brief与制作",
+            "入口视图": "Brief制作后台",
             "入口说明": links["05 Brief与制作"],
             "最后更新时间": updated_at,
         },
         {
-            "动作": "来源异常/采集失败",
-            "优先级": "中",
-            "工作区": "来源与采样",
-            "状态": "今日工作台",
-            "数量/摘要": "；".join(stats["source_errors"]),
-            "说明": "某个来源失败不会中断全流程；可手动粘贴 AIHOT 或对标内容。",
-            "下一步": "如有异常，打开 01 来源与采样 手动补材料。",
-            "入口说明": links["01 来源与采样"],
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "本周可沉淀资产",
+            "动作": "可复刻内容",
+            "卡片类型": "进度统计",
             "优先级": "中高",
             "工作区": "资产与复盘",
             "状态": "今日工作台",
-            "数量/摘要": f"{stats['asset_count']} 个高优先级未完成资产",
-            "说明": "优先沉淀清单、SOP、流程图、案例库或资料包。",
-            "下一步": "每周打开 07，决定本周先做哪个资产。",
+            "数量/摘要": f"{stats['asset_count']} 个高优先级资产/复刻候选。",
+            "说明": "把表现好的内容变成下周选题或资产。",
+            "下一步": "进入 07，选择1个可复刻内容沉淀。",
+            "入口表": "07 资产与复盘",
+            "入口视图": "资产复盘后台",
             "入口说明": links["07 资产与复盘"],
             "最后更新时间": updated_at,
         },
         {
-            "动作": "99 规则与字典入口",
-            "优先级": "高",
+            "动作": "来源异常/采集失败",
+            "卡片类型": "预警提醒",
+            "优先级": "中",
+            "工作区": "来源与采样",
+            "状态": "今日工作台",
+            "数量/摘要": "；".join(stats["source_errors"]),
+            "说明": "某个来源失败不会中断全流程。",
+            "下一步": "如有异常，去 02 URL投喂入口 手动补链接或OCR文本。",
+            "入口表": "02 URL投喂入口",
+            "入口视图": "URL投喂入口",
+            "入口说明": links["02 URL投喂入口"],
+            "最后更新时间": updated_at,
+        },
+        {
+            "动作": "URL投喂入口",
+            "卡片类型": "临时入口",
+            "优先级": "中",
+            "工作区": "来源与采样",
+            "状态": "临时入口",
+            "数量/摘要": "临时粘贴公众号/抖音/小红书链接或OCR文本。",
+            "说明": "解析后可以手动删除投喂记录。",
+            "下一步": "进入 02 粘贴链接，再运行 daily_pipeline.py --feishu-urls。",
+            "入口表": "02 URL投喂入口",
+            "入口视图": "URL投喂入口",
+            "入口说明": links.get("02 URL投喂入口", ""),
+            "最后更新时间": updated_at,
+        },
+        {
+            "动作": "99规则与字典入口",
+            "卡片类型": "临时入口",
+            "优先级": "低",
             "工作区": "规则说明",
             "状态": "固定入口",
-            "数量/摘要": "查看表逻辑、字段含义、状态流转、评分规则、AI边界",
+            "数量/摘要": "看不懂字段、状态、评分或AI边界时再打开。",
             "说明": "这是系统说明书，不是业务数据表。",
-            "下一步": "打开 99 规则与字典，按规则类型查看。",
+            "下一步": "进入 99，按规则类型查看。",
+            "入口表": "99 规则与字典",
+            "入口视图": "规则与字典",
             "入口说明": links["99 规则与字典"],
             "最后更新时间": updated_at,
         },
@@ -527,6 +653,30 @@ def main() -> int:
     brief_ready = [r for r in brief_records if r.get("fields", {}).get("制作状态") == "可制作"]
     published_review = [r for r in brief_records if r.get("fields", {}).get("制作状态") == "已发布待复盘"]
     task_pending = [r for r in task_records if r.get("fields", {}).get("状态") in {"待办", "进行中", "阻塞"}]
+    today = datetime.now()
+    tomorrow = today + timedelta(days=1)
+    due_today = [
+        r for r in task_records
+        if is_open_task(r.get("fields", {}))
+        and (
+            str(r.get("fields", {}).get("是否今天必须完成", "")) == "是"
+            or has_date(r.get("fields", {}).get("截止时间"), today)
+        )
+    ]
+    tomorrow_warning = [
+        r for r in task_records
+        if is_open_task(r.get("fields", {}))
+        and has_date(r.get("fields", {}).get("截止时间"), tomorrow)
+    ]
+    next_7_publish = [
+        r for r in task_records
+        if is_open_task(r.get("fields", {}))
+        and "发布" in str(r.get("fields", {}).get("任务类型", ""))
+        and (
+            not date_text(r.get("fields", {}).get("截止时间"))
+            or any(has_date(r.get("fields", {}).get("截止时间"), today + timedelta(days=offset)) for offset in range(8))
+        )
+    ]
     assets = asset_candidates(asset_records)
     today10 = load_today_10()
 
@@ -542,6 +692,10 @@ def main() -> int:
         "brief_ready_count": len(brief_ready),
         "published_review_count": len(published_review),
         "task_pending_count": len(task_pending),
+        "due_today_count": len(due_today),
+        "tomorrow_warning_count": len(tomorrow_warning),
+        "next_7_publish_count": len(next_7_publish),
+        "task_type_summary": task_type_counter(task_pending),
         "asset_count": len(assets),
         "source_errors": load_run_errors(),
         "top_topics": top_records(high_topics, 5),

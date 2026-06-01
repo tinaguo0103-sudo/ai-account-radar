@@ -30,7 +30,7 @@ ALIASES: dict[str, list[str]] = {
 }
 
 VIEW_NAMES: dict[str, list[str]] = {
-    "console": ["今日工作台"],
+    "console": ["今日工作台", "系统导航"],
     "source_sampling": ["来源与URL入口"],
     "url_inbox": ["URL投喂入口"],
     "content_inbox": ["内容收件箱"],
