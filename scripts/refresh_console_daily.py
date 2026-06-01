@@ -12,6 +12,8 @@ from pathlib import Path
 from typing import Any
 
 import push_to_feishu as feishu
+from feishu_table_registry import TABLES as LOGICAL_TABLES
+from feishu_table_registry import VIEW_NAMES, resolve_table_id, table_name
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -21,16 +23,7 @@ BASE_URL = "https://my.feishu.cn/base"
 
 APP_TOKEN_ENV = "FEISHU_BASE_APP_TOKEN"
 
-TABLES = [
-    "00 主控台",
-    "01 来源与采样",
-    "06 URL投喂入口",
-    "02 内容收件箱",
-    "03 分析与选题",
-    "04 Brief与制作",
-    "05 资产与复盘",
-    "99 规则与字典",
-]
+TABLE_KEYS = list(LOGICAL_TABLES)
 
 CONSOLE_FIELDS = [
     ("数量/摘要", 1),
@@ -38,16 +31,7 @@ CONSOLE_FIELDS = [
     ("最后更新时间", 1),
 ]
 
-VIEW_PLAN = {
-    "00 主控台": ["今日工作台"],
-    "01 来源与采样": ["来源与URL入口"],
-    "06 URL投喂入口": ["URL投喂入口"],
-    "02 内容收件箱": ["内容收件箱"],
-    "03 分析与选题": ["今日Top10"],
-    "04 Brief与制作": ["Brief制作后台"],
-    "05 资产与复盘": ["资产复盘后台"],
-    "99 规则与字典": ["规则与字典"],
-}
+VIEW_PLAN = {table_name(key): views for key, views in VIEW_NAMES.items()}
 
 
 def require_env() -> str:
@@ -74,7 +58,14 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
     page_token = ""
     while True:
         suffix = f"?page_size=500{('&page_token=' + page_token) if page_token else ''}"
-        payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/records{suffix}", token=token)
+        for attempt in range(5):
+            try:
+                payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/records{suffix}", token=token)
+                break
+            except Exception:
+                if attempt == 4:
+                    raise
+                time.sleep(1.5)
         data = payload.get("data", {})
         records.extend(data.get("items", []))
         if not data.get("has_more"):
@@ -190,7 +181,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "状态": "今日工作台",
             "数量/摘要": f"{stats['today_10_count']} 条已生成；最建议进入Brief：{stats['top_today_topic']}",
             "说明": "前台只看这里：今日10选题来自 AIHOT 热点、对标视频和公众号文章的内容拆解，不是数据榜单。",
-            "下一步": "打开今日10选题文件，选 1 条进入 03 分析与选题 / 04 Brief与制作。",
+            "下一步": "打开今日10选题文件，选 1 条进入 04 分析与选题 / 05 Brief与制作。",
             "入口说明": stats["today_10_report"],
             "最后更新时间": updated_at,
         },
@@ -202,7 +193,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "数量/摘要": "把公众号、抖音、小红书、视频号链接粘到这里；解析后可手动删除。",
             "说明": "这是临时链接入口，不是长期业务表。系统只读取公开可见内容，失败会记录原因。",
             "下一步": "粘贴 URL 后运行 daily_pipeline.py --feishu-urls。",
-            "入口说明": links.get("06 URL投喂入口", ""),
+            "入口说明": links.get("02 URL投喂入口", ""),
             "最后更新时间": updated_at,
         },
         {
@@ -212,8 +203,8 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "状态": "今日工作台",
             "数量/摘要": f"{stats['pending_inbox_count']} 条待分析；主要来源：{stats['source_summary']}",
             "说明": "不用每天打开收件箱；这里提示是否有新内容需要进入分析。",
-            "下一步": "打开 03 分析与选题 / 今日决策，先看高分候选。",
-            "入口说明": links["02 内容收件箱"],
+            "下一步": "打开 04 分析与选题 / 今日Top10，先看高分候选。",
+            "入口说明": links["03 内容收件箱"],
             "最后更新时间": updated_at,
         },
         {
@@ -223,8 +214,8 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "状态": "今日工作台",
             "数量/摘要": f"{stats['high_topic_count']} 条待判断高分/AB 选题",
             "说明": "核心决策区：判断是否进入 Brief、本周做、暂存、归档或不做。",
-            "下一步": "进入 03，把值得做的状态改为 进入Brief 或 本周做。",
-            "入口说明": links["03 分析与选题"],
+            "下一步": "进入 04，把值得做的状态改为 进入Brief 或 本周做。",
+            "入口说明": links["04 分析与选题"],
             "最后更新时间": updated_at,
         },
         {
@@ -234,8 +225,8 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "状态": "今日工作台",
             "数量/摘要": f"{stats['topic_to_brief_count']} 条状态为 进入Brief/本周做 的选题",
             "说明": "这些选题已经通过决策，下一步应进入 Brief。",
-            "下一步": "打开 04 Brief与制作，补齐对应 Brief。",
-            "入口说明": links["04 Brief与制作"],
+            "下一步": "打开 05 Brief与制作，补齐对应 Brief。",
+            "入口说明": links["05 Brief与制作"],
             "最后更新时间": updated_at,
         },
         {
@@ -246,7 +237,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "数量/摘要": f"{stats['brief_need_case_count']} 条待补案例",
             "说明": "系统只给提纲；真实案例、截图、个人判断必须人工补。",
             "下一步": "补真实业务现场、视觉建议、CTA 和边界。",
-            "入口说明": links["04 Brief与制作"],
+            "入口说明": links["05 Brief与制作"],
             "最后更新时间": updated_at,
         },
         {
@@ -257,7 +248,18 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "数量/摘要": f"{stats['brief_ready_count']} 条可制作",
             "说明": "这些内容已经具备制作条件，但仍由你人工完成最终表达。",
             "下一步": "选择 1 条开拍、写稿或制图；不自动发布。",
-            "入口说明": links["04 Brief与制作"],
+            "入口说明": links["05 Brief与制作"],
+            "最后更新时间": updated_at,
+        },
+        {
+            "动作": "内容任务主表",
+            "优先级": "高",
+            "工作区": "内容任务",
+            "状态": "今日工作台",
+            "数量/摘要": f"{stats['task_pending_count']} 个待办/进行中/阻塞任务",
+            "说明": "这里承接写稿、拍摄、封面、发布、直播、复盘、私信跟进和资产化任务；不是输入入口。",
+            "下一步": "打开 06 内容任务主表，只处理今日待办和本周任务。",
+            "入口说明": links["06 内容任务主表"],
             "最后更新时间": updated_at,
         },
         {
@@ -268,7 +270,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "数量/摘要": f"{stats['published_review_count']} 条待复盘",
             "说明": "发布后只回填真实数据，不伪造、不自动发布。",
             "下一步": "回填播放/阅读、收藏、评论、私信和复盘结论。",
-            "入口说明": links["04 Brief与制作"],
+            "入口说明": links["05 Brief与制作"],
             "最后更新时间": updated_at,
         },
         {
@@ -289,8 +291,8 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "状态": "今日工作台",
             "数量/摘要": f"{stats['asset_count']} 个高优先级未完成资产",
             "说明": "优先沉淀清单、SOP、流程图、案例库或资料包。",
-            "下一步": "每周打开 05，决定本周先做哪个资产。",
-            "入口说明": links["05 资产与复盘"],
+            "下一步": "每周打开 07，决定本周先做哪个资产。",
+            "入口说明": links["07 资产与复盘"],
             "最后更新时间": updated_at,
         },
         {
@@ -308,7 +310,10 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
 
 
 def sync_console_cards(token: str, app_token: str, table_id: str, cards: list[dict[str, str]]) -> dict[str, Any]:
-    records = all_records(token, app_token, table_id)
+    try:
+        records = all_records(token, app_token, table_id)
+    except Exception as exc:
+        return {"skipped": "could_not_read_console_records", "error": str(exc)}
     by_action = {record.get("fields", {}).get("动作"): record for record in records}
     expected = {card["动作"] for card in cards}
     updated = created = deleted = 0
@@ -372,8 +377,8 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
         return f"- {fields.get('名称/模块', '未命名资产')}：{fields.get('核心内容', '待补核心内容')}"
 
     actions = [
-        "先在 03 分析与选题 中处理高分待判断选题，至少选 1 条改为 进入Brief 或 本周做。",
-        "在 04 Brief与制作 中补 1-3 条真实案例、个人判断、视觉建议和 CTA。",
+        "先在 04 分析与选题 中处理高分待判断选题，至少选 1 条改为 进入Brief 或 本周做。",
+        "在 05 Brief与制作 中补 1-3 条真实案例、个人判断、视觉建议和 CTA。",
         "从本周可沉淀资产里选 1 个轻量资产，先做精简版，不追求完整大包。",
     ]
     if stats["source_errors"] != ["暂无异常"]:
@@ -385,7 +390,7 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
         f"生成时间：{updated_at}",
         "",
         "## 1. 今日新增内容",
-        f"- 当前 `02 内容收件箱` 有 {stats['pending_inbox_count']} 条待分析内容。",
+        f"- 当前 `03 内容收件箱` 有 {stats['pending_inbox_count']} 条待分析内容。",
         f"- 主要来源：{stats['source_summary']}",
         "",
         "## 2. 今日最值得看的选题",
@@ -430,15 +435,17 @@ def main() -> int:
 
     app_token = require_env()
     token = feishu.tenant_token()
-    tables = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
-    missing = [name for name in TABLES if name not in tables]
+    tables_by_name = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
+    tables = {table_name(key): resolve_table_id(tables_by_name, key) for key in TABLE_KEYS}
+    missing = [table_name(key) for key in TABLE_KEYS if not tables.get(table_name(key))]
     if missing:
         raise SystemExit(f"Missing required tables: {missing}")
 
-    inbox_records = all_records(token, app_token, tables["02 内容收件箱"])
-    topic_records = all_records(token, app_token, tables["03 分析与选题"])
-    brief_records = all_records(token, app_token, tables["04 Brief与制作"])
-    asset_records = all_records(token, app_token, tables["05 资产与复盘"])
+    inbox_records = all_records(token, app_token, tables["03 内容收件箱"])
+    topic_records = all_records(token, app_token, tables["04 分析与选题"])
+    brief_records = all_records(token, app_token, tables["05 Brief与制作"])
+    task_records = all_records(token, app_token, tables["06 内容任务主表"])
+    asset_records = all_records(token, app_token, tables["07 资产与复盘"])
 
     pending_inbox = [r for r in inbox_records if r.get("fields", {}).get("处理状态") == "待分析"]
     high_topics = [r for r in topic_records if r.get("fields", {}).get("状态") == "待判断" and is_ab_or_high(r.get("fields", {}))]
@@ -446,6 +453,7 @@ def main() -> int:
     brief_need_case = [r for r in brief_records if r.get("fields", {}).get("制作状态") == "待补案例"]
     brief_ready = [r for r in brief_records if r.get("fields", {}).get("制作状态") == "可制作"]
     published_review = [r for r in brief_records if r.get("fields", {}).get("制作状态") == "已发布待复盘"]
+    task_pending = [r for r in task_records if r.get("fields", {}).get("状态") in {"待办", "进行中", "阻塞"}]
     assets = asset_candidates(asset_records)
     today10 = load_today_10()
 
@@ -460,6 +468,7 @@ def main() -> int:
         "brief_need_case_count": len(brief_need_case),
         "brief_ready_count": len(brief_ready),
         "published_review_count": len(published_review),
+        "task_pending_count": len(task_pending),
         "asset_count": len(assets),
         "source_errors": load_run_errors(),
         "top_topics": top_records(high_topics, 5),

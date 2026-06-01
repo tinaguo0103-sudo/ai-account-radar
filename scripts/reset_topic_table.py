@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reset 03 分析与选题 to the clean 今日Top10 field set.
+"""Reset 04 分析与选题 to the clean 今日Top10 field set.
 
 Use only when test data can be removed. The table itself is preserved.
 """
@@ -11,9 +11,11 @@ import time
 from typing import Any
 
 import push_to_feishu as feishu
+from feishu_table_registry import TABLES, resolve_table_id
 
 
-TABLE_NAME = "03 分析与选题"
+TABLE_KEY = "topic_decision"
+TABLE_NAME = TABLES[TABLE_KEY]
 KEEP_FIELDS = [
     "选题标题",
     "推荐日期",
@@ -44,9 +46,10 @@ def app_token() -> str:
 
 def get_table_id(token: str, app: str) -> str:
     tables = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app)}
-    if TABLE_NAME not in tables:
+    table_id = resolve_table_id(tables, TABLE_KEY)
+    if not table_id:
         raise SystemExit(f"Missing table: {TABLE_NAME}")
-    return tables[TABLE_NAME]
+    return table_id
 
 
 def all_records(token: str, app: str, table_id: str) -> list[dict[str, Any]]:

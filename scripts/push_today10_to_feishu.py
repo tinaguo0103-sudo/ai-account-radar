@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Write only today's top-10 topic rows to Feishu 03 分析与选题.
+"""Write only today's top-10 topic rows to Feishu 04 分析与选题.
 
 This script is intentionally narrow: it does not rebuild tables, does not
 write all candidates, and does not touch publishing/lead workflows.
@@ -17,12 +17,13 @@ from pathlib import Path
 from typing import Any
 
 import push_to_feishu as feishu
+from feishu_table_registry import TABLES, resolve_table_id, table_name
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
 TODAY10 = OUT / "today_10_topics.csv"
-TARGET_TABLE = "03 分析与选题"
+TARGET_TABLE_KEY = "topic_decision"
 REQUIRED_FIELDS = [
     "选题标题",
     "推荐日期",
@@ -129,7 +130,7 @@ def map_row(row: dict[str, str], rank: int, date: str) -> dict[str, str]:
 
 
 def dry_run_print(rows: list[dict[str, str]]) -> None:
-    print("DRY-RUN: will write 10 今日Top10 rows to 03 分析与选题")
+    print(f"DRY-RUN: will write 10 今日Top10 rows to {table_name(TARGET_TABLE_KEY)}")
     for row in rows:
         print(
             f"{row['今日排名']}. {row['选题标题']} | "
@@ -173,9 +174,9 @@ def main() -> int:
         raise SystemExit("FEISHU_BASE_APP_TOKEN is required")
     token = feishu.tenant_token()
     tables = list_tables(token, app_token)
-    table_id = tables.get(TARGET_TABLE)
+    table_id = resolve_table_id(tables, TARGET_TABLE_KEY)
     if not table_id:
-        raise SystemExit(f"Missing Feishu table: {TARGET_TABLE}")
+        raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
     created_fields = ensure_fields(token, app_token, table_id)
 
     existing = all_records(token, app_token, table_id)
@@ -188,7 +189,7 @@ def main() -> int:
     print(json.dumps({
         "ok": True,
         "mode": "write",
-        "table": TARGET_TABLE,
+        "table": TABLES[TARGET_TABLE_KEY],
         "created_fields": created_fields,
         "created_records": created_records,
         "skipped_existing": len(mapped) - len(to_create),

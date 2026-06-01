@@ -3,7 +3,7 @@
 
 Default mode is dry-run: generate content objects, breakdowns and 今日10,
 then print the rows that would be written to Feishu. Use --write-feishu to
-write only 今日10 to 03 分析与选题 and refresh 00 主控台.
+write only 今日10 to 04 分析与选题 and refresh 00 主控台.
 """
 from __future__ import annotations
 
@@ -78,11 +78,11 @@ def today10_count() -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the daily AI account radar pipeline.")
-    parser.add_argument("--write-feishu", action="store_true", help="Write only 今日10 to Feishu and refresh 00 主控台.")
+    parser.add_argument("--write-feishu", action="store_true", help="Write only 今日10 to Feishu 04 分析与选题 and refresh 00 主控台.")
     parser.add_argument("--no-fetch-aihot", action="store_true", help="Skip AIHOT network fetch and use manual samples only.")
     parser.add_argument("--manual", default=str(DEFAULT_MANUAL), help="Path to JSONL manual content items.")
     parser.add_argument("--urls", help="Text file with pasted URLs. Parsed into data/manual/url_intake.jsonl before sampling.")
-    parser.add_argument("--feishu-urls", action="store_true", help="Read URLs from Feishu 06 URL投喂入口 before sampling.")
+    parser.add_argument("--feishu-urls", action="store_true", help="Read URLs from Feishu 02 URL投喂入口 before sampling.")
     args = parser.parse_args()
 
     if args.write_feishu or args.feishu_urls:
@@ -95,7 +95,7 @@ def main() -> int:
     urls_file = args.urls
     if args.feishu_urls:
         feishu_urls_cmd = [py, str(ROOT / "scripts" / "feishu_url_intake.py"), "--out", str(FEISHU_URLS)]
-        steps.append(run_step("read URLs from Feishu 06 URL投喂入口", feishu_urls_cmd, env=os.environ.copy()))
+        steps.append(run_step("read URLs from Feishu 02 URL投喂入口", feishu_urls_cmd, env=os.environ.copy()))
         if steps[-1]["returncode"] != 0:
             log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
@@ -142,7 +142,7 @@ def main() -> int:
 
     if args.write_feishu:
         write_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py"), "--write"]
-        steps.append(run_step("write 今日10 to Feishu 03 分析与选题", write_cmd, env=os.environ.copy()))
+        steps.append(run_step("write 今日10 to Feishu 04 分析与选题", write_cmd, env=os.environ.copy()))
         if steps[-1]["returncode"] != 0:
             log_path = write_run_log(steps, "write-feishu")
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))

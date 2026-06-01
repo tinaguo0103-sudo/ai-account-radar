@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-"""Simplify Feishu Base views and front-stage fields for v0.1.
+"""Simplify Feishu Base views and front-stage fields for v0.2.
 
-This script keeps one view per table and trims 02/03 to the fields needed by
+This script keeps one view per table and trims 03/04 to the fields needed by
 the current "content inbox -> 今日Top10" workflow. It does not create business
 tables and never deletes 99 规则与字典.
 """
@@ -14,21 +14,13 @@ import time
 from typing import Any
 
 import push_to_feishu as feishu
+from feishu_table_registry import TABLES, VIEW_NAMES, resolve_table_id, table_name
 
 
-TABLE_VIEW_PLAN = {
-    "00 主控台": "今日工作台",
-    "01 来源与采样": "来源与URL入口",
-    "06 URL投喂入口": "URL投喂入口",
-    "02 内容收件箱": "内容收件箱",
-    "03 分析与选题": "今日Top10",
-    "04 Brief与制作": "Brief制作后台",
-    "05 资产与复盘": "资产复盘后台",
-    "99 规则与字典": "规则与字典",
-}
+TABLE_VIEW_PLAN = {table_name(key): views[0] for key, views in VIEW_NAMES.items()}
 
 FIELD_KEEP = {
-    "02 内容收件箱": [
+    table_name("content_inbox"): [
         "标题",
         "来源类型",
         "来源名称",
@@ -44,7 +36,7 @@ FIELD_KEEP = {
         "是否重复",
         "处理状态",
     ],
-    "03 分析与选题": [
+    table_name("topic_decision"): [
         "选题标题",
         "推荐日期",
         "今日排名",
@@ -159,8 +151,9 @@ def trim_fields(token: str, app_token: str, table_id: str, table_name: str) -> d
 def main() -> int:
     app_token = require_app_token()
     token = feishu.tenant_token()
-    tables = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
-    missing = [name for name in TABLE_VIEW_PLAN if name not in tables]
+    tables_by_name = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
+    tables = {name: resolve_table_id(tables_by_name, key) for key, name in TABLES.items()}
+    missing = [name for name, table_id in tables.items() if not table_id]
     if missing:
         raise SystemExit(f"Missing required tables: {missing}")
 

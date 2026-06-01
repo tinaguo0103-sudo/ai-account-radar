@@ -22,6 +22,7 @@ except ModuleNotFoundError:  # CSV export still works with the system Python.
     Font = PatternFill = Alignment = None
 
 import push_to_feishu as feishu
+from feishu_table_registry import table_name
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -118,7 +119,7 @@ def build_records(rules: dict[str, Any]) -> list[dict[str, str]]:
             fields,
             updated,
             规则类型="评分规则",
-            所属表="03 分析与选题",
+            所属表=table_name("topic_decision"),
             所属字段="总分",
             名称=scoring["dimension"],
             说明=f"高分标准：{scoring['high']} 低分标准：{scoring['low']} 例子：{scoring['example']}",

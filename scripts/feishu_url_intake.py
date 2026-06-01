@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Manage the temporary Feishu URL intake table.
 
-Users paste links into 06 URL投喂入口. This script reads those URLs into a
+Users paste links into 02 URL投喂入口. This script reads those URLs into a
 local txt file for intake_urls.py. It does not keep long-term business data.
 """
 from __future__ import annotations
@@ -15,11 +15,13 @@ from pathlib import Path
 from typing import Any
 
 import push_to_feishu as feishu
+from feishu_table_registry import resolve_table_id, table_name
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT_URLS = ROOT / "data" / "manual" / "feishu_url_intake.txt"
-TABLE_NAME = "06 URL投喂入口"
+TABLE_KEY = "url_inbox"
+TABLE_NAME = table_name(TABLE_KEY)
 VIEW_NAME = "URL投喂入口"
 FIELDS = ["URL", "备注", "处理状态", "解析结果", "失败原因"]
 
@@ -104,7 +106,7 @@ def ensure_view(token: str, app_token: str, table_id: str) -> str:
 def ensure_table(token: str, app_token: str) -> dict[str, Any]:
     tables = table_map(token, app_token)
     created_table = False
-    table_id = tables.get(TABLE_NAME)
+    table_id = resolve_table_id(tables, TABLE_KEY)
     if not table_id:
         table_id = create_table(token, app_token)
         created_table = True

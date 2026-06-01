@@ -30,20 +30,22 @@ from typing import Any
 from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
+from feishu_table_registry import PROTECTED_TABLE_NAMES, table_name
+
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
 BASE_URL = "https://open.feishu.cn/open-apis"
 
 TABLE_FILES = [
-    ("01 来源与采样", "sources_config.csv"),
-    ("02 内容收件箱", "content_inbox.csv"),
-    ("03 分析与选题", "topic_candidates.csv"),
-    ("04 Brief与制作", "content_briefs.csv"),
-    ("05 资产与复盘", "assets.csv"),
+    (table_name("source_sampling"), "sources_config.csv"),
+    (table_name("content_inbox"), "content_inbox.csv"),
+    (table_name("topic_decision"), "topic_candidates.csv"),
+    (table_name("brief_production"), "content_briefs.csv"),
+    (table_name("review_assets"), "assets.csv"),
 ]
 
-PROTECTED_TABLES = {"99 规则与字典"}
+PROTECTED_TABLES = set(PROTECTED_TABLE_NAMES)
 DEPRECATED_TABLE_NAMES = {
     "定位与选题假设",
     "执行台逻辑说明",
