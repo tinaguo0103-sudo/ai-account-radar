@@ -1,6 +1,6 @@
 {
   "version": "0.1",
-  "last_updated": "2026-06-01",
+  "last_updated": "2026-06-02",
   "positioning": "不是 AI 新闻号、工具搬运号或提示词教程号，而是懂营销、懂内容、懂导演、正在做 AI 业务系统的人；把 AI 工具、模型、热点翻译成内容团队、品牌增长、创业项目可执行的流程、资产和结果。",
   "column_weights": {
     "AI业务定调": "15%",
@@ -14,8 +14,12 @@
   },
   "content_source_rules": [
     {
+      "name": "来源角色定义",
+      "rule": "来源池分为 current_main_competitor 当前主对标、current_aux_competitor 当前辅助对标、historical_reference 历史对标、system_hotspot_source 系统热点源、official_source 官方/技术/工具源、manual_entry 手动入口。只有当前主流程启用来源默认参与采样；历史对标默认不参与今日Top10主采样。"
+    },
+    {
       "name": "新主对标池",
-      "rule": "今日Top10默认使用最新主对标账号池作为内容结构参考：数字生命卡兹克、秋芝2046、xuan酱、ami.moment、Bob同学、数字游牧人、编导李让、何止维、徐老师AI；旧12账号降级为历史参考/备用观察池，默认不参与主流程。"
+      "rule": "今日Top10默认使用最新主对标账号池作为内容结构参考：数字生命卡兹克-公众号文章、秋芝2046、xuan酱、ami.moment、Bob同学、数字游牧人、编导李让、何止维、徐老师AI；数字生命卡兹克-抖音教程视频是当前辅助对标；旧对标账号统一降级为 historical_reference，default_enabled=false，默认不参与主流程。"
     },
     {
       "name": "卡兹克双内容矩阵",
@@ -32,6 +36,14 @@
     {
       "name": "热点与对标统一转译",
       "rule": "今日Top10既可以来自AIHOT，也可以来自卡兹克公众号文章、卡兹克抖音教程视频或其他抖音对标账号内容拆解，但必须先转成我的账号视角，不能原样搬运。"
+    },
+    {
+      "name": "系统源不属于对标权重池",
+      "rule": "AIHOT精选、AIHOT日报属于 system_hotspot_source；OpenAI官网动态、Anthropic Newsroom、Product Hunt AI工具、HN AI相关讨论属于 official_source；手动链接/粘贴/截图转文字、粘贴入口、02 URL投喂入口属于 manual_entry。这些来源可以提供选题输入，但不计入主对标栏目权重。"
+    },
+    {
+      "name": "来源表显性字段",
+      "rule": "01 来源与采样必须能看到 来源角色、是否主对标、是否参与主采样、栏目、栏目权重、默认启用、优先级、平台、来源类型和备注。用户看表时应能一眼区分当前主对标、历史对标、系统源和手动入口。"
     },
     {
       "name": "URL采样P0支持",
@@ -98,7 +110,7 @@
     {
       "name": "01 来源与采样",
       "role": "后台配置表 + 手动输入入口",
-      "why": "记录 AIHOT、官方源、技术社区、工具榜单、手动入口和对标账号列表，明确哪些能自动获取，哪些只能手动采样。",
+      "why": "记录 AIHOT、官方源、技术社区、工具榜单、手动入口和对标账号列表，并显性标注来源角色、栏目权重、是否主对标、是否参与主采样。",
       "input": "sources.example.yaml、对标账号报告、用户手动粘贴内容。",
       "output": "03 内容收件箱、后续采集脚本。",
       "upstream": "config/content_sources.yaml、sources.example.yaml、对标账号配置和人工来源维护。",
@@ -109,7 +121,7 @@
       "daily_visible": "否，只有新增来源或粘贴内容时打开。",
       "user_editable": "是，可以新增来源、修正关注重点、粘贴内容。",
       "default_view": "表单-手动粘贴入口 / 看板-按处理状态",
-      "scripts_write": "run_radar.py 从 sources.example.yaml 读取来源；未来同步脚本可写入来源配置。",
+      "scripts_write": "sync_source_sampling.py 从 config/content_sources.yaml 同步来源角色、栏目权重和启用状态到飞书；content_sampler.py 读取 default_enabled 控制默认采样。",
       "human_edit": "新增对标账号、补 AIHOT 页面、维护来源规则；具体 URL 投喂走 02 URL投喂入口。"
     },
     {
@@ -237,6 +249,9 @@
     {"table": "00 主控台", "field": "优先级", "purpose": "决定卡片在伪仪表盘中的重要程度。", "required": "是", "producer": "脚本/人工", "consumer": "用户", "user_editable": "是", "ai": "否", "human_judgment": "今天是否必须处理。"},
     {"table": "00 主控台", "field": "状态", "purpose": "主控台动作状态，只表达入口或动作是否待处理，不代表选题/制作状态。", "required": "是", "producer": "人工", "consumer": "用户", "user_editable": "是", "ai": "否", "human_judgment": "动作是否完成、暂缓或需要继续。"},
     {"table": "00 主控台", "field": "下一步", "purpose": "告诉用户下一步该打开哪张表或看哪条规则。", "required": "是", "producer": "脚本/人工", "consumer": "用户", "user_editable": "是", "ai": "否", "human_judgment": "下一步是否仍然合理。"},
+    {"table": "01 来源与采样", "field": "来源角色", "purpose": "区分 current_main_competitor、current_aux_competitor、historical_reference、system_hotspot_source、official_source、manual_entry。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、content_sampler.py", "user_editable": "低频", "ai": "否", "human_judgment": "来源是否仍属于当前主采样池。"},
+    {"table": "01 来源与采样", "field": "是否参与主采样", "purpose": "判断来源是否默认进入主采样和今日Top10候选输入；历史对标必须为否。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、content_sampler.py", "user_editable": "低频", "ai": "否", "human_judgment": "某个历史账号是否重新启用。"},
+    {"table": "01 来源与采样", "field": "栏目权重", "purpose": "把主对标所属栏目权重显性展示：AI业务定调15%、真实工作流改造25%、汽车与内容营销25%、AI导演工作流25%、AI项目复盘10%。系统源、官方源、手动入口可为不适用。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、Top10软配额规则", "user_editable": "低频", "ai": "否", "human_judgment": "权重是否符合当前账号阶段。"},
     {"table": "02 URL投喂入口", "field": "URL", "purpose": "临时粘贴公众号文章、抖音单条视频、RSS/Atom或普通网页链接。", "required": "是", "producer": "人工", "consumer": "url_content_resolver.py", "user_editable": "是", "ai": "否", "human_judgment": "链接是否值得投喂。"},
     {"table": "02 URL投喂入口", "field": "处理状态", "purpose": "标记链接是否待解析、已解析、解析失败、重复或跳过。", "required": "否", "producer": "url_content_resolver.py/人工", "consumer": "daily_pipeline.py", "user_editable": "是", "ai": "可辅助", "human_judgment": "解析失败后是否补充可访问链接或放弃。"},
     {"table": "03 内容收件箱", "field": "处理状态", "purpose": "内容处理流状态，表示原始内容是否已分析、已转选题、跳过或重复。", "required": "是", "producer": "脚本/AI辅助/人工", "consumer": "分析脚本", "user_editable": "低频", "ai": "可参与", "human_judgment": "内容是否应跳过或重新分析。"},

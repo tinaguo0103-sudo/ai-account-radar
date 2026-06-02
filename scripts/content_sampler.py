@@ -278,6 +278,8 @@ def aihot_items(source: dict[str, Any], fetch: bool) -> tuple[list[ContentItem],
     logs: list[str] = []
     if not fetch:
         return [], ["AIHOT: skipped"]
+    if not source.get("url"):
+        return [], [f"{source.get('account_name', 'AIHOT')}: skipped_missing_url"]
     data, status = fetch_json(source["url"])
     logs.append(f"{source['account_name']}: {status}")
     if not data:
