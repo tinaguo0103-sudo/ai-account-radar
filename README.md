@@ -58,6 +58,7 @@
 - `scripts/run_radar.py`：采集与分析脚本。
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和今日10选题。
 - `scripts/daily_pipeline.py`：日常总入口，默认 dry-run；显式传入 `--write-feishu` 才写入飞书。
+- `scripts/url_content_resolver.py`：正式 URL 内容采样 adapter，把公众号文章、抖音单条视频、RSS/Atom、普通网页解析成标准 ContentItem；默认只输出本地文件，显式 `--write-feishu` 才写入 `03 内容收件箱`。
 - `scripts/intake_urls.py`：把你粘贴的公众号文章、抖音、小红书、视频号或普通网页 URL 转成内容对象 JSONL。
 - `scripts/feishu_url_intake.py`：创建/读取飞书临时表 `02 URL投喂入口`，把表里的 URL 导出给解析管道。
 - `scripts/push_today10_to_feishu.py`：只把今日10写入飞书 `04 分析与选题`，不写后台全部候选。
@@ -86,13 +87,50 @@ python3 scripts/daily_pipeline.py
 python3 scripts/daily_pipeline.py --no-fetch-aihot
 ```
 
-你只丢 URL 的用法：
+你只丢 URL 的正式用法：
 
 ```bash
-python3 scripts/daily_pipeline.py --urls data/manual/urls.example.txt
+python3 scripts/url_content_resolver.py --file data/manual/urls.example.txt --dry-run
 ```
 
-这会先把 URL 解析成 `data/manual/url_intake.jsonl`，再进入内容拆解和今日10。支持公众号文章、公开网页，以及抖音/小红书/视频号的浅层公开页面采样；解析失败会记录失败原因，不会中断全流程。
+这会把 URL 解析成：
+
+- `output/url_content_items.jsonl`
+- `output/url_content_items.csv`
+- `output/url_content_items_manual.jsonl`
+
+正式支持：
+
+- 公众号文章 URL；
+- 抖音单条视频 URL，包括搜索页 `modal_id` 和 `iesdouyin/share/video`；
+- RSS/Atom；
+- 普通网页，走 Jina Reader。
+
+暂不支持：
+
+- 抖音账号主页自动抓最近 N 条；
+- 抖音口播/字幕转写；
+- 评论区抓取；
+- 小红书；
+- Twitter/X；
+- Reddit。
+
+解析失败会保留失败原因，不会静默丢弃。确认本地输出没问题后，显式写入飞书 `03 内容收件箱`：
+
+```bash
+FEISHU_APP_ID=xxx \
+FEISHU_APP_SECRET=xxx \
+FEISHU_BASE_APP_TOKEN=xxx \
+python3 scripts/url_content_resolver.py --file data/manual/urls.example.txt --write-feishu
+```
+
+你也可以让日常管道先解析 URL，再进入内容拆解和今日10：
+
+```bash
+python3 scripts/daily_pipeline.py --url-file data/manual/urls.example.txt
+```
+
+默认不启用 URL 解析，只有传入 `--url-file` 或 `--resolve-url-intake` 时才运行 resolver。旧的 `--urls` / `intake_urls.py` 仍作为降级路径保留。
 
 更推荐的飞书投喂方式：
 
@@ -109,10 +147,10 @@ python3 scripts/feishu_url_intake.py --setup-only
 FEISHU_APP_ID=xxx \
 FEISHU_APP_SECRET=xxx \
 FEISHU_BASE_APP_TOKEN=xxx \
-python3 scripts/daily_pipeline.py --feishu-urls
+python3 scripts/daily_pipeline.py --resolve-url-intake
 ```
 
-默认仍是 dry-run，不写入飞书 `04`。确认今日10后再加 `--write-feishu`。`02 URL投喂入口` 只作为临时链接入口，解析完你可以手动删除里面的记录，不需要长期保留。
+默认仍是 dry-run，不写入飞书 `03` 或 `04`。确认字段映射、去重和今日10后再加 `--write-feishu`。`--write-feishu` 会把解析出的新内容写入 `03 内容收件箱`，并按原有逻辑把今日10写入 `04 分析与选题`。`02 URL投喂入口` 只作为临时链接入口，解析完你可以手动删除里面的记录，不需要长期保留。
 
 确认 dry-run 输出没问题后，显式写入飞书 `04 分析与选题` 并刷新 `00 主控台`：
 
@@ -396,7 +434,8 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 - 不绕过登录、验证码、反爬或平台限制。
 - 不保存账号密码、cookie、token。
 - 不强抓抖音、小红书、视频号等高风险平台。
-- 这些平台第一版只做内容浅采样：标题、封面文字、简介、可见字幕、评论问题、截图/OCR 文本；拿不到就记录失败原因。
+- 抖音当前只支持单条视频浅采样：标题/文案、作者、视频 ID、封面、发布时间、标签、下载链接记录；不下载视频，不抓主页列表，不抓评论，不做默认转写。
+- 小红书、Twitter/X、Reddit 暂不接入正式采样链路。
 - 能通过 RSS、公开网页、公开 API、AIHOT、GitHub、Product Hunt、Hacker News、官方博客稳定获取的内容，才进入自动化。
 
 ## 内容拆解边界

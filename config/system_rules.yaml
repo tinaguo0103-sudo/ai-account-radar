@@ -32,6 +32,14 @@
     {
       "name": "热点与对标统一转译",
       "rule": "今日Top10既可以来自AIHOT，也可以来自卡兹克公众号文章、卡兹克抖音教程视频或其他抖音对标账号内容拆解，但必须先转成我的账号视角，不能原样搬运。"
+    },
+    {
+      "name": "URL采样P0支持",
+      "rule": "url_content_resolver.py 正式支持公众号文章URL、抖音单条视频URL（含搜索页modal_id和iesdouyin/share/video）、RSS/Atom、普通网页Jina Reader；默认dry-run输出本地文件，显式 --write-feishu 才写入 03 内容收件箱。"
+    },
+    {
+      "name": "URL采样暂不支持",
+      "rule": "暂不支持抖音主页自动抓最近N条、抖音口播/字幕转写、评论区抓取、小红书、Twitter/X、Reddit；不得下载视频、保存cookie/token/API key或绕过登录验证码反爬。"
     }
   ],
   "today_top10_quota": {
@@ -109,33 +117,33 @@
       "role": "输入入口表 / 临时投喂表",
       "why": "让用户只需要把公众号文章、抖音/小红书/视频号链接、AIHOT链接、OCR文本或手动内容补充丢进来，系统再解析进入内容池。",
       "input": "用户手动粘贴URL、OCR文本、视频简介、公众号链接、AIHOT链接。",
-      "output": "03 内容收件箱、daily_pipeline.py --feishu-urls。",
+      "output": "03 内容收件箱、daily_pipeline.py --resolve-url-intake。",
       "upstream": "用户手动粘贴 URL、OCR 文本、视频简介、公众号文章链接、AIHOT 页面链接。",
-      "downstream": "03 内容收件箱、feishu_url_intake.py、intake_urls.py、daily_pipeline.py --feishu-urls。",
+      "downstream": "03 内容收件箱、feishu_url_intake.py、url_content_resolver.py、daily_pipeline.py --resolve-url-intake。",
       "daily_usage": "backend",
       "producer": "用户手动投喂、半自动采样脚本。",
-      "consumer": "feishu_url_intake.py、intake_urls.py、content_sampler.py。",
+      "consumer": "feishu_url_intake.py、url_content_resolver.py、content_sampler.py。",
       "daily_visible": "否，有新链接要投喂时才打开。",
       "user_editable": "是，粘贴URL和备注；解析完成后可手动删除。",
       "default_view": "URL投喂入口",
-      "scripts_write": "feishu_url_intake.py 会读取此表；不作为长期业务数据表。",
+      "scripts_write": "feishu_url_intake.py/url_content_resolver.py 会读取此表；url_content_resolver.py 可在显式 --write-feishu 时写入 03 内容收件箱；不作为长期业务数据表。",
       "human_edit": "只在投喂链接、补OCR文本或清理已解析记录时编辑。"
     },
     {
       "name": "03 内容收件箱",
       "role": "后台数据表",
       "why": "统一接收自动采集和手动输入的原始内容，做去重、标记处理状态，避免一上来就写稿。",
-      "input": "AIHOT、公开源、手动粘贴、后续 RSS/API。",
+      "input": "AIHOT、公众号文章URL、抖音单条视频URL、RSS/Atom、普通网页、手动粘贴。",
       "output": "04 分析与选题。",
-      "upstream": "AIHOT、公开网页、公众号文章、对标视频浅层采样、02 URL投喂入口、data/manual 样例。",
+      "upstream": "AIHOT、公众号文章URL、抖音单条视频URL、RSS/Atom、普通网页、02 URL投喂入口、data/manual 样例。",
       "downstream": "04 分析与选题、content_sampler.py 的内容拆解结果。",
       "daily_usage": "backend",
-      "producer": "采集脚本、手动采样解析、AI 去重辅助。",
+      "producer": "url_content_resolver.py、content_sampler.py、手动采样解析、AI 去重辅助。",
       "consumer": "分析脚本、AI 分析流程。",
       "daily_visible": "否，排查来源或去重时才看。",
       "user_editable": "通常不需要；只在修正标题、摘要、链接、重复状态时编辑。",
       "default_view": "看板-处理状态",
-      "scripts_write": "run_radar.py 生成 content_inbox.csv；飞书同步脚本写入。",
+      "scripts_write": "url_content_resolver.py 显式 --write-feishu 时写入 URL 解析结果；run_radar.py 仍可生成 content_inbox.csv 作为降级输出。",
       "human_edit": "发现内容重复、链接错、摘要错、来源错时。"
     },
     {

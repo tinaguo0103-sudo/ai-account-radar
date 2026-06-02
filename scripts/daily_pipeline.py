@@ -24,6 +24,8 @@ LOG_DIR = OUT / "logs"
 DEFAULT_MANUAL = ROOT / "data" / "manual" / "content_items.example.jsonl"
 URL_INTAKE = ROOT / "data" / "manual" / "url_intake.jsonl"
 FEISHU_URLS = ROOT / "data" / "manual" / "feishu_url_intake.txt"
+URL_RESOLVED = OUT / "url_content_items.jsonl"
+URL_RESOLVED_MANUAL = OUT / "url_content_items_manual.jsonl"
 
 
 def run_step(name: str, command: list[str], env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -83,14 +85,31 @@ def main() -> int:
     parser.add_argument("--manual", default=str(DEFAULT_MANUAL), help="Path to JSONL manual content items.")
     parser.add_argument("--urls", help="Text file with pasted URLs. Parsed into data/manual/url_intake.jsonl before sampling.")
     parser.add_argument("--feishu-urls", action="store_true", help="Read URLs from Feishu 02 URL投喂入口 before sampling.")
+    parser.add_argument("--resolve-url-intake", action="store_true", help="Resolve URLs from Feishu 02 URL投喂入口 into ContentItem rows before sampling.")
+    parser.add_argument("--url-file", help="Resolve URLs from a local text file into ContentItem rows before sampling.")
     args = parser.parse_args()
 
-    if args.write_feishu or args.feishu_urls:
+    if args.write_feishu or args.feishu_urls or args.resolve_url_intake:
         require_feishu_env()
 
     py = sys.executable
     steps: list[dict[str, Any]] = []
     manual_path = args.manual
+
+    if args.resolve_url_intake or args.url_file:
+        resolver_cmd = [py, str(ROOT / "scripts" / "url_content_resolver.py"), "--out", str(URL_RESOLVED)]
+        if args.resolve_url_intake:
+            resolver_cmd.append("--feishu-intake")
+        if args.url_file:
+            resolver_cmd.extend(["--file", args.url_file])
+        if args.write_feishu:
+            resolver_cmd.append("--write-feishu")
+        steps.append(run_step("resolve URL intake into ContentItem rows", resolver_cmd, env=os.environ.copy()))
+        if steps[-1]["returncode"] != 0:
+            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
+            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
+            return steps[-1]["returncode"]
+        manual_path = str(URL_RESOLVED_MANUAL)
 
     urls_file = args.urls
     if args.feishu_urls:

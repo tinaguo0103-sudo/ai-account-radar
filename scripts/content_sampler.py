@@ -349,7 +349,33 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
         source_meta = source_by_name.get(account, {})
         if source_meta.get("default_enabled") is False:
             source_meta = {}
-        if source_type == "公众号文章" and url:
+        fetch_method = raw.get("抓取方式", raw.get("fetch_method", ""))
+        is_resolved_url_item = fetch_method in {
+            "wechat_public_html_js_content",
+            "douyin_public_router_data",
+            "rss_atom_xml",
+            "jina_reader",
+        }
+        if is_resolved_url_item:
+            fp = raw.get("内容指纹") or fingerprint(url, raw.get("内容标题", ""), account)
+            item = ContentItem(
+                source_type=source_type,
+                platform=raw.get("平台", ""),
+                account_name=account,
+                title=raw.get("内容标题", "未命名内容"),
+                url=url,
+                content_shape=raw.get("内容形态", ""),
+                cover_text=raw.get("封面文字", ""),
+                body_snippet=raw.get("正文/字幕/简介片段", ""),
+                published_at=raw.get("发布时间", ""),
+                comment_questions=raw.get("评论区问题", ""),
+                ocr_text=raw.get("截图/OCR文本", ""),
+                fetch_method=fetch_method,
+                fetch_status=raw.get("抓取状态", "success"),
+                failure_reason=raw.get("失败原因", ""),
+                fingerprint=fp,
+            )
+        elif source_type == "公众号文章" and url:
             item = extract_article(url, raw)
         elif source_type == "对标视频":
             item = extract_video_shallow(url, raw)
