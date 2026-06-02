@@ -64,6 +64,7 @@ CONTENT_INBOX_FIELDS = [
     "是否重复",
     "处理状态",
 ]
+URL_INBOX_WRITE_FIELDS = ["处理状态", "解析结果", "失败原因"]
 
 
 @dataclass
@@ -84,6 +85,13 @@ class ContentItem:
     fetch_status: str
     failure_reason: str
     content_fingerprint: str
+
+
+@dataclass
+class IntakeRecord:
+    record_id: str
+    url: str
+    status: str
 
 
 class BlockTextParser(HTMLParser):
@@ -502,6 +510,11 @@ def table_map(token: str, app_token: str) -> dict[str, str]:
     return {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
 
 
+def fields_by_name(token: str, app_token: str, table_id: str) -> dict[str, dict[str, Any]]:
+    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields", token=token)
+    return {field["field_name"]: field for field in payload.get("data", {}).get("items", [])}
+
+
 def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     page_token = ""
@@ -515,21 +528,24 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
         page_token = data.get("page_token", "")
 
 
-def read_feishu_intake_urls(token: str, app_token: str) -> list[str]:
+def read_feishu_intake_records(token: str, app_token: str) -> tuple[str, list[IntakeRecord]]:
     tables = table_map(token, app_token)
     table_id = resolve_table_id(tables, "url_inbox")
     if not table_id:
         raise SystemExit(f"Missing Feishu table: {table_name('url_inbox')}")
     rows = all_records(token, app_token, table_id)
-    urls: list[str] = []
+    records: list[IntakeRecord] = []
+    seen_urls: set[str] = set()
     for record in rows:
         fields = record.get("fields", {})
-        if str(fields.get("处理状态", "")) in {"已处理", "跳过"}:
+        status = str(fields.get("处理状态", ""))
+        if status in {"已解析", "解析失败", "重复", "已存在", "已处理", "跳过"}:
             continue
         url = normalize_url(fields.get("URL", ""))
-        if url:
-            urls.append(url)
-    return list(dict.fromkeys(urls))
+        if url and url not in seen_urls:
+            records.append(IntakeRecord(record_id=record.get("record_id", ""), url=url, status=status))
+            seen_urls.add(url)
+    return table_id, records
 
 
 def item_to_manual_row(item: ContentItem) -> dict[str, str]:
@@ -600,9 +616,62 @@ def batch_create_records(token: str, app_token: str, table_id: str, rows: list[d
     return total
 
 
-def write_feishu_content_inbox(items: list[ContentItem]) -> dict[str, Any]:
-    app_token = require_feishu_env()
-    token = feishu.tenant_token()
+def update_url_intake_records(
+    token: str,
+    app_token: str,
+    table_id: str,
+    records: list[IntakeRecord],
+    outcomes_by_url: dict[str, dict[str, str]],
+) -> dict[str, Any]:
+    existing_fields = fields_by_name(token, app_token, table_id)
+    writable_fields = [field for field in URL_INBOX_WRITE_FIELDS if field in existing_fields]
+    if not writable_fields:
+        return {"updated_records": 0, "skipped": len(records), "reason": "02 URL投喂入口 缺少可回写字段：处理状态/解析结果/失败原因"}
+    updated = 0
+    skipped = 0
+    for record in records:
+        outcome = outcomes_by_url.get(record.url)
+        if not outcome:
+            skipped += 1
+            continue
+        fields = {field: outcome.get(field, "") for field in writable_fields if outcome.get(field, "")}
+        if not fields:
+            skipped += 1
+            continue
+        feishu.request_json(
+            "PUT",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record.record_id}",
+            token=token,
+            body={"fields": fields},
+        )
+        updated += 1
+        time.sleep(0.1)
+    return {"updated_records": updated, "skipped": skipped, "fields": writable_fields}
+
+
+def summarize_url_items(items: list[ContentItem], created: int, duplicates: int) -> str:
+    titles = [item.content_title for item in items if item.content_title][:3]
+    fingerprints = [item.content_fingerprint for item in items if item.content_fingerprint][:5]
+    parts = [
+        f"解析{len(items)}条",
+        f"新写入{created}条",
+        f"重复{duplicates}条",
+    ]
+    if titles:
+        parts.append("标题：" + " / ".join(titles))
+    if fingerprints:
+        parts.append("指纹：" + " / ".join(fingerprints))
+    parts.append(f"解析时间：{now_iso()}")
+    return "；".join(parts)[:1800]
+
+
+def write_feishu_content_inbox(
+    token: str,
+    app_token: str,
+    items: list[ContentItem],
+    intake_records: list[IntakeRecord] | None = None,
+    url_inbox_table_id: str = "",
+) -> dict[str, Any]:
     tables = table_map(token, app_token)
     table_id = resolve_table_id(tables, "content_inbox")
     if not table_id:
@@ -612,13 +681,54 @@ def write_feishu_content_inbox(items: list[ContentItem]) -> dict[str, Any]:
     existing_urls = {str(record.get("fields", {}).get("链接", "")) for record in existing}
     rows: list[dict[str, str]] = []
     duplicates = 0
+    per_url: dict[str, dict[str, Any]] = {}
     for item in items:
+        bucket = per_url.setdefault(item.content_url, {"items": [], "created": 0, "duplicates": 0, "failed": 0, "failure_reasons": []})
+        bucket["items"].append(item)
+        if item.fetch_status != "success":
+            bucket["failed"] += 1
+            if item.failure_reason:
+                bucket["failure_reasons"].append(item.failure_reason)
+            continue
         if item.content_fingerprint in existing_fp or item.content_url in existing_urls:
             duplicates += 1
+            bucket["duplicates"] += 1
             continue
         rows.append(item_to_feishu_fields(item))
+        bucket["created"] += 1
+        existing_fp.add(item.content_fingerprint)
+        existing_urls.add(item.content_url)
     created = batch_create_records(token, app_token, table_id, rows) if rows else 0
-    return {"table": table_name("content_inbox"), "created_records": created, "skipped_duplicates": duplicates}
+    outcomes_by_url: dict[str, dict[str, str]] = {}
+    for url, bucket in per_url.items():
+        url_items = bucket["items"]
+        if bucket["created"]:
+            status = "已解析"
+            failure = ""
+        elif bucket["duplicates"] and not bucket["created"]:
+            status = "重复"
+            failure = ""
+        elif bucket["failed"] and not bucket["created"]:
+            status = "解析失败"
+            failure = "；".join(bucket["failure_reasons"])[:1800]
+        else:
+            status = "已解析"
+            failure = ""
+        outcomes_by_url[url] = {
+            "处理状态": status,
+            "解析结果": summarize_url_items(url_items, int(bucket["created"]), int(bucket["duplicates"])),
+            "失败原因": failure,
+        }
+    intake_update: dict[str, Any] = {}
+    if intake_records and url_inbox_table_id:
+        intake_update = update_url_intake_records(token, app_token, url_inbox_table_id, intake_records, outcomes_by_url)
+    return {
+        "table": table_name("content_inbox"),
+        "created_records": created,
+        "skipped_duplicates": duplicates,
+        "url_outcomes": outcomes_by_url,
+        "intake_update": intake_update,
+    }
 
 
 def main() -> int:
@@ -635,13 +745,18 @@ def main() -> int:
     args = parser.parse_args()
 
     urls: list[str] = []
+    intake_records: list[IntakeRecord] = []
+    url_inbox_table_id = ""
+    token = ""
+    app_token = ""
     if args.file:
         urls.extend(read_file_urls(Path(args.file)))
     urls.extend(normalize_url(url) for url in args.url if normalize_url(url))
     if args.feishu_intake:
         app_token = require_feishu_env()
         token = feishu.tenant_token()
-        urls.extend(read_feishu_intake_urls(token, app_token))
+        url_inbox_table_id, intake_records = read_feishu_intake_records(token, app_token)
+        urls.extend(record.url for record in intake_records)
     urls = list(dict.fromkeys(urls))
     if not urls:
         raise SystemExit("No URLs provided. Use --file, --url, or --feishu-intake.")
@@ -678,7 +793,9 @@ def main() -> int:
     for item in deduped:
         summary["by_status"][item.fetch_status] = summary["by_status"].get(item.fetch_status, 0) + 1
     if args.write_feishu:
-        summary["feishu"] = write_feishu_content_inbox(deduped)
+        app_token = app_token or require_feishu_env()
+        token = token or feishu.tenant_token()
+        summary["feishu"] = write_feishu_content_inbox(token, app_token, deduped, intake_records, url_inbox_table_id)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
     for item in deduped:
         print(f"- {item.platform}: {item.fetch_status} | {item.account_name} | {item.content_title or item.failure_reason}")

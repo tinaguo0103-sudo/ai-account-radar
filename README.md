@@ -59,8 +59,6 @@
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和今日10选题。
 - `scripts/daily_pipeline.py`：日常总入口，默认 dry-run；显式传入 `--write-feishu` 才写入飞书。
 - `scripts/url_content_resolver.py`：正式 URL 内容采样 adapter，把公众号文章、抖音单条视频、RSS/Atom、普通网页解析成标准 ContentItem；默认只输出本地文件，显式 `--write-feishu` 才写入 `03 内容收件箱`。
-- `scripts/intake_urls.py`：把你粘贴的公众号文章、抖音、小红书、视频号或普通网页 URL 转成内容对象 JSONL。
-- `scripts/feishu_url_intake.py`：创建/读取飞书临时表 `02 URL投喂入口`，把表里的 URL 导出给解析管道。
 - `scripts/push_today10_to_feishu.py`：只把今日10写入飞书 `04 分析与选题`，不写后台全部候选。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并创建 `06 内容任务主表`。
 - `scripts/content_ops_pipeline.py`：从 `04 分析与选题` 拆出 `05 Brief与制作` 平台内容和 `06 内容任务主表` 执行任务；默认 dry-run。
@@ -130,18 +128,9 @@ python3 scripts/url_content_resolver.py --file data/manual/urls.example.txt --wr
 python3 scripts/daily_pipeline.py --url-file data/manual/urls.example.txt
 ```
 
-默认不启用 URL 解析，只有传入 `--url-file` 或 `--resolve-url-intake` 时才运行 resolver。旧的 `--urls` / `intake_urls.py` 仍作为降级路径保留。
+默认不启用 URL 解析，只有传入 `--url-file` 或 `--resolve-url-intake` 时才运行 resolver。
 
-更推荐的飞书投喂方式：
-
-```bash
-FEISHU_APP_ID=xxx \
-FEISHU_APP_SECRET=xxx \
-FEISHU_BASE_APP_TOKEN=xxx \
-python3 scripts/feishu_url_intake.py --setup-only
-```
-
-这会创建临时表 `02 URL投喂入口`。你以后只需要在这张表的 `URL` 字段粘贴链接，然后运行：
+飞书投喂方式：在 `02 URL投喂入口` 的 `URL` 字段粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接，然后运行：
 
 ```bash
 FEISHU_APP_ID=xxx \
@@ -150,7 +139,16 @@ FEISHU_BASE_APP_TOKEN=xxx \
 python3 scripts/daily_pipeline.py --resolve-url-intake
 ```
 
-默认仍是 dry-run，不写入飞书 `03` 或 `04`。确认字段映射、去重和今日10后再加 `--write-feishu`。`--write-feishu` 会把解析出的新内容写入 `03 内容收件箱`，并按原有逻辑把今日10写入 `04 分析与选题`。`02 URL投喂入口` 只作为临时链接入口，解析完你可以手动删除里面的记录，不需要长期保留。
+默认仍是 dry-run，不写入飞书 `03` 或 `04`。确认字段映射、去重和今日10后再加 `--write-feishu`：
+
+```bash
+FEISHU_APP_ID=xxx \
+FEISHU_APP_SECRET=xxx \
+FEISHU_BASE_APP_TOKEN=xxx \
+python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
+```
+
+`--write-feishu` 会把解析出的新内容写入 `03 内容收件箱`，按原有逻辑把今日10写入 `04 分析与选题`，并回写 `02 URL投喂入口` 的处理状态、失败原因和解析结果摘要。`02 URL投喂入口` 只作为临时链接入口，解析完成后可手动删除记录，不需要长期保留。
 
 确认 dry-run 输出没问题后，显式写入飞书 `04 分析与选题` 并刷新 `00 主控台`：
 
@@ -281,7 +279,7 @@ python3 scripts/sync_rules_dictionary.py --sync-feishu
 4. 进入 `04 分析与选题` 做选题决策：状态只使用 `待判断`、`进入Brief`、`本周做`、`暂存`、`归档`、`不做`。
 5. 进入 `05 Brief与制作` 补案例和制作：状态只使用 `待补案例`、`可制作`、`已制作待发布`、`已发布待复盘`、`复盘完成`。
 6. 进入 `06 内容任务主表` 看今天要完成的写稿、拍摄、封面、发布、直播和复盘任务。
-7. 必要时打开 `02 URL投喂入口`，手动粘贴 AIHOT、对标账号、小红书/抖音/视频号链接或 OCR 文本。
+7. 必要时打开 `02 URL投喂入口`，手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接；小红书、视频号、评论区和抖音主页批量抓取暂不支持。
 8. 不要每天看系统导航，也不需要每天打开 `01 来源与采样`、`02 URL投喂入口`、`03 内容收件箱` 和 `99 规则与字典`。
 
 CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.csv`、`content_briefs.csv` 当作主要工作台。
@@ -311,7 +309,7 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 4. 进入 `04 分析与选题`，把值得做的选题改为 `进入Brief` 或 `本周做`。
 5. 进入 `05 Brief与制作`，补真实案例、个人判断、视觉建议和 CTA。
 6. 进入 `06 内容任务主表`，只看今天必须完成和本周任务。
-7. 必要时进入 `02 URL投喂入口`，粘贴对标内容、AIHOT 内容、链接或截图 OCR。
+7. 必要时进入 `02 URL投喂入口`，粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
 8. 只有看不懂表关系时，才切到 `00 主控台 / 系统导航` 或打开 `docs/system_map.md`。
 
 每周：
@@ -340,7 +338,7 @@ python3 scripts/refresh_console_daily.py
 1. 打开 `00 主控台 / 今日工作台`。
 2. 进入 `04 分析与选题`，优先看高分和推荐等级 A/B 的候选，决定 `进入Brief`、`本周做`、`暂存`、`归档` 或 `不做`。
 3. 进入 `05 Brief与制作`，补真实案例、个人判断、素材、截图和边界。
-4. 必要时用 `02 URL投喂入口` 手动粘贴 AIHOT 页面、对标内容、截图 OCR 或链接。
+4. 必要时用 `02 URL投喂入口` 手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
 5. 如果需要排查来源、重复内容或采集状态，再打开 `03 内容收件箱`。
 
 ## 每周怎么复盘
