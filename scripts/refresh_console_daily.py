@@ -224,6 +224,15 @@ def top_records(records: list[dict[str, Any]], n: int = 5) -> list[dict[str, Any
 
 
 def load_run_errors() -> list[str]:
+    sampler_log = OUT / "content_sampler_log.json"
+    if sampler_log.exists():
+        try:
+            data = json.loads(sampler_log.read_text(encoding="utf-8"))
+            errors = [log for log in data.get("logs", []) if "failed" in log.lower() or "error" in log.lower() or "jsondecode" in log.lower()]
+            if errors:
+                return [f"部分源失败：{error}" for error in errors[:5]]
+        except json.JSONDecodeError:
+            return ["content_sampler_log.json 无法解析"]
     path = OUT / "run_log.json"
     if not path.exists():
         return ["暂无异常"]
@@ -389,6 +398,20 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "数量/摘要": f"今日已生成 {stats['today_10_count']} 条，先选 1 条推进。",
             "说明": f"最建议优先看：{stats['top_today_topic']}",
             "下一步": "进入 04 今日Top10，选 1 条进入Brief或本周做。",
+            "入口表": "04 分析与选题",
+            "入口视图": "今日Top10",
+            "入口说明": links["04 分析与选题"],
+            "最后更新时间": updated_at,
+        },
+        {
+            "动作": "待生成Brief",
+            "卡片类型": "今日工作",
+            "优先级": "高",
+            "工作区": "分析与选题",
+            "状态": "今日工作台",
+            "数量/摘要": f"{stats['topic_to_brief_count']} 条选题已标记进入Brief/本周做，等待拆到 05/06。",
+            "说明": "daily_pipeline 只写入 04，不自动生成 Brief；Brief 和任务由 content_ops_pipeline 承接。",
+            "下一步": "确认 04 状态后运行 content_ops_pipeline.py --write-feishu。",
             "入口表": "04 分析与选题",
             "入口视图": "今日Top10",
             "入口说明": links["04 分析与选题"],

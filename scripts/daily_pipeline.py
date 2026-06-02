@@ -51,12 +51,13 @@ def require_feishu_env() -> None:
         raise SystemExit(f"--write-feishu requires environment variables: {', '.join(missing)}")
 
 
-def write_run_log(steps: list[dict[str, Any]], mode: str) -> Path:
+def write_run_log(steps: list[dict[str, Any]], mode: str, run_id: str = "") -> Path:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     path = LOG_DIR / f"daily_pipeline_{datetime.now().strftime('%Y-%m-%d')}.json"
     payload = {
         "ok": all(step["returncode"] == 0 for step in steps),
         "mode": mode,
+        "run_id": run_id,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "steps": steps,
         "outputs": {
@@ -76,6 +77,10 @@ def today10_count() -> int:
         return len(list(csv.DictReader(handle)))
 
 
+def new_run_id() -> str:
+    return f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the daily AI account radar pipeline.")
     parser.add_argument("--write-feishu", action="store_true", help="Write Feishu changes for selected steps: URL resolver writes 03/updates 02; 今日10 writes 04 and refreshes 00.")
@@ -91,6 +96,10 @@ def main() -> int:
     py = sys.executable
     steps: list[dict[str, Any]] = []
     manual_path = args.manual
+    run_id = new_run_id()
+    step_env = os.environ.copy()
+    step_env["RUN_ID"] = run_id
+    step_env["AI_ACCOUNT_RADAR_RUN_ID"] = run_id
 
     if args.resolve_url_intake or args.url_file:
         resolver_cmd = [py, str(ROOT / "scripts" / "url_content_resolver.py"), "--out", str(URL_RESOLVED)]
@@ -100,25 +109,27 @@ def main() -> int:
             resolver_cmd.extend(["--file", args.url_file])
         if args.write_feishu:
             resolver_cmd.append("--write-feishu")
-        steps.append(run_step("resolve URL intake into ContentItem rows", resolver_cmd, env=os.environ.copy()))
+        steps.append(run_step("resolve URL intake into ContentItem rows", resolver_cmd, env=step_env))
         if steps[-1]["returncode"] != 0:
-            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
+            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
         manual_path = str(URL_RESOLVED_MANUAL)
 
-    sampler_cmd = [py, str(ROOT / "scripts" / "content_sampler.py"), "--manual", manual_path]
+    sampler_cmd = [py, str(ROOT / "scripts" / "content_sampler.py"), "--manual", manual_path, "--run-id", run_id]
     if args.no_fetch_aihot:
         sampler_cmd.append("--no-fetch-aihot")
-    steps.append(run_step("generate content breakdowns and 今日10", sampler_cmd))
+    if args.write_feishu:
+        sampler_cmd.append("--write-feishu")
+    steps.append(run_step("generate content breakdowns and 今日10", sampler_cmd, env=step_env if args.write_feishu else None))
     if steps[-1]["returncode"] != 0:
-        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
+        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
         print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return steps[-1]["returncode"]
 
     generated_count = today10_count()
     if generated_count == 0:
-        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
+        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
         print(json.dumps({
             "ok": True,
             "mode": "write-feishu" if args.write_feishu else "dry-run",
@@ -132,26 +143,27 @@ def main() -> int:
     dry_run_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py")]
     steps.append(run_step("dry-run 今日10 Feishu write", dry_run_cmd))
     if steps[-1]["returncode"] != 0:
-        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
+        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
         print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return steps[-1]["returncode"]
 
     if args.write_feishu:
-        write_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py"), "--write"]
-        steps.append(run_step("write 今日10 to Feishu 04 分析与选题", write_cmd, env=os.environ.copy()))
+        write_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py"), "--write", "--run-id", run_id]
+        steps.append(run_step("write 今日10 to Feishu 04 分析与选题", write_cmd, env=step_env))
         if steps[-1]["returncode"] != 0:
-            log_path = write_run_log(steps, "write-feishu")
+            log_path = write_run_log(steps, "write-feishu", run_id)
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
 
         refresh_cmd = [py, str(ROOT / "scripts" / "refresh_console_daily.py")]
-        steps.append(run_step("refresh Feishu 00 主控台", refresh_cmd, env=os.environ.copy()))
+        steps.append(run_step("refresh Feishu 00 主控台", refresh_cmd, env=step_env))
 
-    log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run")
+    log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
     ok = all(step["returncode"] == 0 for step in steps)
     print(json.dumps({
         "ok": ok,
         "mode": "write-feishu" if args.write_feishu else "dry-run",
+        "run_id": run_id,
         "log": str(log_path),
         "wrote_feishu": bool(args.write_feishu and ok),
     }, ensure_ascii=False, indent=2))

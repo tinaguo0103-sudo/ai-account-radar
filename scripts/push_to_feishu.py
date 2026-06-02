@@ -15,6 +15,7 @@ Required:
 
 Optional:
   FEISHU_BASE_APP_TOKEN   Existing Base app_token. If absent, create a new Base.
+  FEISHU_API_BASE_URL     Defaults to https://open.feishu.cn. Use https://open.larksuite.com if DNS for open.feishu.cn fails.
   FEISHU_FOLDER_TOKEN     Folder token for creating a new Base in a target folder.
   FEISHU_BASE_NAME        Defaults to "AI账号信息雷达 + 飞书执行台 v0.1"
 """
@@ -35,7 +36,12 @@ from feishu_table_registry import PROTECTED_TABLE_NAMES, table_name
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
-BASE_URL = "https://open.feishu.cn/open-apis"
+DEFAULT_API_HOST = "https://open.feishu.cn"
+
+
+def api_base_url() -> str:
+    host = os.getenv("FEISHU_API_BASE_URL", DEFAULT_API_HOST).rstrip("/")
+    return host if host.endswith("/open-apis") else f"{host}/open-apis"
 
 TABLE_FILES = [
     (table_name("source_sampling"), "sources_config.csv"),
@@ -73,7 +79,7 @@ def request_json(method: str, path: str, token: str | None = None, body: dict[st
     headers = {"Content-Type": "application/json; charset=utf-8"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
-    req = Request(BASE_URL + path, data=data, method=method, headers=headers)
+    req = Request(api_base_url() + path, data=data, method=method, headers=headers)
     try:
         with urlopen(req, timeout=30) as resp:
             payload = json.loads(resp.read().decode("utf-8"))

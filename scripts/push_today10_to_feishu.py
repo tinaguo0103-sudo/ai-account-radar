@@ -27,6 +27,10 @@ TARGET_TABLE_KEY = "topic_decision"
 REQUIRED_FIELDS = [
     "选题标题",
     "推荐日期",
+    "运行日期",
+    "运行批次",
+    "是否本次新增",
+    "最近参与运行批次",
     "今日排名",
     "状态",
     "推荐动作",
@@ -66,6 +70,10 @@ def today_slug() -> str:
     return datetime.now().strftime("%Y-%m-%d")
 
 
+def default_run_id() -> str:
+    return os.getenv("RUN_ID") or os.getenv("AI_ACCOUNT_RADAR_RUN_ID") or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+
 def list_tables(token: str, app_token: str) -> dict[str, str]:
     payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables", token=token)
     return {item["name"]: item["table_id"] for item in payload.get("data", {}).get("items", [])}
@@ -74,6 +82,11 @@ def list_tables(token: str, app_token: str) -> dict[str, str]:
 def list_fields(token: str, app_token: str, table_id: str) -> dict[str, dict[str, Any]]:
     payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields", token=token)
     return {item["field_name"]: item for item in payload.get("data", {}).get("items", [])}
+
+
+def list_views(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
+    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views", token=token)
+    return payload.get("data", {}).get("items", [])
 
 
 def ensure_fields(token: str, app_token: str, table_id: str) -> list[str]:
@@ -106,11 +119,15 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
         page_token = data.get("page_token", "")
 
 
-def map_row(row: dict[str, str], rank: int, date: str) -> dict[str, str]:
+def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str, str]:
     status = ACTION_STATUS.get(row.get("推荐动作", ""), "待判断")
     return {
         "选题标题": row.get("我的选题标题", ""),
         "推荐日期": date,
+        "运行日期": date,
+        "运行批次": run_id,
+        "是否本次新增": "是",
+        "最近参与运行批次": run_id,
         "今日排名": str(rank),
         "状态": status,
         "推荐动作": row.get("推荐动作", ""),
@@ -156,13 +173,72 @@ def batch_create(token: str, app_token: str, table_id: str, rows: list[dict[str,
     return total
 
 
+def update_existing_top10(token: str, app_token: str, table_id: str, record: dict[str, Any], row: dict[str, str]) -> None:
+    fields = {
+        "今日排名": row["今日排名"],
+        "运行日期": row["运行日期"],
+        "运行批次": row["运行批次"],
+        "是否本次新增": "否",
+        "最近参与运行批次": row["最近参与运行批次"],
+    }
+    feishu.request_json(
+        "PUT",
+        f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record['record_id']}",
+        token=token,
+        body={"fields": fields},
+    )
+
+
+def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: str) -> dict[str, Any]:
+    views = {view.get("view_name"): view for view in list_views(token, app_token, table_id)}
+    created: list[str] = []
+    if "今日Top10" not in views:
+        payload = feishu.request_json(
+            "POST",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/views",
+            token=token,
+            body={"view_name": "今日Top10", "view_type": "grid"},
+        )
+        views["今日Top10"] = payload.get("data", {}).get("view", payload.get("data", {}))
+        created.append("今日Top10")
+        time.sleep(0.1)
+    fields = list_fields(token, app_token, table_id)
+    view = views.get("今日Top10", {})
+    run_field = fields.get("最近参与运行批次") or fields.get("运行批次")
+    if not view.get("view_id") or not run_field:
+        return {"created": created, "configured": "missing_view_or_run_field"}
+    visible = {"选题标题", "今日排名", "推荐日期", "运行批次", "是否本次新增", "状态", "推荐动作", "来源类型", "原始来源标题", "来源链接", "对应栏目", "热点切入方式", "业务场景", "推荐理由"}
+    hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
+    body = {
+        "view_name": "今日Top10",
+        "property": {
+            "filter_info": {
+                "conditions": [{
+                    "field_id": run_field["field_id"],
+                    "operator": "is",
+                    "value": json.dumps([run_id], ensure_ascii=False),
+                }],
+                "conjunction": "and",
+            },
+            "hidden_fields": hidden,
+        },
+    }
+    try:
+        feishu.request_json("PATCH", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view['view_id']}", token=token, body=body)
+        return {"created": created, "configured": "ok", "hidden_fields": len(hidden)}
+    except Exception as exc:
+        return {"created": created, "configured": f"failed:{exc}"}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true", help="Actually write to Feishu. Default is dry-run only.")
+    parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
     args = parser.parse_args()
 
     date = today_slug()
-    mapped = [map_row(row, idx, date) for idx, row in enumerate(read_today10(TODAY10), start=1)]
+    run_id = args.run_id or default_run_id()
+    mapped = [map_row(row, idx, date, run_id) for idx, row in enumerate(read_today10(TODAY10), start=1)]
     dry_run_print(mapped)
 
     if not args.write:
@@ -180,19 +256,31 @@ def main() -> int:
     created_fields = ensure_fields(token, app_token, table_id)
 
     existing = all_records(token, app_token, table_id)
-    existing_keys = {
-        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("选题标题", "")))
+    existing_by_key = {
+        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("选题标题", ""))): record
         for record in existing
     }
-    to_create = [row for row in mapped if (row["推荐日期"], row["选题标题"]) not in existing_keys]
+    to_create = []
+    updated_existing = 0
+    for row in mapped:
+        record = existing_by_key.get((row["推荐日期"], row["选题标题"]))
+        if record:
+            update_existing_top10(token, app_token, table_id, record, row)
+            updated_existing += 1
+            time.sleep(0.1)
+        else:
+            to_create.append(row)
     created_records = batch_create(token, app_token, table_id, to_create) if to_create else 0
     print(json.dumps({
         "ok": True,
         "mode": "write",
         "table": TABLES[TARGET_TABLE_KEY],
+        "run_id": run_id,
         "created_fields": created_fields,
         "created_records": created_records,
+        "updated_existing": updated_existing,
         "skipped_existing": len(mapped) - len(to_create),
+        "today_view": ensure_today_top10_view(token, app_token, table_id, run_id),
     }, ensure_ascii=False, indent=2))
     return 0
 

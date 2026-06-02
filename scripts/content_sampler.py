@@ -12,8 +12,10 @@ import csv
 import hashlib
 import html
 import json
+import os
 import re
 import sys
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from html.parser import HTMLParser
@@ -21,6 +23,9 @@ from pathlib import Path
 from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
+
+import push_to_feishu as feishu
+from feishu_table_registry import resolve_table_id, table_name
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -67,6 +72,32 @@ TOP10_COLUMN_LIMITS = {
     "AI导演工作流": (2, 3),
     "AI项目复盘": (0, 1),
 }
+CONTENT_INBOX_FIELDS = [
+    "标题",
+    "来源类型",
+    "来源名称",
+    "平台",
+    "链接",
+    "发布时间",
+    "采集时间",
+    "采集状态",
+    "失败原因",
+    "摘要/片段",
+    "作者/账号",
+    "内容指纹",
+    "正文/全文",
+    "正文长度",
+    "是否全文解析",
+    "原始payload路径",
+    "解析说明",
+    "运行日期",
+    "运行批次",
+    "是否本次新增",
+    "最近参与运行批次",
+    "最近采样日期",
+    "是否重复",
+    "处理状态",
+]
 
 
 def normalize_column(column: str) -> str:
@@ -153,6 +184,14 @@ def now_iso() -> str:
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def today_slug() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def default_run_id() -> str:
+    return os.getenv("RUN_ID") or os.getenv("AI_ACCOUNT_RADAR_RUN_ID") or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+
 def load_json(path: Path) -> dict[str, Any]:
     return json.loads(path.read_text(encoding="utf-8"))
 
@@ -170,14 +209,15 @@ def fetch_text(url: str) -> tuple[str, str]:
         return "", f"failed:{exc.__class__.__name__}"
 
 
-def fetch_json(url: str) -> tuple[dict[str, Any] | None, str]:
+def fetch_json(url: str) -> tuple[dict[str, Any] | None, str, str]:
     text, status = fetch_text(url)
     if status != "ok":
-        return None, status
+        return None, status, ""
     try:
-        return json.loads(text), "ok"
-    except json.JSONDecodeError:
-        return None, "failed:JSONDecodeError"
+        return json.loads(text), "ok", ""
+    except json.JSONDecodeError as exc:
+        preview = normalize_space(text)[:500]
+        return None, f"failed:JSONDecodeError line={exc.lineno} col={exc.colno} msg={exc.msg}", preview
 
 
 def meta_content(page: str, names: list[str]) -> str:
@@ -280,8 +320,11 @@ def aihot_items(source: dict[str, Any], fetch: bool) -> tuple[list[ContentItem],
         return [], ["AIHOT: skipped"]
     if not source.get("url"):
         return [], [f"{source.get('account_name', 'AIHOT')}: skipped_missing_url"]
-    data, status = fetch_json(source["url"])
-    logs.append(f"{source['account_name']}: {status}")
+    data, status, preview = fetch_json(source["url"])
+    if preview:
+        logs.append(f"{source['account_name']}: {status} | url={source['url']} | preview={preview[:300]}")
+    else:
+        logs.append(f"{source['account_name']}: {status} | url={source['url']}")
     if not data:
         return [], logs
     rows: list[ContentItem] = []
@@ -861,6 +904,219 @@ def item_row(item: ContentItem) -> dict[str, Any]:
     }
 
 
+def require_feishu_env() -> str:
+    missing = [name for name in ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_BASE_APP_TOKEN"] if not os.getenv(name)]
+    if missing:
+        raise SystemExit(f"Feishu write requires environment variables: {', '.join(missing)}")
+    return str(os.getenv("FEISHU_BASE_APP_TOKEN"))
+
+
+def list_tables(token: str, app_token: str) -> dict[str, str]:
+    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables", token=token)
+    return {item["name"]: item["table_id"] for item in payload.get("data", {}).get("items", [])}
+
+
+def fields_by_name(token: str, app_token: str, table_id: str) -> dict[str, dict[str, Any]]:
+    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields", token=token)
+    return {field["field_name"]: field for field in payload.get("data", {}).get("items", [])}
+
+
+def list_views(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
+    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views", token=token)
+    return payload.get("data", {}).get("items", [])
+
+
+def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    page_token = ""
+    while True:
+        suffix = f"?page_size=500{('&page_token=' + page_token) if page_token else ''}"
+        payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/records{suffix}", token=token)
+        data = payload.get("data", {})
+        records.extend(data.get("items", []))
+        if not data.get("has_more"):
+            return records
+        page_token = data.get("page_token", "")
+
+
+def ensure_content_inbox_fields(token: str, app_token: str, table_id: str) -> list[str]:
+    existing = fields_by_name(token, app_token, table_id)
+    created: list[str] = []
+    for field_name in CONTENT_INBOX_FIELDS:
+        if field_name in existing:
+            continue
+        feishu.request_json(
+            "POST",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
+            token=token,
+            body={"field_name": field_name, "type": 1},
+        )
+        created.append(field_name)
+        time.sleep(0.1)
+    return created
+
+
+def is_full_text_item(item: ContentItem) -> str:
+    if item.source_type in {"公众号文章", "公开网页", "RSS/Atom"} and len(item.body_snippet or "") > 500:
+        return "是"
+    return "否"
+
+
+def parse_note(item: ContentItem) -> str:
+    if item.source_type == "对标视频" and item.platform == "抖音":
+        return "P0浅层解析：当前仅含标题/文案/作者/封面/发布时间，不含口播字幕和评论区。"
+    if is_full_text_item(item) == "是":
+        return "已解析正文，可用于内容拆解；正文字段可能按飞书长度截断，原始payload路径保留本地全文。"
+    if item.source_type == "AIHOT热点":
+        return "AIHOT条目摘要进入内容拆解；建议发布前回原文核对。"
+    return "已进入内容拆解，按当前可获取文本分析。"
+
+
+def item_to_content_inbox_fields(item: ContentItem, run_id: str, is_new: bool, duplicate: bool = False) -> dict[str, str]:
+    status = "success" if item.fetch_status == "ok" else item.fetch_status
+    failed = status not in {"ok", "success"}
+    body = item.body_snippet or ""
+    date = today_slug()
+    return {
+        "标题": item.title or item.url,
+        "来源类型": item.source_type,
+        "来源名称": item.account_name or item.platform,
+        "平台": item.platform,
+        "链接": item.url,
+        "发布时间": item.published_at,
+        "采集时间": now_iso(),
+        "采集状态": status,
+        "失败原因": item.failure_reason,
+        "摘要/片段": body[:1000],
+        "作者/账号": item.account_name,
+        "内容指纹": item.fingerprint,
+        "正文/全文": body[:20000],
+        "正文长度": str(len(body)),
+        "是否全文解析": is_full_text_item(item),
+        "原始payload路径": item.ocr_text if item.fetch_method in {"wechat_public_html_js_content", "douyin_public_router_data", "rss_atom_xml", "jina_reader"} else "",
+        "解析说明": parse_note(item),
+        "运行日期": date,
+        "运行批次": run_id if is_new else "",
+        "是否本次新增": "是" if is_new else "否",
+        "最近参与运行批次": run_id,
+        "最近采样日期": date,
+        "是否重复": "是" if duplicate else "否",
+        "处理状态": "重复" if duplicate else ("跳过" if failed else "待分析"),
+    }
+
+
+def batch_create_records(token: str, app_token: str, table_id: str, rows: list[dict[str, str]]) -> int:
+    total = 0
+    for start in range(0, len(rows), 500):
+        chunk = rows[start:start + 500]
+        feishu.request_json(
+            "POST",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/batch_create",
+            token=token,
+            body={"records": [{"fields": {key: row.get(key, "") for key in CONTENT_INBOX_FIELDS}} for row in chunk]},
+        )
+        total += len(chunk)
+        time.sleep(0.15)
+    return total
+
+
+def update_record_fields(token: str, app_token: str, table_id: str, record_id: str, fields: dict[str, str]) -> None:
+    feishu.request_json(
+        "PUT",
+        f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
+        token=token,
+        body={"fields": fields},
+    )
+
+
+def ensure_content_inbox_today_view(token: str, app_token: str, table_id: str) -> dict[str, Any]:
+    views = {view.get("view_name"): view for view in list_views(token, app_token, table_id)}
+    created: list[str] = []
+    if "今日采集" not in views:
+        payload = feishu.request_json(
+            "POST",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/views",
+            token=token,
+            body={"view_name": "今日采集", "view_type": "grid"},
+        )
+        views["今日采集"] = payload.get("data", {}).get("view", payload.get("data", {}))
+        created.append("今日采集")
+        time.sleep(0.1)
+    fields = fields_by_name(token, app_token, table_id)
+    view = views.get("今日采集", {})
+    date_field = fields.get("最近采样日期") or fields.get("运行日期")
+    if not view.get("view_id") or not date_field:
+        return {"created": created, "configured": "missing_view_or_date_field"}
+    visible = {"标题", "来源类型", "来源名称", "平台", "链接", "摘要/片段", "正文长度", "是否全文解析", "原始payload路径", "解析说明", "采集状态", "处理状态", "最近采样日期", "最近参与运行批次", "是否本次新增", "内容指纹"}
+    hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
+    body = {
+        "view_name": "今日采集",
+        "property": {
+            "filter_info": {
+                "conditions": [{
+                    "field_id": date_field["field_id"],
+                    "operator": "is",
+                    "value": json.dumps([today_slug()], ensure_ascii=False),
+                }],
+                "conjunction": "and",
+            },
+            "hidden_fields": hidden,
+        },
+    }
+    try:
+        feishu.request_json("PATCH", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view['view_id']}", token=token, body=body)
+        return {"created": created, "configured": "ok", "hidden_fields": len(hidden)}
+    except Exception as exc:
+        return {"created": created, "configured": f"failed:{exc}"}
+
+
+def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dict[str, Any]:
+    app_token = require_feishu_env()
+    token = feishu.tenant_token()
+    table_id = resolve_table_id(list_tables(token, app_token), "content_inbox")
+    if not table_id:
+        raise SystemExit(f"Missing Feishu table: {table_name('content_inbox')}")
+    created_fields = ensure_content_inbox_fields(token, app_token, table_id)
+    existing = all_records(token, app_token, table_id)
+    by_fp = {str(record.get("fields", {}).get("内容指纹", "")): record for record in existing if record.get("fields", {}).get("内容指纹")}
+    by_url = {str(record.get("fields", {}).get("链接", "")): record for record in existing if record.get("fields", {}).get("链接")}
+    to_create: list[dict[str, str]] = []
+    updated_existing = 0
+    skipped_duplicates = 0
+    for item in items:
+        record = by_fp.get(item.fingerprint) or by_url.get(item.url)
+        if record:
+            record_fields = record.get("fields", {})
+            same_run_new = str(record_fields.get("运行批次", "")) == run_id or str(record_fields.get("最近参与运行批次", "")) == run_id
+            fields = item_to_content_inbox_fields(item, run_id, is_new=same_run_new, duplicate=not same_run_new)
+            update_fields = {
+                "最近参与运行批次": fields["最近参与运行批次"],
+                "最近采样日期": fields["最近采样日期"],
+                "是否本次新增": "是" if same_run_new else "否",
+                "是否重复": str(record_fields.get("是否重复", "否")) if same_run_new else "是",
+            }
+            update_record_fields(token, app_token, table_id, record["record_id"], update_fields)
+            updated_existing += 1
+            if not same_run_new:
+                skipped_duplicates += 1
+            time.sleep(0.1)
+            continue
+        fields = item_to_content_inbox_fields(item, run_id, is_new=True, duplicate=False)
+        to_create.append(fields)
+        by_fp[item.fingerprint] = {"record_id": ""}
+        by_url[item.url] = {"record_id": ""}
+    created_records = batch_create_records(token, app_token, table_id, to_create) if to_create else 0
+    return {
+        "table": table_name("content_inbox"),
+        "run_id": run_id,
+        "created_fields": created_fields,
+        "created_records": created_records,
+        "updated_existing": updated_existing,
+        "skipped_duplicates": skipped_duplicates,
+        "today_view": ensure_content_inbox_today_view(token, app_token, table_id),
+    }
+
+
 def write_today10_markdown(path: Path, topics: list[dict[str, Any]], logs: list[str]) -> None:
     best = next((t for t in topics if t["推荐动作"] == "立即蹭热点"), topics[0] if topics else None)
     lines = [
@@ -1038,8 +1294,11 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-fetch-aihot", action="store_true")
     parser.add_argument("--manual", default=str(MANUAL_ITEMS))
+    parser.add_argument("--write-feishu", action="store_true", help="Write all analyzed ContentItems into Feishu 03 内容收件箱 as the content ledger.")
+    parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
     args = parser.parse_args()
 
+    run_id = args.run_id or default_run_id()
     items, logs = collect_items(not args.no_fetch_aihot, Path(args.manual))
     item_rows = [item_row(item) for item in items]
     breakdown_rows = [breakdown(item) for item in items]
@@ -1060,6 +1319,7 @@ def main() -> int:
     write_today10_markdown(md_path, today10, logs)
     run_log = {
         "generated_at": now_iso(),
+        "run_id": run_id,
         "items": len(items),
         "breakdowns": len(breakdown_rows),
         "today_10_topics": len(today10),
@@ -1071,6 +1331,8 @@ def main() -> int:
             "today_10_markdown": str(md_path),
         },
     }
+    if args.write_feishu:
+        run_log["feishu_content_ledger"] = write_content_ledger_to_feishu(items, run_id)
     (OUT / "content_sampler_log.json").write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
     print(json.dumps(run_log, ensure_ascii=False, indent=2))
     return 0

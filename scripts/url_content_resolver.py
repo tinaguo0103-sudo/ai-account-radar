@@ -61,6 +61,16 @@ CONTENT_INBOX_FIELDS = [
     "摘要/片段",
     "作者/账号",
     "内容指纹",
+    "正文/全文",
+    "正文长度",
+    "是否全文解析",
+    "原始payload路径",
+    "解析说明",
+    "运行日期",
+    "运行批次",
+    "是否本次新增",
+    "最近参与运行批次",
+    "最近采样日期",
     "是否重复",
     "处理状态",
 ]
@@ -123,6 +133,14 @@ class BlockTextParser(HTMLParser):
 
 def now_iso() -> str:
     return datetime.now().isoformat(timespec="seconds")
+
+
+def today_slug() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def current_run_id() -> str:
+    return os.getenv("RUN_ID") or os.getenv("AI_ACCOUNT_RADAR_RUN_ID") or f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 
 def fingerprint(*parts: str) -> str:
@@ -570,6 +588,11 @@ def item_to_manual_row(item: ContentItem) -> dict[str, str]:
 
 def item_to_feishu_fields(item: ContentItem, duplicate: bool = False) -> dict[str, str]:
     failed = item.fetch_status != "success"
+    body = item.body_or_transcript or ""
+    is_full = "是" if item.source_type in {"公众号文章", "公开网页", "RSS/Atom"} and len(body) > 500 else "否"
+    parse_note = "已解析全文，可用于内容拆解。" if is_full == "是" else "P0浅层解析：仅含标题/文案/作者/封面/摘要，不含抖音口播字幕和评论区。"
+    run_id = current_run_id()
+    date = today_slug()
     return {
         "标题": item.content_title or item.content_url,
         "来源类型": item.source_type,
@@ -583,6 +606,16 @@ def item_to_feishu_fields(item: ContentItem, duplicate: bool = False) -> dict[st
         "摘要/片段": item.summary_or_description or item.body_or_transcript[:1000],
         "作者/账号": item.account_name,
         "内容指纹": item.content_fingerprint,
+        "正文/全文": body[:20000],
+        "正文长度": str(len(body)),
+        "是否全文解析": is_full,
+        "原始payload路径": item.raw_payload_path,
+        "解析说明": parse_note,
+        "运行日期": date,
+        "运行批次": run_id,
+        "是否本次新增": "否" if duplicate else "是",
+        "最近参与运行批次": run_id,
+        "最近采样日期": date,
         "是否重复": "是" if duplicate else "否",
         "处理状态": "重复" if duplicate else ("跳过" if failed else "待分析"),
     }
@@ -614,6 +647,23 @@ def batch_create_records(token: str, app_token: str, table_id: str, rows: list[d
         total += len(chunk)
         time.sleep(0.15)
     return total
+
+
+def ensure_content_inbox_fields(token: str, app_token: str, table_id: str) -> list[str]:
+    existing = fields_by_name(token, app_token, table_id)
+    created: list[str] = []
+    for field_name in CONTENT_INBOX_FIELDS:
+        if field_name in existing:
+            continue
+        feishu.request_json(
+            "POST",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
+            token=token,
+            body={"field_name": field_name, "type": 1},
+        )
+        created.append(field_name)
+        time.sleep(0.1)
+    return created
 
 
 def update_url_intake_records(
@@ -676,6 +726,7 @@ def write_feishu_content_inbox(
     table_id = resolve_table_id(tables, "content_inbox")
     if not table_id:
         raise SystemExit(f"Missing Feishu table: {table_name('content_inbox')}")
+    created_fields = ensure_content_inbox_fields(token, app_token, table_id)
     existing = all_records(token, app_token, table_id)
     existing_fp = {str(record.get("fields", {}).get("内容指纹", "")) for record in existing}
     existing_urls = {str(record.get("fields", {}).get("链接", "")) for record in existing}
@@ -724,6 +775,7 @@ def write_feishu_content_inbox(
         intake_update = update_url_intake_records(token, app_token, url_inbox_table_id, intake_records, outcomes_by_url)
     return {
         "table": table_name("content_inbox"),
+        "created_fields": created_fields,
         "created_records": created,
         "skipped_duplicates": duplicates,
         "url_outcomes": outcomes_by_url,
@@ -759,7 +811,22 @@ def main() -> int:
         urls.extend(record.url for record in intake_records)
     urls = list(dict.fromkeys(urls))
     if not urls:
-        raise SystemExit("No URLs provided. Use --file, --url, or --feishu-intake.")
+        out_jsonl = Path(args.out)
+        out_csv = Path(args.csv)
+        write_local_outputs([], out_jsonl, out_csv)
+        print(json.dumps({
+            "ok": True,
+            "mode": "write-feishu" if args.write_feishu else "dry-run",
+            "urls": 0,
+            "items": 0,
+            "local_duplicates": 0,
+            "output": str(out_jsonl),
+            "csv": str(out_csv),
+            "manual_jsonl": str(out_jsonl.with_name(out_jsonl.stem + "_manual.jsonl")),
+            "by_status": {},
+            "note": "No pending URLs. Continue downstream pipeline with AIHOT/system sources.",
+        }, ensure_ascii=False, indent=2))
+        return 0
 
     raw_dir = Path(args.raw_dir)
     items: list[ContentItem] = []

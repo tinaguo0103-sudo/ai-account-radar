@@ -51,7 +51,15 @@
     },
     {
       "name": "URL采样P0支持",
-      "rule": "url_content_resolver.py 正式支持公众号文章URL、抖音单条视频URL（含搜索页modal_id和iesdouyin/share/video）、RSS/Atom、普通网页Jina Reader；默认dry-run输出本地文件，显式 --write-feishu 才写入 03 内容收件箱。"
+      "rule": "url_content_resolver.py 正式支持公众号文章URL、抖音单条视频URL（含搜索页modal_id和iesdouyin/share/video）、RSS/Atom、普通网页Jina Reader；默认dry-run输出本地文件，显式 --write-feishu 才写入 03 内容收件箱。公众号文章会保留正文/全文、正文长度、原始payload路径；抖音P0仅做浅层解析，不含口播字幕和评论区。"
+    },
+    {
+      "type": "飞书API规则",
+      "rule": "飞书OpenAPI默认使用 https://open.feishu.cn；如本机DNS解析失败，可临时设置 FEISHU_API_BASE_URL=https://open.larksuite.com。所有脚本统一通过 push_to_feishu.py 的公共请求封装读取此环境变量。"
+    },
+    {
+      "type": "运行批次规则",
+      "rule": "daily_pipeline.py 每次运行生成 run_YYYYMMDD_HHMMSS 形式的运行批次，并同步写入 03 内容收件箱 与 04 分析与选题。03 今日采集视图用于看本日参与拆解的内容账本，04 今日Top10视图用于看本轮最新Top10。"
     },
     {
       "name": "URL采样暂不支持",
@@ -148,7 +156,7 @@
     {
       "name": "03 内容收件箱",
       "role": "后台数据表",
-      "why": "统一接收自动采集和手动输入的原始内容，做去重、标记处理状态，避免一上来就写稿。",
+      "why": "统一接收自动采集和手动输入的原始内容，做去重、标记处理状态，成为参与拆解和Top10候选池的完整内容账本。",
       "input": "AIHOT、公众号文章URL、抖音单条视频URL、RSS/Atom、普通网页、手动粘贴。",
       "output": "04 分析与选题。",
       "upstream": "AIHOT、公众号文章URL、抖音单条视频URL、RSS/Atom、普通网页、02 URL投喂入口、data/manual 样例。",
@@ -158,8 +166,8 @@
       "consumer": "分析脚本、AI 分析流程。",
       "daily_visible": "否，排查来源或去重时才看。",
       "user_editable": "通常不需要；只在修正标题、摘要、链接、重复状态时编辑。",
-      "default_view": "看板-处理状态",
-      "scripts_write": "url_content_resolver.py 显式 --write-feishu 时写入 URL 解析结果；run_radar.py 仍可生成 content_inbox.csv 作为降级输出。",
+      "default_view": "内容收件箱 / 今日采集",
+      "scripts_write": "url_content_resolver.py 显式 --write-feishu 时写入 URL 解析结果；content_sampler.py 显式 --write-feishu 时写入本轮参与分析的 AIHOT、URL投喂和其他 ContentItem，并按内容指纹/URL去重。",
       "human_edit": "发现内容重复、链接错、摘要错、来源错时。"
     },
     {
@@ -176,7 +184,7 @@
       "daily_visible": "是，是最核心工作区。",
       "user_editable": "是，必须允许人工修正状态、分数、平台、业务场景和推荐理由。",
       "default_view": "看板-按状态推进 / 画册-选题卡片",
-      "scripts_write": "run_radar.py 当前生成 topic_candidates.csv；后续 6 表同步脚本写入。",
+      "scripts_write": "push_today10_to_feishu.py 只写今日Top10，并写入运行日期、运行批次、最近参与运行批次；daily_pipeline.py 不自动生成 05 Brief。",
       "human_edit": "决定进入 Brief、本周做、暂存、归档、不做时；发现 AI 判断偏离定位时。"
     },
     {
@@ -261,7 +269,14 @@
     {"table": "03 内容收件箱", "field": "处理状态", "purpose": "内容处理流状态，表示原始内容是否已分析、已转选题、跳过或重复。", "required": "是", "producer": "脚本/AI辅助/人工", "consumer": "分析脚本", "user_editable": "低频", "ai": "可参与", "human_judgment": "内容是否应跳过或重新分析。"},
     {"table": "03 内容收件箱", "field": "是否重复", "purpose": "标记内容是否与已有内容重复，避免重复分析。", "required": "是", "producer": "脚本", "consumer": "分析脚本", "user_editable": "低频", "ai": "可辅助", "human_judgment": "相似但非重复内容是否保留。"},
     {"table": "03 内容收件箱", "field": "内容指纹", "purpose": "用标题、链接、来源生成的去重标识。", "required": "是", "producer": "脚本", "consumer": "脚本", "user_editable": "否", "ai": "否", "human_judgment": "通常不人工改。"},
+    {"table": "03 内容收件箱", "field": "正文/全文", "purpose": "保存可用于内容拆解的正文或解析文本；公众号文章、网页、RSS优先写入正文，短视频P0只写标题/文案等浅层文本。", "required": "否", "producer": "url_content_resolver.py/content_sampler.py", "consumer": "用户排查、内容拆解", "user_editable": "低频", "ai": "可读取", "human_judgment": "发布前仍需人工核对原文。"},
+    {"table": "03 内容收件箱", "field": "正文长度", "purpose": "显示解析文本长度，让用户判断系统是基于全文还是片段分析。", "required": "否", "producer": "脚本", "consumer": "用户排查", "user_editable": "否", "ai": "否", "human_judgment": "正文过短时考虑补链接或手动文本。"},
+    {"table": "03 内容收件箱", "field": "是否全文解析", "purpose": "标记公众号/网页/RSS是否拿到较完整正文；抖音单条视频P0通常为否。", "required": "否", "producer": "脚本", "consumer": "用户、拆解判断", "user_editable": "低频", "ai": "否", "human_judgment": "必要时人工补字幕/OCR。"},
+    {"table": "03 内容收件箱", "field": "原始payload路径", "purpose": "指向本地保存的原始HTML/Markdown/JSON路径，用于追溯全文或原始解析结果。", "required": "否", "producer": "url_content_resolver.py", "consumer": "用户排查、Codex排查", "user_editable": "否", "ai": "可读取", "human_judgment": "本地文件不要当公开链接转发。"},
+    {"table": "03 内容收件箱", "field": "运行批次", "purpose": "标记内容首次写入所属运行批次。", "required": "否", "producer": "daily_pipeline.py", "consumer": "今日采集视图、排查", "user_editable": "否", "ai": "否", "human_judgment": "通常不人工改。"},
+    {"table": "03 内容收件箱", "field": "最近参与运行批次", "purpose": "内容已存在但本轮仍参与拆解时更新此字段，避免重复创建但保留本轮参与痕迹。", "required": "否", "producer": "content_sampler.py", "consumer": "今日采集视图、排查", "user_editable": "否", "ai": "否", "human_judgment": "通常不人工改。"},
     {"table": "04 分析与选题", "field": "选题标题", "purpose": "把来源内容转译成我的选题候选，不是直接复制热点标题。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "标题是否符合我的人设和真实业务现场。"},
+    {"table": "04 分析与选题", "field": "运行批次", "purpose": "标记Top10记录所属运行批次，今日Top10视图默认看最新批次。", "required": "否", "producer": "push_today10_to_feishu.py", "consumer": "用户、主控台", "user_editable": "否", "ai": "否", "human_judgment": "通常不人工改。"},
     {"table": "04 分析与选题", "field": "状态", "purpose": "选题决策流状态，决定下一步进入 Brief、本周做、暂存、归档或不做。", "required": "是", "producer": "人工为主", "consumer": "用户、Brief流程", "user_editable": "是", "ai": "可建议", "human_judgment": "最终是否做必须由用户判断。"},
     {"table": "04 分析与选题", "field": "推荐等级", "purpose": "把总分翻译成行动级别：A 立即看，B 进入候选，C 观察，D 跳过。", "required": "是", "producer": "脚本/AI", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "高分但不适合人设时可降级。"},
     {"table": "04 分析与选题", "field": "总分", "purpose": "排序工具，不是最终决定。用于减少信息筛选成本。", "required": "是", "producer": "脚本/AI", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "如果真实业务价值高，可以人工修正。"},
