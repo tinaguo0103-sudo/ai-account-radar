@@ -22,6 +22,7 @@ ROOT = Path(__file__).resolve().parents[1]
 CONFIG = ROOT / "config" / "content_sources.yaml"
 TABLE_KEY = "source_sampling"
 SYNC_FIELDS = [
+    "名称",
     "来源名称",
     "来源角色",
     "是否主对标",
@@ -102,6 +103,7 @@ def row_from_source(source: dict[str, Any]) -> dict[str, str]:
     if source.get("needs_url"):
         remarks = (remarks + "；" if remarks else "") + "缺主页链接，needs_url=true。"
     return {
+        "名称": source.get("account_name", ""),
         "来源名称": source.get("account_name", ""),
         "来源角色": role,
         "是否主对标": yes_no(bool(source.get("is_main_competitor"))),
@@ -132,10 +134,17 @@ def sync_rows(token: str, app_token: str, rows: list[dict[str, str]]) -> dict[st
         raise SystemExit(f"Missing Feishu table: {table_name(TABLE_KEY)}")
     created_fields = ensure_fields(token, app_token, table_id)
     records = all_records(token, app_token, table_id)
-    by_name = {
-        str(record.get("fields", {}).get("来源名称", "") or record.get("fields", {}).get("来源", "")): record
-        for record in records
-    }
+    by_name: dict[str, dict[str, Any]] = {}
+    for record in records:
+        fields = record.get("fields", {})
+        primary_name = str(fields.get("名称", ""))
+        if primary_name:
+            by_name[primary_name] = record
+            continue
+        for field_name in ["来源名称", "来源"]:
+            name = str(fields.get(field_name, ""))
+            if name and name not in by_name:
+                by_name[name] = record
     created = 0
     updated = 0
     for row in rows:
