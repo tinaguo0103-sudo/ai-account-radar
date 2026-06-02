@@ -121,7 +121,11 @@ def enabled_label(value: bool) -> str:
 
 def clean_missing_note(text: str) -> str:
     parts = [part.strip() for part in str(text or "").split("；") if part.strip()]
-    parts = [part for part in parts if "缺主页链接" not in part and "needs_url=true" not in part]
+    parts = [
+        part
+        for part in parts
+        if "缺主页链接" not in part and "主页链接待补充" not in part and "needs_url=true" not in part
+    ]
     return "；".join(parts)
 
 
@@ -134,7 +138,7 @@ def row_from_source(source: dict[str, Any]) -> dict[str, str]:
     role = source.get("source_role") or source.get("source_group", "")
     remarks = source.get("remarks", "")
     if source.get("needs_url"):
-        remarks = (remarks + "；" if remarks else "") + "缺主页链接，needs_url=true。"
+        remarks = (remarks + "；" if remarks else "") + "主页链接待补充，needs_url=true。"
     return {
         "名称": source.get("account_name", ""),
         "来源角色": role,
