@@ -15,11 +15,11 @@
   "content_source_rules": [
     {
       "name": "来源角色定义",
-      "rule": "来源池分为 current_main_competitor 当前主对标、current_aux_competitor 当前辅助对标、historical_reference 历史对标、system_hotspot_source 系统热点源、official_source 官方/技术/工具源、manual_entry 手动入口。只有当前主流程启用来源默认参与采样；历史对标默认不参与今日Top10主采样。"
+      "rule": "来源池分为 current_main_competitor 当前主对标、current_aux_competitor 当前辅助对标、current_main_competitor_placeholder 当前主对标占位、historical_reference 历史对标、system_hotspot_source 系统热点源、official_source 官方/技术/工具源、manual_entry 正式手动入口、legacy_manual_entry 旧手动入口。只有当前主流程启用来源默认参与采样；历史对标和旧入口默认不参与今日Top10主采样。"
     },
     {
       "name": "新主对标池",
-      "rule": "今日Top10默认使用最新主对标账号池作为内容结构参考：数字生命卡兹克-公众号文章、秋芝2046、xuan酱、ami.moment、Bob同学、数字游牧人、编导李让、何止维、徐老师AI；数字生命卡兹克-抖音教程视频是当前辅助对标；旧对标账号统一降级为 historical_reference，default_enabled=false，默认不参与主流程。"
+      "rule": "今日Top10默认使用最新主对标账号池作为内容结构参考：数字生命卡兹克-公众号文章、秋芝2046、xuan酱、ami.moment、Bob同学、数字游牧人、编导李让、何止维、徐老师AI；数字生命卡兹克-抖音教程视频是当前辅助对标；AI项目复盘-待定是10%权重占位但不参与主采样；旧对标账号统一降级为 historical_reference，default_enabled=false，默认不参与主流程。"
     },
     {
       "name": "卡兹克双内容矩阵",
@@ -43,7 +43,11 @@
     },
     {
       "name": "来源表显性字段",
-      "rule": "01 来源与采样必须能看到 来源角色、是否主对标、是否参与主采样、栏目、栏目权重、默认启用、优先级、平台、来源类型和备注。用户看表时应能一眼区分当前主对标、历史对标、系统源和手动入口。"
+      "rule": "01 来源与采样的规范字段为：名称、来源角色、栏目、栏目权重、平台、主页链接、是否参与主采样、默认启用、优先级、抓取方式、跟踪频率、关注重点、备注。旧字段来源名称、获取方式、关注重点/原始内容、是否主对标、是否重点跟踪只作为兼容或隐藏字段，不进入默认视图。"
+    },
+    {
+      "name": "来源表视图",
+      "rule": "01 来源与采样至少包含 当前主对标池、历史参考池、系统/官方源、手动入口 四个视图。默认看 当前主对标池；历史账号保留但不参与主采样；系统/官方源不属于对标权重池；02 URL投喂入口 是唯一启用的正式手动入口。"
     },
     {
       "name": "URL采样P0支持",
@@ -120,8 +124,8 @@
       "consumer": "采集脚本、用户低频检查。",
       "daily_visible": "否，只有新增来源或粘贴内容时打开。",
       "user_editable": "是，可以新增来源、修正关注重点、粘贴内容。",
-      "default_view": "表单-手动粘贴入口 / 看板-按处理状态",
-      "scripts_write": "sync_source_sampling.py 从 config/content_sources.yaml 同步来源角色、栏目权重和启用状态到飞书；content_sampler.py 读取 default_enabled 控制默认采样。",
+      "default_view": "当前主对标池 / 历史参考池 / 系统/官方源 / 手动入口",
+      "scripts_write": "sync_source_sampling.py 从 config/content_sources.yaml 同步来源角色、栏目权重、启用状态和规范字段到飞书；content_sampler.py 读取 default_enabled 控制默认采样。",
       "human_edit": "新增对标账号、补 AIHOT 页面、维护来源规则；具体 URL 投喂走 02 URL投喂入口。"
     },
     {
@@ -249,7 +253,7 @@
     {"table": "00 主控台", "field": "优先级", "purpose": "决定卡片在伪仪表盘中的重要程度。", "required": "是", "producer": "脚本/人工", "consumer": "用户", "user_editable": "是", "ai": "否", "human_judgment": "今天是否必须处理。"},
     {"table": "00 主控台", "field": "状态", "purpose": "主控台动作状态，只表达入口或动作是否待处理，不代表选题/制作状态。", "required": "是", "producer": "人工", "consumer": "用户", "user_editable": "是", "ai": "否", "human_judgment": "动作是否完成、暂缓或需要继续。"},
     {"table": "00 主控台", "field": "下一步", "purpose": "告诉用户下一步该打开哪张表或看哪条规则。", "required": "是", "producer": "脚本/人工", "consumer": "用户", "user_editable": "是", "ai": "否", "human_judgment": "下一步是否仍然合理。"},
-    {"table": "01 来源与采样", "field": "来源角色", "purpose": "区分 current_main_competitor、current_aux_competitor、historical_reference、system_hotspot_source、official_source、manual_entry。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、content_sampler.py", "user_editable": "低频", "ai": "否", "human_judgment": "来源是否仍属于当前主采样池。"},
+    {"table": "01 来源与采样", "field": "来源角色", "purpose": "区分 current_main_competitor、current_aux_competitor、current_main_competitor_placeholder、historical_reference、system_hotspot_source、official_source、manual_entry、legacy_manual_entry。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、content_sampler.py", "user_editable": "低频", "ai": "否", "human_judgment": "来源是否仍属于当前主采样池。"},
     {"table": "01 来源与采样", "field": "是否参与主采样", "purpose": "判断来源是否默认进入主采样和今日Top10候选输入；历史对标必须为否。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、content_sampler.py", "user_editable": "低频", "ai": "否", "human_judgment": "某个历史账号是否重新启用。"},
     {"table": "01 来源与采样", "field": "栏目权重", "purpose": "把主对标所属栏目权重显性展示：AI业务定调15%、真实工作流改造25%、汽车与内容营销25%、AI导演工作流25%、AI项目复盘10%。系统源、官方源、手动入口可为不适用。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、Top10软配额规则", "user_editable": "低频", "ai": "否", "human_judgment": "权重是否符合当前账号阶段。"},
     {"table": "02 URL投喂入口", "field": "URL", "purpose": "临时粘贴公众号文章、抖音单条视频、RSS/Atom或普通网页链接。", "required": "是", "producer": "人工", "consumer": "url_content_resolver.py", "user_editable": "是", "ai": "否", "human_judgment": "链接是否值得投喂。"},

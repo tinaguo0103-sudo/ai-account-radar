@@ -7,7 +7,9 @@
     "historical_reference": "历史对标账号，保留为备用观察池，默认不参与今日Top10主采样。",
     "system_hotspot_source": "系统热点源，例如 AIHOT，作为热点输入但不属于对标账号权重池。",
     "official_source": "官方/技术/工具源，作为背景和热点输入，不属于对标账号权重池。",
-    "manual_entry": "手动或半自动投喂入口，例如 02 URL投喂入口。"
+    "manual_entry": "手动或半自动投喂入口，例如 02 URL投喂入口。",
+    "current_main_competitor_placeholder": "当前主对标栏目占位，用于显性展示某个栏目权重暂缺账号，不参与主采样。",
+    "legacy_manual_entry": "旧手动入口说明，保留历史语义但停用；当前统一使用 02 URL投喂入口。"
   },
   "source_types": [
     "AIHOT热点",
@@ -191,12 +193,12 @@
     },
     {
       "id": "manual_link_paste_ocr",
-      "source_group": "manual_entry",
-      "source_role": "manual_entry",
+      "source_group": "legacy_manual_entry",
+      "source_role": "legacy_manual_entry",
       "is_main_competitor": false,
       "participates_main_sampling": false,
       "column_weight": "不适用",
-      "default_enabled": true,
+      "default_enabled": false,
       "source_type": "手动补充",
       "platform": "飞书/本地文件",
       "account_name": "手动链接/粘贴/截图转文字",
@@ -205,22 +207,22 @@
       "fetch_method": "url_content_resolver_or_manual_text",
       "column": "",
       "weight_group": "",
-      "priority": "medium",
+      "priority": "low",
       "needs_url": false,
       "sample_frequency": "manual",
       "learn_focus": "用户临时投喂公众号文章、抖音单条、RSS/Atom或普通网页链接。",
-      "do_not_copy": "不是对标账号，不参与栏目权重。",
+      "do_not_copy": "不是当前正式入口，不参与主采样。",
       "convert_direction": "解析成标准 ContentItem 后进入 03 内容收件箱。",
-      "remarks": "02 URL投喂入口 是当前主入口；其他同类名称只作为入口说明。"
+      "remarks": "旧入口说明，当前统一使用 02 URL投喂入口。"
     },
     {
       "id": "paste_entry",
-      "source_group": "manual_entry",
-      "source_role": "manual_entry",
+      "source_group": "legacy_manual_entry",
+      "source_role": "legacy_manual_entry",
       "is_main_competitor": false,
       "participates_main_sampling": false,
       "column_weight": "不适用",
-      "default_enabled": true,
+      "default_enabled": false,
       "source_type": "手动补充",
       "platform": "飞书/本地文件",
       "account_name": "粘贴入口",
@@ -229,13 +231,13 @@
       "fetch_method": "url_content_resolver_or_manual_text",
       "column": "",
       "weight_group": "",
-      "priority": "medium",
+      "priority": "low",
       "needs_url": false,
       "sample_frequency": "manual",
       "learn_focus": "用户临时投喂公众号文章、抖音单条、RSS/Atom或普通网页链接。",
-      "do_not_copy": "不是对标账号，不参与栏目权重。",
+      "do_not_copy": "不是当前正式入口，不参与主采样。",
       "convert_direction": "解析成标准 ContentItem 后进入 03 内容收件箱。",
-      "remarks": "02 URL投喂入口 是当前主入口；其他同类名称只作为入口说明。"
+      "remarks": "旧入口说明，当前统一使用 02 URL投喂入口。"
     },
     {
       "id": "url_inbox_entry",
@@ -259,7 +261,7 @@
       "learn_focus": "用户临时投喂公众号文章、抖音单条、RSS/Atom或普通网页链接。",
       "do_not_copy": "不是对标账号，不参与栏目权重。",
       "convert_direction": "解析成标准 ContentItem 后进入 03 内容收件箱。",
-      "remarks": "02 URL投喂入口 是当前主入口；其他同类名称只作为入口说明。"
+      "remarks": "当前唯一正式 URL 投喂入口。"
     },
     {
       "id": "kazk_wechat_article",
@@ -476,6 +478,30 @@
       "do_not_copy": "不照搬教程路径和具体案例，不把工具步骤当最终观点。",
       "convert_direction": "转成AI导演工作流中的Brief、分镜、素材、修改和验收方法。",
       "remarks": "当前主对标，参与主采样和栏目权重。"
+    },
+    {
+      "id": "ai_project_review_placeholder",
+      "source_group": "current_main_competitor_placeholder",
+      "source_role": "current_main_competitor_placeholder",
+      "is_main_competitor": false,
+      "participates_main_sampling": false,
+      "column_weight": "10%",
+      "default_enabled": false,
+      "source_type": "competitor_placeholder",
+      "platform": "待定",
+      "account_name": "AI项目复盘-待定",
+      "url": "",
+      "content_shape": "placeholder",
+      "fetch_method": "待定",
+      "column": "AI项目复盘",
+      "weight_group": "AI项目复盘",
+      "priority": "low",
+      "needs_url": false,
+      "sample_frequency": "待定",
+      "learn_focus": "后续用于承接 AI 项目复盘、Build in Public、产品化复盘、服务化案例等对标账号。",
+      "do_not_copy": "占位来源，不参与主采样。",
+      "convert_direction": "确定账号后再启用并转成项目复盘、服务化案例和产品化复盘选题。",
+      "remarks": "当前栏目占位，不参与主采样；确定账号后再启用。"
     },
     {
       "id": "kazk_douyin_tutorial",
@@ -1124,6 +1150,30 @@
       "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
+    },
+    {
+      "id": "kazk_legacy_merged",
+      "source_group": "historical_reference",
+      "source_role": "historical_reference",
+      "is_main_competitor": false,
+      "participates_main_sampling": false,
+      "column_weight": "不适用",
+      "default_enabled": false,
+      "source_type": "competitor_legacy_merged",
+      "platform": "公众号/X/AIHOT",
+      "account_name": "数字生命卡兹克",
+      "url": "https://x.com/Khazix0918",
+      "content_shape": "legacy_merged_source",
+      "fetch_method": "manual_sample",
+      "column": "AI业务定调",
+      "weight_group": "AI业务定调",
+      "priority": "low",
+      "needs_url": false,
+      "sample_frequency": "backup_only",
+      "learn_focus": "旧合并来源说明；当前已拆为卡兹克公众号文章主源和卡兹克抖音教程视频辅助源。",
+      "do_not_copy": "不作为当前主采样来源。",
+      "convert_direction": "仅保留历史说明。",
+      "remarks": "旧合并来源，已拆为 数字生命卡兹克-公众号文章 和 数字生命卡兹克-抖音教程视频；本行不参与主采样。"
     }
   ]
 }

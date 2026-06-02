@@ -31,7 +31,7 @@ ALIASES: dict[str, list[str]] = {
 
 VIEW_NAMES: dict[str, list[str]] = {
     "console": ["今日工作台", "系统导航"],
-    "source_sampling": ["来源与URL入口"],
+    "source_sampling": ["当前主对标池", "历史参考池", "系统/官方源", "手动入口"],
     "url_inbox": ["URL投喂入口"],
     "content_inbox": ["内容收件箱"],
     "topic_decision": ["今日Top10"],
