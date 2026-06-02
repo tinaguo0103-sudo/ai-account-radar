@@ -44,7 +44,7 @@ SOURCE_VIEW_PLANS = {
     },
     "历史参考池": {
         "roles": {"historical_reference"},
-        "visible_fields": ["名称", "来源角色", "栏目", "平台", "默认启用", "备注"],
+        "visible_fields": ["名称", "来源角色", "栏目", "平台", "主页链接", "默认启用", "备注"],
     },
     "系统/官方源": {
         "roles": {"system_hotspot_source", "official_source"},
