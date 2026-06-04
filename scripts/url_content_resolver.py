@@ -95,6 +95,8 @@ class ContentItem:
     fetch_status: str
     failure_reason: str
     content_fingerprint: str
+    raw_text_length: int = 0
+    body_truncated: str = ""
 
 
 @dataclass
@@ -188,6 +190,8 @@ def make_failure(url: str, source_type: str, platform: str, method: str, reason:
         fetch_status="failed",
         failure_reason=reason,
         content_fingerprint=fingerprint(url, method, reason),
+        raw_text_length=0,
+        body_truncated="否",
     )
 
 
@@ -282,7 +286,7 @@ def resolve_wechat(url: str, raw_dir: Path) -> list[ContentItem]:
         content_url=url,
         content_shape="长文",
         cover_text="",
-        body_or_transcript=markdown[:20000],
+        body_or_transcript=markdown,
         summary_or_description=summary or body[:500],
         published_at=published_at,
         comments_or_questions="",
@@ -291,6 +295,8 @@ def resolve_wechat(url: str, raw_dir: Path) -> list[ContentItem]:
         fetch_status="success",
         failure_reason="",
         content_fingerprint=fingerprint("wechat", url, title),
+        raw_text_length=len(markdown),
+        body_truncated="是" if len(markdown) > 20000 else "否",
     )]
 
 
@@ -377,6 +383,8 @@ def resolve_douyin(url: str, raw_dir: Path) -> list[ContentItem]:
         fetch_status="success",
         failure_reason="",
         content_fingerprint=fingerprint("douyin", url, title),
+        raw_text_length=len(title),
+        body_truncated="否",
     )]
 
 
@@ -439,6 +447,8 @@ def resolve_feed(url: str, raw_dir: Path, max_items: int) -> list[ContentItem]:
             fetch_status="success",
             failure_reason="",
             content_fingerprint=fingerprint("rss", link, title),
+            raw_text_length=len(summary),
+            body_truncated="否",
         ))
     return items
 
@@ -471,7 +481,7 @@ def resolve_web(url: str, raw_dir: Path) -> list[ContentItem]:
         content_url=url,
         content_shape="web_article",
         cover_text="",
-        body_or_transcript=text[:20000],
+        body_or_transcript=text,
         summary_or_description=" ".join(text.split())[:1000],
         published_at="",
         comments_or_questions="",
@@ -480,6 +490,8 @@ def resolve_web(url: str, raw_dir: Path) -> list[ContentItem]:
         fetch_status="success",
         failure_reason="",
         content_fingerprint=fingerprint("web", url, title),
+        raw_text_length=len(text),
+        body_truncated="是" if len(text) > 20000 else "否",
     )]
 
 
@@ -583,14 +595,23 @@ def item_to_manual_row(item: ContentItem) -> dict[str, str]:
         "抓取状态": item.fetch_status,
         "失败原因": item.failure_reason,
         "内容指纹": item.content_fingerprint,
+        "正文原始长度": str(item.raw_text_length or len(item.body_or_transcript or "")),
+        "正文是否截断": item.body_truncated or ("是" if len(item.body_or_transcript or "") > 20000 else "否"),
     }
 
 
 def item_to_feishu_fields(item: ContentItem, duplicate: bool = False) -> dict[str, str]:
     failed = item.fetch_status != "success"
     body = item.body_or_transcript or ""
-    is_full = "是" if item.source_type in {"公众号文章", "公开网页", "RSS/Atom"} and len(body) > 500 else "否"
-    parse_note = "已解析全文，可用于内容拆解。" if is_full == "是" else "P0浅层解析：仅含标题/文案/作者/封面/摘要，不含抖音口播字幕和评论区。"
+    raw_len = item.raw_text_length or len(body)
+    is_full = "是" if item.source_type in {"公众号文章", "公开网页", "RSS/Atom"} and raw_len > 500 else "否"
+    truncated = raw_len > 20000
+    if is_full == "是":
+        parse_note = "已解析全文，可用于内容拆解。"
+        if truncated:
+            parse_note += f" 飞书正文字段截断到20000字，原始全文见payload路径，原始长度{raw_len}字。"
+    else:
+        parse_note = "P0浅层解析：仅含标题/文案/作者/封面/摘要，不含抖音口播字幕和评论区。"
     run_id = current_run_id()
     date = today_slug()
     return {
@@ -607,7 +628,7 @@ def item_to_feishu_fields(item: ContentItem, duplicate: bool = False) -> dict[st
         "作者/账号": item.account_name,
         "内容指纹": item.content_fingerprint,
         "正文/全文": body[:20000],
-        "正文长度": str(len(body)),
+        "正文长度": str(raw_len),
         "是否全文解析": is_full,
         "原始payload路径": item.raw_payload_path,
         "解析说明": parse_note,

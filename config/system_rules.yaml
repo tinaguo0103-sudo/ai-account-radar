@@ -51,7 +51,15 @@
     },
     {
       "name": "URL采样P0支持",
-      "rule": "url_content_resolver.py 正式支持公众号文章URL、抖音单条视频URL（含搜索页modal_id和iesdouyin/share/video）、RSS/Atom、普通网页Jina Reader；默认dry-run输出本地文件，显式 --write-feishu 才写入 03 内容收件箱。公众号文章会保留正文/全文、正文长度、原始payload路径；抖音P0仅做浅层解析，不含口播字幕和评论区。"
+      "rule": "url_content_resolver.py 正式支持公众号文章URL、抖音单条视频URL（含搜索页modal_id和iesdouyin/share/video）、RSS/Atom、普通网页Jina Reader；默认dry-run输出本地文件，显式 --write-feishu 才写入 03 内容收件箱。公众号文章按全文解析，保留正文/全文、正文长度、是否全文解析、原始payload路径和解析说明；如飞书正文字段截断，解析说明必须标出原始长度和payload路径。抖音P0仅做浅层解析，不含口播字幕和评论区。"
+    },
+    {
+      "name": "抖音能力分层",
+      "rule": "P0为单条视频浅层解析：标题/文案、作者、视频ID、封面、发布时间、标签、下载链接，不下载视频；P1为下载或访问视频后通过ASR/OCR提取口播字幕和画面文字，需要DASHSCOPE_API_KEY/百炼API key等外部凭证；P2为账号主页最近N条和评论区问题，除非稳定且无需登录，否则暂缓。"
+    },
+    {
+      "name": "AIHOT日报接口",
+      "rule": "AIHOT精选使用 /api/public/items?mode=selected&take=30；AIHOT日报使用 /api/public/daily。不得把 AIHOT 首页 HTML 当 JSON 解析。单个AIHOT源失败时记录来源名、URL、状态、失败原因和preview，显示部分源失败但不阻塞主流程。"
     },
     {
       "type": "飞书API规则",
@@ -63,7 +71,7 @@
     },
     {
       "name": "URL采样暂不支持",
-      "rule": "暂不支持抖音主页自动抓最近N条、抖音口播/字幕转写、评论区抓取、小红书、Twitter/X、Reddit；不得下载视频、保存cookie/token/API key或绕过登录验证码反爬。"
+      "rule": "默认暂不支持抖音主页自动抓最近N条、抖音口播/字幕转写、评论区抓取、小红书、Twitter/X、Reddit；不得保存cookie/token/API key或绕过登录验证码反爬。抖音ASR/OCR只能作为显式P1增强，不进入默认P0链路。"
     }
   ],
   "today_top10_quota": {

@@ -129,6 +129,8 @@ class ContentItem:
     learn_focus: str = ""
     do_not_copy: str = ""
     convert_direction: str = ""
+    raw_text_length: int = 0
+    body_truncated: str = ""
 
 
 class TextExtractor(HTMLParser):
@@ -218,6 +220,44 @@ def fetch_json(url: str) -> tuple[dict[str, Any] | None, str, str]:
     except json.JSONDecodeError as exc:
         preview = normalize_space(text)[:500]
         return None, f"failed:JSONDecodeError line={exc.lineno} col={exc.colno} msg={exc.msg}", preview
+
+
+def aihot_daily_rows(data: dict[str, Any], source: dict[str, Any]) -> list[ContentItem]:
+    rows: list[ContentItem] = []
+    generated_at = data.get("generatedAt", "")
+    daily_date = data.get("date", "")
+    for section in data.get("sections", []) or []:
+        label = section.get("label", "") or "AIHOT日报"
+        for item in section.get("items", []) or []:
+            title = item.get("title", "")
+            url = item.get("sourceUrl", "") or item.get("url", "")
+            summary = item.get("summary", "") or ""
+            source_name = item.get("sourceName", "") or source["account_name"]
+            body = f"{summary} {label}".strip()
+            rows.append(ContentItem(
+                source_type="AIHOT热点",
+                platform="AIHOT",
+                account_name=source_name,
+                title=title,
+                url=url,
+                content_shape=f"日报条目/{label}",
+                cover_text="",
+                body_snippet=body,
+                published_at=generated_at or daily_date,
+                comment_questions="",
+                ocr_text="",
+                fetch_method="aihot_daily_api",
+                fetch_status="ok",
+                failure_reason="",
+                fingerprint=fingerprint(url, title, source_name, daily_date),
+                column=normalize_column(source.get("column", "")),
+                learn_focus=source.get("learn_focus", ""),
+                do_not_copy=source.get("do_not_copy", ""),
+                convert_direction=source.get("convert_direction", ""),
+                raw_text_length=len(body),
+                body_truncated="否",
+            ))
+    return rows
 
 
 def meta_content(page: str, names: list[str]) -> str:
@@ -327,6 +367,10 @@ def aihot_items(source: dict[str, Any], fetch: bool) -> tuple[list[ContentItem],
         logs.append(f"{source['account_name']}: {status} | url={source['url']}")
     if not data:
         return [], logs
+    if isinstance(data.get("sections"), list):
+        rows = aihot_daily_rows(data, source)
+        logs.append(f"{source['account_name']}: parsed_daily_sections={len(rows)}")
+        return rows, logs
     rows: list[ContentItem] = []
     for item in data.get("items", []):
         title = item.get("title", "")
@@ -354,6 +398,8 @@ def aihot_items(source: dict[str, Any], fetch: bool) -> tuple[list[ContentItem],
             learn_focus=source.get("learn_focus", ""),
             do_not_copy=source.get("do_not_copy", ""),
             convert_direction=source.get("convert_direction", ""),
+            raw_text_length=len(f"{summary} {category}".strip()),
+            body_truncated="否",
         ))
     return rows, logs
 
@@ -419,6 +465,8 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
                 fetch_status=raw.get("抓取状态", "success"),
                 failure_reason=raw.get("失败原因", ""),
                 fingerprint=fp,
+                raw_text_length=int(raw.get("正文原始长度") or len(raw.get("正文/字幕/简介片段", ""))),
+                body_truncated=raw.get("正文是否截断", ""),
             )
         elif source_type == "公众号文章" and url:
             item = extract_article(url, raw)
@@ -957,7 +1005,8 @@ def ensure_content_inbox_fields(token: str, app_token: str, table_id: str) -> li
 
 
 def is_full_text_item(item: ContentItem) -> str:
-    if item.source_type in {"公众号文章", "公开网页", "RSS/Atom"} and len(item.body_snippet or "") > 500:
+    raw_len = item.raw_text_length or len(item.body_snippet or "")
+    if item.source_type in {"公众号文章", "公开网页", "RSS/Atom"} and raw_len > 500:
         return "是"
     return "否"
 
@@ -966,7 +1015,10 @@ def parse_note(item: ContentItem) -> str:
     if item.source_type == "对标视频" and item.platform == "抖音":
         return "P0浅层解析：当前仅含标题/文案/作者/封面/发布时间，不含口播字幕和评论区。"
     if is_full_text_item(item) == "是":
-        return "已解析正文，可用于内容拆解；正文字段可能按飞书长度截断，原始payload路径保留本地全文。"
+        raw_len = item.raw_text_length or len(item.body_snippet or "")
+        if raw_len > 20000:
+            return f"已解析全文并用于内容拆解；飞书正文字段截断到20000字，原始payload路径保留本地全文，原始长度{raw_len}字。"
+        return "已解析全文并用于内容拆解；原始payload路径保留本地全文。"
     if item.source_type == "AIHOT热点":
         return "AIHOT条目摘要进入内容拆解；建议发布前回原文核对。"
     return "已进入内容拆解，按当前可获取文本分析。"
@@ -976,6 +1028,7 @@ def item_to_content_inbox_fields(item: ContentItem, run_id: str, is_new: bool, d
     status = "success" if item.fetch_status == "ok" else item.fetch_status
     failed = status not in {"ok", "success"}
     body = item.body_snippet or ""
+    raw_len = item.raw_text_length or len(body)
     date = today_slug()
     return {
         "标题": item.title or item.url,
@@ -991,7 +1044,7 @@ def item_to_content_inbox_fields(item: ContentItem, run_id: str, is_new: bool, d
         "作者/账号": item.account_name,
         "内容指纹": item.fingerprint,
         "正文/全文": body[:20000],
-        "正文长度": str(len(body)),
+        "正文长度": str(raw_len),
         "是否全文解析": is_full_text_item(item),
         "原始payload路径": item.ocr_text if item.fetch_method in {"wechat_public_html_js_content", "douyin_public_router_data", "rss_atom_xml", "jina_reader"} else "",
         "解析说明": parse_note(item),
