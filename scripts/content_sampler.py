@@ -1237,10 +1237,16 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
 
     if item.source_type == "公众号文章":
         if "卡兹克" in item.account_name or "数字生命卡兹克" in item.account_name:
-            return f"看完卡兹克这篇，我更确定：AI内容不是拼速度，是拼判断流程"
-        return f"{core}里最值得拆的，不是观点本身，而是它怎么建立判断力"
+            if any(k in text for k in ["Claude Code", "原则", "团队"]):
+                return "卡兹克拆 Claude Code 这篇，最值得抄的是它的项目复盘方式"
+            return "卡兹克这篇内部分享，真正值得学的是他怎么筛选AI信息"
+        return f"{core}最值得拆的，是它怎么让读者相信作者懂行"
     if item.source_type == "对标视频":
         if item.fetch_method == "douyin_public_router_data":
+            if any(k in text for k in ["小云雀", "短剧Agent", "AI短剧"]):
+                return "小云雀短剧Agent这条视频，最值得看的是它怎么承诺成片效果"
+            if any(k in text for k in ["一镜到底", "爆款视频", "视频密码"]):
+                return "这条AI爆款视频教程，先看它怎么把工具包装成交付承诺"
             return f"{core}最值得看的，不是工具名，而是它怎么承诺结果"
         return f"{core}这条视频，真正能学的是钩子、结构和转化入口"
 
@@ -1261,17 +1267,27 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
     if "llm-wiki" in lower or "karpathy" in lower:
         return "Karpathy把AI知识做成llm-wiki后，内容团队也该有自己的资料入口"
     if "minimax" in lower or "长上下文" in text or "100万" in text:
-        return "长上下文继续升级后，AI助理最该解决的是资料整理到验收"
+        return "长上下文继续升级后，AI助理最该先解决资料整理这件事"
+    if "nemotron" in lower and any(k in text for k in ["种子", "问答", "合成"]):
+        return "Nemotron开始合成任务数据后，普通团队也该重看自己的训练材料"
+    if "nemotron" in lower and ("ultra" in lower or "nvidia" in lower):
+        return "NVIDIA继续推Nemotron后，企业AI最该看的不是模型名，是谁来评测结果"
+    if "openshell" in lower:
+        return "OpenShell继续更新后，中间层AI工具不能只靠包装界面了"
+    if "openjarvis" in lower:
+        return "OpenJarvis可以先观察：它离真正接管本地任务还差哪一步"
+    if any(k in text for k in ["智能体工程", "Agent工程", "实战窍门"]):
+        return "Agent工程经验开始成体系后，最值钱的是那张踩坑清单"
 
     if content_type == "踩坑提醒":
-        return f"{event}提醒我：AI项目最容易漏掉的是风险复核"
+        return f"{event}翻车点不在AI，而在上线前少了一道复核"
     if content_type == "工作流拆解":
-        return f"{event}上新后：先看它能替团队省掉哪一步"
+        return f"{event}上新后，先看它能替谁省掉一小时"
     if content_type == "资产沉淀":
-        return f"{event}这类更新：适合拆成一张业务验收清单"
+        return f"{event}不只是新闻，它可以变成一张实操清单"
     if content_type == "暂存观察":
-        return f"{event}：先放观察，业务角度还要再补证据"
-    return f"{event}这类更新：别只看发布信息，要看谁的工作会变简单"
+        return f"{event}先放观察：热度有了，但还缺一个能讲透的案例"
+    return f"{event}别只看发布，要看它让哪类人少做一步"
 
 
 def title_alternatives(topic: dict[str, Any], item: ContentItem, publishable: str) -> str:
@@ -1279,17 +1295,23 @@ def title_alternatives(topic: dict[str, Any], item: ContentItem, publishable: st
     content_type = topic.get("内容类型", "")
     alternatives = [publishable]
     if content_type == "对标学习":
-        alternatives.append(f"{short_title(item.title)}：我会学它的结构，不学它的人设")
-        alternatives.append("这条对标内容最值得拆的是：它怎么让用户相信作者懂行")
+        alternatives.append(f"{short_title(item.title)}这条内容，真正值得学的是专业感怎么建立")
+        alternatives.append("同样讲AI，为什么这类内容更容易让人相信你做过项目")
     elif content_type == "踩坑提醒":
-        alternatives.append(f"{event}不是八卦，是AI内容投放前的风险提醒")
-        alternatives.append("AI素材进投放前，至少要多过一遍这张审核清单")
+        alternatives.append(f"{event}不是八卦，是AI内容上线前的风险提醒")
+        alternatives.append("AI素材别急着投放，先过一遍这几个风险点")
     elif content_type == "工作流拆解":
-        alternatives.append(f"{event}之后，原来的工具链哪一步可以被合并")
-        alternatives.append(f"非技术人看{event}，先看它能接管哪类任务")
+        alternatives.append(f"{event}之后，原来的工具链哪一步最容易被省掉")
+        alternatives.append(f"{event}会让谁少做重复活？这才是我想讲的重点")
+    elif content_type == "资产沉淀":
+        alternatives.append(f"{event}别当新闻看，可以直接拆成一张实操清单")
+        alternatives.append(f"看完{event}，我会先做一张团队自查表")
+    elif content_type == "暂存观察":
+        alternatives.append(f"{event}先别急着发，等一个更清楚的落地案例")
+        alternatives.append(f"{event}热度够了，但现在还差一个好角度")
     else:
-        alternatives.append(f"{event}别只看发布信息，要看它影响哪类业务动作")
-        alternatives.append(f"普通人蹭{event}，应该讲成一个可执行动作")
+        alternatives.append(f"{event}别只看发布，要看它会改掉谁的日常工作")
+        alternatives.append(f"普通人蹭{event}，可以从这一个变化讲起")
     return "\n".join(dict.fromkeys(alternatives[:3]))
 
 
