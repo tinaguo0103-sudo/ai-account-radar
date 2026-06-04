@@ -502,26 +502,9 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 
 ## 自动拉取边界
 
-当前稳定自动拉取来源：
+当前默认自动源是 AIHOT精选、AIHOT日报、官方 RSS/Atom、官方网页/普通网页/Jina Reader，以及 `02 URL投喂入口` 的单条 URL 投喂。主对标账号自动抓取仍处于 P1 `source_watch_probe` 阶段：抖音主页最近 N 条、公众号历史文章列表不直接进入默认 `daily_pipeline.py`。`--include-resolved-url-intake` 只用于复用已解析 URL 做规则测试，不作为默认日常流程。
 
-- AIHOT精选；
-- AIHOT日报；
-- 官方 RSS / Atom；
-- 官方网页或公开网页，必要时走 Jina Reader；
-- 其他公开 API / RSS，前提是无需登录、无需 cookie、无需绕过反爬。
-
-当前主对标池的自动拉取判断：
-
-- `数字生命卡兹克-公众号文章`：单篇公众号文章 URL 可以解析全文；公众号历史文章自动发现暂不稳定，建议先用 URL 投喂或后续单独做 `source_watch_probe`。
-- `数字生命卡兹克-抖音教程视频`：单条抖音视频 URL 可以浅层解析；主页最近 N 条自动发现暂缓。
-- `秋芝2046`、`xuan酱`、`ami.moment`、`Bob同学`、`数字游牧人`、`编导李让`、`何止维`、`徐老师AI`：当前都按抖音视频源处理。抖音主页最新视频自动发现容易遇到公开页面 JS 壳、登录态、验证码、风控和接口变化，不进入默认主流程。
-
-推荐路线：
-
-- P0：AIHOT + 官方/RSS/网页自动拉取，URL 投喂作为人工补充。
-- P0.5：用 `--include-resolved-url-intake` 让已解析 URL 复用参与测试，方便调选题规则。
-- P1：为主对标账号单独做 `source_watch_probe`，只输出可行性报告，不写正式表。
-- P2：只有找到稳定、低风险、无需登录的工具后，再考虑自动抓主对标账号最新内容。
+完整路线、主对标池逐个判断和未来 PoC 分支命名见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md)。
 
 ## 采集边界
 
