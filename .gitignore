@@ -24,6 +24,7 @@ env/
 feishu_created_base.json
 
 # Generated runtime outputs
+.worktrees/
 output/
 output_no_fetch_test/
 data/manual/url_intake*.jsonl
