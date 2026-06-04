@@ -87,10 +87,11 @@ def main() -> int:
     parser.add_argument("--no-fetch-aihot", action="store_true", help="Skip AIHOT network fetch and use manual samples only.")
     parser.add_argument("--manual", default=str(DEFAULT_MANUAL), help="Path to JSONL manual content items.")
     parser.add_argument("--resolve-url-intake", action="store_true", help="Resolve URLs from Feishu 02 URL投喂入口 into ContentItem rows before sampling.")
+    parser.add_argument("--include-resolved-url-intake", action="store_true", help="Testing mode: reuse already parsed Feishu 02 URLs as candidates without changing default intake behavior.")
     parser.add_argument("--url-file", help="Resolve URLs from a local text file into ContentItem rows before sampling.")
     args = parser.parse_args()
 
-    if args.write_feishu or args.resolve_url_intake:
+    if args.write_feishu or args.resolve_url_intake or args.include_resolved_url_intake:
         require_feishu_env()
 
     py = sys.executable
@@ -101,10 +102,12 @@ def main() -> int:
     step_env["RUN_ID"] = run_id
     step_env["AI_ACCOUNT_RADAR_RUN_ID"] = run_id
 
-    if args.resolve_url_intake or args.url_file:
+    if args.resolve_url_intake or args.include_resolved_url_intake or args.url_file:
         resolver_cmd = [py, str(ROOT / "scripts" / "url_content_resolver.py"), "--out", str(URL_RESOLVED)]
-        if args.resolve_url_intake:
+        if args.resolve_url_intake or args.include_resolved_url_intake:
             resolver_cmd.append("--feishu-intake")
+        if args.include_resolved_url_intake:
+            resolver_cmd.append("--include-resolved-url-intake")
         if args.url_file:
             resolver_cmd.extend(["--file", args.url_file])
         if args.write_feishu:

@@ -39,6 +39,8 @@ python3 scripts/douyin_video_transcribe.py --url <douyin_url> --asr local
 5. 可选抽帧做 OCR / VLM。
 6. 把转写结果作为补充字段进入内容拆解，但不替代人工判断。
 
+DashScope / 百炼不是必须。它只是当前工程上最轻的 P1 路线之一。完整视频理解不是“把抖音链接丢给百炼就结束”，而是：抖音 URL 解析 → 拿视频 URL → 下载或提交可访问视频 → ASR 转写口播 → 转写文本再进入内容拆解。
+
 ### 路线 A：DashScope / 百炼 ASR
 
 优点：
@@ -50,7 +52,7 @@ python3 scripts/douyin_video_transcribe.py --url <douyin_url> --asr local
 缺点：
 
 - 需要 API key。
-- 有调用成本。
+- 有调用成本，通常按语音时长或任务量计费；适合小规模显式转写测试，具体费用以官方控制台和文档为准。
 - 依赖外部服务稳定性和配额。
 
 适合先做 P1 显式命令，不适合默认跑。
@@ -66,7 +68,7 @@ python3 scripts/douyin_video_transcribe.py --url <douyin_url> --asr local
 
 - 需要安装 `ffmpeg`、模型和运行环境。
 - 首次部署较重。
-- 速度和硬件压力更大，长视频更明显。
+- 速度和硬件压力更大，长视频更明显；对少量指定视频可行，但不建议当前作为每日批量默认链路。
 
 适合后续需要低成本批量转写时评估。
 
@@ -82,6 +84,7 @@ python3 scripts/douyin_video_transcribe.py --url <douyin_url> --asr local
 - 需要本地模型和运行环境。
 - 工程复杂度高于云端 ASR。
 - 仍需要处理下载、抽音频、长视频切分和错误重试。
+- 对中文口播可能更适合，但本地负载、模型管理和环境维护成本高于云端方案。
 
 适合作为本地化 P1/P2 方案，不建议当前默认接入。
 

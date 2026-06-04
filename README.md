@@ -149,6 +149,24 @@ python3 scripts/daily_pipeline.py --url-file data/manual/urls.example.txt
 
 默认不启用 URL 解析，只有传入 `--url-file` 或 `--resolve-url-intake` 时才运行 resolver。
 
+规则测试时，如果飞书里没有新的待处理 URL，但你想让已解析过的公众号/抖音内容重新参与本轮候选池，可以显式加复用参数：
+
+```bash
+FEISHU_APP_ID=xxx \
+FEISHU_APP_SECRET=xxx \
+FEISHU_BASE_APP_TOKEN=xxx \
+python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-intake
+```
+
+这个参数不会改变默认日常流程：默认仍只处理待解析 URL；开启后会复用 `02 URL投喂入口` 中已解析/重复/已存在的 URL，重新生成本地 ContentItem 参与候选，不重复写入 `03 内容收件箱`，也不会把 `02` 的状态改回待解析。正式写入时可加：
+
+```bash
+FEISHU_APP_ID=xxx \
+FEISHU_APP_SECRET=xxx \
+FEISHU_BASE_APP_TOKEN=xxx \
+python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-intake --write-feishu
+```
+
 飞书投喂方式：在 `02 URL投喂入口` 的 `URL` 字段粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接，然后运行：
 
 ```bash
@@ -178,6 +196,8 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 ```
 
 `--write-feishu` 会把解析出的新 URL 内容写入 `03 内容收件箱`，同时把本轮参与分析的 AIHOT 等 ContentItem 也同步进 `03`，再把今日10写入 `04 分析与选题`，并回写 `02 URL投喂入口` 的处理状态、失败原因和解析结果摘要。`02 URL投喂入口` 只作为临时链接入口，解析完成后可手动删除记录，不需要长期保留。
+
+今日 Top10 还有两个来源约束：AIHOT 可以是主来源，但默认最多占 8 条；如果本轮有 URL 投喂或开启已解析 URL 复用，并且 URL 内容解析成功、分数过线，系统会优先保留至少 1 条 URL 候选进入 Top10 选择池。调试文件 `output/debug_today10_generation.csv` / `.md` 会显示每条候选是否来自已解析 URL 复用、是否进入 Top10、标题结构模板、事件锚点和业务变化判断。
 
 确认 dry-run 输出没问题后，显式写入飞书 `04 分析与选题` 并刷新 `00 主控台`：
 
@@ -479,6 +499,29 @@ AIHOT 官方公开方式包括网页、Skill、RSS 和 REST API。公开页面�
 如果单个 AIHOT 源返回 HTML、空内容或非 JSON，脚本会记录来源名、URL、HTTP/解析状态和返回 preview，并在主控台显示“部分源失败”；不会阻塞 AIHOT精选、内容拆解或今日Top10。
 
 AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚类去重、模型/产品/行业/论文/技巧分桶、固定日报。但你的二次筛选标准不是“AI 新闻重要吗”，而是“它能否进入内容团队、品牌增长、AI导演、Agent或创业项目的业务现场”。
+
+## 自动拉取边界
+
+当前稳定自动拉取来源：
+
+- AIHOT精选；
+- AIHOT日报；
+- 官方 RSS / Atom；
+- 官方网页或公开网页，必要时走 Jina Reader；
+- 其他公开 API / RSS，前提是无需登录、无需 cookie、无需绕过反爬。
+
+当前主对标池的自动拉取判断：
+
+- `数字生命卡兹克-公众号文章`：单篇公众号文章 URL 可以解析全文；公众号历史文章自动发现暂不稳定，建议先用 URL 投喂或后续单独做 `source_watch_probe`。
+- `数字生命卡兹克-抖音教程视频`：单条抖音视频 URL 可以浅层解析；主页最近 N 条自动发现暂缓。
+- `秋芝2046`、`xuan酱`、`ami.moment`、`Bob同学`、`数字游牧人`、`编导李让`、`何止维`、`徐老师AI`：当前都按抖音视频源处理。抖音主页最新视频自动发现容易遇到公开页面 JS 壳、登录态、验证码、风控和接口变化，不进入默认主流程。
+
+推荐路线：
+
+- P0：AIHOT + 官方/RSS/网页自动拉取，URL 投喂作为人工补充。
+- P0.5：用 `--include-resolved-url-intake` 让已解析 URL 复用参与测试，方便调选题规则。
+- P1：为主对标账号单独做 `source_watch_probe`，只输出可行性报告，不写正式表。
+- P2：只有找到稳定、低风险、无需登录的工具后，再考虑自动抓主对标账号最新内容。
 
 ## 采集边界
 

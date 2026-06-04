@@ -97,6 +97,7 @@ class ContentItem:
     content_fingerprint: str
     raw_text_length: int = 0
     body_truncated: str = ""
+    reused_url: str = "否"
 
 
 @dataclass
@@ -104,6 +105,7 @@ class IntakeRecord:
     record_id: str
     url: str
     status: str
+    reused: bool = False
 
 
 class BlockTextParser(HTMLParser):
@@ -558,7 +560,7 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
         page_token = data.get("page_token", "")
 
 
-def read_feishu_intake_records(token: str, app_token: str) -> tuple[str, list[IntakeRecord]]:
+def read_feishu_intake_records(token: str, app_token: str, include_resolved: bool = False) -> tuple[str, list[IntakeRecord]]:
     tables = table_map(token, app_token)
     table_id = resolve_table_id(tables, "url_inbox")
     if not table_id:
@@ -569,11 +571,12 @@ def read_feishu_intake_records(token: str, app_token: str) -> tuple[str, list[In
     for record in rows:
         fields = record.get("fields", {})
         status = str(fields.get("处理状态", ""))
-        if status in {"已解析", "解析失败", "重复", "已存在", "已处理", "跳过"}:
+        resolved = status in {"已解析", "重复", "已存在", "已处理"}
+        if status in {"解析失败", "跳过"} or (resolved and not include_resolved):
             continue
         url = normalize_url(fields.get("URL", ""))
         if url and url not in seen_urls:
-            records.append(IntakeRecord(record_id=record.get("record_id", ""), url=url, status=status))
+            records.append(IntakeRecord(record_id=record.get("record_id", ""), url=url, status=status, reused=resolved))
             seen_urls.add(url)
     return table_id, records
 
@@ -597,6 +600,7 @@ def item_to_manual_row(item: ContentItem) -> dict[str, str]:
         "内容指纹": item.content_fingerprint,
         "正文原始长度": str(item.raw_text_length or len(item.body_or_transcript or "")),
         "正文是否截断": item.body_truncated or ("是" if len(item.body_or_transcript or "") > 20000 else "否"),
+        "是否来自已解析URL复用": item.reused_url,
     }
 
 
@@ -701,6 +705,9 @@ def update_url_intake_records(
     updated = 0
     skipped = 0
     for record in records:
+        if record.reused:
+            skipped += 1
+            continue
         outcome = outcomes_by_url.get(record.url)
         if not outcome:
             skipped += 1
@@ -809,6 +816,7 @@ def main() -> int:
     parser.add_argument("--file", help="Local text file with one URL per line.")
     parser.add_argument("--url", action="append", default=[], help="URL to resolve; can be repeated.")
     parser.add_argument("--feishu-intake", action="store_true", help="Read URLs from Feishu 02 URL投喂入口.")
+    parser.add_argument("--include-resolved-url-intake", action="store_true", help="Also reuse already parsed Feishu 02 URLs for local candidate testing; does not rewrite their intake status.")
     parser.add_argument("--write-feishu", action="store_true", help="Write deduped rows to Feishu 03 内容收件箱. Default is dry-run.")
     parser.add_argument("--dry-run", action="store_true", help="Dry-run alias for clarity; dry-run is the default.")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="Output JSONL path.")
@@ -828,7 +836,7 @@ def main() -> int:
     if args.feishu_intake:
         app_token = require_feishu_env()
         token = feishu.tenant_token()
-        url_inbox_table_id, intake_records = read_feishu_intake_records(token, app_token)
+        url_inbox_table_id, intake_records = read_feishu_intake_records(token, app_token, include_resolved=args.include_resolved_url_intake)
         urls.extend(record.url for record in intake_records)
     urls = list(dict.fromkeys(urls))
     if not urls:
@@ -852,7 +860,11 @@ def main() -> int:
     raw_dir = Path(args.raw_dir)
     items: list[ContentItem] = []
     for url in urls:
-        items.extend(resolve_url(url, raw_dir, args.max_feed_items))
+        resolved_items = resolve_url(url, raw_dir, args.max_feed_items)
+        reused = any(record.url == url and record.reused for record in intake_records)
+        for item in resolved_items:
+            item.reused_url = "是" if reused else "否"
+        items.extend(resolved_items)
     seen: set[str] = set()
     deduped: list[ContentItem] = []
     local_duplicates = 0
@@ -877,6 +889,7 @@ def main() -> int:
         "csv": str(out_csv),
         "manual_jsonl": str(out_jsonl.with_name(out_jsonl.stem + "_manual.jsonl")),
         "by_status": {},
+        "reused_resolved_urls": sum(1 for record in intake_records if record.reused),
     }
     for item in deduped:
         summary["by_status"][item.fetch_status] = summary["by_status"].get(item.fetch_status, 0) + 1
