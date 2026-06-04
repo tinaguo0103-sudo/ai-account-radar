@@ -8,6 +8,7 @@ can become the user's own AI-business-system-director topic.
 from __future__ import annotations
 
 import argparse
+import collections
 import csv
 import hashlib
 import html
@@ -649,9 +650,37 @@ def short_title(title: str) -> str:
     return clean[:22] + ("..." if len(clean) > 22 else "")
 
 
+def title_token(title: str, limit: int = 18) -> str:
+    clean = re.sub(r"\s+", " ", title or "").strip()
+    clean = re.sub(r"[#＃].*$", "", clean).strip()
+    clean = re.sub(r"[：:丨|｜].*$", "", clean).strip()
+    return clean[:limit] + ("..." if len(clean) > limit else "")
+
+
+def title_template_key(title: str) -> str:
+    if "背后，哪类AI工具会先失去壁垒" in title:
+        return "product_wall_generic"
+    if "更新后，业务人该先判断它会改掉哪段工作流" in title:
+        return "generic_model_update_workflow"
+    if title.startswith("非技术人看") and "先看任务怎么验收" in title:
+        return "agent_validation_generic"
+    if "最先变的是哪一步" in title:
+        return "workflow_step_generic"
+    if "最该重排的是哪一步" in title:
+        return "content_reorder_generic"
+    if "不是prompt" in title:
+        return "ai_video_not_prompt_generic"
+    return "specific"
+
+
+def specific_event_title(item: ContentItem) -> str:
+    return title_token(item.title, 20)
+
+
 def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
     text = item_text(item)
     title = short_title(item.title)
+    event = specific_event_title(item)
     lower = text.lower()
     if any(k in text for k in ["公众号首图", "小红书", "教程步骤卡", "视觉物料", "图文卡", "视觉模板", "宣传图"]):
         if "luma" in lower:
@@ -665,6 +694,7 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "我的蹭热点角度": "视觉物料自动生成后，内容团队真正要保留的是选题判断、审美把关、品牌一致性和复盘标准。",
             "影响对象": "内容团队、品牌运营、图文生产流程、设计协作和素材复用。",
             "标题": hot_title,
+            "标题规则": "visual_content_specific",
         }
     if any(k.lower() in lower for k in ["shein", "ai假人", "虚假广告", "带货", "品牌", "营销", "信任", "合规", "审核", "骗子"]):
         return {
@@ -672,6 +702,23 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "我的蹭热点角度": "这类热点不该只讲AI翻车，而要讲品牌内容团队如何补素材审核、AI生成标识、虚假人设识别和投放前风控。",
             "影响对象": "品牌内容团队、投放团队、素材审核流程、AI营销合规与消费者信任。",
             "标题": "AI假人带货翻车后，品牌内容团队最该补的是素材审核流程",
+            "标题规则": "brand_risk_specific",
+        }
+    if any(k in lower for k in ["openjarvis", "local-first"]) or "设备端个人AI智能体" in text:
+        return {
+            "角度类型": "Agent落地",
+            "我的蹭热点角度": "本地优先Agent的重点不是框架名，而是任务边界、工具调用、记忆和学习怎么被业务人验收。",
+            "影响对象": "个人Agent、设备端自动化、非技术任务流、隐私和验收标准。",
+            "标题": f"非技术人看{event}，先看任务边界和验收怎么设计",
+            "标题规则": "local_first_agent_validation",
+        }
+    if any(k in lower for k in ["ppisp", "photometric"]) or any(k in text for k in ["3D重建", "光度变化"]):
+        return {
+            "角度类型": "AI导演流程",
+            "我的蹭热点角度": "3D重建和光度补偿这类更新，不该硬讲成模型跑分，而要看它能否改善素材一致性、镜头衔接和成片验收。",
+            "影响对象": "AI视频团队、3D素材工作流、镜头一致性、成片验收和视觉资产复用。",
+            "标题": f"{event}后，AI视频团队该补的是镜头一致性验收",
+            "标题规则": "video_3d_reconstruction_validation",
         }
     if any(k.lower() in lower for k in ["runway", "kling", "luma", "seedance", "sora", "视频", "图像", "画面", "音效", "剪辑"]):
         if "runway" in lower:
@@ -685,12 +732,15 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "我的蹭热点角度": "AI视频模型更新后，导演工作流里最先变的不是prompt，而是Brief、分镜、素材修改和验收标准。",
             "影响对象": "AI视频服务、品牌内容团队、短视频制作流程、分镜和成片验收。",
             "标题": hot_title,
+            "标题规则": "ai_video_workflow_specific",
         }
     if any(k.lower() in lower for k in ["agent", "agents", "智能体", "codex", "claude code", "mcp", "llamaindex", "guardrails", "openrouter", "comfyui"]):
         if "llamaindex" in lower:
             hot_title = "非技术人看Agent模板，先别看框架名，要看任务怎么验收"
         elif "openrouter" in lower or "补丁" in text:
             hot_title = "模型能生成补丁后，Codex类工具怎么进入非技术工作流"
+        elif "claude" in lower and any(k in text for k in ["数据分析", "自助", "分析"]):
+            hot_title = "Claude做自助数据分析后，非技术团队先补指标口径和验收表"
         else:
             hot_title = f"非技术人看{title}，先看任务怎么验收"
         return {
@@ -698,6 +748,7 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "我的蹭热点角度": f"非技术人看 {title}，不该只看工具名，而要看哪些任务的输入、输出、验收和异常处理能被接管。",
             "影响对象": "Agent服务、企业流程自动化、非技术业务人的重复任务、工具链整合。",
             "标题": hot_title,
+            "标题规则": "agent_validation_specific",
         }
     if "文档自动化" in text or "documentation" in lower or "mcg toolkit" in lower:
         return {
@@ -705,13 +756,111 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "我的蹭热点角度": "文档自动化不只是省写文档，而是让Agent项目的输入、输出、验收和异常记录开始可交接。",
             "影响对象": "Agent项目交付、模型文档、验收记录、非技术团队协作。",
             "标题": "AI模型文档自动化后，Agent项目最该补的是验收文档",
+            "标题规则": "agent_documentation_specific",
         }
     if "推理速度" in text or "reasoning speed" in lower or "inference" in lower:
         return {
             "角度类型": "工作流重排",
             "我的蹭热点角度": "模型变快的价值不只是跑分，而是哪些内容生产、资料筛选和复盘任务可以从人工盯着做改成后台自动跑。",
             "影响对象": "内容团队重复任务、资料筛选、日报生成、轻量Agent工作流。",
-            "标题": "推理速度变快后，内容团队哪些任务可以交给后台自动跑",
+            "标题": f"{event}后，内容团队哪些后台任务可以真正自动跑",
+            "标题规则": "inference_speed_workflow",
+        }
+    if any(k in lower for k in ["cloudflare radar", "bot traffic"]) or any(k in text for k in ["机器人流量", "AI流量", "Radar"]):
+        return {
+            "角度类型": "内容团队变化",
+            "我的蹭热点角度": "Cloudflare把AI流量做成雷达后，内容团队不能只看热度，要学会判断工具是真增长、爬虫噪音还是虚火。",
+            "影响对象": "内容团队、AI工具运营、增长复盘、流量判断和选题验证。",
+            "标题": f"{event}后，内容团队该怎么判断AI工具是真增长还是虚火",
+            "标题规则": "traffic_radar_growth_check",
+        }
+    if "deepseek" in lower and any(k in text for k in ["融资", "参投", "估值", "腾讯", "宁德时代"]):
+        return {
+            "角度类型": "商业化机会",
+            "我的蹭热点角度": "DeepSeek融资传闻不适合只讲资本热闹，更适合拆模型公司、生态工具和AI创业项目各自该站在哪一层。",
+            "影响对象": "AI创业项目、模型生态、中间层工具、企业服务和内容团队的工具选择。",
+            "标题": f"{event}背后，AI创业项目该重新判断自己站在哪一层",
+            "标题规则": "model_company_ecosystem_positioning",
+        }
+    if any(k in text for k in ["斯坦福", "法学院", "法学教授"]):
+        return {
+            "角度类型": "工作流重排",
+            "我的蹭热点角度": "AI在专家任务里超过教授，不该直接讲替代专家，而要讲非技术团队如何把专业任务拆成输入、判断、复核和验收。",
+            "影响对象": "专业服务团队、非技术业务团队、知识工作流、复核机制和AI任务验收。",
+            "标题": f"{event}后，非技术团队更该学的是专家任务怎么验收",
+            "标题规则": "expert_task_validation",
+        }
+    if ("chatgpt" in lower and any(k in text for k in ["月活", "10 亿", "10亿"])) or "sensor tower" in lower:
+        return {
+            "角度类型": "内容团队变化",
+            "我的蹭热点角度": "ChatGPT月活破10亿的重点不是用户数本身，而是AI入口已经变成内容团队、品牌团队和普通用户的默认工作界面。",
+            "影响对象": "内容团队、品牌运营、用户触点、AI入口设计和工具选择。",
+            "标题": "Sensor Tower说ChatGPT月活破10亿后，内容团队该把AI入口当基础设施",
+            "标题规则": "chatgpt_default_ai_interface",
+        }
+    if any(k in text for k in ["战略合作", "阿里云", "宏利香港", "保险"]):
+        return {
+            "角度类型": "工作流重排",
+            "我的蹭热点角度": "传统企业接入云厂商AI，不该只看签约新闻，而要看具体业务流程、数据边界、验收标准和一线团队能不能真的用起来。",
+            "影响对象": "传统企业AI转型、业务流程改造、企业知识库、客服/营销/运营团队和项目验收。",
+            "标题": f"{event}后，传统企业AI项目最该先验收哪条业务流程",
+            "标题规则": "enterprise_ai_partnership_workflow",
+        }
+    if "cloudflare ai gateway" in lower or ("cloudflare" in lower and "gateway" in lower):
+        return {
+            "角度类型": "工作流重排",
+            "我的蹭热点角度": "模型接入AI Gateway的重点不是多一个入口，而是企业和团队开始需要统一管理模型路由、成本、权限和调用验收。",
+            "影响对象": "企业AI调用、Agent工具链、模型路由、成本控制和交付验收。",
+            "标题": f"{event}后，企业AI调用最该补的是路由和成本验收",
+            "标题规则": "ai_gateway_ops_validation",
+        }
+    if any(k in lower for k in ["ideogram", "midjourney", "image model"]) or any(k in text for k in ["生图", "图像模型", "2K", "JSON 提示"]):
+        return {
+            "角度类型": "内容团队变化",
+            "我的蹭热点角度": "图像模型更新不只是画质更好，而是品牌图文生产开始卷一致性、批量修改和验收标准。",
+            "影响对象": "品牌设计、内容运营、图文模板、视觉验收和素材复用。",
+            "标题": f"{event}不是又一个生图更新，而是品牌图文开始卷一致性验收",
+            "标题规则": "image_model_brand_consistency",
+        }
+    if any(k in lower for k in ["miso", "speech", "voice", "asr"]) or any(k in text for k in ["语音模型", "语音克隆", "低延迟", "口播"]):
+        return {
+            "角度类型": "AI导演流程",
+            "我的蹭热点角度": "语音模型更新会影响AI视频服务里的口播、配音、修改和验收，不该只看参数。",
+            "影响对象": "AI视频服务、口播生产、配音修改、短剧工作流和内容验收。",
+            "标题": f"{event}后，AI视频服务该先补哪套口播验收流程",
+            "标题规则": "speech_model_video_voiceover",
+        }
+    if any(k in lower for k in ["grok imagine", "imagine"]) or any(k in text for k in ["Imagine", "视频生成"]):
+        return {
+            "角度类型": "AI导演流程",
+            "我的蹭热点角度": "视频模型发布后，最该看的不是热闹，而是哪些镜头、节奏和修改环节可以被纳入导演验收。",
+            "影响对象": "AI视频团队、导演工作流、镜头验证、素材修改和成片验收。",
+            "标题": f"{event}发布后，AI视频团队先验证哪三类镜头",
+            "标题规则": "video_model_shot_validation",
+        }
+    if any(k in lower for k in ["minimax", "1m token", "long context"]) or any(k in text for k in ["100万", "1M token", "长上下文", "解码加速"]):
+        return {
+            "角度类型": "Agent落地",
+            "我的蹭热点角度": "长上下文和解码加速的价值，不是炫参数，而是让资料整理、验收和多步Agent任务更可能一次跑完。",
+            "影响对象": "Agent工作流、长文档处理、项目资料整理、内容复盘和非技术任务验收。",
+            "标题": f"{event}后，非技术Agent最该重排的是资料到验收这一段",
+            "标题规则": "long_context_agent_workflow",
+        }
+    if "karpathy" in lower or "llm-wiki" in lower:
+        return {
+            "角度类型": "内容团队变化",
+            "我的蹭热点角度": "llm-wiki火起来，不该只看项目星标，而要看内容团队如何把AI知识整理成选题资产、资料入口和判断标准。",
+            "影响对象": "内容团队、AI知识库、选题资料池、内部学习和知识资产沉淀。",
+            "标题": f"{event}火了后，内容团队该怎么搭自己的AI知识库入口",
+            "标题规则": "ai_knowledge_base_content_asset",
+        }
+    if any(k in text for k in ["洪水", "水文", "灾害", "气候"]) and not any(k in text for k in ["内容", "营销", "Agent", "视频", "品牌"]):
+        return {
+            "角度类型": "暂存观察",
+            "我的蹭热点角度": "这个热点有技术和公共议题价值，但暂时缺少内容团队、品牌增长或AI业务系统的直接行动角度，适合暂存观察。",
+            "影响对象": "暂存：需要进一步判断它能否转成数据产品、公益技术或行业解决方案复盘。",
+            "标题": f"{event}可以观察，先别硬讲成内容团队工作流",
+            "标题规则": "off_position_science_observation",
         }
     if any(k.lower() in lower for k in ["模型", "model", "api", "框架", "framework", "平台", "推理", "训练", "开源", "发布", "更新"]):
         if any(k in text for k in ["训练框架", "自研训练", "JAX", "GPU"]):
@@ -724,13 +873,14 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             hot_title = "图像模型继续升级后，内容团队最该重排的是视觉验收"
             angle = "内容团队变化"
         else:
-            hot_title = f"{title}背后，哪类AI工具会先失去壁垒"
+            hot_title = f"{event}更新后，业务人该先判断它会改掉哪段工作流"
             angle = "产品生死线"
         return {
             "角度类型": angle,
-            "我的蹭热点角度": f"这次 {title} 的重点不是参数，而是它会不会让某类AI产品、插件或中间层工具失去壁垒。",
+            "我的蹭热点角度": f"这次 {event} 的重点不是参数，而是它会改掉哪段工作流、削弱哪类中间工具、给业务人什么行动建议。",
             "影响对象": "AI工具产品、包装型SaaS、插件生态、内容/运营团队的工具选择。",
             "标题": hot_title,
+            "标题规则": "generic_model_update_workflow",
         }
     if any(k in text for k in ["公众号", "小红书", "图文", "卡片", "文章", "内容", "素材", "设计"]):
         return {
@@ -738,6 +888,7 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "我的蹭热点角度": f"{title} 影响的是内容团队从选题、图文素材到复盘的哪一步被合并或重排。",
             "影响对象": "内容团队、品牌运营、图文生产、素材复用和投放复盘。",
             "标题": f"{title}发布后，内容团队最该重排的是哪一步",
+            "标题规则": "content_team_reorder",
         }
     if scene == "汽车与内容营销流程":
         return {
@@ -745,12 +896,14 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "我的蹭热点角度": f"这个热点要看它如何改变汽车与品牌内容团队的素材生产、审核、卖点表达和信任建立。",
             "影响对象": "汽车内容团队、品牌营销、素材审核、投放前风控和产品卖点表达。",
             "标题": f"{title}背后，品牌内容团队该重做哪条审核线",
+            "标题规则": "brand_content_audit",
         }
     return {
         "角度类型": "暂存观察",
         "我的蹭热点角度": "目前只能看出资讯价值，业务影响和行动建议还不够明确，适合暂存观察。",
         "影响对象": "待补：需要进一步判断影响哪类产品、流程、团队或商业机会。",
         "标题": f"{title} 可以蹭，但要先找到业务影响而不是复述资讯",
+        "标题规则": "needs_observation",
     }
 
 
@@ -758,15 +911,35 @@ def regular_topic_title(item: ContentItem, scene: str) -> str:
     core = short_title(item.title)
     if item.source_type == "AIHOT热点":
         return hotspot_angle(item, scene)["标题"]
+    text = item_text(item)
+    lower = text.lower()
+    if item.source_type == "公众号文章":
+        if "claude code" in lower and any(k in text for k in ["原则", "团队", "工作方式", "harness", "验收"]):
+            return f"{core}，为什么更像非技术团队用AI做项目的验收清单"
+        if any(k in text for k in ["方法论", "内容创作", "内部分享", "团队"]):
+            return f"{core}，内容团队最该学的是判断流程而不是观点金句"
+        return f"{core}，怎么拆成我的业务现场选题和Brief"
     if scene == "AI导演工作流与视频交付":
-        return "AI视频不是prompt，而是从Brief到分镜到验收的交付流程"
+        if item.fetch_method == "douyin_public_router_data":
+            return f"{core}，先别急着复刻成片，要拆它的标题、工具和交付承诺"
+        return f"{core}，AI视频真正该拆的是Brief、分镜和验收"
     if scene == "非技术Agent处理重复业务任务":
-        return "非技术人做Agent，先别聊工具，先把任务拆成输入输出和验收"
+        return f"{core}，非技术团队先看输入输出和验收怎么定"
     if scene == "汽车与内容营销流程":
-        return "AI营销素材越容易生成，品牌团队越要先补审核流程"
+        return f"{core}，品牌团队该补哪条素材审核线"
     if scene == "项目复盘与能力产品化":
-        return "做AI项目不能只复盘情绪，要把过程沉淀成模板和服务入口"
-    return "一个内容团队如何把AI热点和对标内容转成可执行Brief"
+        return f"{core}，怎么把项目过程沉淀成模板和服务入口"
+    return f"{core}，怎么转成内容团队能执行的Brief"
+
+
+def title_generation_rule(item: ContentItem, scene: str) -> str:
+    if item.source_type == "AIHOT热点":
+        return hotspot_angle(item, scene).get("标题规则", "aihot_unknown")
+    if item.source_type == "公众号文章":
+        return "article_fulltext_subject"
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+        return "douyin_shallow_title_only"
+    return f"competitor_{scene}"
 
 
 def angle_score(item: ContentItem, scene: str) -> int:
@@ -781,13 +954,14 @@ def angle_score(item: ContentItem, scene: str) -> int:
 
 def score_item(item: ContentItem, scene: str) -> int:
     text = item_text(item)
+    angle = hotspot_angle(item, scene) if item.source_type == "AIHOT热点" else {}
     heat = 5 if item.source_type == "AIHOT热点" else 3
     account_angle = angle_score(item, scene)
     business = 5 if any(k in text for k in ["流程", "SOP", "清单", "Brief", "分镜", "Agent", "复盘", "模板", "产品", "工具", "团队"]) else 3
     diff = 5 if account_angle >= 4 else 3
     action = 5 if any(k in text for k in ["工具", "模板", "流程", "Agent", "视频", "内容", "产品", "服务", "发布", "更新"]) else 3
     cost_reverse = 4 if item.body_snippet or item.cover_text else 2
-    return round(
+    score = round(
         heat * 20 / 5
         + account_angle * 20 / 5
         + business * 20 / 5
@@ -795,6 +969,9 @@ def score_item(item: ContentItem, scene: str) -> int:
         + action * 15 / 5
         + cost_reverse * 10 / 5
     )
+    if angle.get("角度类型") == "暂存观察":
+        score = min(score, 64)
+    return score
 
 
 def recommend_action(item: ContentItem, score: int, scene: str) -> str:
@@ -871,6 +1048,7 @@ def breakdown(item: ContentItem) -> dict[str, Any]:
 def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, Any]:
     scene = choose_scene(item_text(item))
     topic_title = regular_topic_title(item, scene)
+    title_rule = title_generation_rule(item, scene)
     profile = business_profile(scene, row["热点切入方式"])
     column = normalize_column(row["对应栏目"])
     if row["热点切入方式"] == "产品生死线":
@@ -914,6 +1092,7 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "推荐分": row["推荐分"],
         "内容指纹": row["内容指纹"],
         "相关来源": "",
+        "标题生成规则": title_rule,
     }
 
 
@@ -1213,6 +1392,95 @@ def write_today10_markdown(path: Path, topics: list[dict[str, Any]], logs: list[
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
+def text_basis(item: ContentItem) -> str:
+    if item.source_type == "公众号文章":
+        return "全文" if is_full_text_item(item) == "是" else "摘要/片段"
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+        return "抖音P0浅层字段：标题/文案/作者/封面/标签/下载链接，不含口播转写"
+    if item.source_type == "AIHOT热点":
+        return "AIHOT摘要/日报条目"
+    return "当前可获取文本"
+
+
+def debug_flags(topic: dict[str, Any], item: ContentItem, template_counts: dict[str, int]) -> tuple[str, str, str]:
+    title = topic.get("我的选题标题", "")
+    template = title_template_key(title)
+    repeated = "是" if template != "specific" and template_counts.get(template, 0) > 2 else "否"
+    event = specific_event_title(item)
+    detached = "是" if item.source_type == "AIHOT热点" and event and event[:4] not in title else "否"
+    reasons: list[str] = []
+    if repeated == "是":
+        reasons.append(f"同批标题结构 {template} 重复")
+    if detached == "是":
+        reasons.append("标题未明显保留原始热点事件词")
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+        reasons.append("抖音仅浅层解析，缺口播字幕/评论，深度结论需人工复核")
+    if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
+        reasons.append("公众号未达到全文解析阈值")
+    return repeated, detached, "；".join(reasons) or "无"
+
+
+def write_debug_top10(
+    topics: list[dict[str, Any]],
+    breakdown_by_fp: dict[str, dict[str, Any]],
+    item_by_fp: dict[str, ContentItem],
+) -> None:
+    template_counts = collections.Counter(title_template_key(topic.get("我的选题标题", "")) for topic in topics)
+    rows: list[dict[str, Any]] = []
+    for rank, topic in enumerate(topics, start=1):
+        fp = topic.get("内容指纹", "")
+        item = item_by_fp.get(fp)
+        row = breakdown_by_fp.get(fp, {})
+        if not item:
+            continue
+        repeated, detached, review_reason = debug_flags(topic, item, template_counts)
+        rows.append({
+            "今日排名": rank,
+            "原始来源标题": item.title,
+            "原始来源类型": item.source_type,
+            "原始摘要/片段": (item.body_snippet or item.cover_text)[:500],
+            "文本使用方式": text_basis(item),
+            "命中的栏目": topic.get("对应栏目", ""),
+            "命中的场景映射规则": choose_scene(item_text(item)),
+            "命中的标题模板或标题生成规则": topic.get("标题生成规则", title_generation_rule(item, choose_scene(item_text(item)))),
+            "推荐动作": topic.get("推荐动作", ""),
+            "推荐分": topic.get("推荐分", ""),
+            "最终选题标题": topic.get("我的选题标题", ""),
+            "为什么推荐": topic.get("推荐理由", ""),
+            "普通资讯号会怎么讲": topic.get("普通AI资讯号会怎么讲", ""),
+            "我的角度是什么": topic.get("我的蹭热点角度", ""),
+            "是否疑似模板重复": repeated,
+            "是否疑似脱离原始热点": detached,
+            "需要人工复核原因": review_reason,
+            "内容指纹": fp,
+            "内容结构": row.get("内容结构", ""),
+        })
+    csv_path = OUT / "debug_today10_generation.csv"
+    md_path = OUT / "debug_today10_generation.md"
+    write_csv(csv_path, rows)
+    lines = [
+        f"# 今日Top10生成诊断 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "",
+        "这份文件用于审计标题生成、场景映射和模板重复，不写入飞书。",
+        "",
+    ]
+    for row in rows:
+        lines.extend([
+            f"## {row['今日排名']}. {row['最终选题标题']}",
+            f"- 原始来源：{row['原始来源类型']} / {row['原始来源标题']}",
+            f"- 文本使用方式：{row['文本使用方式']}",
+            f"- 场景映射：{row['命中的场景映射规则']} -> {row['命中的栏目']}",
+            f"- 标题规则：{row['命中的标题模板或标题生成规则']}",
+            f"- 推荐动作/分数：{row['推荐动作']} / {row['推荐分']}",
+            f"- 我的角度：{row['我的角度是什么']}",
+            f"- 疑似模板重复：{row['是否疑似模板重复']}",
+            f"- 疑似脱离原始热点：{row['是否疑似脱离原始热点']}",
+            f"- 人工复核：{row['需要人工复核原因']}",
+            "",
+        ])
+    md_path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def assign_action_quotas(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
     immediate = 0
     brief = 0
@@ -1283,11 +1551,12 @@ def similar_asset_key(topic: dict[str, Any]) -> str:
     return re.sub(r"\s+", "", asset)[:18]
 
 
-def topic_theme_key(topic: dict[str, Any]) -> tuple[str, str, str]:
+def topic_theme_key(topic: dict[str, Any]) -> tuple[str, str, str, str]:
     return (
         topic["业务场景"],
         topic["热点切入方式"],
         similar_asset_key(topic),
+        topic.get("标题生成规则", ""),
     )
 
 
@@ -1303,7 +1572,10 @@ def merge_same_theme(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         kept = by_key[key]
         related = [part for part in kept.get("相关来源", "").split("；") if part]
         if topic["热点切入方式"] in {"内容团队变化", "AI导演流程", "品牌风控/信任危机"}:
-            related.append(f"{topic['来源类型']}：{topic['来源内容']}")
+            related_source = f"{topic['来源类型']}：{topic['来源内容']}"
+            kept_source = f"{kept['来源类型']}：{kept['来源内容']}"
+            if related_source != kept_source:
+                related.append(related_source)
         kept["相关来源"] = "；".join(dict.fromkeys(related))
     return merged
 
@@ -1318,12 +1590,17 @@ def select_today10(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
     selected: list[dict[str, Any]] = []
     seen_fp: set[str] = set()
+    template_counts: dict[str, int] = {}
 
     def add(row: dict[str, Any]) -> bool:
         if row["内容指纹"] in seen_fp or len(selected) >= 10:
             return False
+        template = title_template_key(row.get("我的选题标题", ""))
+        if template != "specific" and template_counts.get(template, 0) >= 2:
+            return False
         selected.append(row)
         seen_fp.add(row["内容指纹"])
+        template_counts[template] = template_counts.get(template, 0) + 1
         return True
 
     for column, (minimum, maximum) in TOP10_COLUMN_LIMITS.items():
@@ -1353,6 +1630,7 @@ def main() -> int:
     parser.add_argument("--manual", default=str(MANUAL_ITEMS))
     parser.add_argument("--write-feishu", action="store_true", help="Write all analyzed ContentItems into Feishu 03 内容收件箱 as the content ledger.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
+    parser.add_argument("--debug-top10", action="store_true", help="Write local Top10 generation diagnostics to output/debug_today10_generation.*")
     args = parser.parse_args()
 
     run_id = args.run_id or default_run_id()
@@ -1360,6 +1638,7 @@ def main() -> int:
     item_rows = [item_row(item) for item in items]
     breakdown_rows = [breakdown(item) for item in items]
     item_by_fp = {item.fingerprint: item for item in items}
+    breakdown_by_fp = {row["内容指纹"]: row for row in breakdown_rows}
     candidates = [
         topic_from_breakdown(row, item_by_fp[row["内容指纹"]])
         for row in breakdown_rows
@@ -1367,6 +1646,7 @@ def main() -> int:
     ]
     today10 = select_today10(candidates)
     today10 = assign_action_quotas(today10)
+    write_debug_top10(today10, breakdown_by_fp, item_by_fp)
 
     write_csv(OUT / "content_items.csv", item_rows)
     write_csv(OUT / "content_breakdowns.csv", breakdown_rows)
@@ -1386,6 +1666,8 @@ def main() -> int:
             "content_breakdowns": str(OUT / "content_breakdowns.csv"),
             "today_10_topics": str(OUT / "today_10_topics.csv"),
             "today_10_markdown": str(md_path),
+            "debug_top10_csv": str(OUT / "debug_today10_generation.csv"),
+            "debug_top10_markdown": str(OUT / "debug_today10_generation.md"),
         },
     }
     if args.write_feishu:
