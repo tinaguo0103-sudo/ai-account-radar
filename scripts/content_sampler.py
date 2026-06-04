@@ -1175,6 +1175,164 @@ def regular_topic_title(item: ContentItem, scene: str) -> str:
     return f"{core}，怎么转成内容团队能执行的Brief"
 
 
+INTERNAL_TITLE_TERMS = ["内容团队", "业务团队", "非技术团队", "验收", "流程", "工作流", "基础设施"]
+
+
+def infer_content_type(topic: dict[str, Any], item: ContentItem) -> str:
+    text = " ".join([
+        topic.get("来源内容", ""),
+        topic.get("业务场景", ""),
+        topic.get("热点切入方式", ""),
+        topic.get("可沉淀资产", ""),
+        topic.get("我的蹭热点角度", ""),
+    ])
+    if topic.get("推荐动作") == "暂存观察":
+        return "暂存观察"
+    if item.source_type != "AIHOT热点":
+        return "对标学习"
+    if any(k in text for k in ["风险", "审核", "风控", "合规", "翻车", "虚假", "恶意"]):
+        return "踩坑提醒"
+    if topic.get("热点切入方式") in {"AI导演流程", "Agent落地", "工作流重排"}:
+        return "工作流拆解"
+    if topic.get("推荐动作") == "进入Brief" or any(k in text for k in ["清单", "SOP", "模板", "流程图", "资料包"]):
+        return "资产沉淀"
+    return "热点短评"
+
+
+def title_style(content_type: str, topic: dict[str, Any]) -> str:
+    if content_type == "踩坑提醒":
+        return "风险提醒型"
+    if content_type == "对标学习":
+        return "案例拆解型"
+    if content_type == "资产沉淀":
+        return "清单资产型"
+    if content_type == "工作流拆解":
+        return "流程拆解型"
+    if topic.get("推荐动作") == "立即蹭热点":
+        return "热点短评型"
+    return "观点判断型"
+
+
+def platform_suggestion(content_type: str, topic: dict[str, Any]) -> str:
+    if topic.get("推荐动作") == "立即蹭热点":
+        return "小红书短帖 / 抖音短评 / 视频号短评"
+    if topic.get("推荐动作") == "进入Brief":
+        return "公众号 / 小红书图文 / 抖音"
+    if content_type == "对标学习":
+        return "小红书图文 / 公众号短文"
+    if content_type == "工作流拆解":
+        return "抖音 / 视频号 / 小红书图文"
+    if content_type == "踩坑提醒":
+        return "小红书短帖 / 公众号短评"
+    if content_type == "暂存观察":
+        return "内部观察 / 暂不发布"
+    return "小红书 / 抖音 / 视频号"
+
+
+def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, content_type: str) -> str:
+    event = topic.get("事件锚点") or extract_event_anchor(item)
+    core = short_title(item.title)
+    lower = " ".join([item.title, item.body_snippet, topic.get("我的蹭热点角度", "")]).lower()
+    text = " ".join([item.title, item.body_snippet, topic.get("业务场景", ""), topic.get("可沉淀资产", "")])
+
+    if item.source_type == "公众号文章":
+        if "卡兹克" in item.account_name or "数字生命卡兹克" in item.account_name:
+            return f"看完卡兹克这篇，我更确定：AI内容不是拼速度，是拼判断流程"
+        return f"{core}里最值得拆的，不是观点本身，而是它怎么建立判断力"
+    if item.source_type == "对标视频":
+        if item.fetch_method == "douyin_public_router_data":
+            return f"{core}最值得看的，不是工具名，而是它怎么承诺结果"
+        return f"{core}这条视频，真正能学的是钩子、结构和转化入口"
+
+    if "cloudflare radar" in lower or ("cloudflare" in lower and "radar" in lower):
+        return "AI工具到底是真火还是虚火？Cloudflare这组流量数据给了一个判断方法"
+    if "cloudflare ai gateway" in lower or ("cloudflare" in lower and "gateway" in lower):
+        return "Cloudflare AI Gateway接入更多模型后，最先失控的可能是成本和权限"
+    if "ideogram" in lower or "生图" in text or "图像模型" in text:
+        return "生图工具继续升级后，品牌图最难的反而是保持一致"
+    if "grok imagine" in lower or "imagine" in lower:
+        return "Grok Imagine 1.5我最想测的不是画质，而是这三类镜头能不能稳定"
+    if "claude" in lower and ("数据分析" in text or "data" in lower):
+        return "Claude能自己做数据分析后，最危险的不是不会用AI，而是指标口径没人管"
+    if "miso" in lower or ("grok" in lower and any(k in text for k in ["语音", "低延迟", "口播"])):
+        return "AI口播开始卷低延迟后，视频服务最该多卖一个“修改交付”"
+    if any(k in text for k in ["AI假人", "Shein", "虚假广告", "带货"]):
+        return "AI假人带货翻车后，品牌内容团队最该补的是素材审核流程"
+    if "llm-wiki" in lower or "karpathy" in lower:
+        return "Karpathy把AI知识做成llm-wiki后，内容团队也该有自己的资料入口"
+    if "minimax" in lower or "长上下文" in text or "100万" in text:
+        return "长上下文继续升级后，AI助理最该解决的是资料整理到验收"
+
+    if content_type == "踩坑提醒":
+        return f"{event}提醒我：AI项目最容易漏掉的是风险复核"
+    if content_type == "工作流拆解":
+        return f"{event}上新后：先看它能替团队省掉哪一步"
+    if content_type == "资产沉淀":
+        return f"{event}这类更新：适合拆成一张业务验收清单"
+    if content_type == "暂存观察":
+        return f"{event}：先放观察，业务角度还要再补证据"
+    return f"{event}这类更新：别只看发布信息，要看谁的工作会变简单"
+
+
+def title_alternatives(topic: dict[str, Any], item: ContentItem, publishable: str) -> str:
+    event = topic.get("事件锚点") or extract_event_anchor(item)
+    content_type = topic.get("内容类型", "")
+    alternatives = [publishable]
+    if content_type == "对标学习":
+        alternatives.append(f"{short_title(item.title)}：我会学它的结构，不学它的人设")
+        alternatives.append("这条对标内容最值得拆的是：它怎么让用户相信作者懂行")
+    elif content_type == "踩坑提醒":
+        alternatives.append(f"{event}不是八卦，是AI内容投放前的风险提醒")
+        alternatives.append("AI素材进投放前，至少要多过一遍这张审核清单")
+    elif content_type == "工作流拆解":
+        alternatives.append(f"{event}之后，原来的工具链哪一步可以被合并")
+        alternatives.append(f"非技术人看{event}，先看它能接管哪类任务")
+    else:
+        alternatives.append(f"{event}别只看发布信息，要看它影响哪类业务动作")
+        alternatives.append(f"普通人蹭{event}，应该讲成一个可执行动作")
+    return "\n".join(dict.fromkeys(alternatives[:3]))
+
+
+def is_over_internalized_title(title: str) -> str:
+    hits = sum(1 for term in INTERNAL_TITLE_TERMS if term in title)
+    if hits >= 3:
+        return "是"
+    if any(phrase in title for phrase in ["该先判断", "先看输入输出", "怎么转成", "最该补的是"]):
+        return "是"
+    return "否"
+
+
+def publish_rewrite_reason(topic: dict[str, Any], item: ContentItem) -> str:
+    internal = topic.get("内部切入角度") or topic.get("我的选题标题", "")
+    publishable = topic.get("可发布标题", "")
+    if internal == publishable:
+        return "未改写：内部角度已经接近可发布表达。"
+    event = topic.get("事件锚点") or extract_event_anchor(item)
+    return f"把内部判断句改成面向用户的标题；保留事件锚点：{event}。"
+
+
+def ensure_publish_metadata(topic: dict[str, Any], item: ContentItem) -> dict[str, Any]:
+    content_type = infer_content_type(topic, item)
+    publishable = publishable_title_from_topic(topic, item, content_type)
+    topic["内部切入角度"] = topic.get("内部切入角度") or topic.get("我的选题标题", "")
+    topic["内容类型"] = content_type
+    topic["平台建议"] = platform_suggestion(content_type, topic)
+    topic["标题风格"] = title_style(content_type, topic)
+    topic["可发布标题"] = publishable
+    topic["标题备选"] = title_alternatives(topic, item, publishable)
+    topic["标题是否过度内部化"] = is_over_internalized_title(topic["内部切入角度"])
+    topic["标题改写原因"] = publish_rewrite_reason(topic, item)
+    return topic
+
+
+def assign_publish_metadata(topics: list[dict[str, Any]], item_by_fp: dict[str, ContentItem]) -> list[dict[str, Any]]:
+    for topic in topics:
+        item = item_by_fp.get(topic.get("内容指纹", ""))
+        if item:
+            ensure_publish_metadata(topic, item)
+    return topics
+
+
 def title_generation_rule(item: ContentItem, scene: str) -> str:
     if item.source_type == "AIHOT热点":
         return hotspot_angle(item, scene).get("标题规则", "aihot_unknown")
@@ -1322,6 +1480,14 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         }
     return {
         "我的选题标题": topic_title,
+        "内部切入角度": topic_title,
+        "可发布标题": "",
+        "内容类型": "",
+        "平台建议": "",
+        "标题风格": "",
+        "标题备选": "",
+        "标题是否过度内部化": "",
+        "标题改写原因": "",
         "来源内容": row["内容标题"],
         "来源链接": item.url,
         "来源类型": row["来源类型"],
@@ -1619,14 +1785,19 @@ def write_today10_markdown(path: Path, topics: list[dict[str, Any]], logs: list[
     if best:
         lines.extend([
             "## 今日最建议动作",
-            f"- 推荐：{best['我的选题标题']}",
+            f"- 推荐：{best.get('可发布标题') or best['我的选题标题']}",
+            f"- 内部切入角度：{best.get('内部切入角度') or best['我的选题标题']}",
             f"- 动作：{best['推荐动作']}",
             "- 理由：今天更适合先蹭一个有明确差异化角度的热点，做 30-60 秒短评；不要同时把多条都推进成完整 Brief。",
             "",
         ])
     for idx, topic in enumerate(topics, start=1):
         lines.extend([
-            f"## {idx}. {topic['我的选题标题']}",
+            f"## {idx}. {topic.get('可发布标题') or topic['我的选题标题']}",
+            f"- 内部切入角度：{topic.get('内部切入角度') or topic['我的选题标题']}",
+            f"- 内容类型：{topic.get('内容类型', '')}",
+            f"- 平台建议：{topic.get('平台建议', '')}",
+            f"- 标题风格：{topic.get('标题风格', '')}",
             f"- 来源：{topic['来源类型']} / {topic['来源内容']}",
             f"- 栏目：{topic['对应栏目']}",
             f"- 热点切入方式：{topic['热点切入方式']}",
@@ -1662,7 +1833,7 @@ def text_basis(item: ContentItem) -> str:
 
 
 def debug_flags(topic: dict[str, Any], item: ContentItem, template_counts: dict[str, int]) -> tuple[str, str, str, str, str]:
-    title = topic.get("我的选题标题", "")
+    title = topic.get("可发布标题") or topic.get("我的选题标题", "")
     template = title_structure_template(title)
     repeated = "是" if template != "specific" and template_counts.get(template, 0) > 2 else "否"
     event = specific_event_title(item)
@@ -1690,7 +1861,11 @@ def write_debug_top10(
     breakdown_by_fp: dict[str, dict[str, Any]],
     item_by_fp: dict[str, ContentItem],
 ) -> None:
-    template_counts = collections.Counter(title_structure_template(topic.get("我的选题标题", "")) for topic in topics)
+    for topic in topics:
+        item = item_by_fp.get(topic.get("内容指纹", ""))
+        if item:
+            ensure_publish_metadata(topic, item)
+    template_counts = collections.Counter(title_structure_template(topic.get("可发布标题") or topic.get("我的选题标题", "")) for topic in topics)
     selected_fps = {topic.get("内容指纹", "") for topic in topics}
     rank_by_fp = {topic.get("内容指纹", ""): rank for rank, topic in enumerate(topics, start=1)}
     ordered = [*topics, *[candidate for candidate in candidates if candidate.get("内容指纹", "") not in selected_fps]]
@@ -1701,6 +1876,7 @@ def write_debug_top10(
         row = breakdown_by_fp.get(fp, {})
         if not item:
             continue
+        ensure_publish_metadata(topic, item)
         repeated, detached, kept_anchor, over_infer, review_reason = debug_flags(topic, item, template_counts)
         in_top10 = fp in selected_fps
         rows.append({
@@ -1717,10 +1893,17 @@ def write_debug_top10(
             "命中的场景映射规则": choose_scene(item_text(item)),
             "栏目映射来源": "hotspot_angle_override" if item.source_type == "AIHOT热点" else ("source_config" if item.column else "choose_scene"),
             "命中的标题模板或标题生成规则": topic.get("标题生成规则", title_generation_rule(item, choose_scene(item_text(item)))),
-            "标题结构模板": title_structure_template(topic.get("我的选题标题", "")),
+            "标题结构模板": title_structure_template(topic.get("可发布标题") or topic.get("我的选题标题", "")),
             "推荐动作": topic.get("推荐动作", ""),
             "推荐分": topic.get("推荐分", ""),
-            "最终选题标题": topic.get("我的选题标题", ""),
+            "内部切入角度": topic.get("内部切入角度", topic.get("我的选题标题", "")),
+            "可发布标题": topic.get("可发布标题", ""),
+            "内容类型": topic.get("内容类型", ""),
+            "平台建议": topic.get("平台建议", ""),
+            "标题风格": topic.get("标题风格", ""),
+            "标题是否过度内部化": topic.get("标题是否过度内部化", ""),
+            "标题改写原因": topic.get("标题改写原因", ""),
+            "最终选题标题": topic.get("可发布标题") or topic.get("我的选题标题", ""),
             "为什么推荐": topic.get("推荐理由", ""),
             "普通资讯号会怎么讲": topic.get("普通AI资讯号会怎么讲", ""),
             "我的角度是什么": topic.get("我的蹭热点角度", ""),
@@ -1752,6 +1935,10 @@ def write_debug_top10(
             f"- 是否进入Top10：{row['是否进入Top10']}",
             f"- 原始来源：{row['原始来源类型']} / {row['原始来源标题']}",
             f"- 文本使用方式：{row['文本使用方式']}",
+            f"- 内部切入角度：{row['内部切入角度']}",
+            f"- 内容类型/平台建议：{row['内容类型']} / {row['平台建议']}",
+            f"- 标题风格：{row['标题风格']}",
+            f"- 标题改写原因：{row['标题改写原因']}",
             f"- 事件锚点：{row['事件锚点']}",
             f"- 业务变化判断：{row['业务变化判断']}",
             f"- 场景映射：{row['命中的场景映射规则']} -> {row['命中的栏目']}",
@@ -1887,7 +2074,7 @@ def select_today10(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         if row.get("来源类型") == "AIHOT热点" and not allow_aihot_overflow:
             if sum(1 for item in selected if item.get("来源类型") == "AIHOT热点") >= 8:
                 return False
-        template = title_structure_template(row.get("我的选题标题", ""))
+        template = title_structure_template(row.get("可发布标题") or row.get("我的选题标题", ""))
         if template != "specific" and template_counts.get(template, 0) >= 2:
             return False
         selected.append(row)
@@ -1947,8 +2134,10 @@ def main() -> int:
         for row in breakdown_rows
         if row["是否进入今日10选题"] == "是"
     ]
+    candidates = assign_publish_metadata(candidates, item_by_fp)
     today10 = select_today10(candidates)
     today10 = assign_action_quotas(today10)
+    today10 = assign_publish_metadata(today10, item_by_fp)
     write_debug_top10(today10, candidates, breakdown_by_fp, item_by_fp)
 
     write_csv(OUT / "content_items.csv", item_rows)

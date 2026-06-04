@@ -646,7 +646,7 @@ def load_today_10() -> dict[str, Any]:
 
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    top = rows[0].get("我的选题标题", "尚未生成") if rows else "尚未生成"
+    top = (rows[0].get("可发布标题") or rows[0].get("我的选题标题") or "尚未生成") if rows else "尚未生成"
     return {"count": len(rows), "top": top, "report": str(report)}
 
 

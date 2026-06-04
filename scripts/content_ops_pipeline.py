@@ -172,7 +172,7 @@ def local_ready_topics() -> list[dict[str, Any]]:
         status = "进入Brief" if row.get("推荐动作") == "进入Brief" else "本周做" if row.get("推荐动作") == "本周做" else ""
         if status in TOPIC_READY_STATUSES:
             ready.append({"record_id": "", "fields": {
-                "选题标题": row.get("我的选题标题", ""),
+                "选题标题": row.get("可发布标题") or row.get("我的选题标题", ""),
                 "状态": status,
                 "推荐动作": row.get("推荐动作", ""),
                 "业务场景": row.get("业务场景", ""),
