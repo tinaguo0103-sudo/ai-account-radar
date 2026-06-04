@@ -1139,6 +1139,10 @@ def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dic
     for item in items:
         record = by_fp.get(item.fingerprint) or by_url.get(item.url)
         if record:
+            record_id = record.get("record_id") or record.get("id") or ""
+            if not record_id:
+                skipped_duplicates += 1
+                continue
             record_fields = record.get("fields", {})
             same_run_new = str(record_fields.get("运行批次", "")) == run_id or str(record_fields.get("最近参与运行批次", "")) == run_id
             fields = item_to_content_inbox_fields(item, run_id, is_new=same_run_new, duplicate=not same_run_new)
@@ -1148,7 +1152,7 @@ def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dic
                 "是否本次新增": "是" if same_run_new else "否",
                 "是否重复": str(record_fields.get("是否重复", "否")) if same_run_new else "是",
             }
-            update_record_fields(token, app_token, table_id, record["record_id"], update_fields)
+            update_record_fields(token, app_token, table_id, record_id, update_fields)
             updated_existing += 1
             if not same_run_new:
                 skipped_duplicates += 1
