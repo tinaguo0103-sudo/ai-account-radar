@@ -180,6 +180,26 @@ def normalize_space(text: str) -> str:
     return re.sub(r"\s+", " ", html.unescape(text or "")).strip()
 
 
+def cell_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (int, float, bool)):
+        return str(value)
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("name") or item.get("value") or ""))
+            else:
+                parts.append(cell_text(item))
+        return normalize_space(" ".join(part for part in parts if part))
+    if isinstance(value, dict):
+        return str(value.get("text") or value.get("name") or value.get("value") or "")
+    return str(value)
+
+
 def fingerprint(*parts: str) -> str:
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
@@ -420,6 +440,67 @@ def load_manual_items(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
+def load_payload_text(payload_path: str) -> str:
+    if not payload_path:
+        return ""
+    path = Path(payload_path)
+    if not path.exists() or not path.is_file():
+        return ""
+    try:
+        return path.read_text(encoding="utf-8")[:20000]
+    except OSError:
+        return ""
+
+
+def load_reused_content_ledger(manual_rows: list[dict[str, Any]]) -> dict[str, dict[str, str]]:
+    if not any(row.get("是否来自已解析URL复用") == "是" for row in manual_rows):
+        return {}
+    if not all(os.getenv(name) for name in ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_BASE_APP_TOKEN"]):
+        return {}
+    try:
+        app_token = str(os.getenv("FEISHU_BASE_APP_TOKEN"))
+        token = feishu.tenant_token()
+        table_id = resolve_table_id(list_tables(token, app_token), "content_inbox")
+        if not table_id:
+            return {}
+        records = all_records(token, app_token, table_id)
+    except Exception as exc:
+        print(f"[warn] reused URL ledger lookup skipped: {exc}", file=sys.stderr)
+        return {}
+    ledger: dict[str, dict[str, str]] = {}
+    for record in records:
+        fields = record.get("fields", {})
+        normalized = {name: cell_text(value) for name, value in fields.items()}
+        for key_name in ("内容指纹", "链接"):
+            key = normalized.get(key_name, "")
+            if key:
+                ledger[key] = normalized
+    return ledger
+
+
+def enrich_reused_item_from_ledger(item: ContentItem, ledger: dict[str, dict[str, str]]) -> None:
+    fields = ledger.get(item.fingerprint) or ledger.get(item.url) or {}
+    if not fields:
+        return
+    full_body = fields.get("正文/全文", "")
+    payload_path = fields.get("原始payload路径", "")
+    if len(full_body) < 500:
+        payload_text = load_payload_text(payload_path)
+        if payload_text:
+            full_body = payload_text
+    if full_body:
+        item.body_snippet = full_body
+    raw_len = fields.get("正文长度", "")
+    if raw_len.isdigit():
+        item.raw_text_length = max(item.raw_text_length, int(raw_len))
+    elif full_body:
+        item.raw_text_length = max(item.raw_text_length, len(full_body))
+    if payload_path:
+        item.ocr_text = payload_path
+    if fields.get("是否全文解析") == "是" and not item.body_truncated:
+        item.body_truncated = "否"
+
+
 def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentItem], list[str]]:
     config = load_json(CONTENT_SOURCES)
     sources = config["sources"]
@@ -435,7 +516,9 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
             items.extend(rows)
             logs.extend(source_logs)
 
-    for raw in load_manual_items(manual_path):
+    manual_rows = load_manual_items(manual_path)
+    reused_ledger = load_reused_content_ledger(manual_rows)
+    for raw in manual_rows:
         source_type = normalize_source_type(raw.get("来源类型", raw.get("source_type", "手动补充")))
         url = raw.get("内容链接", raw.get("url", ""))
         account = raw.get("账号名/公众号名", raw.get("account_name", ""))
@@ -471,6 +554,8 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
                 body_truncated=raw.get("正文是否截断", ""),
                 reused_url=raw.get("是否来自已解析URL复用", "否"),
             )
+            if item.reused_url == "是":
+                enrich_reused_item_from_ledger(item, reused_ledger)
         elif source_type == "公众号文章" and url:
             item = extract_article(url, raw)
         elif source_type == "对标视频":
@@ -701,27 +786,51 @@ def title_structure_template(title: str) -> str:
 
 
 def specific_event_title(item: ContentItem) -> str:
-    return title_token(item.title, 20)
+    return title_token(item.title, 24)
 
 
 def extract_event_anchor(item: ContentItem) -> str:
+    title_text = " ".join([item.title, item.cover_text])
+    title_lower = title_text.lower()
     text = item_text(item)
     lower = text.lower()
-    anchors = [
-        ("Cloudflare Radar", "cloudflare radar"),
-        ("Cloudflare AI Gateway", "cloudflare ai gateway"),
-        ("Ideogram v4.0", "ideogram"),
-        ("Miso One", "miso"),
-        ("Grok Imagine", "grok imagine"),
-        ("NVIDIA PPISP", "ppisp"),
-        ("MiniMax M3", "minimax"),
-        ("Meet OpenJarvis", "openjarvis"),
-        ("Claude 自助数据分析", "claude"),
-        ("Sensor Tower / ChatGPT月活", "sensor tower"),
-        ("Karpathy llm-wiki", "llm-wiki"),
+    title_rules = [
+        ("Sensor Tower / ChatGPT月活", lambda s: "sensor tower" in s or ("chatgpt" in s and ("月活" in s or "10亿" in s or "10 亿" in s))),
+        ("Anthropic AI恶意账户分析", lambda s: "anthropic" in s and ("恶意账户" in s or "malicious" in s or "abuse" in s)),
+        ("OpenClaw 2026.6.1", lambda s: "openclaw" in s),
+        ("Cloudflare AI Gateway", lambda s: "cloudflare ai gateway" in s),
+        ("Cloudflare Radar", lambda s: "cloudflare radar" in s),
+        ("Ideogram v4.0", lambda s: "ideogram" in s),
+        ("Miso One", lambda s: "miso" in s),
+        ("Grok Imagine", lambda s: "grok imagine" in s),
+        ("NVIDIA PPISP", lambda s: "ppisp" in s or "photometric" in s),
+        ("MiniMax M3", lambda s: "minimax" in s or "mini max" in s),
+        ("Meet OpenJarvis", lambda s: "openjarvis" in s),
+        ("Claude Code", lambda s: "claude code" in s),
+        ("Claude 自助数据分析", lambda s: "claude" in s and ("自助数据分析" in s or "数据分析" in s)),
+        ("Karpathy llm-wiki", lambda s: "karpathy" in s or "llm-wiki" in s),
     ]
-    for label, token in anchors:
-        if token in lower:
+    for label, predicate in title_rules:
+        if predicate(title_lower):
+            return label
+    body_rules = [
+        ("Sensor Tower / ChatGPT月活", lambda s: "sensor tower" in s or ("chatgpt" in s and ("月活" in s or "10亿" in s or "10 亿" in s))),
+        ("Anthropic AI恶意账户分析", lambda s: "anthropic" in s and ("恶意账户" in s or "malicious" in s or "abuse" in s)),
+        ("OpenClaw 2026.6.1", lambda s: "openclaw" in s),
+        ("Cloudflare AI Gateway", lambda s: "cloudflare ai gateway" in s),
+        ("Cloudflare Radar", lambda s: "cloudflare radar" in s),
+        ("Ideogram v4.0", lambda s: "ideogram" in s),
+        ("Miso One", lambda s: "miso" in s),
+        ("Grok Imagine", lambda s: "grok imagine" in s),
+        ("NVIDIA PPISP", lambda s: "ppisp" in s or "photometric" in s),
+        ("Meet OpenJarvis", lambda s: "openjarvis" in s),
+        ("Claude Code", lambda s: "claude code" in s),
+        ("Claude 自助数据分析", lambda s: "claude" in s and ("自助数据分析" in s or "数据分析" in s)),
+        ("MiniMax M3", lambda s: "minimax" in s or "mini max" in s),
+        ("Karpathy llm-wiki", lambda s: "karpathy" in s or "llm-wiki" in s),
+    ]
+    for label, predicate in body_rules:
+        if predicate(lower):
             return label
     return specific_event_title(item)
 
@@ -741,6 +850,10 @@ def infer_business_change(item: ContentItem, scene: str) -> str:
         return "AI视频镜头验证"
     if "ppisp" in lower or "3D重建" in text:
         return "镜头一致性和3D素材验收"
+    if "openclaw" in lower:
+        return "开源语音助手的任务边界和本地部署判断"
+    if "anthropic" in lower and "恶意账户" in text:
+        return "AI工具滥用风险和内容安全复核"
     if "minimax" in lower or "长上下文" in text:
         return "长资料处理到任务验收"
     if "openjarvis" in lower:
@@ -758,6 +871,29 @@ def compose_topic_title(event_anchor: str, business_change: str, audience: str, 
     if constraint == "asset":
         return f"{event_anchor}提醒{audience}，要把{business_change}沉淀成一张检查表"
     return f"{event_anchor}正在改的不是工具名，而是{audience}的{business_change}"
+
+
+def is_agent_task_content(text: str) -> bool:
+    lower = text.lower()
+    head = lower[:220]
+    disallow_tokens = [
+        "融资", "人物访谈", "访谈", "观点", "黑客马拉松", "论文", "研究动态",
+        "普通模型发布", "月活", "组织管理", "partner network", "openclaw",
+        "黄仁勋", "纳德拉",
+    ]
+    if any(token in text for token in disallow_tokens):
+        return False
+    strong_tokens = [
+        "claude code", "codex", "mcp", "llamaindex", "openrouter", "openjarvis",
+        "guardrails", "tool calling", "function calling", "工具调用", "自动化任务",
+        "工作流执行", "企业流程自动化", "任务边界",
+    ]
+    if any(token in lower or token in text for token in strong_tokens):
+        return True
+    if "agent" in head or "智能体" in head:
+        task_terms = ["任务", "流程", "自动化", "执行", "验收", "工具", "应用", "桌面应用", "business", "seo"]
+        return any(term in lower or term in text for term in task_terms)
+    return False
 
 
 def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
@@ -786,6 +922,14 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "影响对象": "品牌内容团队、投放团队、素材审核流程、AI营销合规与消费者信任。",
             "标题": "AI假人带货翻车后，品牌内容团队最该补的是素材审核流程",
             "标题规则": "brand_risk_specific",
+        }
+    if "anthropic" in lower and any(k in text for k in ["恶意账户", "攻击者", "滥用", "abuse", "malicious"]):
+        return {
+            "角度类型": "品牌风控/信任危机",
+            "我的蹭热点角度": "Anthropic披露AI恶意账户时，不该只当安全新闻，而要看内容团队、AI工具团队和服务商如何补滥用识别、异常行为复核和客户风险提示。",
+            "影响对象": "AI工具服务商、内容团队、品牌风控、客户交付和异常使用复核。",
+            "标题": "Anthropic恶意账户分析后，AI工具团队最该补的是滥用风险复核",
+            "标题规则": "ai_abuse_risk_review",
         }
     if any(k in lower for k in ["openjarvis", "local-first"]) or "设备端个人AI智能体" in text:
         return {
@@ -825,7 +969,7 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "标题": "Miso One开源语音模型后，AI视频服务的口播修改会变成新交付项" if "miso" in lower else f"{event}正在把AI口播从配音工具变成视频交付环节",
             "标题规则": "speech_model_video_voiceover",
         }
-    if any(k.lower() in lower for k in ["agent", "agents", "智能体", "codex", "claude code", "mcp", "llamaindex", "guardrails", "openrouter", "comfyui"]):
+    if is_agent_task_content(text):
         if "llamaindex" in lower:
             hot_title = "非技术人看Agent模板，先别看框架名，要看任务怎么验收"
         elif "openrouter" in lower or "补丁" in text:
@@ -921,6 +1065,22 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "标题": "Grok Imagine 1.5预览版适合拿来做三组镜头测试，而不是直接喊替代剪辑",
             "标题规则": "video_model_shot_validation",
         }
+    if "karpathy" in lower or "llm-wiki" in lower:
+        return {
+            "角度类型": "内容团队变化",
+            "我的蹭热点角度": "llm-wiki火起来，不该只看项目星标，而要看内容团队如何把AI知识整理成选题资产、资料入口和判断标准。",
+            "影响对象": "内容团队、AI知识库、选题资料池、内部学习和知识资产沉淀。",
+            "标题": f"{event}火了后，内容团队该怎么搭自己的AI知识库入口",
+            "标题规则": "ai_knowledge_base_content_asset",
+        }
+    if "openclaw" in lower:
+        return {
+            "角度类型": "暂存观察",
+            "我的蹭热点角度": "OpenClaw更新可以关注，但当前信息更像版本发布；如果没有明确业务任务、工作流边界和可演示场景，先不要硬讲成Agent验收方法论。",
+            "影响对象": "暂存：需要补充它能稳定接管的具体业务任务、输入输出和演示链路。",
+            "标题": "OpenClaw 2026.6.1可以观察，先别硬套非技术Agent验收",
+            "标题规则": "agent_release_observation",
+        }
     if any(k in lower for k in ["minimax", "1m token", "long context"]) or any(k in text for k in ["100万", "1M token", "长上下文", "解码加速"]):
         return {
             "角度类型": "Agent落地",
@@ -929,13 +1089,13 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "标题": f"{event}后，非技术Agent最该重排的是资料到验收这一段",
             "标题规则": "long_context_agent_workflow",
         }
-    if "karpathy" in lower or "llm-wiki" in lower:
+    if any(k in text for k in ["黄仁勋", "纳德拉", "人物观点", "人物访谈", "共议"]):
         return {
-            "角度类型": "内容团队变化",
-            "我的蹭热点角度": "llm-wiki火起来，不该只看项目星标，而要看内容团队如何把AI知识整理成选题资产、资料入口和判断标准。",
-            "影响对象": "内容团队、AI知识库、选题资料池、内部学习和知识资产沉淀。",
-            "标题": f"{event}火了后，内容团队该怎么搭自己的AI知识库入口",
-            "标题规则": "ai_knowledge_base_content_asset",
+            "角度类型": "暂存观察",
+            "我的蹭热点角度": "人物观点类热点可以帮助判断趋势，但如果没有落到产品能力、业务流程或可执行动作，不适合直接占用今日Top10。",
+            "影响对象": "暂存：需要补充具体产品变化、团队动作或业务流程影响。",
+            "标题": f"{event}可以观察，先别把人物观点硬改成工作流选题",
+            "标题规则": "person_viewpoint_observation",
         }
     if any(k in text for k in ["洪水", "水文", "灾害", "气候"]) and not any(k in text for k in ["内容", "营销", "Agent", "视频", "品牌"]):
         return {
@@ -1489,7 +1649,11 @@ def write_today10_markdown(path: Path, topics: list[dict[str, Any]], logs: list[
 
 def text_basis(item: ContentItem) -> str:
     if item.source_type == "公众号文章":
-        return "全文" if is_full_text_item(item) == "是" else "摘要/片段"
+        if is_full_text_item(item) == "是":
+            return "全文"
+        if item.reused_url == "是":
+            return "复用内容不完整：仅摘要"
+        return "摘要/片段"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
         return "抖音P0浅层字段：标题/文案/作者/封面/标签/下载链接，不含口播转写"
     if item.source_type == "AIHOT热点":
@@ -1566,7 +1730,7 @@ def write_debug_top10(
             "是否保留真实热点词": kept_anchor,
             "是否疑似脱离原始热点": detached,
             "是否超过解析文本支撑范围": over_infer,
-            "是否来自已解析URL复用": topic.get("是否来自已解析URL复用", item.reused_url),
+            "是否来自已解析URL复用": "是" if item.reused_url == "是" or topic.get("是否来自已解析URL复用") == "是" else "否",
             "降级或改写原因": review_reason if topic.get("推荐动作") in {"暂存观察", "不做"} else "",
             "需要人工复核原因": review_reason,
             "内容指纹": fp,
