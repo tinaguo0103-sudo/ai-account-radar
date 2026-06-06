@@ -32,11 +32,14 @@ from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from feishu_table_registry import PROTECTED_TABLE_NAMES, table_name
+from local_env import load_local_env
 
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
 DEFAULT_API_HOST = "https://open.feishu.cn"
+
+load_local_env()
 
 
 def api_base_url() -> str:

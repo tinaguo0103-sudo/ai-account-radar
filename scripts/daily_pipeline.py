@@ -17,6 +17,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from local_env import load_local_env
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
@@ -24,6 +25,8 @@ LOG_DIR = OUT / "logs"
 DEFAULT_MANUAL = ROOT / "data" / "manual" / "content_items.example.jsonl"
 URL_RESOLVED = OUT / "url_content_items.jsonl"
 URL_RESOLVED_MANUAL = OUT / "url_content_items_manual.jsonl"
+
+load_local_env()
 
 
 def run_step(name: str, command: list[str], env: dict[str, str] | None = None) -> dict[str, Any]:
