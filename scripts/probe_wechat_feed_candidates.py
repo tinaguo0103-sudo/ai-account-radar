@@ -103,11 +103,21 @@ def load_candidates(path: Path) -> list[Candidate]:
     """Parse the small project YAML without adding a PyYAML dependency."""
     candidates: list[dict[str, str]] = []
     current: dict[str, str] | None = None
+    section = ""
     for raw_line in path.read_text(encoding="utf-8").splitlines():
         line = raw_line.rstrip()
-        if not line.strip() or line.lstrip().startswith("#") or line.strip() == "candidates:":
+        stripped_line = line.strip()
+        if not stripped_line or line.lstrip().startswith("#"):
             continue
-        stripped = line.strip()
+        if not raw_line.startswith(" ") and stripped_line.endswith(":"):
+            if current and section == "candidates":
+                candidates.append(current)
+            current = None
+            section = stripped_line[:-1]
+            continue
+        if section != "candidates":
+            continue
+        stripped = stripped_line
         if stripped.startswith("- "):
             if current:
                 candidates.append(current)

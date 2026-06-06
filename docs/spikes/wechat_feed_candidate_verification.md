@@ -5,8 +5,19 @@
 ## 一页结论
 - 找到 `数字生命卡兹克` 可直接读取的 feed：`https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml`。
 - 本轮检测到的 feed 若来自工具项目 releases，只能说明工具项目可被订阅，不代表卡兹克公众号已可自动发现。
-- 当前最稳路径仍是 `02 URL投喂入口` 单篇 URL；下一步若要自动发现，优先做 `we-mp-rss / wewe-rss` 自建服务 PoC。
-- 本轮不建议把 RSS之家页面或 GitHub issue 直接接入 `daily_pipeline.py`。
+- 当前已把卡兹克 Wechat2RSS feed 做成 P1 显式接入能力：默认 `daily_pipeline.py` 不拉取，只有传 `--fetch-wechat-feed` 时才进入候选池。
+- 当前最稳回退路径仍是 `02 URL投喂入口` 单篇 URL；如果 feed 失效或全文解析受限，继续用单篇 URL 投喂。
+- 本轮不建议把 RSS之家页面或 GitHub issue 直接接入默认 `daily_pipeline.py`。
+
+## P1 显式接入命令
+
+```bash
+python3 scripts/wechat_feed_intake.py --config config/wechat_feed_candidates.yaml --limit 5 --dry-run
+python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5
+python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5 --write-feishu
+```
+
+feed 内容会先进入标准 ContentItem，本地输出 `output/wechat_feed_content_items.jsonl`；显式写入时会进入 `03 内容收件箱`，再参与 `04 分析与选题` 候选。默认流程仍不拉该 feed。
 
 ## 能力矩阵
 
@@ -121,9 +132,9 @@
 ## 下一步最小接入方案
 
 1. 继续保留单篇公众号 URL 作为 P0：`02 URL投喂入口 -> url_content_resolver.py -> 03 内容收件箱`。
-2. 如要自动发现卡兹克新文章，先单独开 `source_watch_probe`，部署或接入一个用户可控的公众号 RSS 服务。
-3. probe 输出只落本地报告，不写飞书、不进 Top10；连续稳定后再考虑接 `03 内容收件箱`。
-4. 正式接入前必须提供：feed_url、标题、文章链接、发布时间、去重指纹、失败原因。
+2. 卡兹克 Wechat2RSS feed 已进入 P1 显式接入验证；默认流程不拉取。
+3. 显式 feed 输出只在用户传 `--fetch-wechat-feed` 时参与候选；连续稳定后再考虑是否默认接入。
+4. 正式默认化前必须持续验证：feed_url、标题、文章链接、发布时间、去重指纹、失败原因、全文解析可用性。
 
 ## 原始结果摘要
 

@@ -48,6 +48,15 @@
 - 用于规则测试、Top10 调试、对比 AIHOT + URL 混合候选效果。
 - 不作为默认日常流程。
 
+### `--fetch-wechat-feed`
+
+- 卡兹克公众号 feed 已从候选验证进入 P1 显式接入验证。
+- feed URL：`https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml`。
+- 默认 `daily_pipeline.py` 不拉取该 feed。
+- 只有用户主动运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时，feed 文章才进入本轮 ContentItem 候选池。
+- 显式加 `--write-feishu` 后，feed 内容写入 `03 内容收件箱`，再参与 `04 今日Top10` 候选。
+- 如果 feed 失效或全文解析受限，继续回退到 `02 URL投喂入口` 单篇公众号文章 URL。
+
 ## P1 单独 PoC / source_watch_probe
 
 这类来源不允许直接进入 `main` 的默认 `daily_pipeline.py`。必须单独开分支做 PoC。
@@ -55,10 +64,10 @@
 ### 公众号自动发现最新文章
 
 - 重点源：数字生命卡兹克-公众号文章。
-- 单篇公众号 URL 解析已经可用，但自动发现公众号最新文章还未验证。
+- 单篇公众号 URL 解析已经可用；Wechat2RSS feed 已做成 P1 显式接入能力。
 - 可研究方向：`we-mp-rss`、`wewe-rss`、其他公众号 RSS/订阅服务。
 - 这类方案通常需要单独部署、维护、登录态或服务配置，不能直接接入默认流程。
-- P1 目标只做 `source_watch_probe`，输出本地报告，不写飞书，不进 Top10。
+- 当前 P1 只允许显式拉取，不进入默认流程；正式默认化前需要连续稳定性、去重和字段完整性验证。
 
 ### 抖音主页自动发现最近 N 条
 
@@ -100,8 +109,8 @@
 
 - 平台：微信公众号。
 - 当前能力：单篇 URL 解析可用，全文解析可用。
-- 自动发现：未验证。
-- 推荐：P1 优先做公众号 `source_watch_probe`，研究 RSS/订阅服务。
+- 自动发现：Wechat2RSS feed 已验证可读，并已接入显式参数。
+- 推荐：继续用 `--fetch-wechat-feed` 做 P1 观察；稳定后再讨论是否默认化。
 - 不进入默认 `daily_pipeline.py`。
 
 ### 数字生命卡兹克-抖音教程视频

@@ -149,6 +149,35 @@ python3 scripts/daily_pipeline.py --url-file data/manual/urls.example.txt
 
 默认不启用 URL 解析，只有传入 `--url-file` 或 `--resolve-url-intake` 时才运行 resolver。
 
+卡兹克公众号 feed 已进入 P1 显式接入验证。默认 `daily_pipeline.py` 不会拉取公众号 feed；只有主动传入参数时才会读取下面这个 Wechat2RSS feed，把文章转成 ContentItem，进入 `03 内容收件箱` 和 `04 今日Top10` 候选：
+
+```text
+https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml
+```
+
+本地验证 feed：
+
+```bash
+python3 scripts/wechat_feed_intake.py --config config/wechat_feed_candidates.yaml --limit 5 --dry-run
+```
+
+显式把 feed 合入日常管道 dry-run：
+
+```bash
+python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5
+```
+
+确认质量后，显式写入飞书：
+
+```bash
+FEISHU_APP_ID=xxx \
+FEISHU_APP_SECRET=xxx \
+FEISHU_BASE_APP_TOKEN=xxx \
+python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5 --write-feishu
+```
+
+如果 feed 失效，继续回退到 `02 URL投喂入口` 单篇公众号文章 URL。当前 feed 条目会尝试调用公众号全文解析；如果微信页面限制导致全文解析失败，系统保留 feed 摘要、失败原因和原始 payload 路径，不伪装成全文。
+
 规则测试时，如果飞书里没有新的待处理 URL，但你想让已解析过的公众号/抖音内容重新参与本轮候选池，可以显式加复用参数：
 
 ```bash
@@ -502,11 +531,11 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 
 ## 自动拉取边界
 
-当前默认自动源是 AIHOT精选、AIHOT日报、官方 RSS/Atom、官方网页/普通网页/Jina Reader，以及 `02 URL投喂入口` 的单条 URL 投喂。主对标账号自动抓取仍处于 P1 `source_watch_probe` 阶段：抖音主页最近 N 条、公众号历史文章列表不直接进入默认 `daily_pipeline.py`。`--include-resolved-url-intake` 只用于复用已解析 URL 做规则测试，不作为默认日常流程。
+当前默认自动源是 AIHOT精选、AIHOT日报、官方 RSS/Atom、官方网页/普通网页/Jina Reader，以及 `02 URL投喂入口` 的单条 URL 投喂。主对标账号自动抓取仍处于 P1：抖音主页最近 N 条、公众号历史文章列表不直接进入默认 `daily_pipeline.py`。`--include-resolved-url-intake` 只用于复用已解析 URL 做规则测试，不作为默认日常流程；卡兹克公众号 feed 只在显式传 `--fetch-wechat-feed` 时拉取。
 
 完整路线、主对标池逐个判断和未来 PoC 分支命名见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md)。
 
-卡兹克公众号 feed 候选验证见 [docs/spikes/wechat_feed_candidate_verification.md](docs/spikes/wechat_feed_candidate_verification.md)。本轮已从 Wechat2RSS issue 线索中验证到一个可读 XML feed，但它仍先归入 `source_watch_probe`，不直接进入默认 `daily_pipeline.py`；正式接入前还需要连续稳定性、去重和字段完整性验证。
+卡兹克公众号 feed 候选验证见 [docs/spikes/wechat_feed_candidate_verification.md](docs/spikes/wechat_feed_candidate_verification.md)。当前已从 Wechat2RSS issue 线索中验证到一个可读 XML feed，并做成 P1 显式接入能力：`python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5 --write-feishu`。默认流程仍不拉 feed；正式默认化前还需要连续稳定性、去重和全文字段完整性验证。
 
 ## 采集边界
 

@@ -1,3 +1,17 @@
+sources:
+  - source_id: kazike_wechat_feed
+    name: 数字生命卡兹克
+    platform: 微信公众号
+    source_type: 公众号文章
+    feed_url: https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml
+    fetch_mode: rss
+    default_enabled: false
+    topic_bucket: AI业务定调
+    matrix_id: kazike
+    parse_fulltext: true
+    max_items: 5
+    note: P1显式启用源；默认daily_pipeline不拉取，只有传--fetch-wechat-feed时才进入候选池。
+
 candidates:
   - name: RSS之家数字生命卡兹克页面
     type: rssabc_page

@@ -42,9 +42,9 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 这个参数只用于测试混合候选池，会让已解析的公众号/抖音/RSS/网页 URL 重新参与本轮候选；默认日常流程仍只处理待解析 URL。
 
-当前默认自动源是 AIHOT、官方 RSS/Atom、官方网页/普通网页/Jina Reader 和 URL 投喂；主对标账号自动抓取仍处于 P1 probe 阶段。抖音主页、公众号历史列表不直接进入默认流程。完整自动拉取路线见 `docs/source_autofetch_plan.md`。
+当前默认自动源是 AIHOT、官方 RSS/Atom、官方网页/普通网页/Jina Reader 和 URL 投喂；主对标账号自动抓取仍处于 P1 阶段。抖音主页、公众号历史列表不直接进入默认流程。完整自动拉取路线见 `docs/source_autofetch_plan.md`。
 
-卡兹克公众号 feed 候选验证见 `docs/spikes/wechat_feed_candidate_verification.md`。当前已发现一个 Wechat2RSS XML feed 候选，但它仍只属于 P1 `source_watch_probe`，不默认写入 `03 内容收件箱` 或参与 `04 今日Top10`。
+卡兹克公众号 feed 候选验证见 `docs/spikes/wechat_feed_candidate_verification.md`。当前已发现一个 Wechat2RSS XML feed，并做成 P1 显式接入：只有运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时才拉取。默认流程不写入 `03 内容收件箱`，也不参与 `04 今日Top10`；如果 feed 失效，继续用 `02 URL投喂入口` 粘贴单篇文章 URL。
 
 ## 原则
 

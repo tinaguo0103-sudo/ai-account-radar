@@ -528,6 +528,7 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
         fetch_method = raw.get("抓取方式", raw.get("fetch_method", ""))
         is_resolved_url_item = fetch_method in {
             "wechat_public_html_js_content",
+            "wechat_feed",
             "douyin_public_router_data",
             "rss_atom_xml",
             "jina_reader",
@@ -1989,7 +1990,7 @@ def item_to_content_inbox_fields(item: ContentItem, run_id: str, is_new: bool, d
         "正文/全文": body[:20000],
         "正文长度": str(raw_len),
         "是否全文解析": is_full_text_item(item),
-        "原始payload路径": item.ocr_text if item.fetch_method in {"wechat_public_html_js_content", "douyin_public_router_data", "rss_atom_xml", "jina_reader"} else "",
+        "原始payload路径": item.ocr_text if item.fetch_method in {"wechat_public_html_js_content", "wechat_feed", "douyin_public_router_data", "rss_atom_xml", "jina_reader"} else "",
         "解析说明": parse_note(item),
         "运行日期": date,
         "运行批次": run_id if is_new else "",

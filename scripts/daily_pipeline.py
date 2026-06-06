@@ -25,6 +25,10 @@ LOG_DIR = OUT / "logs"
 DEFAULT_MANUAL = ROOT / "data" / "manual" / "content_items.example.jsonl"
 URL_RESOLVED = OUT / "url_content_items.jsonl"
 URL_RESOLVED_MANUAL = OUT / "url_content_items_manual.jsonl"
+WECHAT_FEED_RESOLVED = OUT / "wechat_feed_content_items.jsonl"
+WECHAT_FEED_RESOLVED_MANUAL = OUT / "wechat_feed_content_items_manual.jsonl"
+COMBINED_MANUAL = OUT / "daily_pipeline_manual_combined.jsonl"
+DEFAULT_WECHAT_FEED_CONFIG = ROOT / "config" / "wechat_feed_candidates.yaml"
 
 load_local_env()
 
@@ -84,6 +88,34 @@ def new_run_id() -> str:
     return f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 
+def row_key(row: dict[str, Any]) -> str:
+    return str(row.get("内容指纹") or row.get("内容链接") or row.get("内容标题") or "")
+
+
+def combine_manual_jsonl(paths: list[Path], output: Path) -> Path:
+    rows: list[dict[str, Any]] = []
+    seen: set[str] = set()
+    for path in paths:
+        if not path.exists():
+            continue
+        for line in path.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                row = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            key = row_key(row)
+            if key and key in seen:
+                continue
+            if key:
+                seen.add(key)
+            rows.append(row)
+    output.parent.mkdir(parents=True, exist_ok=True)
+    output.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + ("\n" if rows else ""), encoding="utf-8")
+    return output
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the daily AI account radar pipeline.")
     parser.add_argument("--write-feishu", action="store_true", help="Write Feishu changes for selected steps: URL resolver writes 03/updates 02; 今日10 writes 04 and refreshes 00.")
@@ -92,6 +124,9 @@ def main() -> int:
     parser.add_argument("--resolve-url-intake", action="store_true", help="Resolve URLs from Feishu 02 URL投喂入口 into ContentItem rows before sampling.")
     parser.add_argument("--include-resolved-url-intake", action="store_true", help="Testing mode: reuse already parsed Feishu 02 URLs as candidates without changing default intake behavior.")
     parser.add_argument("--url-file", help="Resolve URLs from a local text file into ContentItem rows before sampling.")
+    parser.add_argument("--fetch-wechat-feed", action="store_true", help="Explicit P1 mode: fetch configured WeChat public-account feeds into the candidate pool. Default is off.")
+    parser.add_argument("--wechat-feed-config", default=str(DEFAULT_WECHAT_FEED_CONFIG), help="Config for explicit WeChat feed intake.")
+    parser.add_argument("--wechat-feed-limit", type=int, default=5, help="Max articles to fetch per WeChat feed when --fetch-wechat-feed is enabled.")
     args = parser.parse_args()
 
     if args.write_feishu or args.resolve_url_intake or args.include_resolved_url_intake:
@@ -100,6 +135,7 @@ def main() -> int:
     py = sys.executable
     steps: list[dict[str, Any]] = []
     manual_path = args.manual
+    manual_inputs: list[Path] = [Path(args.manual)]
     run_id = new_run_id()
     step_env = os.environ.copy()
     step_env["RUN_ID"] = run_id
@@ -120,7 +156,28 @@ def main() -> int:
             log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
-        manual_path = str(URL_RESOLVED_MANUAL)
+        manual_inputs = [URL_RESOLVED_MANUAL]
+
+    if args.fetch_wechat_feed:
+        feed_cmd = [
+            py,
+            str(ROOT / "scripts" / "wechat_feed_intake.py"),
+            "--config",
+            args.wechat_feed_config,
+            "--limit",
+            str(args.wechat_feed_limit),
+            "--out",
+            str(WECHAT_FEED_RESOLVED),
+        ]
+        steps.append(run_step("fetch explicit WeChat feed into ContentItem rows", feed_cmd, env=step_env))
+        if steps[-1]["returncode"] != 0:
+            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
+            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
+            return steps[-1]["returncode"]
+        manual_inputs.append(WECHAT_FEED_RESOLVED_MANUAL)
+
+    if len(manual_inputs) > 1:
+        manual_path = str(combine_manual_jsonl(manual_inputs, COMBINED_MANUAL))
 
     sampler_cmd = [py, str(ROOT / "scripts" / "content_sampler.py"), "--manual", manual_path, "--run-id", run_id]
     if args.no_fetch_aihot:
