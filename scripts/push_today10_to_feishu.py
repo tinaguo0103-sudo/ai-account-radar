@@ -32,6 +32,9 @@ REQUIRED_FIELDS = [
     "平台建议",
     "标题风格",
     "标题备选",
+    "编辑判断分",
+    "AI味风险",
+    "今日建议级别",
     "推荐日期",
     "运行日期",
     "运行批次",
@@ -127,16 +130,24 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 
 def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str, str]:
     status = ACTION_STATUS.get(row.get("推荐动作", ""), "待判断")
-    publishable_title = row.get("可发布标题") or row.get("我的选题标题", "")
+    publishable_title = row.get("可发布标题", "")
+    display_title = publishable_title or row.get("我的选题标题", "")
     internal_angle = row.get("内部切入角度") or row.get("我的选题标题", "")
+    recommendation_reason = row.get("推荐理由", "")
+    action_reason = row.get("推荐动作原因", "")
+    if action_reason:
+        recommendation_reason = f"{recommendation_reason}\n编辑判断：{action_reason}" if recommendation_reason else f"编辑判断：{action_reason}"
     return {
-        "选题标题": publishable_title,
+        "选题标题": display_title,
         "内部切入角度": internal_angle,
         "可发布标题": publishable_title,
         "内容类型": row.get("内容类型", ""),
         "平台建议": row.get("平台建议", ""),
         "标题风格": row.get("标题风格", ""),
         "标题备选": row.get("标题备选", ""),
+        "编辑判断分": row.get("编辑判断分", ""),
+        "AI味风险": row.get("AI味风险", ""),
+        "今日建议级别": row.get("今日建议级别", ""),
         "推荐日期": date,
         "运行日期": date,
         "运行批次": run_id,
@@ -155,7 +166,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "AI介入点": row.get("AI介入点", ""),
         "可展示结果": row.get("可展示结果", ""),
         "可沉淀资产": row.get("可沉淀资产", ""),
-        "推荐理由": row.get("推荐理由", ""),
+        "推荐理由": recommendation_reason,
         "相关来源": row.get("相关来源", ""),
     }
 
@@ -167,7 +178,8 @@ def dry_run_print(rows: list[dict[str, str]]) -> None:
             f"{row['今日排名']}. {row['选题标题']} | "
             f"{row['内容类型']} / {row['标题风格']} | "
             f"{row['对应栏目']} / {row['热点切入方式']} | "
-            f"{row['业务场景']} | {row['推荐动作']} -> {row['状态']}"
+            f"{row['业务场景']} | {row['推荐动作']} -> {row['状态']} | "
+            f"{row.get('今日建议级别', '')} / 编辑分{row.get('编辑判断分', '')} / AI味{row.get('AI味风险', '')}"
         )
         if row.get("内部切入角度") and row["内部切入角度"] != row["选题标题"]:
             print(f"   内部角度: {row['内部切入角度'][:120]}")
@@ -224,7 +236,7 @@ def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: s
     run_field = fields.get("最近参与运行批次") or fields.get("运行批次")
     if not view.get("view_id") or not run_field:
         return {"created": created, "configured": "missing_view_or_run_field"}
-    visible = {"选题标题", "可发布标题", "内部切入角度", "内容类型", "平台建议", "标题风格", "今日排名", "推荐日期", "运行批次", "是否本次新增", "状态", "推荐动作", "来源类型", "原始来源标题", "来源链接", "对应栏目", "热点切入方式", "业务场景", "推荐理由"}
+    visible = {"选题标题", "可发布标题", "内部切入角度", "内容类型", "平台建议", "标题风格", "编辑判断分", "AI味风险", "今日建议级别", "今日排名", "推荐日期", "运行批次", "是否本次新增", "状态", "推荐动作", "来源类型", "原始来源标题", "来源链接", "对应栏目", "热点切入方式", "业务场景", "推荐理由"}
     hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
     body = {
         "view_name": "今日Top10",

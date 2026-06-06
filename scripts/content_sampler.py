@@ -1231,6 +1231,7 @@ def platform_suggestion(content_type: str, topic: dict[str, Any]) -> str:
 
 def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, content_type: str) -> str:
     event = topic.get("事件锚点") or extract_event_anchor(item)
+    event_short = title_token(event, 28)
     core = short_title(item.title)
     lower = " ".join([item.title, item.body_snippet, topic.get("我的蹭热点角度", "")]).lower()
     text = " ".join([item.title, item.body_snippet, topic.get("业务场景", ""), topic.get("可沉淀资产", "")])
@@ -1280,14 +1281,14 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
         return "Agent工程经验开始成体系后，最值钱的是那张踩坑清单"
 
     if content_type == "踩坑提醒":
-        return f"{event}翻车点不在AI，而在上线前少了一道复核"
+        return f"{event_short}翻车点不在AI，而在上线前少了一道复核"
     if content_type == "工作流拆解":
-        return f"{event}上新后，先看它能替谁省掉一小时"
+        return f"{event_short}之后，谁会先少做一小时"
     if content_type == "资产沉淀":
-        return f"{event}不只是新闻，它可以变成一张实操清单"
+        return f"{event_short}，先拆成一张团队自查表"
     if content_type == "暂存观察":
-        return f"{event}先放观察：热度有了，但还缺一个能讲透的案例"
-    return f"{event}别只看发布，要看它让哪类人少做一步"
+        return f"{event_short}热度够了，但现在还差一个好案例"
+    return f"{event_short}之后，谁会最先少做一步"
 
 
 def title_alternatives(topic: dict[str, Any], item: ContentItem, publishable: str) -> str:
@@ -1304,14 +1305,14 @@ def title_alternatives(topic: dict[str, Any], item: ContentItem, publishable: st
         alternatives.append(f"{event}之后，原来的工具链哪一步最容易被省掉")
         alternatives.append(f"{event}会让谁少做重复活？这才是我想讲的重点")
     elif content_type == "资产沉淀":
-        alternatives.append(f"{event}别当新闻看，可以直接拆成一张实操清单")
-        alternatives.append(f"看完{event}，我会先做一张团队自查表")
+        alternatives.append(f"{event}落地前，先做一张团队自查表")
+        alternatives.append(f"{event}能不能用起来，关键看这三件小事")
     elif content_type == "暂存观察":
         alternatives.append(f"{event}先别急着发，等一个更清楚的落地案例")
         alternatives.append(f"{event}热度够了，但现在还差一个好角度")
     else:
-        alternatives.append(f"{event}别只看发布，要看它会改掉谁的日常工作")
-        alternatives.append(f"普通人蹭{event}，可以从这一个变化讲起")
+        alternatives.append(f"{event}之后，哪类人的日常工作会先变轻")
+        alternatives.append(f"{event}这件事，我会从一个具体场景讲起")
     return "\n".join(dict.fromkeys(alternatives[:3]))
 
 
@@ -1345,6 +1346,143 @@ def ensure_publish_metadata(topic: dict[str, Any], item: ContentItem) -> dict[st
     topic["标题是否过度内部化"] = is_over_internalized_title(topic["内部切入角度"])
     topic["标题改写原因"] = publish_rewrite_reason(topic, item)
     return topic
+
+
+ABSTRACT_TITLE_TERMS = ["流程", "验收", "判断", "业务动作", "工作流", "基础设施", "这类更新", "可执行动作", "业务验收清单"]
+GENERIC_SUBJECT_TERMS = ["内容团队", "业务团队", "非技术团队"]
+STRATEGY_TITLE_PHRASES = ["怎么蹭", "应该讲成", "可执行动作", "别只看发布信息", "别只看发布", "普通人蹭", "不只是新闻", "先放观察", "上新后"]
+
+
+def content_credibility(item: ContentItem) -> str:
+    if item.source_type == "公众号文章":
+        return "全文" if is_full_text_item(item) == "是" else "摘要"
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+        return "抖音浅层"
+    if item.source_type == "AIHOT热点":
+        return "AIHOT摘要"
+    return "摘要"
+
+
+def real_user_question(topic: dict[str, Any], item: ContentItem) -> str:
+    text = " ".join([topic.get("可发布标题", ""), topic.get("业务场景", ""), item.title, item.body_snippet])
+    if any(k in text for k in ["Claude Code", "Agent", "智能体", "OpenJarvis", "Nemotron"]):
+        return "这个 AI 能不能真的帮我完成任务，结果谁来检查？"
+    if any(k in text for k in ["Grok", "视频", "口播", "Imagine", "短剧", "小云雀"]):
+        return "这个视频能力能不能变成可交付的内容效果，而不是只看演示？"
+    if any(k in text for k in ["品牌", "素材", "AI假人", "Shein", "审核"]):
+        return "AI生成内容上线前，怎样避免翻车和信任风险？"
+    if item.source_type == "公众号文章":
+        return "这篇长文真正值得学的判断方法是什么？"
+    return "这个热点对我今天的内容选题有什么真实帮助？"
+
+
+def why_today(topic: dict[str, Any], item: ContentItem) -> str:
+    if item.source_type == "AIHOT热点":
+        return "今天仍在热点窗口，适合借势讲一个具体影响，而不是复述新闻。"
+    if item.reused_url == "是":
+        return "这是已投喂内容复用测试，适合和当天热点一起比较选题质量。"
+    return "来源内容已进入本轮候选，适合判断是否值得拆成自己的表达。"
+
+
+def title_lint(title: str, item: ContentItem) -> tuple[int, str, list[str]]:
+    penalties = 0
+    reasons: list[str] = []
+    abstract_hits = [term for term in ABSTRACT_TITLE_TERMS if term in title]
+    subject_hits = [term for term in GENERIC_SUBJECT_TERMS if term in title]
+    if abstract_hits:
+        penalties += min(35, 10 * len(abstract_hits))
+        reasons.append(f"抽象词过多：{','.join(abstract_hits)}")
+    if subject_hits:
+        penalties += min(20, 8 * len(subject_hits))
+        reasons.append(f"泛化主体：{','.join(subject_hits)}")
+    anchor = extract_event_anchor(item)
+    if anchor and anchor[:4] not in title and specific_event_title(item)[:4] not in title:
+        penalties += 18
+        reasons.append("缺少具体热点名或来源锚点")
+    if any(k in title for k in STRATEGY_TITLE_PHRASES):
+        penalties += 25
+        reasons.append("像策略说明，不像标题")
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data" and any(k in title for k in ["口播", "镜头结构", "评论区", "完整"]):
+        penalties += 25
+        reasons.append("超过抖音浅层解析可支撑范围")
+    score = max(0, 100 - penalties)
+    if score >= 78:
+        risk = "低"
+    elif score >= 58:
+        risk = "中"
+    else:
+        risk = "高"
+    return score, risk, reasons
+
+
+def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, Any]:
+    credibility = content_credibility(item)
+    title = topic.get("可发布标题", "")
+    title_score, ai_risk, lint_reasons = title_lint(title, item)
+    base = int(topic.get("推荐分", 0) or 0)
+    credibility_bonus = {"全文": 12, "AIHOT摘要": 5, "摘要": 0, "抖音浅层": -10}.get(credibility, 0)
+    action_bonus = 5 if topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"} else -5
+    editor_score = max(0, min(100, round(base * 0.7 + title_score * 0.2 + credibility_bonus + action_bonus)))
+    not_recommend: list[str] = []
+    if credibility == "抖音浅层":
+        not_recommend.append("只有标题/文案/封面等浅层信息，缺口播和评论，不适合直接下深结论")
+    if title_score < 65:
+        not_recommend.append("标题 AI 味或抽象词偏重")
+    if editor_score < 68:
+        not_recommend.append("编辑判断分不足，先观察")
+    if ai_risk == "高":
+        not_recommend.append("AI味风险高")
+    if topic.get("推荐动作") == "暂存观察":
+        not_recommend.append("当前推荐动作已是暂存观察，先不生成可发布标题")
+
+    suggested = "是" if editor_score >= 78 and title_score >= 72 and ai_risk != "高" else ("暂存观察" if editor_score >= 60 else "否")
+    if topic.get("推荐动作") == "暂存观察":
+        suggested = "暂存观察"
+    if suggested != "是" and topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"}:
+        topic["推荐动作"] = "暂存观察"
+    topic["真实用户问题"] = real_user_question(topic, item)
+    topic["为什么今天值得做"] = why_today(topic, item)
+    topic["我能讲出的独特角度"] = topic.get("我的蹭热点角度", "")
+    topic["不建议做的原因"] = "；".join(not_recommend) or "暂无明显不做理由。"
+    topic["内容可信度"] = credibility
+    topic["编辑判断分"] = str(editor_score)
+    topic["标题质量分"] = str(title_score)
+    topic["AI味风险"] = ai_risk
+    topic["是否建议进入制作"] = suggested
+    topic["推荐动作原因"] = "；".join(lint_reasons + not_recommend) or "标题具体、信息密度足够，适合进入今日判断。"
+    topic["降级原因"] = "；".join(not_recommend) if suggested != "是" else ""
+    if suggested != "是":
+        topic["可发布标题"] = ""
+        topic["标题备选"] = ""
+    return topic
+
+
+def apply_editorial_judgement(topics: list[dict[str, Any]], item_by_fp: dict[str, ContentItem]) -> list[dict[str, Any]]:
+    for topic in topics:
+        item = item_by_fp.get(topic.get("内容指纹", ""))
+        if item:
+            ensure_publish_metadata(topic, item)
+            editorial_judgement(topic, item)
+    return topics
+
+
+def assign_today_priority(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    recommended = sorted(
+        [topic for topic in topics if topic.get("是否建议进入制作") == "是"],
+        key=lambda row: int(row.get("编辑判断分", 0) or 0),
+        reverse=True,
+    )
+    top_fps = {topic.get("内容指纹") for topic in recommended[:3]}
+    for topic in topics:
+        if topic.get("内容指纹") in top_fps:
+            topic["今日建议级别"] = "今日最值得做"
+        elif topic.get("是否建议进入制作") == "是":
+            topic["今日建议级别"] = "可选候选"
+        elif topic.get("是否建议进入制作") == "暂存观察":
+            topic["今日建议级别"] = "暂存观察"
+        else:
+            topic["今日建议级别"] = "不建议制作"
+    return topics
 
 
 def assign_publish_metadata(topics: list[dict[str, Any]], item_by_fp: dict[str, ContentItem]) -> list[dict[str, Any]]:
@@ -1510,6 +1648,18 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "标题备选": "",
         "标题是否过度内部化": "",
         "标题改写原因": "",
+        "真实用户问题": "",
+        "为什么今天值得做": "",
+        "我能讲出的独特角度": "",
+        "不建议做的原因": "",
+        "内容可信度": "",
+        "编辑判断分": "",
+        "标题质量分": "",
+        "AI味风险": "",
+        "是否建议进入制作": "",
+        "今日建议级别": "",
+        "推荐动作原因": "",
+        "降级原因": "",
         "来源内容": row["内容标题"],
         "来源链接": item.url,
         "来源类型": row["来源类型"],
@@ -1820,6 +1970,10 @@ def write_today10_markdown(path: Path, topics: list[dict[str, Any]], logs: list[
             f"- 内容类型：{topic.get('内容类型', '')}",
             f"- 平台建议：{topic.get('平台建议', '')}",
             f"- 标题风格：{topic.get('标题风格', '')}",
+            f"- 今日建议级别：{topic.get('今日建议级别', '')}",
+            f"- 编辑判断分 / 标题质量分 / AI味风险：{topic.get('编辑判断分', '')} / {topic.get('标题质量分', '')} / {topic.get('AI味风险', '')}",
+            f"- 真实用户问题：{topic.get('真实用户问题', '')}",
+            f"- 为什么今天值得做：{topic.get('为什么今天值得做', '')}",
             f"- 来源：{topic['来源类型']} / {topic['来源内容']}",
             f"- 栏目：{topic['对应栏目']}",
             f"- 热点切入方式：{topic['热点切入方式']}",
@@ -1887,6 +2041,7 @@ def write_debug_top10(
         item = item_by_fp.get(topic.get("内容指纹", ""))
         if item:
             ensure_publish_metadata(topic, item)
+            editorial_judgement(topic, item)
     template_counts = collections.Counter(title_structure_template(topic.get("可发布标题") or topic.get("我的选题标题", "")) for topic in topics)
     selected_fps = {topic.get("内容指纹", "") for topic in topics}
     rank_by_fp = {topic.get("内容指纹", ""): rank for rank, topic in enumerate(topics, start=1)}
@@ -1899,6 +2054,7 @@ def write_debug_top10(
         if not item:
             continue
         ensure_publish_metadata(topic, item)
+        editorial_judgement(topic, item)
         repeated, detached, kept_anchor, over_infer, review_reason = debug_flags(topic, item, template_counts)
         in_top10 = fp in selected_fps
         rows.append({
@@ -1925,6 +2081,17 @@ def write_debug_top10(
             "标题风格": topic.get("标题风格", ""),
             "标题是否过度内部化": topic.get("标题是否过度内部化", ""),
             "标题改写原因": topic.get("标题改写原因", ""),
+            "真实用户问题": topic.get("真实用户问题", ""),
+            "为什么今天值得做": topic.get("为什么今天值得做", ""),
+            "我能讲出的独特角度": topic.get("我能讲出的独特角度", ""),
+            "不建议做的原因": topic.get("不建议做的原因", ""),
+            "内容可信度": topic.get("内容可信度", ""),
+            "编辑判断分": topic.get("编辑判断分", ""),
+            "标题质量分": topic.get("标题质量分", ""),
+            "AI味风险": topic.get("AI味风险", ""),
+            "是否建议进入制作": topic.get("是否建议进入制作", ""),
+            "今日建议级别": topic.get("今日建议级别", ""),
+            "推荐动作原因": topic.get("推荐动作原因", ""),
             "最终选题标题": topic.get("可发布标题") or topic.get("我的选题标题", ""),
             "为什么推荐": topic.get("推荐理由", ""),
             "普通资讯号会怎么讲": topic.get("普通AI资讯号会怎么讲", ""),
@@ -1936,7 +2103,7 @@ def write_debug_top10(
             "是否疑似脱离原始热点": detached,
             "是否超过解析文本支撑范围": over_infer,
             "是否来自已解析URL复用": "是" if item.reused_url == "是" or topic.get("是否来自已解析URL复用") == "是" else "否",
-            "降级或改写原因": review_reason if topic.get("推荐动作") in {"暂存观察", "不做"} else "",
+            "降级或改写原因": topic.get("降级原因") or (review_reason if topic.get("推荐动作") in {"暂存观察", "不做"} else ""),
             "需要人工复核原因": review_reason,
             "内容指纹": fp,
             "内容结构": row.get("内容结构", ""),
@@ -1958,6 +2125,13 @@ def write_debug_top10(
             f"- 原始来源：{row['原始来源类型']} / {row['原始来源标题']}",
             f"- 文本使用方式：{row['文本使用方式']}",
             f"- 内部切入角度：{row['内部切入角度']}",
+            f"- 真实用户问题：{row['真实用户问题']}",
+            f"- 为什么今天值得做：{row['为什么今天值得做']}",
+            f"- 独特角度：{row['我能讲出的独特角度']}",
+            f"- 内容可信度/编辑分/标题分/AI味：{row['内容可信度']} / {row['编辑判断分']} / {row['标题质量分']} / {row['AI味风险']}",
+            f"- 是否建议进入制作：{row['是否建议进入制作']} / {row['今日建议级别']}",
+            f"- 推荐动作原因：{row['推荐动作原因']}",
+            f"- 不建议做的原因：{row['不建议做的原因']}",
             f"- 内容类型/平台建议：{row['内容类型']} / {row['平台建议']}",
             f"- 标题风格：{row['标题风格']}",
             f"- 标题改写原因：{row['标题改写原因']}",
@@ -2156,10 +2330,11 @@ def main() -> int:
         for row in breakdown_rows
         if row["是否进入今日10选题"] == "是"
     ]
-    candidates = assign_publish_metadata(candidates, item_by_fp)
+    candidates = apply_editorial_judgement(candidates, item_by_fp)
     today10 = select_today10(candidates)
     today10 = assign_action_quotas(today10)
-    today10 = assign_publish_metadata(today10, item_by_fp)
+    today10 = apply_editorial_judgement(today10, item_by_fp)
+    today10 = assign_today_priority(today10)
     write_debug_top10(today10, candidates, breakdown_by_fp, item_by_fp)
 
     write_csv(OUT / "content_items.csv", item_rows)
