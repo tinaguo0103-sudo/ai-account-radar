@@ -506,6 +506,8 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 
 完整路线、主对标池逐个判断和未来 PoC 分支命名见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md)。
 
+卡兹克公众号 feed 候选验证见 [docs/spikes/wechat_feed_candidate_verification.md](docs/spikes/wechat_feed_candidate_verification.md)。本轮已从 Wechat2RSS issue 线索中验证到一个可读 XML feed，但它仍先归入 `source_watch_probe`，不直接进入默认 `daily_pipeline.py`；正式接入前还需要连续稳定性、去重和字段完整性验证。
+
 ## 采集边界
 
 - 不绕过登录、验证码、反爬或平台限制。

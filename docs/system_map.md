@@ -44,6 +44,8 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 当前默认自动源是 AIHOT、官方 RSS/Atom、官方网页/普通网页/Jina Reader 和 URL 投喂；主对标账号自动抓取仍处于 P1 probe 阶段。抖音主页、公众号历史列表不直接进入默认流程。完整自动拉取路线见 `docs/source_autofetch_plan.md`。
 
+卡兹克公众号 feed 候选验证见 `docs/spikes/wechat_feed_candidate_verification.md`。当前已发现一个 Wechat2RSS XML feed 候选，但它仍只属于 P1 `source_watch_probe`，不默认写入 `03 内容收件箱` 或参与 `04 今日Top10`。
+
 ## 原则
 
 后台可以复杂，前台只保留今天要做什么。

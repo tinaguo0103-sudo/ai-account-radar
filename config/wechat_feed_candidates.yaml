@@ -1,0 +1,51 @@
+candidates:
+  - name: RSS之家数字生命卡兹克页面
+    type: rssabc_page
+    url: https://www.rssabc.com/obj/PDxlbw893y
+    target: 数字生命卡兹克
+    note: 检查是否有公开 RSS/Atom/JSON feed 或商业订阅入口。
+  - name: Wechat2RSS issue 166
+    type: github_issue
+    url: https://github.com/ttttmr/Wechat2RSS/issues/166
+    target: 数字生命卡兹克
+    note: 检查 issue 中是否包含公众号线索、Biz ID、样本文章或 feed 地址。
+  - name: Wechat2RSS issue 310
+    type: github_issue
+    url: https://github.com/ttttmr/Wechat2RSS/issues/310
+    target: 数字生命卡兹克
+    note: 检查 issue 中是否包含公众号线索、Biz ID、样本文章或 feed 地址。
+  - name: Wechat2RSS issue 390
+    type: github_issue
+    url: https://github.com/ttttmr/Wechat2RSS/issues/390
+    target: 数字生命卡兹克
+    note: 检查 issue 中是否包含公众号线索、Biz ID、样本文章或 feed 地址。
+  - name: Wechat2RSS issue 419
+    type: github_issue
+    url: https://github.com/ttttmr/Wechat2RSS/issues/419
+    target: 数字生命卡兹克
+    note: 重点检查 Biz ID 线索和是否已有可读 feed。
+  - name: we-mp-rss GitHub
+    type: tool_route
+    url: https://github.com/rachelos/we-mp-rss
+    target: 微信公众号自动订阅中间层
+    note: 判断是否适合作为自建 feed source watch 服务。
+  - name: we-mp-rss README
+    type: tool_route
+    url: https://github.com/rachelos/we-mp-rss/blob/main/ReadMe.md
+    target: 微信公众号自动订阅中间层
+    note: 检查部署、登录态、输出格式和 API 能力。
+  - name: wewe-rss GitHub
+    type: tool_route
+    url: https://github.com/cooderl/wewe-rss
+    target: 微信公众号自动订阅中间层
+    note: 判断是否适合低维护私有化部署。
+  - name: wewe-rss releases
+    type: tool_route
+    url: https://github.com/cooderl/wewe-rss/releases
+    target: 微信公众号自动订阅中间层
+    note: 检查项目活跃度和可用版本。
+  - name: RSSHub GitHub
+    type: tool_route
+    url: https://github.com/DIYgod/RSSHub
+    target: 补充 RSS 路线
+    note: 判断公众号路线是否适合通过 RSSHub 或第三方源补充。
