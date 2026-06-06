@@ -26,18 +26,33 @@ TODAY10 = OUT / "today_10_topics.csv"
 TARGET_TABLE_KEY = "topic_decision"
 REQUIRED_FIELDS = [
     "选题标题",
+    "我的选题标题",
     "内部切入角度",
     "可发布标题",
     "内容类型",
     "平台建议",
     "标题风格",
     "标题备选",
+    "标题是否过度内部化",
+    "标题改写原因",
+    "真实用户问题",
+    "为什么今天值得做",
+    "我能讲出的独特角度",
+    "我的账号为什么能讲",
+    "是否只是资讯搬运",
+    "是否有足够内容支撑",
     "编辑判断分",
     "标题质量分",
+    "人设匹配分",
+    "内容可信度",
     "AI味风险",
+    "是否建议进入制作",
     "今日建议级别",
     "主编判断",
+    "模板词命中情况",
     "不建议做的原因",
+    "推荐动作原因",
+    "降级原因",
     "推荐日期",
     "运行日期",
     "运行批次",
@@ -58,6 +73,7 @@ REQUIRED_FIELDS = [
     "可沉淀资产",
     "推荐理由",
     "相关来源",
+    "内容指纹",
 ]
 ACTION_STATUS = {
     "立即蹭热点": "待判断",
@@ -139,18 +155,33 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
     recommendation_reason = row.get("推荐理由", "")
     return {
         "选题标题": display_title,
+        "我的选题标题": row.get("我的选题标题", ""),
         "内部切入角度": internal_angle,
         "可发布标题": publishable_title,
         "内容类型": row.get("内容类型", ""),
         "平台建议": row.get("平台建议", ""),
         "标题风格": row.get("标题风格", ""),
         "标题备选": row.get("标题备选", ""),
+        "标题是否过度内部化": row.get("标题是否过度内部化", ""),
+        "标题改写原因": row.get("标题改写原因", ""),
+        "真实用户问题": row.get("真实用户问题", ""),
+        "为什么今天值得做": row.get("为什么今天值得做", ""),
+        "我能讲出的独特角度": row.get("我能讲出的独特角度", ""),
+        "我的账号为什么能讲": row.get("我的账号为什么能讲", ""),
+        "是否只是资讯搬运": row.get("是否只是资讯搬运", ""),
+        "是否有足够内容支撑": row.get("是否有足够内容支撑", ""),
         "编辑判断分": row.get("编辑判断分", ""),
         "标题质量分": row.get("标题质量分", ""),
+        "人设匹配分": row.get("人设匹配分", ""),
+        "内容可信度": row.get("内容可信度", ""),
         "AI味风险": row.get("AI味风险", ""),
+        "是否建议进入制作": row.get("是否建议进入制作", ""),
         "今日建议级别": row.get("今日建议级别", ""),
         "主编判断": row.get("主编判断", ""),
+        "模板词命中情况": row.get("模板词命中情况", ""),
         "不建议做的原因": row.get("不建议做的原因", ""),
+        "推荐动作原因": row.get("推荐动作原因", ""),
+        "降级原因": row.get("降级原因", ""),
         "推荐日期": date,
         "运行日期": date,
         "运行批次": run_id,
@@ -171,6 +202,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "可沉淀资产": row.get("可沉淀资产", ""),
         "推荐理由": recommendation_reason,
         "相关来源": row.get("相关来源", ""),
+        "内容指纹": row.get("内容指纹", ""),
     }
 
 
@@ -206,13 +238,10 @@ def batch_create(token: str, app_token: str, table_id: str, rows: list[dict[str,
 
 
 def update_existing_top10(token: str, app_token: str, table_id: str, record: dict[str, Any], row: dict[str, str]) -> None:
-    fields = {
-        "今日排名": row["今日排名"],
-        "运行日期": row["运行日期"],
-        "运行批次": row["运行批次"],
-        "是否本次新增": "否",
-        "最近参与运行批次": row["最近参与运行批次"],
-    }
+    # Fully overwrite all fields controlled by this script. This intentionally
+    # keeps empty strings so stale Feishu values are cleared instead of retained.
+    fields = {key: row.get(key, "") for key in REQUIRED_FIELDS}
+    fields["是否本次新增"] = "否"
     feishu.request_json(
         "PUT",
         f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record['record_id']}",
@@ -239,7 +268,7 @@ def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: s
     run_field = fields.get("最近参与运行批次") or fields.get("运行批次")
     if not view.get("view_id") or not run_field:
         return {"created": created, "configured": "missing_view_or_run_field"}
-    visible = {"选题标题", "可发布标题", "内部切入角度", "内容类型", "平台建议", "标题风格", "标题备选", "编辑判断分", "标题质量分", "AI味风险", "今日建议级别", "主编判断", "不建议做的原因", "今日排名", "推荐日期", "运行批次", "是否本次新增", "状态", "推荐动作", "来源类型", "原始来源标题", "来源链接", "对应栏目", "热点切入方式", "业务场景", "推荐理由"}
+    visible = {"选题标题", "可发布标题", "内部切入角度", "内容类型", "平台建议", "标题风格", "标题备选", "编辑判断分", "标题质量分", "AI味风险", "今日建议级别", "主编判断", "不建议做的原因", "今日排名", "推荐日期", "运行批次", "是否本次新增", "状态", "推荐动作", "来源类型", "原始来源标题", "来源链接", "对应栏目", "热点切入方式", "业务场景", "推荐理由", "内容指纹", "是否建议进入制作"}
     hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
     body = {
         "view_name": "今日Top10",
@@ -288,20 +317,38 @@ def main() -> int:
     created_fields = ensure_fields(token, app_token, table_id)
 
     existing = all_records(token, app_token, table_id)
-    existing_by_key = {
+    existing_by_fp = {
+        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("内容指纹", ""))): record
+        for record in existing
+        if record.get("fields", {}).get("内容指纹")
+    }
+    existing_by_source = {
+        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("原始来源标题", ""))): record
+        for record in existing
+        if record.get("fields", {}).get("原始来源标题")
+    }
+    existing_by_title = {
         (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("选题标题", ""))): record
         for record in existing
     }
     to_create = []
     updated_existing = 0
+    updated_titles: list[str] = []
+    created_titles: list[str] = []
     for row in mapped:
-        record = existing_by_key.get((row["推荐日期"], row["选题标题"]))
+        record = (
+            existing_by_fp.get((row["推荐日期"], row.get("内容指纹", "")))
+            or existing_by_source.get((row["推荐日期"], row.get("原始来源标题", "")))
+            or existing_by_title.get((row["推荐日期"], row["选题标题"]))
+        )
         if record:
             update_existing_top10(token, app_token, table_id, record, row)
             updated_existing += 1
+            updated_titles.append(row["选题标题"])
             time.sleep(0.1)
         else:
             to_create.append(row)
+            created_titles.append(row["选题标题"])
     created_records = batch_create(token, app_token, table_id, to_create) if to_create else 0
     print(json.dumps({
         "ok": True,
@@ -312,6 +359,8 @@ def main() -> int:
         "created_records": created_records,
         "updated_existing": updated_existing,
         "skipped_existing": len(mapped) - len(to_create),
+        "created_titles": created_titles,
+        "updated_titles": updated_titles,
         "today_view": ensure_today_top10_view(token, app_token, table_id, run_id),
     }, ensure_ascii=False, indent=2))
     return 0

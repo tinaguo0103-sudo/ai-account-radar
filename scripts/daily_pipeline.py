@@ -161,6 +161,13 @@ def main() -> int:
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
 
+        verify_cmd = [py, str(ROOT / "scripts" / "verify_today10_feishu_consistency.py"), "--run-id", run_id]
+        steps.append(run_step("verify Feishu 04 今日Top10 consistency", verify_cmd, env=step_env))
+        if steps[-1]["returncode"] != 0:
+            log_path = write_run_log(steps, "write-feishu", run_id)
+            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
+            return steps[-1]["returncode"]
+
         refresh_cmd = [py, str(ROOT / "scripts" / "refresh_console_daily.py")]
         steps.append(run_step("refresh Feishu 00 主控台", refresh_cmd, env=step_env))
 
