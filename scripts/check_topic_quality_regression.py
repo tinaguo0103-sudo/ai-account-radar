@@ -14,6 +14,8 @@ DEBUG = ROOT / "output" / "debug_today10_generation.csv"
 FORBIDDEN_VISIBLE_TERMS = [
     "自查表", "少做一小时", "这类更新", "可执行动作", "业务动作", "业务验收清单",
     "别只看发布信息", "先看任务怎么验收", "该先判断", "最该重排",
+    "适合拆成一次真实任务边界测试", "适合拆成一次AI视频交付测试",
+    "不该只看工具名", "只有在能说清具体产品层",
 ]
 VISIBLE_FIELDS = [
     "我的选题标题", "可发布标题", "标题备选", "推荐理由", "我的蹭热点角度",
@@ -43,6 +45,8 @@ def main() -> int:
     rows = read_csv(TODAY10)
     debug_rows = read_csv(DEBUG)
     failures: list[str] = []
+    warnings: list[str] = []
+    debug_by_fp = {row.get("内容指纹", ""): row for row in debug_rows if row.get("内容指纹", "")}
 
     for idx, row in enumerate(rows, start=1):
         visible_text = "\n".join(row.get(field, "") for field in VISIBLE_FIELDS)
@@ -54,6 +58,15 @@ def main() -> int:
                 failures.append(f"row {idx}: {row.get('今日建议级别')} still has publishable title/options")
         if row.get("AI味风险") == "低" and hits:
             failures.append(f"row {idx}: AI味风险低 but template terms present")
+        if row.get("今日建议级别") == "今日最值得做":
+            if row.get("AI味风险") == "高":
+                failures.append(f"row {idx}: 今日最值得做 has high AI risk")
+            if not row.get("可发布标题", "").strip():
+                failures.append(f"row {idx}: 今日最值得做 has no publishable title")
+            if intish(row.get("标题质量分", "")) < 72 or intish(row.get("编辑判断分", "")) < 78:
+                failures.append(f"row {idx}: 今日最值得做 has low judgement/title score")
+        if row.get("今日建议级别") == "不建议制作":
+            failures.append(f"row {idx}: 不建议制作 should not enter 今日Top10")
         if intish(row.get("标题质量分", "")) >= 85 and not (row.get("可发布标题") or row.get("来源内容") or "")[:4]:
             failures.append(f"row {idx}: high title score without concrete source/title")
         if row.get("来源类型") == "对标视频" and "抖音" in row.get("内容可信度", ""):
@@ -76,10 +89,41 @@ def main() -> int:
         for source_term, wrong_term in known_bad_pairs:
             if source_term in row.get("来源内容", "") and wrong_term in title_blob:
                 failures.append(f"row {idx}: source {source_term} mapped to wrong term {wrong_term}")
+        fp = row.get("内容指纹", "")
+        debug = debug_by_fp.get(fp)
+        if debug:
+            for field in ["今日建议级别", "推荐动作", "是否建议进入制作", "编辑判断分", "标题质量分", "AI味风险", "可发布标题", "标题备选", "不建议做的原因", "主编判断"]:
+                if (row.get(field, "") or "") != (debug.get(field, "") or ""):
+                    failures.append(f"row {idx}: field mismatch with debug for {field}")
 
     top_count = sum(1 for row in rows if row.get("今日建议级别") == "今日最值得做")
     if top_count > 3:
         failures.append(f"今日最值得做 count > 3: {top_count}")
+    watch_count = sum(1 for row in rows if row.get("今日建议级别") == "暂存观察")
+    selected_sources = {row.get("来源内容", "") for row in rows}
+    better_unselected = [
+        row for row in debug_rows
+        if row.get("是否进入Top10") != "是"
+        and row.get("原始来源标题", "") not in selected_sources
+        and row.get("是否建议进入制作") == "是"
+        and row.get("AI味风险") == "低"
+        and intish(row.get("编辑判断分", "")) >= 78
+        and intish(row.get("标题质量分", "")) >= 72
+    ]
+    if watch_count > 5 and better_unselected:
+        failures.append(f"Top10 has {watch_count} 暂存观察 while {len(better_unselected)} better production-ready candidates are unselected")
+
+    selected_fps = {row.get("内容指纹", "") for row in rows}
+    weakest_selected_watch = min(
+        [intish(row.get("编辑判断分", "")) for row in rows if row.get("今日建议级别") == "暂存观察"],
+        default=101,
+    )
+    for row in better_unselected:
+        if intish(row.get("编辑判断分", "")) > weakest_selected_watch:
+            warnings.append(f"unselected better candidate: {row.get('原始来源标题', '')[:80]}")
+            if row.get("内容指纹", "") not in selected_fps and row.get("原始来源标题", "") not in selected_sources:
+                failures.append(f"better candidate unselected while weaker watch item selected: {row.get('原始来源标题', '')[:80]}")
+                break
 
     for idx, row in enumerate(debug_rows, start=1):
         if row.get("是否超过解析文本支撑范围") == "是" and row.get("今日建议级别") == "今日最值得做":
@@ -92,6 +136,8 @@ def main() -> int:
         for failure in failures:
             print(f"- {failure}")
         return 1
+    for warning in warnings:
+        print(f"WARNING: {warning}")
     print(f"Topic quality regression passed: {len(rows)} top rows, {len(debug_rows)} debug rows")
     return 0
 

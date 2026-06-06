@@ -788,6 +788,8 @@ def title_structure_template(title: str) -> str:
 FORBIDDEN_VISIBLE_TERMS = [
     "自查表", "少做一小时", "这类更新", "可执行动作", "业务动作", "业务验收清单",
     "别只看发布信息", "先看任务怎么验收", "该先判断", "最该重排",
+    "适合拆成一次真实任务边界测试", "适合拆成一次AI视频交付测试",
+    "不该只看工具名", "只有在能说清具体产品层",
 ]
 
 
@@ -1023,7 +1025,7 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
         elif "luma" in lower:
             hot_title = "Luma自动宣传图这类能力，真正考验的是谁来决定能不能发"
         else:
-            hot_title = f"{event}更适合拆成一次AI视频交付测试"
+            hot_title = ""
         return {
             "角度类型": "AI导演流程" if any(k.lower() in lower for k in ["runway", "kling", "seedance", "sora", "视频", "分镜", "镜头", "成片"]) else "内容团队变化",
             "我的蹭热点角度": "AI视频模型更新后，导演工作流里最先变的不是prompt，而是Brief、分镜、素材修改和验收标准。",
@@ -1047,10 +1049,10 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
         elif "claude" in lower and any(k in text for k in ["数据分析", "自助", "分析"]):
             hot_title = "Claude自助数据分析真正改变的，是业务团队怎么定义指标口径"
         else:
-            hot_title = f"{event}适合拆成一次真实任务边界测试"
+            hot_title = ""
         return {
             "角度类型": "Agent落地",
-            "我的蹭热点角度": f"非技术人看 {title}，不该只看工具名，而要看哪些任务的输入、输出、验收和异常处理能被接管。",
+            "我的蹭热点角度": f"{title}要先补一个真实任务样例：输入什么、交付什么结果、失败时谁处理。",
             "影响对象": "Agent服务、企业流程自动化、非技术业务人的重复任务、工具链整合。",
             "标题": hot_title,
             "标题规则": "agent_validation_specific",
@@ -1190,7 +1192,7 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             angle = "产品生死线"
         return {
             "角度类型": angle,
-            "我的蹭热点角度": f"这次 {event} 只有在能说清具体产品层、具体用户任务或具体项目影响时才值得做；否则先作为资讯观察。",
+            "我的蹭热点角度": f"{event}目前更像资讯观察项；如果后续能补到明确产品层、用户任务或项目影响，再考虑转成选题。",
             "影响对象": "AI工具产品、包装型SaaS、插件生态、内容/运营团队的工具选择。",
             "标题": hot_title,
             "标题规则": "generic_model_update_observe",
@@ -1308,7 +1310,12 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
 
     if item.source_type == "公众号文章":
         if "卡兹克" in item.account_name or "数字生命卡兹克" in item.account_name:
-            if any(k in text for k in ["Claude Code", "原则", "团队"]):
+            source_title = item.title or ""
+            if any(k in source_title for k in ["内部分享", "内容创作方法论", "内容创作", "三年来总结"]):
+                return "卡兹克这场内部分享，值得学的是他怎么筛选选题"
+            if "Claude Code" in source_title or (
+                "Claude Code" in text and any(k in source_title for k in ["原则", "团队", "工作方式"])
+            ):
                 return "卡兹克拆 Claude Code 这篇，最值得抄的是它的项目复盘方式"
             return "卡兹克这篇内部分享，真正值得学的是他怎么筛选AI信息"
         return f"{core}最值得拆的，是它怎么让读者相信作者懂行"
@@ -1524,6 +1531,26 @@ def support_level(topic: dict[str, Any], item: ContentItem) -> str:
     return "摘要可用" if item.body_snippet or item.cover_text else "不足"
 
 
+def editor_visible_note(topic: dict[str, Any], item: ContentItem, suggested: str, not_recommend: list[str], persona_score: int, support: str) -> str:
+    if suggested == "是":
+        if item.source_type == "公众号文章" and is_full_text_item(item) == "是":
+            return "这条和账号人设强相关，且有全文支撑，可以拆成一篇对标学习。"
+        if item.source_type == "AIHOT热点":
+            return "这条有热点窗口，也能接到我的AI业务系统视角，适合今天推进。"
+        return "这条能体现我的内容现场和项目判断，适合进入制作。"
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+        return "抖音浅层解析只有标题和文案，适合观察选题包装，不适合直接做深拆。"
+    if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
+        return "只有摘要，能看出方向，但缺全文细节，先暂存。"
+    if support in {"不足", "浅层"}:
+        return "信息支撑还不够，先暂存，等补到案例、全文或口播再判断。"
+    if persona_score < 60:
+        return "和当前账号人设关联还不够强，先暂存。"
+    if not_recommend:
+        return not_recommend[0]
+    return "能看出方向，但今天还缺一个足够具体的切入点，先暂存。"
+
+
 def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, Any]:
     credibility = content_credibility(item)
     title = topic.get("可发布标题", "")
@@ -1586,6 +1613,7 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     topic["是否建议进入制作"] = suggested
     topic["主编判断"] = "值得今天推进" if suggested == "是" else ("先暂存，等更具体角度或材料" if suggested == "暂存观察" else "不建议制作")
     topic["模板词命中情况"] = "、".join(template_hits) or "无"
+    topic["推荐理由"] = editor_visible_note(topic, item, suggested, not_recommend, persona_score, support)
     topic["推荐动作原因"] = "；".join(lint_reasons + not_recommend) or "标题具体、信息密度足够，适合进入今日判断。"
     topic["降级原因"] = "；".join(not_recommend) if suggested != "是" else ""
     if suggested != "是":
@@ -2221,6 +2249,7 @@ def write_debug_top10(
             "推荐分": topic.get("推荐分", ""),
             "内部切入角度": topic.get("内部切入角度", topic.get("我的选题标题", "")),
             "可发布标题": topic.get("可发布标题", ""),
+            "标题备选": topic.get("标题备选", ""),
             "内容类型": topic.get("内容类型", ""),
             "平台建议": topic.get("平台建议", ""),
             "标题风格": topic.get("标题风格", ""),
@@ -2314,6 +2343,9 @@ def assign_action_quotas(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
     brief = 0
     weekly = 0
     for topic in topics:
+        if topic.get("是否建议进入制作") != "是":
+            topic["推荐动作"] = "暂存观察" if topic.get("是否建议进入制作") == "暂存观察" else "不做"
+            continue
         desired = topic["推荐动作"]
         if desired == "立即蹭热点":
             immediate += 1
@@ -2329,12 +2361,6 @@ def assign_action_quotas(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
             weekly += 1
             if weekly > 2:
                 topic["推荐动作"] = "暂存观察"
-    if sum(1 for t in topics if t["推荐动作"] == "立即蹭热点") < 3:
-        for topic in topics:
-            if topic["来源类型"] == "AIHOT热点" and topic["推荐动作"] in {"本周做", "暂存观察"}:
-                topic["推荐动作"] = "立即蹭热点"
-                if sum(1 for t in topics if t["推荐动作"] == "立即蹭热点") >= 3:
-                    break
     return topics
 
 
@@ -2408,59 +2434,95 @@ def merge_same_theme(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return merged
 
 
+def credibility_rank(topic: dict[str, Any]) -> int:
+    return {
+        "全文": 5,
+        "摘要": 3,
+        "AIHOT摘要": 3,
+        "摘要可用": 3,
+        "抖音浅层": 1,
+    }.get(topic.get("内容可信度", ""), 2)
+
+
+def ai_risk_rank(topic: dict[str, Any]) -> int:
+    return {"低": 3, "中": 2, "高": 0}.get(topic.get("AI味风险", ""), 1)
+
+
+def editorial_sort_key(topic: dict[str, Any]) -> tuple[int, int, int, int, int, int, int]:
+    suggested = 1 if topic.get("是否建议进入制作") == "是" else 0
+    return (
+        suggested,
+        ai_risk_rank(topic),
+        int(topic.get("编辑判断分", 0) or 0),
+        int(topic.get("标题质量分", 0) or 0),
+        credibility_rank(topic),
+        int(topic.get("人设匹配分", 0) or 0),
+        int(topic.get("推荐分", 0) or 0),
+    )
+
+
+def quality_band(topic: dict[str, Any]) -> str:
+    if topic.get("是否建议进入制作") == "是" and topic.get("AI味风险") != "高":
+        return "make"
+    if topic.get("是否建议进入制作") == "暂存观察":
+        return "watch"
+    return "no"
+
+
 def select_today10(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Select a diverse Top10 with soft column quotas from config/system rules."""
-    sorted_candidates = merge_same_theme(sorted(candidates, key=lambda row: int(row["推荐分"]), reverse=True))
-    buckets: dict[str, list[dict[str, Any]]] = {}
-    for row in sorted_candidates:
+    """Select Top10 after editorial judgement; column quota is only a soft tie-breaker.
+
+    Freeze the anti-template baseline:
+    - no natural angle -> keep as watch, do not force a title;
+    - insufficient support -> keep as watch, do not pretend it is production-ready;
+    - weak persona fit -> keep as watch, do not rescue it with workflow/checklist wording;
+    - 今日最值得做 can be only one item; never fill it by quota.
+    """
+    for row in candidates:
         row["对应栏目"] = normalize_column(row["对应栏目"])
-        buckets.setdefault(row["对应栏目"], []).append(row)
+    sorted_candidates = merge_same_theme(sorted(candidates, key=editorial_sort_key, reverse=True))
 
     selected: list[dict[str, Any]] = []
     seen_fp: set[str] = set()
+    seen_titles: set[str] = set()
     template_counts: dict[str, int] = {}
-    has_url_candidate = any(row.get("候选来源方式") == "URL投喂/复用" for row in sorted_candidates)
+    column_counts: dict[str, int] = {}
 
-    def add(row: dict[str, Any], allow_aihot_overflow: bool = False) -> bool:
+    def add(row: dict[str, Any], allow_overflow: bool = False) -> bool:
         if row["内容指纹"] in seen_fp or len(selected) >= 10:
             return False
-        if row.get("来源类型") == "AIHOT热点" and not allow_aihot_overflow:
+        visible_title = (row.get("可发布标题") or row.get("来源内容") or row.get("我的选题标题", "")).strip()
+        if visible_title and visible_title in seen_titles:
+            return False
+        if row.get("来源类型") == "AIHOT热点" and not allow_overflow:
             if sum(1 for item in selected if item.get("来源类型") == "AIHOT热点") >= 8:
                 return False
         template = title_structure_template(row.get("可发布标题") or row.get("我的选题标题", ""))
         if template != "specific" and template_counts.get(template, 0) >= 2:
             return False
+        column = normalize_column(row.get("对应栏目", ""))
+        _minimum, maximum = TOP10_COLUMN_LIMITS.get(column, (0, 10))
+        if not allow_overflow and quality_band(row) != "make" and column_counts.get(column, 0) >= maximum:
+            return False
         selected.append(row)
         seen_fp.add(row["内容指纹"])
+        if visible_title:
+            seen_titles.add(visible_title)
         template_counts[template] = template_counts.get(template, 0) + 1
+        column_counts[column] = column_counts.get(column, 0) + 1
         return True
 
-    if has_url_candidate:
+    for band in ("make", "watch"):
         for row in sorted_candidates:
-            if row.get("候选来源方式") == "URL投喂/复用" and int(row["推荐分"]) >= 62:
+            if quality_band(row) == band:
                 add(row)
-                break
-
-    for column, (minimum, maximum) in TOP10_COLUMN_LIMITS.items():
-        column_rows = buckets.get(column, [])
-        for row in column_rows[:maximum]:
-            if len([item for item in selected if item["对应栏目"] == column]) >= minimum:
-                break
-            add(row)
-
-    for column, (_minimum, maximum) in TOP10_COLUMN_LIMITS.items():
-        for row in buckets.get(column, []):
-            if len([item for item in selected if item["对应栏目"] == column]) >= maximum:
-                break
-            add(row)
-
-    for row in sorted_candidates:
-        add(row)
+                if len(selected) >= 10:
+                    break
         if len(selected) >= 10:
             break
 
     for row in sorted_candidates:
-        add(row, allow_aihot_overflow=True)
+        add(row, allow_overflow=True)
         if len(selected) >= 10:
             break
 

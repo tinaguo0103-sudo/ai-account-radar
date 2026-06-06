@@ -137,9 +137,6 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
     display_title = publishable_title or row.get("来源内容", "") or row.get("我的选题标题", "")
     internal_angle = row.get("内部切入角度") or row.get("我的选题标题", "")
     recommendation_reason = row.get("推荐理由", "")
-    action_reason = row.get("推荐动作原因", "")
-    if action_reason:
-        recommendation_reason = f"{recommendation_reason}\n编辑判断：{action_reason}" if recommendation_reason else f"编辑判断：{action_reason}"
     return {
         "选题标题": display_title,
         "内部切入角度": internal_angle,
