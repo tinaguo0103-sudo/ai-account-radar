@@ -785,6 +785,26 @@ def title_structure_template(title: str) -> str:
     return "specific"
 
 
+FORBIDDEN_VISIBLE_TERMS = [
+    "自查表", "少做一小时", "这类更新", "可执行动作", "业务动作", "业务验收清单",
+    "别只看发布信息", "先看任务怎么验收", "该先判断", "最该重排",
+]
+
+
+def forbidden_title_hits(text: str) -> list[str]:
+    return [term for term in FORBIDDEN_VISIBLE_TERMS if term and term in (text or "")]
+
+
+def visible_title_is_usable(title: str, item: ContentItem) -> bool:
+    if not title or forbidden_title_hits(title):
+        return False
+    anchor = extract_event_anchor(item)
+    source = specific_event_title(item)
+    if anchor and anchor[:4] not in title and source[:4] not in title:
+        return False
+    return True
+
+
 def specific_event_title(item: ContentItem) -> str:
     return title_token(item.title, 24)
 
@@ -807,6 +827,11 @@ def extract_event_anchor(item: ContentItem) -> str:
         ("MiniMax M3", lambda s: "minimax" in s or "mini max" in s),
         ("Meet OpenJarvis", lambda s: "openjarvis" in s),
         ("Claude Code", lambda s: "claude code" in s),
+        ("Google Colab CLI", lambda s: "google colab" in s and "cli" in s),
+        ("Suno Voices", lambda s: "suno" in s and "voices" in s),
+        ("Arena Agent排行榜", lambda s: "arena" in s and ("agent" in s or "智能体" in s)),
+        ("Gemini Live 图像编辑", lambda s: "gemini live" in s and ("图像" in s or "image" in s)),
+        ("MiniCPM财务分析工具", lambda s: "minicpm" in s and ("财务" in s or "accounting" in s)),
         ("Claude 自助数据分析", lambda s: "claude" in s and ("自助数据分析" in s or "数据分析" in s)),
         ("Karpathy llm-wiki", lambda s: "karpathy" in s or "llm-wiki" in s),
     ]
@@ -825,6 +850,11 @@ def extract_event_anchor(item: ContentItem) -> str:
         ("NVIDIA PPISP", lambda s: "ppisp" in s or "photometric" in s),
         ("Meet OpenJarvis", lambda s: "openjarvis" in s),
         ("Claude Code", lambda s: "claude code" in s),
+        ("Google Colab CLI", lambda s: "google colab" in s and "cli" in s),
+        ("Suno Voices", lambda s: "suno" in s and "voices" in s),
+        ("Arena Agent排行榜", lambda s: "arena" in s and ("agent" in s or "智能体" in s)),
+        ("Gemini Live 图像编辑", lambda s: "gemini live" in s and ("图像" in s or "image" in s)),
+        ("MiniCPM财务分析工具", lambda s: "minicpm" in s and ("财务" in s or "accounting" in s)),
         ("Claude 自助数据分析", lambda s: "claude" in s and ("自助数据分析" in s or "数据分析" in s)),
         ("MiniMax M3", lambda s: "minimax" in s or "mini max" in s),
         ("Karpathy llm-wiki", lambda s: "karpathy" in s or "llm-wiki" in s),
@@ -901,6 +931,46 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
     title = short_title(item.title)
     event = extract_event_anchor(item)
     lower = text.lower()
+    if "minicpm" in lower and any(k in text for k in ["财务", "AccountingLLM", "会计", "分析工具"]):
+        return {
+            "角度类型": "Agent落地",
+            "我的蹭热点角度": "MiniCPM财务分析工具更适合拆成企业数据任务怎么交接：输入资料、口径确认、结果复核和异常处理，而不是硬套品牌风控。",
+            "影响对象": "企业财务分析、非技术数据任务、资料整理、口径复核和结果交接。",
+            "标题": "MiniCPM财务分析工具这条，适合看企业数据任务怎么交接",
+            "标题规则": "minicpm_accounting_agent_specific",
+        }
+    if "arena" in lower and ("agent" in lower or "智能体" in text or "排行榜" in text):
+        return {
+            "角度类型": "Agent落地",
+            "我的蹭热点角度": "Arena Agent排行榜值得看的是评测场景是否接近真实工作任务：谁定义任务、谁检查结果、失败样例有没有暴露。",
+            "影响对象": "Agent产品、企业自动化任务、非技术团队验收和工具选择。",
+            "标题": "Arena Agent排行榜值得看的是它怎么定义真实任务",
+            "标题规则": "arena_agent_benchmark_specific",
+        }
+    if "google colab" in lower and "cli" in lower:
+        return {
+            "角度类型": "非技术人机会",
+            "我的蹭热点角度": "Google Colab CLI不该被锚定成Claude Code，它更像把Notebook里的实验、脚本和复现步骤带进命令行工作方式。",
+            "影响对象": "数据分析、Notebook实验、脚本复现、轻量开发和非工程团队协作。",
+            "标题": "Google Colab CLI发布后，Notebook实验会更像一条可复现任务",
+            "标题规则": "google_colab_cli_specific",
+        }
+    if "suno" in lower and "voices" in lower:
+        return {
+            "角度类型": "AI导演流程",
+            "我的蹭热点角度": "Suno Voices的重点不是泛化成AI视频模型，而是人声、口播和声音资产能不能进入内容制作的角色设定与修改流程。",
+            "影响对象": "口播内容、声音资产、短视频配音、角色设定和修改交付。",
+            "标题": "Suno Voices更适合拆人声资产，而不是泛讲AI视频模型",
+            "标题规则": "suno_voices_specific",
+        }
+    if "gemini live" in lower and any(k in text for k in ["图像", "图片", "image", "编辑"]):
+        return {
+            "角度类型": "内容团队变化",
+            "我的蹭热点角度": "Gemini Live实时编辑图像更适合拆内容团队现场改图：用户说需求、AI出修改、人确认品牌和事实风险。",
+            "影响对象": "图文内容、现场改图、品牌视觉、素材修改和内容审核。",
+            "标题": "Gemini Live实时改图后，内容团队要重新分工的是现场修改",
+            "标题规则": "gemini_live_image_edit_specific",
+        }
     if any(k in text for k in ["公众号首图", "小红书", "教程步骤卡", "视觉物料", "图文卡", "视觉模板", "宣传图"]):
         if "luma" in lower:
             hot_title = "Luma自动生成宣传图后，内容团队还要保留哪三个人工判断"
@@ -942,7 +1012,7 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
     if any(k in lower for k in ["ppisp", "photometric"]) or any(k in text for k in ["3D重建", "光度变化"]):
         return {
             "角度类型": "AI导演流程",
-            "我的蹭热点角度": "3D重建和光度补偿这类更新，不该硬讲成模型跑分，而要看它能否改善素材一致性、镜头衔接和成片验收。",
+            "我的蹭热点角度": "NVIDIA PPISP不该硬讲成论文指标，而要看它能否改善素材一致性、镜头衔接和成片确认。",
             "影响对象": "AI视频团队、3D素材工作流、镜头一致性、成片验收和视觉资产复用。",
             "标题": "NVIDIA PPISP把3D重建问题拉回成片验收，AI视频团队别只看论文指标",
             "标题规则": "video_3d_reconstruction_validation",
@@ -951,9 +1021,9 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
         if "runway" in lower:
             hot_title = "Runway API开放后，AI视频服务最先被重做的是哪一层"
         elif "luma" in lower:
-            hot_title = "Luma更新后，内容团队最该重排的是视觉交付流程"
+            hot_title = "Luma自动宣传图这类能力，真正考验的是谁来决定能不能发"
         else:
-            hot_title = "AI视频模型更新后，导演工作流里最先变的是哪一步"
+            hot_title = f"{event}更适合拆成一次AI视频交付测试"
         return {
             "角度类型": "AI导演流程" if any(k.lower() in lower for k in ["runway", "kling", "seedance", "sora", "视频", "分镜", "镜头", "成片"]) else "内容团队变化",
             "我的蹭热点角度": "AI视频模型更新后，导演工作流里最先变的不是prompt，而是Brief、分镜、素材修改和验收标准。",
@@ -971,13 +1041,13 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
         }
     if is_agent_task_content(text):
         if "llamaindex" in lower:
-            hot_title = "非技术人看Agent模板，先别看框架名，要看任务怎么验收"
+            hot_title = "Agent模板真正要看的，是它能不能说清输入和失败边界"
         elif "openrouter" in lower or "补丁" in text:
             hot_title = "模型能生成补丁后，Codex类工具怎么进入非技术工作流"
         elif "claude" in lower and any(k in text for k in ["数据分析", "自助", "分析"]):
             hot_title = "Claude自助数据分析真正改变的，是业务团队怎么定义指标口径"
         else:
-            hot_title = f"非技术人看{title}，先看任务怎么验收"
+            hot_title = f"{event}适合拆成一次真实任务边界测试"
         return {
             "角度类型": "Agent落地",
             "我的蹭热点角度": f"非技术人看 {title}，不该只看工具名，而要看哪些任务的输入、输出、验收和异常处理能被接管。",
@@ -1086,13 +1156,13 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "角度类型": "Agent落地",
             "我的蹭热点角度": "长上下文和解码加速的价值，不是炫参数，而是让资料整理、验收和多步Agent任务更可能一次跑完。",
             "影响对象": "Agent工作流、长文档处理、项目资料整理、内容复盘和非技术任务验收。",
-            "标题": f"{event}后，非技术Agent最该重排的是资料到验收这一段",
+            "标题": f"{event}后，先看长资料任务能不能交接给Agent",
             "标题规则": "long_context_agent_workflow",
         }
     if any(k in text for k in ["黄仁勋", "纳德拉", "人物观点", "人物访谈", "共议"]):
         return {
             "角度类型": "暂存观察",
-            "我的蹭热点角度": "人物观点类热点可以帮助判断趋势，但如果没有落到产品能力、业务流程或可执行动作，不适合直接占用今日Top10。",
+            "我的蹭热点角度": "人物观点类热点可以帮助判断趋势，但如果没有落到产品能力、业务场景或项目经验，不适合直接占用今日Top10。",
             "影响对象": "暂存：需要补充具体产品变化、团队动作或业务流程影响。",
             "标题": f"{event}可以观察，先别把人物观点硬改成工作流选题",
             "标题规则": "person_viewpoint_observation",
@@ -1113,24 +1183,24 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             hot_title = "AI公司讲幕后故事时，内容团队该学的是信任感而不是术语"
             angle = "内容团队变化"
         elif "banana" in lower or "图像" in text or "多模态" in text:
-            hot_title = "图像模型继续升级后，内容团队最该重排的是视觉验收"
+            hot_title = "图像模型继续升级后，品牌图最难的是保持一致"
             angle = "内容团队变化"
         else:
-            hot_title = f"{event}更新后，业务人该先判断它会改掉哪段工作流"
+            hot_title = ""
             angle = "产品生死线"
         return {
             "角度类型": angle,
-            "我的蹭热点角度": f"这次 {event} 的重点不是参数，而是它会改掉哪段工作流、削弱哪类中间工具、给业务人什么行动建议。",
+            "我的蹭热点角度": f"这次 {event} 只有在能说清具体产品层、具体用户任务或具体项目影响时才值得做；否则先作为资讯观察。",
             "影响对象": "AI工具产品、包装型SaaS、插件生态、内容/运营团队的工具选择。",
             "标题": hot_title,
-            "标题规则": "generic_model_update_workflow",
+            "标题规则": "generic_model_update_observe",
         }
     if any(k in text for k in ["公众号", "小红书", "图文", "卡片", "文章", "内容", "素材", "设计"]):
         return {
             "角度类型": "内容团队变化",
             "我的蹭热点角度": f"{title} 影响的是内容团队从选题、图文素材到复盘的哪一步被合并或重排。",
             "影响对象": "内容团队、品牌运营、图文生产、素材复用和投放复盘。",
-            "标题": f"{title}发布后，内容团队最该重排的是哪一步",
+            "标题": f"{title}要先回到具体内容场景再决定做不做",
             "标题规则": "content_team_reorder",
         }
     if scene == "汽车与内容营销流程":
@@ -1153,12 +1223,12 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
 def regular_topic_title(item: ContentItem, scene: str) -> str:
     core = short_title(item.title)
     if item.source_type == "AIHOT热点":
-        return hotspot_angle(item, scene)["标题"]
+        return hotspot_angle(item, scene).get("标题") or specific_event_title(item)
     text = item_text(item)
     lower = text.lower()
     if item.source_type == "公众号文章":
         if "claude code" in lower and any(k in text for k in ["原则", "团队", "工作方式", "harness", "验收"]):
-            return f"{core}，为什么更像非技术团队用AI做项目的验收清单"
+            return "Claude Code团队的5条原则，最值得学的是项目交付习惯"
         if any(k in text for k in ["方法论", "内容创作", "内部分享", "团队"]):
             return f"{core}，内容团队最该学的是判断流程而不是观点金句"
         return f"{core}，怎么拆成我的业务现场选题和Brief"
@@ -1167,12 +1237,12 @@ def regular_topic_title(item: ContentItem, scene: str) -> str:
             return f"{core}，先别急着复刻成片，要拆它的标题、工具和交付承诺"
         return f"{core}，AI视频真正该拆的是Brief、分镜和验收"
     if scene == "非技术Agent处理重复业务任务":
-        return f"{core}，非技术团队先看输入输出和验收怎么定"
+        return f"{core}，先看它能不能说清任务边界"
     if scene == "汽车与内容营销流程":
         return f"{core}，品牌团队该补哪条素材审核线"
     if scene == "项目复盘与能力产品化":
         return f"{core}，怎么把项目过程沉淀成模板和服务入口"
-    return f"{core}，怎么转成内容团队能执行的Brief"
+    return f"{core}，先看它和我的内容现场有没有关系"
 
 
 INTERNAL_TITLE_TERMS = ["内容团队", "业务团队", "非技术团队", "验收", "流程", "工作流", "基础设施"]
@@ -1280,15 +1350,9 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
     if any(k in text for k in ["智能体工程", "Agent工程", "实战窍门"]):
         return "Agent工程经验开始成体系后，最值钱的是那张踩坑清单"
 
-    if content_type == "踩坑提醒":
-        return f"{event_short}翻车点不在AI，而在上线前少了一道复核"
-    if content_type == "工作流拆解":
-        return f"{event_short}之后，谁会先少做一小时"
-    if content_type == "资产沉淀":
-        return f"{event_short}，先拆成一张团队自查表"
-    if content_type == "暂存观察":
-        return f"{event_short}热度够了，但现在还差一个好案例"
-    return f"{event_short}之后，谁会最先少做一步"
+    if content_type == "踩坑提醒" and any(k in text for k in ["风险", "恶意", "虚假", "翻车", "滥用"]):
+        return f"{event_short}这条，适合讲AI内容上线前的风险复核"
+    return ""
 
 
 def title_alternatives(topic: dict[str, Any], item: ContentItem, publishable: str) -> str:
@@ -1302,11 +1366,11 @@ def title_alternatives(topic: dict[str, Any], item: ContentItem, publishable: st
         alternatives.append(f"{event}不是八卦，是AI内容上线前的风险提醒")
         alternatives.append("AI素材别急着投放，先过一遍这几个风险点")
     elif content_type == "工作流拆解":
-        alternatives.append(f"{event}之后，原来的工具链哪一步最容易被省掉")
-        alternatives.append(f"{event}会让谁少做重复活？这才是我想讲的重点")
+        alternatives.append(f"{event}这条，先拿一个真实任务测清楚")
+        alternatives.append(f"{event}能不能做内容，关键看它有没有具体使用场景")
     elif content_type == "资产沉淀":
-        alternatives.append(f"{event}落地前，先做一张团队自查表")
-        alternatives.append(f"{event}能不能用起来，关键看这三件小事")
+        alternatives.append(f"{event}要不要做，先看它能沉淀哪类账号资产")
+        alternatives.append(f"{event}如果只剩新闻价值，就先不要急着发")
     elif content_type == "暂存观察":
         alternatives.append(f"{event}先别急着发，等一个更清楚的落地案例")
         alternatives.append(f"{event}热度够了，但现在还差一个好角度")
@@ -1351,6 +1415,12 @@ def ensure_publish_metadata(topic: dict[str, Any], item: ContentItem) -> dict[st
 ABSTRACT_TITLE_TERMS = ["流程", "验收", "判断", "业务动作", "工作流", "基础设施", "这类更新", "可执行动作", "业务验收清单"]
 GENERIC_SUBJECT_TERMS = ["内容团队", "业务团队", "非技术团队"]
 STRATEGY_TITLE_PHRASES = ["怎么蹭", "应该讲成", "可执行动作", "别只看发布信息", "别只看发布", "普通人蹭", "不只是新闻", "先放观察", "上新后"]
+PERSONA_TERMS = [
+    "内容", "营销", "品牌", "增长", "AI视频", "视频", "导演", "分镜", "脚本", "口播",
+    "Brief", "飞书", "账号", "复盘", "Agent", "智能体", "工作流", "项目", "交付",
+    "素材", "转化", "服务", "工具链", "自动化",
+]
+NEWS_ONLY_TERMS = ["发布", "更新", "开源", "上线", "融资", "论文", "排行榜", "版本", "指南"]
 
 
 def content_credibility(item: ContentItem) -> str:
@@ -1387,6 +1457,12 @@ def why_today(topic: dict[str, Any], item: ContentItem) -> str:
 def title_lint(title: str, item: ContentItem) -> tuple[int, str, list[str]]:
     penalties = 0
     reasons: list[str] = []
+    if not title.strip():
+        return 0, "高", ["没有生成可发布标题"]
+    forbidden_hits = forbidden_title_hits(title)
+    if forbidden_hits:
+        penalties += min(70, 28 * len(forbidden_hits))
+        reasons.append(f"命中禁用模板词：{','.join(forbidden_hits)}")
     abstract_hits = [term for term in ABSTRACT_TITLE_TERMS if term in title]
     subject_hits = [term for term in GENERIC_SUBJECT_TERMS if term in title]
     if abstract_hits:
@@ -1415,15 +1491,67 @@ def title_lint(title: str, item: ContentItem) -> tuple[int, str, list[str]]:
     return score, risk, reasons
 
 
+def persona_match_score(topic: dict[str, Any], item: ContentItem) -> tuple[int, list[str]]:
+    text = " ".join([
+        item.title, item.body_snippet, item.cover_text,
+        topic.get("我的蹭热点角度", ""), topic.get("业务场景", ""),
+        topic.get("可沉淀资产", ""),
+    ])
+    hits = list(dict.fromkeys([term for term in PERSONA_TERMS if term.lower() in text.lower() or term in text]))
+    score = min(100, 30 + len(hits) * 10)
+    if item.source_type == "公众号文章" and is_full_text_item(item) == "是":
+        score += 10
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+        score -= 12
+    score = max(0, min(100, score))
+    return score, hits
+
+
+def is_news_only(topic: dict[str, Any], item: ContentItem, persona_score: int) -> str:
+    text = " ".join([item.title, item.body_snippet, topic.get("我的蹭热点角度", "")])
+    news_hits = sum(1 for term in NEWS_ONLY_TERMS if term in text)
+    has_project_angle = persona_score >= 60
+    return "是" if news_hits >= 2 and not has_project_angle else "否"
+
+
+def support_level(topic: dict[str, Any], item: ContentItem) -> str:
+    if item.source_type == "公众号文章":
+        return "足够" if is_full_text_item(item) == "是" else "不足"
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+        return "浅层"
+    if item.source_type == "AIHOT热点":
+        return "摘要可用"
+    return "摘要可用" if item.body_snippet or item.cover_text else "不足"
+
+
 def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, Any]:
     credibility = content_credibility(item)
     title = topic.get("可发布标题", "")
+    combined_visible = "\n".join([title, topic.get("标题备选", ""), topic.get("我的蹭热点角度", ""), topic.get("推荐理由", "")])
+    template_hits = list(dict.fromkeys(forbidden_title_hits(combined_visible)))
     title_score, ai_risk, lint_reasons = title_lint(title, item)
+    persona_score, persona_hits = persona_match_score(topic, item)
+    support = support_level(topic, item)
+    news_only = is_news_only(topic, item, persona_score)
     base = int(topic.get("推荐分", 0) or 0)
     credibility_bonus = {"全文": 12, "AIHOT摘要": 5, "摘要": 0, "抖音浅层": -10}.get(credibility, 0)
     action_bonus = 5 if topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"} else -5
-    editor_score = max(0, min(100, round(base * 0.7 + title_score * 0.2 + credibility_bonus + action_bonus)))
+    editor_score = max(0, min(100, round(base * 0.45 + title_score * 0.2 + persona_score * 0.25 + credibility_bonus + action_bonus)))
     not_recommend: list[str] = []
+    if template_hits:
+        not_recommend.append(f"用户可见字段命中模板词：{','.join(template_hits)}")
+        ai_risk = "高" if len(template_hits) >= 2 else ("高" if ai_risk == "中" else "中")
+        title_score = min(title_score, 55 if len(template_hits) == 1 else 35)
+    if not title.strip():
+        not_recommend.append("没有足够自然、具体、有人味的可发布标题")
+    if persona_score < 60:
+        not_recommend.append("和AI内容系统/营销/导演/项目现场的人设关联弱")
+    if news_only == "是":
+        not_recommend.append("目前更像资讯搬运，缺少我的项目现场角度")
+    if support == "不足":
+        not_recommend.append("解析文本支撑不足")
+    if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
+        not_recommend.append("公众号不是全文解析，不能当作深度拆解推进")
     if credibility == "抖音浅层":
         not_recommend.append("只有标题/文案/封面等浅层信息，缺口播和评论，不适合直接下深结论")
     if title_score < 65:
@@ -1435,20 +1563,29 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     if topic.get("推荐动作") == "暂存观察":
         not_recommend.append("当前推荐动作已是暂存观察，先不生成可发布标题")
 
-    suggested = "是" if editor_score >= 78 and title_score >= 72 and ai_risk != "高" else ("暂存观察" if editor_score >= 60 else "否")
+    editor_score = max(0, min(100, round(base * 0.45 + title_score * 0.2 + persona_score * 0.25 + credibility_bonus + action_bonus)))
+    suggested = "是" if editor_score >= 78 and title_score >= 72 and persona_score >= 60 and ai_risk != "高" and news_only == "否" else ("暂存观察" if editor_score >= 55 else "否")
     if topic.get("推荐动作") == "暂存观察":
+        suggested = "暂存观察"
+    if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
         suggested = "暂存观察"
     if suggested != "是" and topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"}:
         topic["推荐动作"] = "暂存观察"
     topic["真实用户问题"] = real_user_question(topic, item)
     topic["为什么今天值得做"] = why_today(topic, item)
     topic["我能讲出的独特角度"] = topic.get("我的蹭热点角度", "")
+    topic["我的账号为什么能讲"] = "、".join(persona_hits[:8]) or "暂时缺少明显人设锚点"
+    topic["是否只是资讯搬运"] = news_only
+    topic["是否有足够内容支撑"] = support
     topic["不建议做的原因"] = "；".join(not_recommend) or "暂无明显不做理由。"
     topic["内容可信度"] = credibility
+    topic["人设匹配分"] = str(persona_score)
     topic["编辑判断分"] = str(editor_score)
     topic["标题质量分"] = str(title_score)
     topic["AI味风险"] = ai_risk
     topic["是否建议进入制作"] = suggested
+    topic["主编判断"] = "值得今天推进" if suggested == "是" else ("先暂存，等更具体角度或材料" if suggested == "暂存观察" else "不建议制作")
+    topic["模板词命中情况"] = "、".join(template_hits) or "无"
     topic["推荐动作原因"] = "；".join(lint_reasons + not_recommend) or "标题具体、信息密度足够，适合进入今日判断。"
     topic["降级原因"] = "；".join(not_recommend) if suggested != "是" else ""
     if suggested != "是":
@@ -1651,12 +1788,18 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "真实用户问题": "",
         "为什么今天值得做": "",
         "我能讲出的独特角度": "",
+        "我的账号为什么能讲": "",
+        "是否只是资讯搬运": "",
+        "是否有足够内容支撑": "",
         "不建议做的原因": "",
         "内容可信度": "",
+        "人设匹配分": "",
         "编辑判断分": "",
         "标题质量分": "",
         "AI味风险": "",
         "是否建议进入制作": "",
+        "主编判断": "",
+        "模板词命中情况": "",
         "今日建议级别": "",
         "推荐动作原因": "",
         "降级原因": "",
@@ -1972,6 +2115,8 @@ def write_today10_markdown(path: Path, topics: list[dict[str, Any]], logs: list[
             f"- 标题风格：{topic.get('标题风格', '')}",
             f"- 今日建议级别：{topic.get('今日建议级别', '')}",
             f"- 编辑判断分 / 标题质量分 / AI味风险：{topic.get('编辑判断分', '')} / {topic.get('标题质量分', '')} / {topic.get('AI味风险', '')}",
+            f"- 主编判断：{topic.get('主编判断', '')}",
+            f"- 人设匹配分：{topic.get('人设匹配分', '')}",
             f"- 真实用户问题：{topic.get('真实用户问题', '')}",
             f"- 为什么今天值得做：{topic.get('为什么今天值得做', '')}",
             f"- 来源：{topic['来源类型']} / {topic['来源内容']}",
@@ -2082,14 +2227,20 @@ def write_debug_top10(
             "标题是否过度内部化": topic.get("标题是否过度内部化", ""),
             "标题改写原因": topic.get("标题改写原因", ""),
             "真实用户问题": topic.get("真实用户问题", ""),
+            "人设匹配分": topic.get("人设匹配分", ""),
+            "我的账号为什么能讲": topic.get("我的账号为什么能讲", ""),
             "为什么今天值得做": topic.get("为什么今天值得做", ""),
             "我能讲出的独特角度": topic.get("我能讲出的独特角度", ""),
+            "是否只是资讯搬运": topic.get("是否只是资讯搬运", ""),
+            "是否有足够内容支撑": topic.get("是否有足够内容支撑", ""),
             "不建议做的原因": topic.get("不建议做的原因", ""),
             "内容可信度": topic.get("内容可信度", ""),
             "编辑判断分": topic.get("编辑判断分", ""),
             "标题质量分": topic.get("标题质量分", ""),
             "AI味风险": topic.get("AI味风险", ""),
             "是否建议进入制作": topic.get("是否建议进入制作", ""),
+            "主编判断": topic.get("主编判断", ""),
+            "模板词命中情况": topic.get("模板词命中情况", ""),
             "今日建议级别": topic.get("今日建议级别", ""),
             "推荐动作原因": topic.get("推荐动作原因", ""),
             "最终选题标题": topic.get("可发布标题") or topic.get("我的选题标题", ""),
@@ -2126,9 +2277,15 @@ def write_debug_top10(
             f"- 文本使用方式：{row['文本使用方式']}",
             f"- 内部切入角度：{row['内部切入角度']}",
             f"- 真实用户问题：{row['真实用户问题']}",
+            f"- 人设匹配分：{row['人设匹配分']}",
+            f"- 我的账号为什么能讲：{row['我的账号为什么能讲']}",
             f"- 为什么今天值得做：{row['为什么今天值得做']}",
+            f"- 是否只是资讯搬运：{row['是否只是资讯搬运']}",
+            f"- 是否有足够内容支撑：{row['是否有足够内容支撑']}",
             f"- 独特角度：{row['我能讲出的独特角度']}",
             f"- 内容可信度/编辑分/标题分/AI味：{row['内容可信度']} / {row['编辑判断分']} / {row['标题质量分']} / {row['AI味风险']}",
+            f"- 主编判断：{row['主编判断']}",
+            f"- 模板词命中情况：{row['模板词命中情况']}",
             f"- 是否建议进入制作：{row['是否建议进入制作']} / {row['今日建议级别']}",
             f"- 推荐动作原因：{row['推荐动作原因']}",
             f"- 不建议做的原因：{row['不建议做的原因']}",

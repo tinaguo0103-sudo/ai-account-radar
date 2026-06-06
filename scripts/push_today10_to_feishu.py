@@ -33,8 +33,11 @@ REQUIRED_FIELDS = [
     "标题风格",
     "标题备选",
     "编辑判断分",
+    "标题质量分",
     "AI味风险",
     "今日建议级别",
+    "主编判断",
+    "不建议做的原因",
     "推荐日期",
     "运行日期",
     "运行批次",
@@ -131,7 +134,7 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str, str]:
     status = ACTION_STATUS.get(row.get("推荐动作", ""), "待判断")
     publishable_title = row.get("可发布标题", "")
-    display_title = publishable_title or row.get("我的选题标题", "")
+    display_title = publishable_title or row.get("来源内容", "") or row.get("我的选题标题", "")
     internal_angle = row.get("内部切入角度") or row.get("我的选题标题", "")
     recommendation_reason = row.get("推荐理由", "")
     action_reason = row.get("推荐动作原因", "")
@@ -146,8 +149,11 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "标题风格": row.get("标题风格", ""),
         "标题备选": row.get("标题备选", ""),
         "编辑判断分": row.get("编辑判断分", ""),
+        "标题质量分": row.get("标题质量分", ""),
         "AI味风险": row.get("AI味风险", ""),
         "今日建议级别": row.get("今日建议级别", ""),
+        "主编判断": row.get("主编判断", ""),
+        "不建议做的原因": row.get("不建议做的原因", ""),
         "推荐日期": date,
         "运行日期": date,
         "运行批次": run_id,
@@ -236,7 +242,7 @@ def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: s
     run_field = fields.get("最近参与运行批次") or fields.get("运行批次")
     if not view.get("view_id") or not run_field:
         return {"created": created, "configured": "missing_view_or_run_field"}
-    visible = {"选题标题", "可发布标题", "内部切入角度", "内容类型", "平台建议", "标题风格", "编辑判断分", "AI味风险", "今日建议级别", "今日排名", "推荐日期", "运行批次", "是否本次新增", "状态", "推荐动作", "来源类型", "原始来源标题", "来源链接", "对应栏目", "热点切入方式", "业务场景", "推荐理由"}
+    visible = {"选题标题", "可发布标题", "内部切入角度", "内容类型", "平台建议", "标题风格", "标题备选", "编辑判断分", "标题质量分", "AI味风险", "今日建议级别", "主编判断", "不建议做的原因", "今日排名", "推荐日期", "运行批次", "是否本次新增", "状态", "推荐动作", "来源类型", "原始来源标题", "来源链接", "对应栏目", "热点切入方式", "业务场景", "推荐理由"}
     hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
     body = {
         "view_name": "今日Top10",
