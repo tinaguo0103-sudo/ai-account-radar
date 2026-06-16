@@ -255,6 +255,8 @@ python3 scripts/daily_pipeline.py --write-feishu
 
 `04 分析与选题` 已收敛为今日候选池决策表：主字段 `选题标题` 优先展示可读标题，用于日常决策和进入 Brief。飞书默认视图只展示业务决策字段，例如 `今日建议级别`、`编辑判断分`、`AI味风险`、`内容可信度`、`推荐动作`、`原始来源标题`、`业务场景`、`推荐理由`、`不建议做的原因` 和 `可沉淀资产`。代码和调试文件仍保留更多算法字段，但默认飞书视图不展示。写入前会先经过 `editorial_judgement` 编辑判断层，让你能区分“今日最值得做”“可选候选”和“暂存观察”。没有足够人设角度或内容支撑的内容不会为了凑数进入候选池。
 
+飞书字段显示原则：代码和本地 CSV 可以保留完整调试字段，但飞书默认视图只露出业务判断需要的字段。`03 内容收件箱 / 今日采集` 默认看标题、来源、链接、摘要、正文长度、是否全文解析、解析说明、采集/处理状态和最近采样时间；内容指纹、payload 路径、运行批次等排障字段默认隐藏。`04 分析与选题 / 今日候选池` 默认看标题、建议级别、编辑判断分、AI味风险、可信度、推荐动作、来源、栏目、业务场景、推荐理由、不建议做的原因和可沉淀资产；算法中间字段默认隐藏。
+
 同步来源池和栏目权重到飞书 `01 来源与采样`：
 
 ```bash
@@ -552,6 +554,14 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 卡兹克公众号发现源与全文源的结论见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md) 和 [docs/spikes/wechat_fulltext_provider_eval.md](docs/spikes/wechat_fulltext_provider_eval.md)。当前口径是：Wechat2RSS 公共 feed 适合发现文章列表，不是稳定全文源；`wewe-rss` 已验证可作为本地全文 provider，但必须显式启用；`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。默认流程不依赖这些服务。
 
 抖音开源工具评估见 [docs/spikes/douyin_open_source_tool_eval.md](docs/spikes/douyin_open_source_tool_eval.md)。当前口径是：单条视频 metadata 继续使用项目内 `url_content_resolver.py`；账号主页最近 N 条的 P1 候选是 `MediaCrawler`，但需要抖音小号和本机浏览器登录态，必须单独 probe；口播字幕/ASR 的 P1 候选是 `douyin-mcp-server`、`wanyi-watermark` 或 `social-post-extractor-mcp`，需要显式命令和 ASR key，不进入默认流程。
+
+当前已有一个低频主页探针：
+
+```bash
+python3 scripts/douyin_source_watch_probe.py --account-limit 3 --video-limit 2
+```
+
+它只做本地 dry-run：读取当前主对标池里的抖音主页，尝试从公开页面发现最近作品 ID，并复用单条视频 resolver 输出本地 ContentItem。它不写飞书、不保存登录态、不下载视频、不抓评论。若公开页面只返回 JS 壳或要求登录，脚本会记录 `partial` / `needs_login` / `needs_url`，下一步再用 MediaCrawler 登录态路线验证。
 
 ## 采集边界
 

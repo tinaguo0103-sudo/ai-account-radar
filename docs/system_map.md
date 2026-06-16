@@ -50,6 +50,8 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 抖音主页和字幕增强仍是 P1 probe，不是日常入口。单条视频 metadata 继续走 `url_content_resolver.py`；主页最近 N 条优先评估 `MediaCrawler`；字幕/ASR 只适合显式命令和 API key。当前结论见 `docs/spikes/douyin_open_source_tool_eval.md`。
 
+当前可用的抖音主页轻量探针是 `scripts/douyin_source_watch_probe.py`。它只输出本地报告和 ContentItem，不写飞书、不进 `03/04`、不接默认 `daily_pipeline.py`。如果公开主页无法解析最近作品，下一步再进入 MediaCrawler + 抖音小号登录态的 P1 验证。
+
 ## 原则
 
 后台可以复杂，前台只保留今天要做什么。

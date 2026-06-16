@@ -2052,7 +2052,21 @@ def ensure_content_inbox_today_view(token: str, app_token: str, table_id: str) -
     date_field = fields.get("最近采样日期") or fields.get("运行日期")
     if not view.get("view_id") or not date_field:
         return {"created": created, "configured": "missing_view_or_date_field"}
-    visible = {"标题", "来源类型", "来源名称", "平台", "链接", "摘要/片段", "正文长度", "是否全文解析", "原始payload路径", "解析说明", "采集状态", "处理状态", "最近采样日期", "最近参与运行批次", "是否本次新增", "内容指纹"}
+    visible = {
+        "标题",
+        "来源类型",
+        "来源名称",
+        "平台",
+        "链接",
+        "摘要/片段",
+        "正文长度",
+        "是否全文解析",
+        "解析说明",
+        "采集状态",
+        "处理状态",
+        "最近采样日期",
+        "最近参与运行批次",
+    }
     hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
     body = {
         "view_name": "今日采集",

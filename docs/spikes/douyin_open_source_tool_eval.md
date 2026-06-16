@@ -144,3 +144,28 @@ https://api.douyin.wtf/api/hybrid/video_data?minimal=false&url=...
 - 未下载视频/音频。
 - 未保存 cookie、token、二维码、浏览器 profile。
 - 未抓评论区。
+
+## 2026-06-16 主页 source watch probe 复验
+
+新增显式脚本：
+
+```bash
+python3 scripts/douyin_source_watch_probe.py --account-limit 3 --video-limit 2
+```
+
+本脚本不写飞书、不接默认 `daily_pipeline.py`、不保存 cookie/token/profile、不下载视频、不抓评论。它读取 `config/content_sources.yaml` 里的当前主/辅助抖音对标账号，低频请求主页公开 HTML；如果能解析到作品 ID，就复用现有 `url_content_resolver.py` 做单条视频浅层解析并输出本地 ContentItem。
+
+本轮真实结果：
+
+| 账号 | 结果 | 说明 |
+| --- | --- | --- |
+| 秋芝2046 | partial | 公开页面可访问，但返回内容更像 JS 壳，没有解析出作品 ID。 |
+| xuan酱 | partial | 公开页面可访问，但返回内容更像 JS 壳，没有解析出作品 ID。 |
+| ami.moment | needs_url | 当前配置缺少抖音主页链接。 |
+
+结论：
+
+- 无登录公开主页抓取仍不足以稳定发现最近 N 条作品。
+- `douyin_source_watch_probe.py` 可以作为轻量探针保留，用于验证某些主页是否公开暴露作品 ID。
+- 真正要推进账号主页最近 N 条，应进入 P1 登录态路线：优先 `MediaCrawler`，使用抖音小号、本机浏览器登录态、每账号最近 3 条、低频只读。
+- 单条视频 metadata 仍继续用 `url_content_resolver.py`；主页发现和视频理解不要混成一个默认流程。
