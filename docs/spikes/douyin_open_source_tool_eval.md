@@ -5,8 +5,8 @@
 本轮没有从零写抖音采样器，而是盘点并验证已有路线。结论是：
 
 - **单条视频 metadata**：继续优先使用项目内已接入的 `url_content_resolver.py` / `_ROUTER_DATA` 解析。它对本轮测试的抖音搜索页 `modal_id` 链接成功，能拿标题/文案、作者、视频 ID、发布时间、标签、封面 URL、下载链接和部分统计/描述线索。
-- **单条视频 ASR/字幕**：`douyin-mcp-server` / `wanyi-watermark` 更适合作为 P1 显式转写路线，但需要 `DASHSCOPE_API_KEY`/百炼或同类 ASR 能力，并可能下载或访问视频；不进入默认链路。
-- **账号主页最近 N 条**：`MediaCrawler` 是最接近需求的候选，支持抖音创作者主页与登录态缓存，但依赖 Playwright/CDP、用户本机浏览器登录态和低频运行；适合下一阶段单独 P1 `source_watch_probe`，不直接进默认 `daily_pipeline.py`。
+- **单条视频 ASR/字幕**：`douyin-mcp-server` / `wanyi-watermark` 更适合作为 P1 显式转写路线。当前优先 `paraformer-v2`，因为用户已开启百炼 paraformer 免费额度和“用完即停”；不进入默认链路。
+- **账号主页最近 N 条**：已通过专用 Chrome CDP profile + 抖音小号低频验证，可以从部分主页拿到多条可信作品并复用单条 resolver。它仍是 P1 显式探针，不直接进默认 `daily_pipeline.py`。
 - **Agent-Reach**：更像工具路由、安装器和能力清单，不适合作为本项目正式生产依赖；可以复用它的工具选择思路。
 - **Douyin_TikTok_Download_API**：能力最全，文档声明支持视频数据、用户主页作品、评论等，但明确需要自行处理 Cookie/风控配置。适合自部署评估，不适合当前直接默认接入。
 
@@ -103,24 +103,25 @@ https://api.douyin.wtf/api/hybrid/video_data?minimal=false&url=...
 | `douyin-mcp-server` / `wanyi-watermark` | 本机已装；同一 `modal_id` 链接失败 | 不支持主页订阅 | 普通分享链接可能支持 | 支持 | 支持但需 ASR key | `DASHSCOPE_API_KEY`/百炼、可能下载视频 | 下载/ASR 成本 | **备选：P1 单条转写** |
 | `social-post-extractor-mcp` | 文档盘点 | 未验证 | 面向单条链接 | 可能支持 | 百炼 ASR/OCR | `BAILIAN_API_KEY`/DashScope 类 key | 外部服务、媒体处理 | 备选：P1 转写/OCR |
 | `MediaCrawler` | 文档和源码盘点 | 支持创作者主页 | 支持指定帖子 | 不作为重点 | 不作为重点 | Playwright/CDP、登录态缓存 | 验证码/风控/非商业许可 | **主路线候选：P1 主页采样** |
-| `douyin_cdp_source_watch_probe.mjs` | 本轮真实跑通 CDP 连接，但未拿到可信作品区 | 未跑通，能识别不可信热门推荐 | 可在可信作品链接出现后复用 resolver | 不作为重点 | 不支持 | 本机 Chrome 远程调试、用户小号登录态 | 页面异常、登录/验证、推荐流污染 | **P1 验证辅助** |
+| `douyin_cdp_source_watch_probe.mjs` | 专用 Chrome 登录后真实跑通多账号低频主页采样 | 支持部分账号低频采样，多条作品 | 复用 resolver | 不作为重点 | 不支持 | 本机 Chrome 远程调试、用户小号登录态 | 页面异常、登录/验证、推荐流污染 | **P1 主路线候选** |
 | `Douyin_TikTok_Download_API` | 文档盘点；在线 demo 本轮 520 | 文档声明支持 | 文档声明支持 | 支持 | 不内置完整 ASR | 自部署、Cookie/风控配置 | 维护成本高 | 备选：自部署 API |
 | `douyin-downloader` | 未找到比以上更稳的独立主路线 | 未验证 | 单条下载/metadata 候选 | 支持下载方向 | 通常不含 ASR | 取决于项目 | 维护分散 | 仅调研 |
 
 ## 推荐路线
 
 1. **订阅/主页最近 N 条**  
-   推荐 P1 首选 `MediaCrawler`，但必须单独开 source watch probe。使用抖音小号、本机浏览器登录态、每账号最近 3 条、低频只读。不要抓评论，不要批量历史，不进入默认 `daily_pipeline.py`。
+   当前优先用项目内 `douyin_cdp_source_watch_probe.mjs` 做 P1 显式低频采样：专用 Chrome profile、抖音小号登录态、每账号最近 3-5 条、只读、不抓评论、不批量历史、不进入默认 `daily_pipeline.py`。如果后续需要更稳定的批量账号管理，再评估 `MediaCrawler`。
 
 2. **单条视频 metadata**  
    继续用当前 `url_content_resolver.py`。它对搜索页 `modal_id` 和公开页面 `_ROUTER_DATA` 的覆盖比本轮测试的 `douyin-mcp-server` 更适合本项目。
 
 3. **视频 ASR / 字幕**  
-   P1 可选 `douyin-mcp-server` / `wanyi-watermark` 或 `social-post-extractor-mcp`，但需要显式命令、ASR key、低频执行，不默认跑。建议后续命令形态类似：
+   P1 可选 `douyin-mcp-server` / `wanyi-watermark` 或 `social-post-extractor-mcp`，但需要显式命令、ASR key、低频执行，不默认跑。当前新增两层保护：先用 `douyin_transcript_candidates.py` 选候选，再用 `douyin_video_transcribe.py` 显式调用 `paraformer-v2`。建议命令形态：
 
-   ```bash
-   python3 scripts/douyin_video_transcribe.py --url <douyin_url> --asr dashscope
-   ```
+```bash
+python3 scripts/douyin_transcript_candidates.py
+python3 scripts/douyin_video_transcribe.py --url <douyin_url> --model paraformer-v2 --confirm-free-quota --yes
+```
 
 4. **是否需要自有 wrapper**  
    需要，但只做很薄的 wrapper：把外部工具结果转成标准 ContentItem，不重新实现平台协议。下一步可以基于 `scripts/douyin_open_source_probe.py` 扩展正式 P1 source watch。

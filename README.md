@@ -569,14 +569,35 @@ python3 scripts/douyin_source_watch_probe.py --account-limit 3 --video-limit 2
 node scripts/douyin_cdp_source_watch_probe.mjs --account-limit 3 --video-limit 2
 ```
 
-它只连接本机 `http://127.0.0.1:9222` 的 Chrome 调试端口，不导出浏览器 profile，不保存 cookie/token，不写飞书。当前复验结果是：脚本可以打开秋芝2046、xuan酱主页，但在未拿到可信作品区时页面会出现“服务异常/重新刷新拉取数据”，且页面中混入的 `/video/` ID 更像热门推荐；脚本会把这些 ID 标记为 `untrusted_video_ids`，不会交给 resolver，也不会生成 ContentItem。下一步如果继续，应由用户在本机 Chrome 远程调试 profile 中登录抖音小号后再低频复验。
+它只连接本机 Chrome 调试端口，不导出浏览器 profile，不保存 cookie/token，不写飞书。当前推荐使用独立端口和独立本地 profile：
+
+```bash
+python3 scripts/start_douyin_cdp_chrome.py --port 9333
+node scripts/douyin_cdp_source_watch_probe.mjs --cdp http://127.0.0.1:9333 --account-limit 3 --video-limit 3
+```
+
+`start_douyin_cdp_chrome.py` 默认用后台方式启动专用 Chrome，尽量不抢当前桌面焦点；只有需要登录/验证码时才加 `--foreground`。2026-06-16 复验结果：在专用 Chrome 登录抖音小号后，CDP 探针可以从秋芝2046、xuan酱等主页拿到多条可信作品，并复用单条视频 resolver 输出本地 ContentItem。它仍属于 P1 显式低频探针，不进入默认 `daily_pipeline.py`。
+
+抖音口播转写不默认跑。先用标题/文案/时长做候选筛选：
+
+```bash
+python3 scripts/douyin_transcript_candidates.py
+```
+
+确认某条视频值得转写后，再显式调用百炼 paraformer：
+
+```bash
+python3 scripts/douyin_video_transcribe.py --url <douyin_url> --model paraformer-v2 --confirm-free-quota --yes
+```
+
+这里默认模型为 `paraformer-v2`，因为当前已开启 paraformer 免费额度和“免费额度用完即停”。长视频默认会被成本护栏拦住；超过 `DOUYIN_ASR_MAX_SINGLE_MINUTES` 需要人工确认并显式加 `--allow-long`。
 
 ## 采集边界
 
 - 不绕过登录、验证码、反爬或平台限制。
 - 不保存账号密码、cookie、token。
 - 不强抓抖音、小红书、视频号等高风险平台。
-- 抖音当前只支持单条视频浅采样：标题/文案、作者、视频 ID、封面、发布时间、标签、下载链接记录；不下载视频，不抓主页列表，不抓评论，不做默认转写。已验证 `douyin-mcp-server` / `wanyi-watermark` 等上游工具的转写能力依赖 ASR API key，基础解析不比当前 `_ROUTER_DATA` 解析更稳。
+- 抖音默认流程仍只支持单条视频浅采样：标题/文案、作者、视频 ID、封面、发布时间、标签、下载链接记录；不下载视频，不抓评论，不做默认转写。主页最近 N 条已通过专用 Chrome CDP + 小号登录态做低频 P1 探针验证，但不进入默认流程。口播转写使用显式命令和成本护栏，优先 `paraformer-v2`。
 - 小红书、Twitter/X、Reddit 暂不接入正式采样链路。
 - 能通过 RSS、公开网页、公开 API、AIHOT、GitHub、Product Hunt、Hacker News、官方博客稳定获取的内容，才进入自动化。
 
