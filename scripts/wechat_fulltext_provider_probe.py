@@ -27,6 +27,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config" / "wechat_fulltext_provider.example.yaml"
 DEFAULT_OUT = ROOT / "output" / "wechat_fulltext_provider_items.jsonl"
 DEFAULT_CSV = ROOT / "output" / "wechat_fulltext_provider_items.csv"
+MAX_FEED_BYTES = 50_000_000
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 AIAccountRadar/0.1"
 
 
@@ -127,7 +128,7 @@ def fetch(url: str) -> tuple[bytes, str, str]:
     req = urllib.request.Request(url, headers={"User-Agent": UA})
     try:
         with urllib.request.urlopen(req, timeout=20) as resp:
-            return resp.read(5_000_000), "ok", resp.headers.get("Content-Type", "")
+            return resp.read(MAX_FEED_BYTES), "ok", resp.headers.get("Content-Type", "")
     except Exception as exc:
         return b"", f"failed:{type(exc).__name__}:{exc}", ""
 
@@ -198,13 +199,31 @@ def parse_json_items(raw: bytes, provider: Provider) -> list[dict[str, str]]:
     for item in candidates[: provider.max_items]:
         if not isinstance(item, dict):
             continue
-        body = str(item.get("content") or item.get("body") or item.get("description") or item.get("summary") or "")
+        body = str(
+            item.get("content_html")
+            or item.get("content_text")
+            or item.get("content")
+            or item.get("body")
+            or item.get("description")
+            or item.get("summary")
+            or ""
+        )
+        author = item.get("author") if isinstance(item.get("author"), dict) else {}
         rows.append({
             "title": str(item.get("title") or item.get("name") or "未命名公众号文章"),
             "url": str(item.get("url") or item.get("link") or item.get("guid") or ""),
-            "published_at": str(item.get("published_at") or item.get("pubDate") or item.get("date") or item.get("updated") or ""),
+            "published_at": str(
+                item.get("published_at")
+                or item.get("pubDate")
+                or item.get("date")
+                or item.get("updated")
+                or item.get("date_modified")
+                or item.get("date_published")
+                or ""
+            ),
             "body": html_to_text(body),
             "raw_body": body,
+            "author": str(author.get("name") or ""),
         })
     return rows
 

@@ -6,6 +6,17 @@
 
 测试账号：`数字生命卡兹克`
 
+## 2026-06-16 结论更新
+
+`we-mp-rss` 已降级，不再作为 P1 主路线。原因是它需要公众号平台扫码授权，不适合当前“专用微信小号订阅内容”的使用约束，也不建议绑定用户已有公众号主体。
+
+后续主路线调整为：
+
+1. `Wechat2RSS` 公共 feed 继续作为发现源。
+2. `wewe-rss` 作为普通微信 / 微信读书侧全文源优先验证。
+3. 如果 `wewe-rss` 后续不稳定，则保留“公共 feed 发现 + 02 URL 投喂补全文”的低风险方案。
+4. `we-mp-rss` 不再阻塞后续推进。
+
 ## 用户依赖
 
 - Docker Desktop：已安装，但当前 Docker 拉取镜像被本机 credential store / Keychain 异常阻塞。
@@ -85,11 +96,11 @@ docker: error getting credentials - err: exit status 1, out: `Keychain Error. (-
 
 未能实际验证。文档和接口显示具备全文输出能力，但本机未完成启动和扫码，因此本轮不能把它标成 `auto_ready`。
 
-### 当前建议
+### 2026-06-16 复验结论
 
-`needs_user_dependency`
+`we-mp-rss` Docker 镜像已能启动，服务地址为 `http://127.0.0.1:8001/`。但其“扫码授权”需要公众号平台授权，不是普通微信小号或微信读书登录。由于用户个人主体已经注册过公众号，且不希望绑定已有公众号主体，本方案降级为 `blocked_not_recommended_for_current_use`。
 
-原因：路线正确，但依赖用户修复 Docker Desktop credential store，并用微信小号扫码授权；全文能力需在服务启动后通过实际 RSS/API 返回验证。
+后续不再把 `we-mp-rss` 作为当前 P1 主路线。
 
 ## wewe-rss 测试结果
 
@@ -117,43 +128,84 @@ docker run -d \
 - `/feeds/<feed_id>.atom?limit=5&mode=fulltext`
 - `/feeds/<feed_id>.json?limit=5&mode=fulltext`
 
-### 本机实际尝试
+### 2026-06-16 本机实际尝试
 
-Docker 运行同样失败：
+Docker credential store 修复后，`wewe-rss` 使用 SQLite Docker 镜像成功启动：
 
-```text
-docker: error getting credentials - err: exit status 1, out: `Keychain Error. (-67674)`
+```bash
+docker run -d \
+  --name ai-radar-wewe-rss \
+  -p 4000:4000 \
+  -e DATABASE_TYPE=sqlite \
+  -e AUTH_CODE=ai-radar-local-test \
+  -e FEED_MODE=fulltext \
+  -e SERVER_ORIGIN_URL=http://127.0.0.1:4000 \
+  -v .local_services/wewe-rss/data:/app/data \
+  cooderl/wewe-rss-sqlite:latest
 ```
 
-本机 Node 可用，但 pnpm 未安装。可通过 corepack 后续启用 pnpm，但这仍不能替代微信读书扫码登录和订阅验证。
+本地访问地址：
+
+```text
+http://127.0.0.1:4000/dash
+```
+
+用户在本机浏览器完成微信读书 / 微信小号扫码登录，并添加 `数字生命卡兹克` 后，服务返回：
+
+```json
+[{"id":"MP_WXS_3223096120","name":"数字生命卡兹克","intro":"希望能激发你对AI的好奇。"}]
+```
 
 ### 是否成功启动
 
-未成功启动。
+已成功启动。
 
 ### 是否能订阅数字生命卡兹克
 
-未能实际验证。需要启动服务、登录微信读书账号，并通过公众号分享链接添加订阅。
+已成功订阅。日志显示 `getMpArticles(MP_WXS_3223096120) page: 1 articles: 48`，并创建了最近 48 篇文章索引。
 
 ### 是否能输出全文
 
-未能实际验证。文档支持 `mode=fulltext`，但本轮没有实际服务返回。
+已验证可输出全文。接口：
+
+```text
+http://127.0.0.1:4000/feeds/all.json?limit=5&mode=fulltext
+```
+
+返回 JSON Feed，字段包含：
+
+- `title`
+- `url`
+- `date_modified`
+- `author.name`
+- `content_html`
+
+本地 probe 结果：
+
+| 标题 | 正文长度 | 是否全文 |
+| --- | ---: | --- |
+| 2026年的毕业生们，正在花钱向AI证明自己是人类。 | 5558 | 是 |
+| Prompt该退环境了，未来属于Loop Engineering。 | 7046 | 是 |
+| 实测GLM-5.2，国产Coding模型的又一座新高峰。 | 4471 | 是 |
+| 让5个AI文明自己活15天，Claude建成了乌托邦，Grok四天团灭。 | 5817 | 是 |
+| 从0到1带你速通WorkBuddy，这可能是最适合国内的Agent产品。 | 7617 | 是 |
 
 ### 当前建议
 
-`needs_user_dependency`
+`needs_user_dependency -> usable_p1_provider`
 
-原因：可作为备选，但依赖微信读书登录态和 Docker / Node 环境；比 `we-mp-rss` 多一层账号依赖。
+原因：需要用户本机扫码登录微信读书 / 微信小号，并维护低频本地服务；但一旦登录和订阅完成，能够稳定输出卡兹克最近文章全文，适合作为 P1 全文 provider 接入现有 `--fetch-wechat-feed` 链路。
 
 ## 是否拿到卡兹克最近文章全文
 
-未拿到。
+已通过 `wewe-rss` 拿到。
 
 当前已知：
 
 - Wechat2RSS 公共 feed 能发现卡兹克文章列表，但只能提供很短摘要。
 - 单篇公众号 URL 解析在某些链接上可以拿全文，但 feed 中的 `mp.weixin.qq.com/s?__biz=...` 链接本轮返回页面中缺少 `js_content`，无法稳定全文。
-- `we-mp-rss / wewe-rss` 的全文能力需要本地服务启动 + 用户扫码授权后才能验证。
+- `we-mp-rss` 因公众号平台授权限制降级。
+- `wewe-rss` 已验证可作为普通微信 / 微信读书侧全文源。
 
 ## 风险边界
 
@@ -169,24 +221,24 @@ docker: error getting credentials - err: exit status 1, out: `Keychain Error. (-
 
 | 方案 | 结论 | 原因 |
 | --- | --- | --- |
-| we-mp-rss | `needs_user_dependency` | 最符合公众号全文采集，但本机 Docker credential store 阻塞，源码要求 Python 3.13+；需用户扫码授权后复验全文。 |
-| wewe-rss | `needs_user_dependency` | 支持 fulltext，但依赖微信读书登录态；Docker 同样被 Keychain 阻塞。 |
+| we-mp-rss | `blocked_not_recommended_for_current_use` | 已可启动，但需要公众号平台扫码授权；不适合当前微信小号订阅方案，也不建议绑定已有公众号主体。 |
+| wewe-rss | `usable_p1_provider` | 已用 Docker 启动，用户完成微信读书 / 微信小号扫码后成功订阅数字生命卡兹克，并输出最近文章全文 JSON Feed。 |
 | Wechat2RSS 公共 feed | `discovery_only` | 可发现卡兹克文章列表，但不是稳定全文源。 |
 
 ## 下一步接入方式
 
-如果用户修复 Docker Desktop credential store，并完成本机扫码授权：
+建议路线：
 
-1. 启动 `we-mp-rss`。
-2. 只订阅 `数字生命卡兹克`。
-3. 打开本地 feed/API，确认返回最近文章全文。
-4. 用 `scripts/wechat_fulltext_provider_probe.py` 验证输出能转成 ContentItem。
-5. 若至少连续 2-3 天稳定，再把全文 provider 接到现有 `--fetch-wechat-feed` 链路，作为“公共 feed 发现 + 本地 provider 补全文”的 P1 增强。
+1. `Wechat2RSS` 公共 feed 继续负责发现卡兹克文章列表。
+2. `wewe-rss` 本地服务负责补全文。
+3. 用 `scripts/wechat_fulltext_provider_probe.py` 验证输出能转成 ContentItem。
+4. 若至少连续 2-3 天稳定，再把全文 provider 接到现有 `--fetch-wechat-feed` 链路，作为“公共 feed 发现 + 本地 provider 补全文”的 P1 增强。
+5. 如果 wewe-rss 登录态失效或 provider 不稳定，降级回“公共 feed 发现 + 02 URL 投喂补全文”。
 
 示例验证命令：
 
 ```bash
-python3 scripts/wechat_fulltext_provider_probe.py --config config/wechat_fulltext_provider.example.yaml --dry-run
+python3 scripts/wechat_fulltext_provider_probe.py --config config/wechat_fulltext_provider.example.yaml --provider-id local_wewe_rss_kazike --dry-run
 ```
 
 该脚本只读本地 provider 输出，不写飞书，不进 `03`，不进 `04`。
