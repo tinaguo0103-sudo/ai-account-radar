@@ -103,6 +103,7 @@ https://api.douyin.wtf/api/hybrid/video_data?minimal=false&url=...
 | `douyin-mcp-server` / `wanyi-watermark` | 本机已装；同一 `modal_id` 链接失败 | 不支持主页订阅 | 普通分享链接可能支持 | 支持 | 支持但需 ASR key | `DASHSCOPE_API_KEY`/百炼、可能下载视频 | 下载/ASR 成本 | **备选：P1 单条转写** |
 | `social-post-extractor-mcp` | 文档盘点 | 未验证 | 面向单条链接 | 可能支持 | 百炼 ASR/OCR | `BAILIAN_API_KEY`/DashScope 类 key | 外部服务、媒体处理 | 备选：P1 转写/OCR |
 | `MediaCrawler` | 文档和源码盘点 | 支持创作者主页 | 支持指定帖子 | 不作为重点 | 不作为重点 | Playwright/CDP、登录态缓存 | 验证码/风控/非商业许可 | **主路线候选：P1 主页采样** |
+| `douyin_cdp_source_watch_probe.mjs` | 本轮真实跑通 CDP 连接，但未拿到可信作品区 | 未跑通，能识别不可信热门推荐 | 可在可信作品链接出现后复用 resolver | 不作为重点 | 不支持 | 本机 Chrome 远程调试、用户小号登录态 | 页面异常、登录/验证、推荐流污染 | **P1 验证辅助** |
 | `Douyin_TikTok_Download_API` | 文档盘点；在线 demo 本轮 520 | 文档声明支持 | 文档声明支持 | 支持 | 不内置完整 ASR | 自部署、Cookie/风控配置 | 维护成本高 | 备选：自部署 API |
 | `douyin-downloader` | 未找到比以上更稳的独立主路线 | 未验证 | 单条下载/metadata 候选 | 支持下载方向 | 通常不含 ASR | 取决于项目 | 维护分散 | 仅调研 |
 
@@ -169,3 +170,41 @@ python3 scripts/douyin_source_watch_probe.py --account-limit 3 --video-limit 2
 - `douyin_source_watch_probe.py` 可以作为轻量探针保留，用于验证某些主页是否公开暴露作品 ID。
 - 真正要推进账号主页最近 N 条，应进入 P1 登录态路线：优先 `MediaCrawler`，使用抖音小号、本机浏览器登录态、每账号最近 3 条、低频只读。
 - 单条视频 metadata 仍继续用 `url_content_resolver.py`；主页发现和视频理解不要混成一个默认流程。
+
+## 2026-06-16 Chrome CDP 主页探针复验
+
+新增显式脚本：
+
+```bash
+node scripts/douyin_cdp_source_watch_probe.mjs --account-limit 3 --video-limit 2
+```
+
+脚本边界：
+
+- 只连接本机 `http://127.0.0.1:9222` 的 Chrome DevTools Protocol。
+- 不导出浏览器 profile。
+- 不读取、保存或提交 cookie/token。
+- 不写飞书、不进 `03/04`、不接默认 `daily_pipeline.py`。
+- 不下载视频、不抓评论、不做批量历史。
+- 只有发现可信账号作品 ID 时才复用 `url_content_resolver.py` 生成本地 ContentItem。
+
+本轮真实结果：
+
+| 账号 | 结果 | 说明 |
+| --- | --- | --- |
+| 秋芝2046 | needs_login_or_verification | CDP 可打开主页，但作品区提示“服务异常/重新刷新拉取数据”；页面里发现的 video ID 更像热门推荐，不可信。 |
+| xuan酱 | needs_login_or_verification | CDP 可打开主页，但作品区同样异常；发现的 video ID 不作为账号最近作品。 |
+| ami.moment | needs_url | 当前配置缺少抖音主页链接。 |
+
+关键修正：
+
+- 早期探针能从页面 HTML 里看到 `/video/` ID，但这些 ID 并不一定来自目标账号主页作品区。
+- 现在脚本会检测 `服务异常` / `重新刷新拉取数据` 等页面状态；如果作品区异常，发现的 ID 只写入 `untrusted_video_ids`，不会进入 resolver，也不会输出 ContentItem。
+- 这一步很重要：它避免把抖音热门推荐误当成对标账号最近作品，防止后续选题池被脏数据污染。
+
+结论：
+
+- Chrome CDP 路线比纯 HTML 请求更接近可用，因为它可以复用用户本机浏览器状态。
+- 但在未获得健康登录态/可信作品区前，仍不能说“账号主页最近 N 条已跑通”。
+- 下一步若继续，应由用户在本机 Chrome 远程调试 profile 中登录抖音小号，手动完成任何验证码/手机号验证；脚本再低频复验 2-3 个账号，每个账号最多最近 2-3 条。
+- 即便后续跑通，也应先作为 P1 显式 probe，不进入默认 `daily_pipeline.py`。

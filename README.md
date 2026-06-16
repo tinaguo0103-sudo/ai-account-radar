@@ -563,6 +563,14 @@ python3 scripts/douyin_source_watch_probe.py --account-limit 3 --video-limit 2
 
 它只做本地 dry-run：读取当前主对标池里的抖音主页，尝试从公开页面发现最近作品 ID，并复用单条视频 resolver 输出本地 ContentItem。它不写飞书、不保存登录态、不下载视频、不抓评论。若公开页面只返回 JS 壳或要求登录，脚本会记录 `partial` / `needs_login` / `needs_url`，下一步再用 MediaCrawler 登录态路线验证。
 
+另有一个 Chrome DevTools 低频探针，用于复验“本机浏览器已登录抖音小号后，能否从主页看到可信作品列表”：
+
+```bash
+node scripts/douyin_cdp_source_watch_probe.mjs --account-limit 3 --video-limit 2
+```
+
+它只连接本机 `http://127.0.0.1:9222` 的 Chrome 调试端口，不导出浏览器 profile，不保存 cookie/token，不写飞书。当前复验结果是：脚本可以打开秋芝2046、xuan酱主页，但在未拿到可信作品区时页面会出现“服务异常/重新刷新拉取数据”，且页面中混入的 `/video/` ID 更像热门推荐；脚本会把这些 ID 标记为 `untrusted_video_ids`，不会交给 resolver，也不会生成 ContentItem。下一步如果继续，应由用户在本机 Chrome 远程调试 profile 中登录抖音小号后再低频复验。
+
 ## 采集边界
 
 - 不绕过登录、验证码、反爬或平台限制。

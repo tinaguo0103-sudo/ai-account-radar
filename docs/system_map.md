@@ -52,6 +52,8 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 当前可用的抖音主页轻量探针是 `scripts/douyin_source_watch_probe.py`。它只输出本地报告和 ContentItem，不写飞书、不进 `03/04`、不接默认 `daily_pipeline.py`。如果公开主页无法解析最近作品，下一步再进入 MediaCrawler + 抖音小号登录态的 P1 验证。
 
+另有 `scripts/douyin_cdp_source_watch_probe.mjs` 用于本机 Chrome 登录态复验。它通过 Chrome DevTools Protocol 低频打开主对标抖音主页，只在发现可信账号作品 ID 时才复用单条视频 resolver；如果页面返回服务异常或混入热门推荐，脚本会标记为 `needs_login_or_verification` / `partial_untrusted`，不输出 ContentItem。
+
 ## 原则
 
 后台可以复杂，前台只保留今天要做什么。

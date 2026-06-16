@@ -91,6 +91,7 @@
 - 已盘点开源路线：`Agent-Reach` 更适合作为工具清单而不是正式依赖；当前 `_ROUTER_DATA` 单条解析比本轮测试的 `douyin-mcp-server` 更适合 metadata；`MediaCrawler` 是账号主页最近 N 条的 P1 主候选；`Douyin_TikTok_Download_API` 能力全但需要自部署和 Cookie/风控配置，暂作备选。详见 `docs/spikes/douyin_open_source_tool_eval.md`。
 - 当前已有轻量探针：`scripts/douyin_source_watch_probe.py`。它读取当前主对标池里的抖音主页，尝试从公开页面发现作品 ID；如果发现作品 ID，就复用单条视频 resolver 输出本地 ContentItem。它不写飞书、不保存登录态、不下载视频、不抓评论。
 - 2026-06-16 复验结果：秋芝2046、xuan酱公开页面可访问但更像 JS 壳，未解析出作品 ID；ami.moment 缺主页链接。结论是无登录公开主页不足以稳定发现最近 N 条。
+- 当前已有 Chrome CDP 探针：`scripts/douyin_cdp_source_watch_probe.mjs`。它只连接本机远程调试 Chrome，不导出 profile，不保存 cookie/token，不写飞书。2026-06-16 复验结果：CDP 可连接并打开主页，但未拿到可信作品区；页面出现“服务异常/重新刷新拉取数据”，且发现的视频 ID 更像热门推荐。脚本已将这类 ID 标记为 `untrusted_video_ids`，不会作为账号作品输出。
 - P1 只允许单独分支 probe，不进入 `main` 默认流程。
 
 ### 评论区问题抓取
