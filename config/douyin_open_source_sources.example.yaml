@@ -1,0 +1,29 @@
+accounts:
+  - account_name: 数字生命卡兹克-抖音教程视频
+    platform: 抖音
+    homepage_url: ""
+    column: AI业务定调
+    priority: medium
+    sample_limit: 3
+    needs_login: true
+    note: 需要用户提供抖音主页链接，并在本机浏览器用抖音小号保持登录。
+  - account_name: 徐老师AI
+    platform: 抖音
+    homepage_url: ""
+    column: AI导演工作流
+    priority: high
+    sample_limit: 3
+    needs_login: true
+    note: 需要用户提供抖音主页链接，并在本机浏览器用抖音小号保持登录。
+  - account_name: xuan酱
+    platform: 抖音
+    homepage_url: ""
+    column: 真实工作流改造
+    priority: high
+    sample_limit: 3
+    needs_login: true
+    note: 需要用户提供抖音主页链接，并在本机浏览器用抖音小号保持登录。
+
+test_video_urls:
+  - name: 歸藏 modal_id 样例
+    url: https://www.douyin.com/search/%E6%AD%B8%E8%97%8F%20guizang.ai?aid=e99f9039-d470-40fc-9fa2-1e55799bb2b8&modal_id=7548465155441544475&type=general

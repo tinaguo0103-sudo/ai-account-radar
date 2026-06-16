@@ -551,6 +551,8 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 
 卡兹克公众号发现源与全文源的结论见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md) 和 [docs/spikes/wechat_fulltext_provider_eval.md](docs/spikes/wechat_fulltext_provider_eval.md)。当前口径是：Wechat2RSS 公共 feed 适合发现文章列表，不是稳定全文源；`wewe-rss` 已验证可作为本地全文 provider，但必须显式启用；`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。默认流程不依赖这些服务。
 
+抖音开源工具评估见 [docs/spikes/douyin_open_source_tool_eval.md](docs/spikes/douyin_open_source_tool_eval.md)。当前口径是：单条视频 metadata 继续使用项目内 `url_content_resolver.py`；账号主页最近 N 条的 P1 候选是 `MediaCrawler`，但需要抖音小号和本机浏览器登录态，必须单独 probe；口播字幕/ASR 的 P1 候选是 `douyin-mcp-server`、`wanyi-watermark` 或 `social-post-extractor-mcp`，需要显式命令和 ASR key，不进入默认流程。
+
 ## 采集边界
 
 - 不绕过登录、验证码、反爬或平台限制。

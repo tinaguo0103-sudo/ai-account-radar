@@ -88,7 +88,7 @@
 - 当前单条抖音视频 URL P0 浅层解析可用。
 - 账号主页最近 N 条自动发现未稳定验证。
 - 可能卡点：JS 壳、登录态、验证码、反爬、接口变动、浏览器回退、下载成本。
-- 可研究方向：当前 `_ROUTER_DATA` 单条解析、Douyin_TikTok_Download_API、douyin-downloader、douyin-mcp-server、Agent-Reach 相关能力。
+- 已盘点开源路线：`Agent-Reach` 更适合作为工具清单而不是正式依赖；当前 `_ROUTER_DATA` 单条解析比本轮测试的 `douyin-mcp-server` 更适合 metadata；`MediaCrawler` 是账号主页最近 N 条的 P1 主候选；`Douyin_TikTok_Download_API` 能力全但需要自部署和 Cookie/风控配置，暂作备选。详见 `docs/spikes/douyin_open_source_tool_eval.md`。
 - P1 只允许单独分支 probe，不进入 `main` 默认流程。
 
 ### 评论区问题抓取

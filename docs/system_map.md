@@ -48,6 +48,8 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 公众号全文 provider 已有显式 P1 路线：本地 `wewe-rss` 可通过 `python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5` 拉取卡兹克全文；默认工作流不依赖本地服务。`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。当前结论见 `docs/spikes/wechat_fulltext_provider_eval.md`。
 
+抖音主页和字幕增强仍是 P1 probe，不是日常入口。单条视频 metadata 继续走 `url_content_resolver.py`；主页最近 N 条优先评估 `MediaCrawler`；字幕/ASR 只适合显式命令和 API key。当前结论见 `docs/spikes/douyin_open_source_tool_eval.md`。
+
 ## 原则
 
 后台可以复杂，前台只保留今天要做什么。
