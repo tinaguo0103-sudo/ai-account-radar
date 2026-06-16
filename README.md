@@ -537,6 +537,8 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 
 卡兹克公众号 feed 候选验证见 [docs/spikes/wechat_feed_candidate_verification.md](docs/spikes/wechat_feed_candidate_verification.md)。当前已从 Wechat2RSS issue 线索中验证到一个可读 XML feed，并做成 P1 显式接入能力：`python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5 --write-feishu`。默认流程仍不拉 feed；正式默认化前还需要连续稳定性、去重和全文字段完整性验证。
 
+微信公众号全文 provider POC 见 [docs/spikes/wechat_fulltext_provider_eval.md](docs/spikes/wechat_fulltext_provider_eval.md)。本轮结论是：Wechat2RSS 公共 feed 适合发现文章列表，不是稳定全文源；`we-mp-rss` 是优先本地全文候选，`wewe-rss` 是备选，但都需要本机 Docker 服务和专用微信小号/微信读书扫码授权。默认流程不依赖这些服务。
+
 ## 采集边界
 
 - 不绕过登录、验证码、反爬或平台限制。

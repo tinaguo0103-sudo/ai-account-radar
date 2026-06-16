@@ -46,6 +46,8 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 卡兹克公众号 feed 候选验证见 `docs/spikes/wechat_feed_candidate_verification.md`。当前已发现一个 Wechat2RSS XML feed，并做成 P1 显式接入：只有运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时才拉取。默认流程不写入 `03 内容收件箱`，也不参与 `04 今日Top10`；如果 feed 失效，继续用 `02 URL投喂入口` 粘贴单篇文章 URL。
 
+公众号全文 provider 仍是 POC。`we-mp-rss` / `wewe-rss` 需要本机 Docker 服务和专用微信小号扫码授权，当前结论见 `docs/spikes/wechat_fulltext_provider_eval.md`；默认工作流不依赖这些服务。
+
 ## 原则
 
 后台可以复杂，前台只保留今天要做什么。

@@ -1,0 +1,21 @@
+providers:
+  - provider_id: local_we_mp_rss_kazike
+    provider_name: we-mp-rss local
+    account_name: 数字生命卡兹克
+    platform: 微信公众号
+    source_type: 公众号文章
+    feed_url: http://127.0.0.1:8001/feed/<feed_id>.xml?limit=5
+    provider_type: rss
+    requires_login: true
+    max_items: 5
+    note: 本地we-mp-rss服务输出；需要先在本机Web UI扫码授权并只订阅数字生命卡兹克。
+  - provider_id: local_wewe_rss_kazike
+    provider_name: wewe-rss local
+    account_name: 数字生命卡兹克
+    platform: 微信公众号
+    source_type: 公众号文章
+    feed_url: http://127.0.0.1:4000/feeds/<feed_id>.atom?limit=5&mode=fulltext
+    provider_type: atom
+    requires_login: true
+    max_items: 5
+    note: 本地wewe-rss服务输出；需要微信读书扫码登录并添加公众号分享链接。
