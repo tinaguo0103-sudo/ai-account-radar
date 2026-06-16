@@ -15,6 +15,7 @@ import html
 import json
 import re
 import sys
+import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
 from dataclasses import dataclass
@@ -27,6 +28,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config" / "wechat_fulltext_provider.example.yaml"
 DEFAULT_OUT = ROOT / "output" / "wechat_fulltext_provider_items.jsonl"
 DEFAULT_CSV = ROOT / "output" / "wechat_fulltext_provider_items.csv"
+DEFAULT_RAW_DIR = ROOT / "output" / "wechat_fulltext_provider_raw"
 MAX_FEED_BYTES = 50_000_000
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 AIAccountRadar/0.1"
 
@@ -34,15 +36,38 @@ UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 AIAccou
 @dataclass
 class Provider:
     provider_id: str
-    provider_name: str
-    account_name: str
+    provider: str
+    name: str
+    source_name: str
     platform: str
     source_type: str
-    feed_url: str
-    provider_type: str = "rss"
-    requires_login: bool = True
+    base_url: str = ""
+    feed_path: str = ""
+    mode: str = "fulltext"
+    default_enabled: bool = False
+    source_id: str = ""
+    topic_bucket: str = ""
     max_items: int = 5
     note: str = ""
+
+    @property
+    def provider_name(self) -> str:
+        return self.provider
+
+    @property
+    def account_name(self) -> str:
+        return self.source_name
+
+    @property
+    def feed_url(self) -> str:
+        base = self.base_url.rstrip("/")
+        path = self.feed_path if self.feed_path.startswith("/") else f"/{self.feed_path}"
+        url = f"{base}{path}"
+        query = {"limit": str(self.max_items)}
+        if self.mode:
+            query["mode"] = self.mode
+        separator = "&" if "?" in url else "?"
+        return f"{url}{separator}{urllib.parse.urlencode(query)}"
 
 
 class TextExtractor(HTMLParser):
@@ -120,8 +145,31 @@ def load_yaml_list(path: Path, section_name: str) -> list[dict[str, Any]]:
     return rows
 
 
+def normalize_provider_row(row: dict[str, Any]) -> dict[str, Any]:
+    if "provider_name" in row or "feed_url" in row:
+        feed_url = str(row.get("feed_url", ""))
+        parsed = urllib.parse.urlparse(feed_url)
+        return {
+            "provider_id": str(row.get("provider_id", "")),
+            "provider": str(row.get("provider_name", row.get("provider", ""))).replace(" local", ""),
+            "name": str(row.get("provider_name", row.get("name", ""))),
+            "base_url": f"{parsed.scheme}://{parsed.netloc}" if parsed.scheme and parsed.netloc else "",
+            "feed_path": parsed.path or feed_url,
+            "mode": urllib.parse.parse_qs(parsed.query).get("mode", ["fulltext"])[0],
+            "default_enabled": bool(row.get("default_enabled", False)),
+            "source_id": str(row.get("source_id", row.get("provider_id", ""))),
+            "source_name": str(row.get("account_name", row.get("source_name", ""))),
+            "platform": str(row.get("platform", "微信公众号")),
+            "source_type": str(row.get("source_type", "公众号文章")),
+            "topic_bucket": str(row.get("topic_bucket", "")),
+            "max_items": int(row.get("max_items", 5) or 5),
+            "note": str(row.get("note", "")),
+        }
+    return row
+
+
 def load_providers(path: Path) -> list[Provider]:
-    return [Provider(**row) for row in load_yaml_list(path, "providers")]
+    return [Provider(**normalize_provider_row(row)) for row in load_yaml_list(path, "providers")]
 
 
 def fetch(url: str) -> tuple[bytes, str, str]:
@@ -131,6 +179,11 @@ def fetch(url: str) -> tuple[bytes, str, str]:
             return resp.read(MAX_FEED_BYTES), "ok", resp.headers.get("Content-Type", "")
     except Exception as exc:
         return b"", f"failed:{type(exc).__name__}:{exc}", ""
+
+
+def write_text(path: Path, content: str) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(content, encoding="utf-8")
 
 
 def ns_free(tag: str) -> str:
@@ -169,6 +222,11 @@ def fingerprint(*parts: str) -> str:
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+def raw_payload_path(provider: Provider, url: str, title: str, suffix: str = "html") -> Path:
+    safe_id = fingerprint(provider.provider_id, url, title)
+    return DEFAULT_RAW_DIR / f"{provider.provider_id}_{safe_id}.{suffix}"
+
+
 def parse_xml_items(raw: bytes, provider: Provider) -> list[dict[str, str]]:
     root = ET.fromstring(raw)
     entries = [node for node in root.iter() if ns_free(node.tag) in {"item", "entry"}]
@@ -185,6 +243,7 @@ def parse_xml_items(raw: bytes, provider: Provider) -> list[dict[str, str]]:
             "published_at": published,
             "body": text or content,
             "raw_body": content,
+            "raw_payload_path": str(raw_payload_path(provider, url, title, "html")),
         })
     return rows
 
@@ -224,6 +283,7 @@ def parse_json_items(raw: bytes, provider: Provider) -> list[dict[str, str]]:
             "body": html_to_text(body),
             "raw_body": body,
             "author": str(author.get("name") or ""),
+            "raw_payload_path": str(raw_payload_path(provider, str(item.get("url") or item.get("link") or item.get("guid") or ""), str(item.get("title") or item.get("name") or ""), "html")),
         })
     return rows
 
@@ -233,10 +293,19 @@ def to_manual_row(provider: Provider, item: dict[str, str], status: str, failure
     title = item.get("title", "")
     url = item.get("url", "")
     is_full = "是" if len(body) >= 800 else "否"
+    raw_payload = item.get("raw_payload_path", "")
+    if raw_payload and item.get("raw_body"):
+        write_text(Path(raw_payload), item.get("raw_body", ""))
+    parse_note = (
+        f"provider={provider.provider}; source_id={provider.source_id}; "
+        f"feed_url_or_api_url={provider.feed_url}; "
+        f"topic_bucket={provider.topic_bucket}; "
+        f"{'已解析全文' if is_full == '是' else '未达到全文阈值'}"
+    )
     return {
         "来源类型": provider.source_type,
         "平台": provider.platform,
-        "账号名/公众号名": provider.account_name,
+        "账号名/公众号名": provider.source_name,
         "内容标题": title,
         "内容链接": url,
         "内容形态": "长文",
@@ -244,15 +313,19 @@ def to_manual_row(provider: Provider, item: dict[str, str], status: str, failure
         "正文/字幕/简介片段": body,
         "发布时间": item.get("published_at", ""),
         "评论区问题": "",
-        "截图/OCR文本": provider.provider_id,
-        "抓取方式": f"wechat_fulltext_provider:{provider.provider_name}",
+        "截图/OCR文本": raw_payload,
+        "抓取方式": "wechat_feed",
         "抓取状态": status,
         "失败原因": failure,
-        "内容指纹": fingerprint("wechat_fulltext_provider", url, title),
+        "内容指纹": fingerprint("wechat", url, title),
         "正文原始长度": str(len(body)),
         "正文是否截断": "否",
         "是否来自已解析URL复用": "否",
         "是否全文解析": is_full,
+        "解析说明": parse_note,
+        "provider": provider.provider,
+        "source_id": provider.source_id,
+        "feed_url_or_api_url": provider.feed_url,
     }
 
 
@@ -284,6 +357,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Probe local WeChat full-text provider into ContentItem-compatible JSONL.")
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
     parser.add_argument("--provider-id", default="")
+    parser.add_argument("--limit", type=int, default=None)
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--csv", default=str(DEFAULT_CSV))
     parser.add_argument("--dry-run", action="store_true", help="Dry-run alias; this script never writes Feishu.")
@@ -291,10 +365,15 @@ def main() -> int:
 
     providers = load_providers(Path(args.config))
     if args.provider_id:
-        providers = [provider for provider in providers if provider.provider_id == args.provider_id]
+        providers = [
+            provider for provider in providers
+            if provider.provider_id == args.provider_id or provider.provider == args.provider_id
+        ]
     rows: list[dict[str, str]] = []
     report: list[dict[str, Any]] = []
     for provider in providers:
+        if args.limit is not None:
+            provider.max_items = args.limit
         items, status, content_type = probe_provider(provider)
         if not items:
             rows.append(to_manual_row(provider, {}, "failed", status))

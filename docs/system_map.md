@@ -44,9 +44,9 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 当前默认自动源是 AIHOT、官方 RSS/Atom、官方网页/普通网页/Jina Reader 和 URL 投喂；主对标账号自动抓取仍处于 P1 阶段。抖音主页、公众号历史列表不直接进入默认流程。完整自动拉取路线见 `docs/source_autofetch_plan.md`。
 
-卡兹克公众号 feed 候选验证见 `docs/spikes/wechat_feed_candidate_verification.md`。当前已发现一个 Wechat2RSS XML feed，并做成 P1 显式接入：只有运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时才拉取。默认流程不写入 `03 内容收件箱`，也不参与 `04 今日Top10`；如果 feed 失效，继续用 `02 URL投喂入口` 粘贴单篇文章 URL。
+卡兹克公众号 Wechat2RSS 发现源已做成 P1 显式接入：只有运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时才拉取。默认流程不写入 `03 内容收件箱`，也不参与 `04 今日Top10`；如果 feed 失效，继续用 `02 URL投喂入口` 粘贴单篇文章 URL。
 
-公众号全文 provider 仍是 POC。`we-mp-rss` / `wewe-rss` 需要本机 Docker 服务和专用微信小号扫码授权，当前结论见 `docs/spikes/wechat_fulltext_provider_eval.md`；默认工作流不依赖这些服务。
+公众号全文 provider 已有显式 P1 路线：本地 `wewe-rss` 可通过 `python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5` 拉取卡兹克全文；默认工作流不依赖本地服务。`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。当前结论见 `docs/spikes/wechat_fulltext_provider_eval.md`。
 
 ## 原则
 

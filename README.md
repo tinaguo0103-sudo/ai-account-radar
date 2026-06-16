@@ -178,6 +178,20 @@ python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5 --wr
 
 如果 feed 失效，继续回退到 `02 URL投喂入口` 单篇公众号文章 URL。当前 feed 条目会尝试调用公众号全文解析；如果微信页面限制导致全文解析失败，系统保留 feed 摘要、失败原因和原始 payload 路径，不伪装成全文。
 
+卡兹克公众号全文 provider 已作为 P1 显式源接入。本地 `wewe-rss` 服务启动并订阅 `数字生命卡兹克` 后，可以显式拉取全文：
+
+```bash
+python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5
+```
+
+确认质量后，显式写入飞书：
+
+```bash
+python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5 --write-feishu
+```
+
+默认 `python3 scripts/daily_pipeline.py` 不拉取 `wewe-rss`，也不依赖本地全文服务。`wewe-rss` 只作为低频 P1 全文补充源；如果本地服务不可用，继续回退到 Wechat2RSS 发现源或 `02 URL投喂入口` 单篇文章 URL。
+
 规则测试时，如果飞书里没有新的待处理 URL，但你想让已解析过的公众号/抖音内容重新参与本轮候选池，可以显式加复用参数：
 
 ```bash
@@ -531,13 +545,11 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 
 ## 自动拉取边界
 
-当前默认自动源是 AIHOT精选、AIHOT日报、官方 RSS/Atom、官方网页/普通网页/Jina Reader，以及 `02 URL投喂入口` 的单条 URL 投喂。主对标账号自动抓取仍处于 P1：抖音主页最近 N 条、公众号历史文章列表不直接进入默认 `daily_pipeline.py`。`--include-resolved-url-intake` 只用于复用已解析 URL 做规则测试，不作为默认日常流程；卡兹克公众号 feed 只在显式传 `--fetch-wechat-feed` 时拉取。
+当前默认自动源是 AIHOT精选、AIHOT日报、官方 RSS/Atom、官方网页/普通网页/Jina Reader，以及 `02 URL投喂入口` 的单条 URL 投喂。主对标账号自动抓取仍处于 P1：抖音主页最近 N 条、公众号历史文章列表不直接进入默认 `daily_pipeline.py`。`--include-resolved-url-intake` 只用于复用已解析 URL 做规则测试，不作为默认日常流程；卡兹克公众号 Wechat2RSS 发现源只在显式传 `--fetch-wechat-feed` 时拉取，本地 `wewe-rss` 全文源只在显式传 `--fetch-wechat-fulltext-provider` 或 `--wechat-fulltext-provider wewe-rss` 时拉取。
 
 完整路线、主对标池逐个判断和未来 PoC 分支命名见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md)。
 
-卡兹克公众号 feed 候选验证见 [docs/spikes/wechat_feed_candidate_verification.md](docs/spikes/wechat_feed_candidate_verification.md)。当前已从 Wechat2RSS issue 线索中验证到一个可读 XML feed，并做成 P1 显式接入能力：`python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5 --write-feishu`。默认流程仍不拉 feed；正式默认化前还需要连续稳定性、去重和全文字段完整性验证。
-
-微信公众号全文 provider POC 见 [docs/spikes/wechat_fulltext_provider_eval.md](docs/spikes/wechat_fulltext_provider_eval.md)。本轮结论是：Wechat2RSS 公共 feed 适合发现文章列表，不是稳定全文源；`we-mp-rss` 是优先本地全文候选，`wewe-rss` 是备选，但都需要本机 Docker 服务和专用微信小号/微信读书扫码授权。默认流程不依赖这些服务。
+卡兹克公众号发现源与全文源的结论见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md) 和 [docs/spikes/wechat_fulltext_provider_eval.md](docs/spikes/wechat_fulltext_provider_eval.md)。当前口径是：Wechat2RSS 公共 feed 适合发现文章列表，不是稳定全文源；`wewe-rss` 已验证可作为本地全文 provider，但必须显式启用；`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。默认流程不依赖这些服务。
 
 ## 采集边界
 

@@ -27,8 +27,10 @@ URL_RESOLVED = OUT / "url_content_items.jsonl"
 URL_RESOLVED_MANUAL = OUT / "url_content_items_manual.jsonl"
 WECHAT_FEED_RESOLVED = OUT / "wechat_feed_content_items.jsonl"
 WECHAT_FEED_RESOLVED_MANUAL = OUT / "wechat_feed_content_items_manual.jsonl"
+WECHAT_FULLTEXT_RESOLVED_MANUAL = OUT / "wechat_fulltext_provider_items.jsonl"
 COMBINED_MANUAL = OUT / "daily_pipeline_manual_combined.jsonl"
 DEFAULT_WECHAT_FEED_CONFIG = ROOT / "config" / "wechat_feed_candidates.yaml"
+DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG = ROOT / "config" / "wechat_fulltext_provider.example.yaml"
 
 load_local_env()
 
@@ -125,7 +127,10 @@ def main() -> int:
     parser.add_argument("--include-resolved-url-intake", action="store_true", help="Testing mode: reuse already parsed Feishu 02 URLs as candidates without changing default intake behavior.")
     parser.add_argument("--url-file", help="Resolve URLs from a local text file into ContentItem rows before sampling.")
     parser.add_argument("--fetch-wechat-feed", action="store_true", help="Explicit P1 mode: fetch configured WeChat public-account feeds into the candidate pool. Default is off.")
+    parser.add_argument("--fetch-wechat-fulltext-provider", action="store_true", help="Explicit P1 mode: fetch local WeChat fulltext provider rows into the candidate pool. Default is off.")
     parser.add_argument("--wechat-feed-config", default=str(DEFAULT_WECHAT_FEED_CONFIG), help="Config for explicit WeChat feed intake.")
+    parser.add_argument("--wechat-fulltext-provider-config", default=str(DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG), help="Config for explicit WeChat fulltext provider intake.")
+    parser.add_argument("--wechat-fulltext-provider", default="", help="Provider id/name to fetch, e.g. wewe-rss. Only used with explicit WeChat fulltext provider mode.")
     parser.add_argument("--wechat-feed-limit", type=int, default=5, help="Max articles to fetch per WeChat feed when --fetch-wechat-feed is enabled.")
     args = parser.parse_args()
 
@@ -175,6 +180,29 @@ def main() -> int:
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
         manual_inputs.append(WECHAT_FEED_RESOLVED_MANUAL)
+
+    if args.fetch_wechat_fulltext_provider or args.wechat_fulltext_provider:
+        provider_cmd = [
+            py,
+            str(ROOT / "scripts" / "wechat_fulltext_provider_probe.py"),
+            "--config",
+            args.wechat_fulltext_provider_config,
+            "--out",
+            str(WECHAT_FULLTEXT_RESOLVED_MANUAL),
+            "--csv",
+            str(OUT / "wechat_fulltext_provider_items.csv"),
+            "--dry-run",
+        ]
+        if args.wechat_fulltext_provider:
+            provider_cmd.extend(["--provider-id", args.wechat_fulltext_provider])
+        if args.wechat_feed_limit:
+            provider_cmd.extend(["--limit", str(args.wechat_feed_limit)])
+        steps.append(run_step("fetch explicit WeChat fulltext provider into ContentItem rows", provider_cmd, env=step_env))
+        if steps[-1]["returncode"] != 0:
+            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
+            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
+            return steps[-1]["returncode"]
+        manual_inputs.append(WECHAT_FULLTEXT_RESOLVED_MANUAL)
 
     if len(manual_inputs) > 1:
         manual_path = str(combine_manual_jsonl(manual_inputs, COMBINED_MANUAL))

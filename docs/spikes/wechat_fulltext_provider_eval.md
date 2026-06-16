@@ -2,7 +2,7 @@
 
 ## 测试目标
 
-验证是否能用免费自建方案稳定拿到微信公众号全文，优先测试 `we-mp-rss`，备选测试 `wewe-rss`。本轮不改默认 `daily_pipeline.py`，不写飞书，不进入 `03 内容收件箱` 或 `04 今日Top10`。
+验证是否能用免费自建方案稳定拿到微信公众号全文，并把已跑通的本地 `wewe-rss` 作为 P1 显式全文 provider 接入现有管道。默认 `daily_pipeline.py` 不拉取本地 provider；只有显式参数启用时才进入 `03 内容收件箱` 与 `04 今日Top10` 候选。
 
 测试账号：`数字生命卡兹克`
 
@@ -38,7 +38,7 @@
 
 ### 文档结论
 
-`we-mp-rss` 是更贴合本项目需求的优先路线：它定位为微信公众号订阅助手，支持 Web 管理界面、扫码授权、添加订阅、RSS 生成、全文配置、导出 Markdown/JSON 等能力。
+`we-mp-rss` 曾被列为全文候选：它定位为微信公众号订阅助手，支持 Web 管理界面、扫码授权、添加订阅、RSS 生成、全文配置、导出 Markdown/JSON 等能力。但后续实测确认它需要公众号平台授权，不适合当前“微信小号/微信读书订阅”方案。
 
 最小 Docker 方案：
 
@@ -115,7 +115,7 @@ docker run -d \
   --name wewe-rss \
   -p 4000:4000 \
   -e DATABASE_TYPE=sqlite \
-  -e AUTH_CODE=123567 \
+  -e AUTH_CODE=<local-admin-code> \
   -v $(pwd)/data:/app/data \
   cooderl/wewe-rss-sqlite:latest
 ```
@@ -137,7 +137,7 @@ docker run -d \
   --name ai-radar-wewe-rss \
   -p 4000:4000 \
   -e DATABASE_TYPE=sqlite \
-  -e AUTH_CODE=ai-radar-local-test \
+  -e AUTH_CODE=<local-admin-code> \
   -e FEED_MODE=fulltext \
   -e SERVER_ORIGIN_URL=http://127.0.0.1:4000 \
   -v .local_services/wewe-rss/data:/app/data \
@@ -238,7 +238,20 @@ http://127.0.0.1:4000/feeds/all.json?limit=5&mode=fulltext
 示例验证命令：
 
 ```bash
-python3 scripts/wechat_fulltext_provider_probe.py --config config/wechat_fulltext_provider.example.yaml --provider-id local_wewe_rss_kazike --dry-run
+python3 scripts/wechat_fulltext_provider_probe.py --config config/wechat_fulltext_provider.example.yaml --provider-id wewe-rss --limit 5 --dry-run
 ```
 
-该脚本只读本地 provider 输出，不写飞书，不进 `03`，不进 `04`。
+该脚本只读本地 provider 输出，不写飞书。显式接入现有管道时使用：
+
+```bash
+python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5
+python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5 --write-feishu
+```
+
+也可以和 Wechat2RSS 发现源一起运行：
+
+```bash
+python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5
+```
+
+默认 `python3 scripts/daily_pipeline.py` 不调用 `wewe-rss`。

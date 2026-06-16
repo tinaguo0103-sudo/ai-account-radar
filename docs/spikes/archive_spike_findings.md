@@ -21,9 +21,11 @@
 - 已迁移：是。
 - 迁移到：
   - `docs/source_autofetch_plan.md`
-  - `docs/spikes/wechat_feed_candidate_verification.md`
-- 删除判断：可删除。本轮 main 已新增正式候选验证脚本和报告。
-- 未保留内容：`scripts/spike_source_watch_wechat_rss.py`。
+  - `scripts/wechat_feed_intake.py`
+  - `config/wechat_feed_candidates.yaml`
+  - `docs/spikes/wechat_fulltext_provider_eval.md`
+- 删除判断：旧候选验证脚本和长报告可删除；结论已迁移到 source_autofetch_plan 和全文 provider 评估文档。
+- 未保留内容：`scripts/spike_source_watch_wechat_rss.py`、`scripts/probe_wechat_feed_candidates.py`、`docs/spikes/wechat_feed_candidate_verification.md`。
 
 ## spike/source-watch-douyin-homepage
 
@@ -52,10 +54,12 @@
 - 最终结论：`needs_user_dependency`。如果有可用 feed URL，可用轻量 source watch 转成 ContentItem；但默认不写飞书、不进 Top10。
 - 已迁移：是。
 - 迁移到：
-  - `scripts/probe_wechat_feed_candidates.py`
+  - `scripts/wechat_feed_intake.py`
   - `config/wechat_feed_candidates.yaml`
-  - `docs/spikes/wechat_feed_candidate_verification.md`
-- 删除判断：可删除。main 已保留可复用 probe，不保留旧 POC。
+  - `scripts/wechat_fulltext_provider_probe.py`
+  - `config/wechat_fulltext_provider.example.yaml`
+  - `docs/spikes/wechat_fulltext_provider_eval.md`
+- 删除判断：可删除。main 已保留显式 feed intake 和 wewe-rss fulltext provider adapter，不再保留旧候选验证 POC。
 - 未保留内容：`config/wechat_feed_sources.example.yaml`、`scripts/wechat_feed_source_watch_poc.py`。
 
 ## spike/short-video-visible-sampler
@@ -82,5 +86,5 @@
 ## 删除后保留原则
 
 - main 只保留稳定脚本、配置样例和结论文档。
-- 后续如需继续做公众号自动发现，应新开小分支或直接基于 `scripts/probe_wechat_feed_candidates.py` 做 `source_watch_probe`，不得把实验依赖和外部仓库提交进 main。
+- 后续如需继续做公众号自动发现，应新开小分支，并基于 `scripts/wechat_feed_intake.py` 或新的 `source_watch_probe` 实现；不得把实验依赖和外部仓库提交进 main。
 - 后续如需继续做抖音主页、短视频可见采样、ASR/OCR，应重新开独立 spike，并继续遵守“不写飞书、不改表结构、不进 Top10”的边界。

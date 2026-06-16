@@ -133,6 +133,7 @@ class ContentItem:
     raw_text_length: int = 0
     body_truncated: str = ""
     reused_url: str = "否"
+    parse_hint: str = ""
 
 
 class TextExtractor(HTMLParser):
@@ -554,6 +555,7 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
                 raw_text_length=int(raw.get("正文原始长度") or len(raw.get("正文/字幕/简介片段", ""))),
                 body_truncated=raw.get("正文是否截断", ""),
                 reused_url=raw.get("是否来自已解析URL复用", "否"),
+                parse_hint=raw.get("解析说明", ""),
             )
             if item.reused_url == "是":
                 enrich_reused_item_from_ledger(item, reused_ledger)
@@ -580,6 +582,7 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
                 failure_reason=raw.get("失败原因", ""),
                 fingerprint=fp,
                 reused_url=raw.get("是否来自已解析URL复用", "否"),
+                parse_hint=raw.get("解析说明", ""),
             )
         item.source_type = normalize_source_type(item.source_type)
         item.column = normalize_column(item.column or source_meta.get("column", ""))
@@ -1888,6 +1891,10 @@ def item_row(item: ContentItem) -> dict[str, Any]:
         "抓取状态": item.fetch_status,
         "失败原因": item.failure_reason,
         "内容指纹": item.fingerprint,
+        "正文长度": item.raw_text_length or len(item.body_snippet or ""),
+        "是否全文解析": is_full_text_item(item),
+        "原始payload路径": item.ocr_text,
+        "解析说明": parse_note(item),
         "对应栏目": normalize_column(item.column),
         "重点学习": item.learn_focus,
         "不能照搬": item.do_not_copy,
@@ -1956,16 +1963,17 @@ def is_full_text_item(item: ContentItem) -> str:
 
 
 def parse_note(item: ContentItem) -> str:
+    hint = f"{item.parse_hint}；" if item.parse_hint else ""
     if item.source_type == "对标视频" and item.platform == "抖音":
-        return "P0浅层解析：当前仅含标题/文案/作者/封面/发布时间，不含口播字幕和评论区。"
+        return hint + "P0浅层解析：当前仅含标题/文案/作者/封面/发布时间，不含口播字幕和评论区。"
     if is_full_text_item(item) == "是":
         raw_len = item.raw_text_length or len(item.body_snippet or "")
         if raw_len > 20000:
-            return f"已解析全文并用于内容拆解；飞书正文字段截断到20000字，原始payload路径保留本地全文，原始长度{raw_len}字。"
-        return "已解析全文并用于内容拆解；原始payload路径保留本地全文。"
+            return hint + f"已解析全文并用于内容拆解；飞书正文字段截断到20000字，原始payload路径保留本地全文，原始长度{raw_len}字。"
+        return hint + "已解析全文并用于内容拆解；原始payload路径保留本地全文。"
     if item.source_type == "AIHOT热点":
-        return "AIHOT条目摘要进入内容拆解；建议发布前回原文核对。"
-    return "已进入内容拆解，按当前可获取文本分析。"
+        return hint + "AIHOT条目摘要进入内容拆解；建议发布前回原文核对。"
+    return hint + "已进入内容拆解，按当前可获取文本分析。"
 
 
 def item_to_content_inbox_fields(item: ContentItem, run_id: str, is_new: bool, duplicate: bool = False) -> dict[str, str]:
@@ -2077,11 +2085,29 @@ def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dic
     existing = all_records(token, app_token, table_id)
     by_fp = {str(record.get("fields", {}).get("内容指纹", "")): record for record in existing if record.get("fields", {}).get("内容指纹")}
     by_url = {str(record.get("fields", {}).get("链接", "")): record for record in existing if record.get("fields", {}).get("链接")}
+    by_title_time: dict[tuple[str, str], dict[str, Any]] = {}
+    by_wechat_title: dict[str, dict[str, Any]] = {}
+    for record in existing:
+        fields = record.get("fields", {})
+        title = normalize_space(str(fields.get("标题", "")))
+        published_at = normalize_space(str(fields.get("发布时间", "")))
+        source_type = normalize_space(str(fields.get("来源类型", "")))
+        if title and published_at:
+            by_title_time[(title, published_at)] = record
+        if title and source_type == "公众号文章":
+            by_wechat_title[title] = record
     to_create: list[dict[str, str]] = []
     updated_existing = 0
     skipped_duplicates = 0
     for item in items:
-        record = by_fp.get(item.fingerprint) or by_url.get(item.url)
+        title_key = normalize_space(item.title)
+        published_key = normalize_space(item.published_at)
+        record = (
+            by_fp.get(item.fingerprint)
+            or by_url.get(item.url)
+            or by_title_time.get((title_key, published_key))
+            or (by_wechat_title.get(title_key) if item.source_type == "公众号文章" else None)
+        )
         if record:
             record_id = record.get("record_id") or record.get("id") or ""
             if not record_id:
@@ -2096,6 +2122,26 @@ def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dic
                 "是否本次新增": "是" if same_run_new else "否",
                 "是否重复": str(record_fields.get("是否重复", "否")) if same_run_new else "是",
             }
+            if fields.get("是否全文解析") == "是":
+                update_fields.update({
+                    "标题": fields["标题"],
+                    "来源类型": fields["来源类型"],
+                    "来源名称": fields["来源名称"],
+                    "平台": fields["平台"],
+                    "链接": fields["链接"],
+                    "发布时间": fields["发布时间"],
+                    "采集时间": fields["采集时间"],
+                    "采集状态": fields["采集状态"],
+                    "失败原因": fields["失败原因"],
+                    "摘要/片段": fields["摘要/片段"],
+                    "作者/账号": fields["作者/账号"],
+                    "内容指纹": fields["内容指纹"],
+                    "正文/全文": fields["正文/全文"],
+                    "正文长度": fields["正文长度"],
+                    "是否全文解析": fields["是否全文解析"],
+                    "原始payload路径": fields["原始payload路径"],
+                    "解析说明": fields["解析说明"],
+                })
             update_record_fields(token, app_token, table_id, record_id, update_fields)
             updated_existing += 1
             if not same_run_new:
@@ -2106,6 +2152,10 @@ def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dic
         to_create.append(fields)
         by_fp[item.fingerprint] = {"record_id": ""}
         by_url[item.url] = {"record_id": ""}
+        if title_key and published_key:
+            by_title_time[(title_key, published_key)] = {"record_id": ""}
+        if title_key and item.source_type == "公众号文章":
+            by_wechat_title[title_key] = {"record_id": ""}
     created_records = batch_create_records(token, app_token, table_id, to_create) if to_create else 0
     return {
         "table": table_name("content_inbox"),

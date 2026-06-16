@@ -101,10 +101,18 @@ def main() -> int:
         failures.append(f"今日最值得做 count > 3: {top_count}")
     watch_count = sum(1 for row in rows if row.get("今日建议级别") == "暂存观察")
     selected_sources = {row.get("来源内容", "") for row in rows}
+    selected_fps = {row.get("内容指纹", "") for row in rows}
+    selected_debug_final_titles = {
+        row.get("最终选题标题", "")
+        for row in debug_rows
+        if row.get("是否进入Top10") == "是" and row.get("最终选题标题", "")
+    }
     better_unselected = [
         row for row in debug_rows
         if row.get("是否进入Top10") != "是"
+        and row.get("内容指纹", "") not in selected_fps
         and row.get("原始来源标题", "") not in selected_sources
+        and row.get("最终选题标题", "") not in selected_debug_final_titles
         and row.get("是否建议进入制作") == "是"
         and row.get("AI味风险") == "低"
         and intish(row.get("编辑判断分", "")) >= 78
@@ -113,7 +121,6 @@ def main() -> int:
     if watch_count > 5 and better_unselected:
         failures.append(f"Top10 has {watch_count} 暂存观察 while {len(better_unselected)} better production-ready candidates are unselected")
 
-    selected_fps = {row.get("内容指纹", "") for row in rows}
     weakest_selected_watch = min(
         [intish(row.get("编辑判断分", "")) for row in rows if row.get("今日建议级别") == "暂存观察"],
         default=101,
