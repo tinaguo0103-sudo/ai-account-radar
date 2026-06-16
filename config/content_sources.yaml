@@ -4,7 +4,7 @@
   "source_roles": {
     "current_main_competitor": "当前主对标账号，参与主采样和栏目权重。",
     "current_aux_competitor": "当前辅助对标来源，可参与采样，但归入所属栏目权重，不单独增加配额。",
-    "historical_reference": "历史对标账号，保留为备用观察池，默认不参与今日Top10主采样。",
+    "historical_reference": "历史对标账号，保留为备用观察池，默认不参与今日候选池主采样。",
     "system_hotspot_source": "系统热点源，例如 AIHOT，作为热点输入但不属于对标账号权重池。",
     "official_source": "官方/技术/工具源，作为背景和热点输入，不属于对标账号权重池。",
     "manual_entry": "手动或半自动投喂入口，例如 02 URL投喂入口。",
@@ -116,7 +116,7 @@
       "sample_frequency": "daily_or_weekly",
       "learn_focus": "官方模型、产品和平台能力变化。",
       "do_not_copy": "不作为对标账号，不按栏目权重参与主采样。",
-      "convert_direction": "只作为热点和背景输入，进入Top10前必须转成业务现场角度。",
+      "convert_direction": "只作为热点和背景输入，进入候选池前必须转成业务现场角度。",
       "remarks": "官方/技术/工具源，不属于对标账号权重池。"
     },
     {
@@ -140,7 +140,7 @@
       "sample_frequency": "daily_or_weekly",
       "learn_focus": "Claude、Agent、模型安全和企业应用变化。",
       "do_not_copy": "不作为对标账号，不按栏目权重参与主采样。",
-      "convert_direction": "只作为热点和背景输入，进入Top10前必须转成业务现场角度。",
+      "convert_direction": "只作为热点和背景输入，进入候选池前必须转成业务现场角度。",
       "remarks": "官方/技术/工具源，不属于对标账号权重池。"
     },
     {
@@ -164,7 +164,7 @@
       "sample_frequency": "daily_or_weekly",
       "learn_focus": "AI工具趋势和产品形态变化。",
       "do_not_copy": "不作为对标账号，不按栏目权重参与主采样。",
-      "convert_direction": "只作为热点和背景输入，进入Top10前必须转成业务现场角度。",
+      "convert_direction": "只作为热点和背景输入，进入候选池前必须转成业务现场角度。",
       "remarks": "官方/技术/工具源，不属于对标账号权重池。"
     },
     {
@@ -188,7 +188,7 @@
       "sample_frequency": "daily_or_weekly",
       "learn_focus": "技术社区对AI产品、Agent和开发工具的真实讨论。",
       "do_not_copy": "不作为对标账号，不按栏目权重参与主采样。",
-      "convert_direction": "只作为热点和背景输入，进入Top10前必须转成业务现场角度。",
+      "convert_direction": "只作为热点和背景输入，进入候选池前必须转成业务现场角度。",
       "remarks": "官方/技术/工具源，不属于对标账号权重池。"
     },
     {
@@ -547,7 +547,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：老板能直接抄的 AI 提效动作、工作流和 SOP 表达。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -571,7 +571,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：Brief、分镜、镜头、成片质量、导演判断和幕后方法。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -595,7 +595,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：AI工作流、企业提效、AI咨询服务如何表达商业价值。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -619,7 +619,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：Agent、Codex、Claude Code、AI编程内容如何拆成教程结构。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -643,7 +643,7 @@
       "needs_url": true,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：非技术背景转 AI 产品化、Build in Public、产品复盘和成长叙事。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -667,7 +667,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：创业者视角拆 AI 案例、案例判断和商业价值判断。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -691,7 +691,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：真实工作流改造 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -715,7 +715,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：真实工作流改造 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -739,7 +739,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：AI项目复盘 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -763,7 +763,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：真实工作流改造 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -787,7 +787,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：视觉钩子、AI短片创意、画面吸引力和世界观包装。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -811,7 +811,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：真实工作流改造 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -835,7 +835,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：AI导演工作流 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -859,7 +859,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：真实工作流改造 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -883,7 +883,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：智能体概念如何变成具体任务、工作流和教程。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -907,7 +907,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：AI项目复盘 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -931,7 +931,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：真实工作流改造 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -955,7 +955,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：真实工作流改造 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -979,7 +979,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：汽车与内容营销 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -1003,7 +1003,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：真实工作流改造 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -1027,7 +1027,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：汽车与内容营销 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -1051,7 +1051,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：汽车与内容营销 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -1075,7 +1075,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：汽车与内容营销 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -1099,7 +1099,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：AI项目复盘 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -1123,7 +1123,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：AI项目复盘 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },
@@ -1147,7 +1147,7 @@
       "needs_url": false,
       "sample_frequency": "backup_only",
       "learn_focus": "历史参考：AI业务定调 相关内容结构、钩子和商业入口。",
-      "do_not_copy": "不作为今日Top10主采样池，不默认参与主流程。",
+      "do_not_copy": "不作为今日候选池主采样池，不默认参与主流程。",
       "convert_direction": "仅在用户明确投喂内容时作为结构参考。",
       "remarks": "历史参考/备用观察池，默认不参与主采样。"
     },

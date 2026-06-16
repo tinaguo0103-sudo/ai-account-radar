@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """Daily entrypoint for AI account radar.
 
-Default mode is dry-run: generate content objects, breakdowns and 今日10,
+Default mode is dry-run: generate content objects, breakdowns and 今日候选池,
 then print the rows that would be written to Feishu. Use --write-feishu to
-write only 今日10 to 04 分析与选题 and refresh 00 主控台.
+write only the daily candidate pool to 04 分析与选题 and refresh 00 主控台.
 """
 from __future__ import annotations
 
@@ -120,7 +120,7 @@ def combine_manual_jsonl(paths: list[Path], output: Path) -> Path:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run the daily AI account radar pipeline.")
-    parser.add_argument("--write-feishu", action="store_true", help="Write Feishu changes for selected steps: URL resolver writes 03/updates 02; 今日10 writes 04 and refreshes 00.")
+    parser.add_argument("--write-feishu", action="store_true", help="Write Feishu changes for selected steps: URL resolver writes 03/updates 02; 今日候选池 writes 04 and refreshes 00.")
     parser.add_argument("--no-fetch-aihot", action="store_true", help="Skip AIHOT network fetch and use manual samples only.")
     parser.add_argument("--manual", default=str(DEFAULT_MANUAL), help="Path to JSONL manual content items.")
     parser.add_argument("--resolve-url-intake", action="store_true", help="Resolve URLs from Feishu 02 URL投喂入口 into ContentItem rows before sampling.")
@@ -206,13 +206,15 @@ def main() -> int:
 
     if len(manual_inputs) > 1:
         manual_path = str(combine_manual_jsonl(manual_inputs, COMBINED_MANUAL))
+    elif manual_inputs:
+        manual_path = str(manual_inputs[0])
 
     sampler_cmd = [py, str(ROOT / "scripts" / "content_sampler.py"), "--manual", manual_path, "--run-id", run_id]
     if args.no_fetch_aihot:
         sampler_cmd.append("--no-fetch-aihot")
     if args.write_feishu:
         sampler_cmd.append("--write-feishu")
-    steps.append(run_step("generate content breakdowns and 今日10", sampler_cmd, env=step_env if args.write_feishu else None))
+    steps.append(run_step("generate content breakdowns and 今日候选池", sampler_cmd, env=step_env if args.write_feishu else None))
     if steps[-1]["returncode"] != 0:
         log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
         print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
@@ -227,12 +229,12 @@ def main() -> int:
             "today_10_topics": 0,
             "wrote_feishu": False,
             "log": str(log_path),
-            "note": "No 今日10 topics generated. Check URL parsing failures in output/content_items.csv and output/content_breakdowns.csv.",
+            "note": "No daily topic candidates generated. Check URL parsing failures in output/content_items.csv and output/content_breakdowns.csv.",
         }, ensure_ascii=False, indent=2))
         return 0
 
     dry_run_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py")]
-    steps.append(run_step("dry-run 今日10 Feishu write", dry_run_cmd))
+    steps.append(run_step("dry-run 今日候选池 Feishu write", dry_run_cmd))
     if steps[-1]["returncode"] != 0:
         log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
         print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
@@ -240,14 +242,14 @@ def main() -> int:
 
     if args.write_feishu:
         write_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py"), "--write", "--run-id", run_id]
-        steps.append(run_step("write 今日10 to Feishu 04 分析与选题", write_cmd, env=step_env))
+        steps.append(run_step("write 今日候选池 to Feishu 04 分析与选题", write_cmd, env=step_env))
         if steps[-1]["returncode"] != 0:
             log_path = write_run_log(steps, "write-feishu", run_id)
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
 
         verify_cmd = [py, str(ROOT / "scripts" / "verify_today10_feishu_consistency.py"), "--run-id", run_id]
-        steps.append(run_step("verify Feishu 04 今日Top10 consistency", verify_cmd, env=step_env))
+        steps.append(run_step("verify Feishu 04 今日候选池 consistency", verify_cmd, env=step_env))
         if steps[-1]["returncode"] != 0:
             log_path = write_run_log(steps, "write-feishu", run_id)
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))

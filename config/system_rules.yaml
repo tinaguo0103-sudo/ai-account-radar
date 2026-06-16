@@ -15,11 +15,11 @@
   "content_source_rules": [
     {
       "name": "来源角色定义",
-      "rule": "来源池分为 current_main_competitor 当前主对标、current_aux_competitor 当前辅助对标、current_main_competitor_placeholder 当前主对标占位、historical_reference 历史对标、system_hotspot_source 系统热点源、official_source 官方/技术/工具源、manual_entry 正式手动入口、legacy_manual_entry 旧手动入口。只有当前主流程启用来源默认参与采样；历史对标和旧入口默认不参与今日Top10主采样。"
+      "rule": "来源池分为 current_main_competitor 当前主对标、current_aux_competitor 当前辅助对标、current_main_competitor_placeholder 当前主对标占位、historical_reference 历史对标、system_hotspot_source 系统热点源、official_source 官方/技术/工具源、manual_entry 正式手动入口、legacy_manual_entry 旧手动入口。只有当前主流程启用来源默认参与采样；历史对标和旧入口默认不参与今日候选池主采样。"
     },
     {
       "name": "新主对标池",
-      "rule": "今日Top10默认使用最新主对标账号池作为内容结构参考：数字生命卡兹克-公众号文章、秋芝2046、xuan酱、ami.moment、Bob同学、数字游牧人、编导李让、何止维、徐老师AI；数字生命卡兹克-抖音教程视频是当前辅助对标；AI项目复盘-待定是10%权重占位但不参与主采样；旧对标账号统一降级为 historical_reference，default_enabled=false，默认不参与主流程。"
+      "rule": "今日候选池默认使用最新主对标账号池作为内容结构参考：数字生命卡兹克-公众号文章、秋芝2046、xuan酱、ami.moment、Bob同学、数字游牧人、编导李让、何止维、徐老师AI；数字生命卡兹克-抖音教程视频是当前辅助对标；AI项目复盘-待定是10%权重占位但不参与主采样；旧对标账号统一降级为 historical_reference，default_enabled=false，默认不参与主流程。"
     },
     {
       "name": "卡兹克双内容矩阵",
@@ -35,7 +35,7 @@
     },
     {
       "name": "热点与对标统一转译",
-      "rule": "今日Top10既可以来自AIHOT，也可以来自卡兹克公众号文章、卡兹克抖音教程视频或其他抖音对标账号内容拆解，但必须先转成我的账号视角，不能原样搬运。"
+      "rule": "今日候选池既可以来自AIHOT，也可以来自卡兹克公众号文章、卡兹克抖音教程视频或其他抖音对标账号内容拆解，但必须先转成我的账号视角，不能原样搬运。"
     },
     {
       "name": "系统源不属于对标权重池",
@@ -67,27 +67,27 @@
     },
     {
       "type": "运行批次规则",
-      "rule": "daily_pipeline.py 每次运行生成 run_YYYYMMDD_HHMMSS 形式的运行批次，并同步写入 03 内容收件箱 与 04 分析与选题。03 今日采集视图用于看本日参与拆解的内容账本，04 今日Top10视图用于看本轮最新Top10。"
+      "rule": "daily_pipeline.py 每次运行生成 run_YYYYMMDD_HHMMSS 形式的运行批次，并同步写入 03 内容收件箱 与 04 分析与选题。03 今日采集视图用于看本日参与拆解的内容账本，04 今日候选池视图用于看本轮最新可用候选。"
     },
     {
       "name": "URL采样暂不支持",
       "rule": "默认暂不支持抖音主页自动抓最近N条、抖音口播/字幕转写、评论区抓取、小红书、Twitter/X、Reddit；不得保存cookie/token/API key或绕过登录验证码反爬。抖音ASR/OCR只能作为显式P1增强，不进入默认P0链路。"
     },
     {
-      "name": "今日Top10标题质量约束",
-      "rule": "同一批Top10中同一结构型标题模板最多出现2次；需要识别 X后Y先看Z、X后Y先补Z、X不是A而是B、非技术人看X先看Y、X发布后Y先验证Z、X背后Y该重做Z 等结构，不只识别固定短语。最终标题必须保留真实热点事件信息，不能把模型更新、工具发布、平台接入一律映射为工具壁垒消失或泛泛工作流变化。"
+      "name": "今日候选池标题质量约束",
+      "rule": "同一批候选池中同一结构型标题模板最多出现2次；需要识别 X后Y先看Z、X后Y先补Z、X不是A而是B、非技术人看X先看Y、X发布后Y先验证Z、X背后Y该重做Z 等结构，不只识别固定短语。最终标题必须保留真实热点事件信息，不能把模型更新、工具发布、平台接入一律映射为工具壁垒消失或泛泛工作流变化。"
     },
     {
-      "name": "今日Top10原始内容约束",
-      "rule": "如果无法从原始内容推导出具体业务角度，应降级为暂存观察，不要硬进Top10；公众号全文优先按全文主旨生成标题，不允许只根据一两个关键词套模板；抖音P0浅层解析只允许做浅层选题判断，不能生成超出口播/字幕缺失情况下可支撑的深度流程结论。"
+      "name": "今日候选池原始内容约束",
+      "rule": "如果无法从原始内容推导出具体业务角度，应降级为暂存观察，不要硬进候选池；公众号全文优先按全文主旨生成标题，不允许只根据一两个关键词套模板；抖音P0浅层解析只允许做浅层选题判断，不能生成超出口播/字幕缺失情况下可支撑的深度流程结论。"
     },
     {
-      "name": "今日Top10来源约束",
-      "rule": "AIHOT 可以是主来源，但单日Top10默认最多8条；如果当天有URL投喂或开启已解析URL复用测试模式，解析成功且分数过线的URL内容至少保留1条进入Top10候选池。AIHOT精选和AIHOT日报同主题重复时应合并为相关来源，不重复占位。"
+      "name": "今日候选池来源约束",
+      "rule": "AIHOT 可以是主来源，但不再为了凑满固定数量而强行占位；如果当天有URL投喂或开启已解析URL复用测试模式，解析成功且分数过线的URL内容进入候选池。AIHOT精选和AIHOT日报同主题重复时应合并为相关来源，不重复占位。"
     },
     {
-      "name": "今日Top10编辑判断层",
-      "rule": "Top10输出前必须先做 editorial_judgement：先按“AI领域玩家 / 懂营销、懂内容、懂导演、正在做 AI 业务系统的人”这个人设判断，再决定是否给可发布标题。判断字段包括人设匹配分、真实用户问题、我的账号为什么能讲、今天为什么值得做、是否只是资讯搬运、是否有足够内容支撑、不建议做的原因、内容可信度、编辑判断分、标题质量分、AI味风险和是否建议进入制作。可发布标题只给编辑判断分、标题质量分、人设匹配分和内容支撑都达标的候选；抖音浅层内容不得生成超出标题/文案/封面支撑范围的深结论。"
+      "name": "今日候选池编辑判断层",
+      "rule": "候选池输出前必须先做 editorial_judgement：先按“AI领域玩家 / 懂营销、懂内容、懂导演、正在做 AI 业务系统的人”这个人设判断，再决定是否进入候选池和是否给可发布标题。判断字段包括人设匹配分、真实用户问题、我的账号为什么能讲、今天为什么值得做、是否只是资讯搬运、是否有足够内容支撑、不建议做的原因、内容可信度、编辑判断分、标题质量分、AI味风险和是否建议进入制作。可发布标题只给编辑判断分、标题质量分、人设匹配分和内容支撑都达标的候选；抖音浅层内容不得生成超出标题/文案/封面支撑范围的深结论。"
     },
     {
       "name": "AI味检测规则",
@@ -95,7 +95,7 @@
     },
     {
       "name": "今日建议级别",
-      "rule": "Top10仍保留10条用于观察，但只有编辑判断分和标题质量分较高的1-3条标为 今日最值得做；其他分为 可选候选、暂存观察、不建议制作。推荐动作被降级时必须写入推荐动作原因或降级原因。"
+      "rule": "今日候选池不再强制保留10条；符合主编判断和内容支撑的候选多就多、少就少。只有编辑判断分和标题质量分较高的1-3条标为 今日最值得做；其他分为 可选候选、暂存观察、不建议制作。推荐动作被降级时必须写入推荐动作原因或降级原因。"
     },
     {
       "name": "已解析URL复用测试",
@@ -112,7 +112,7 @@
     "汽车与内容营销": "2-3条",
     "AI导演工作流": "2-3条",
     "AI项目复盘": "0-1条；待主源确定前只在高质量候选出现时进入。",
-    "补位规则": "如果某个栏目当天没有高质量候选，可以由其他高分栏目补位，但需要在日报或日志里说明补位原因；不要让某一类热点刷屏Top10。"
+    "补位规则": "如果某个栏目当天没有高质量候选，可以由其他高分栏目补位，但需要在日报或日志里说明补位原因；不要让某一类热点刷屏候选池。"
   },
   "dictionary_table": {
     "name": "99 规则与字典",
@@ -196,7 +196,7 @@
     {
       "name": "03 内容收件箱",
       "role": "后台数据表",
-      "why": "统一接收自动采集和手动输入的原始内容，做去重、标记处理状态，成为参与拆解和Top10候选池的完整内容账本。",
+      "why": "统一接收自动采集和手动输入的原始内容，做去重、标记处理状态，成为参与拆解和今日候选池的完整内容账本。",
       "input": "AIHOT、公众号文章URL、抖音单条视频URL、RSS/Atom、普通网页、手动粘贴。",
       "output": "04 分析与选题。",
       "upstream": "AIHOT、公众号文章URL、抖音单条视频URL、RSS/Atom、普通网页、02 URL投喂入口、data/manual 样例。",
@@ -224,7 +224,7 @@
       "daily_visible": "是，是最核心工作区。",
       "user_editable": "是，必须允许人工修正状态、分数、平台、业务场景和推荐理由。",
       "default_view": "看板-按状态推进 / 画册-选题卡片",
-      "scripts_write": "push_today10_to_feishu.py 只写今日Top10，并写入运行日期、运行批次、最近参与运行批次；daily_pipeline.py 不自动生成 05 Brief。",
+      "scripts_write": "push_today10_to_feishu.py 只写今日候选池，并写入运行日期、运行批次、最近参与运行批次；daily_pipeline.py 不自动生成 05 Brief。",
       "human_edit": "决定进入 Brief、本周做、暂存、归档、不做时；发现 AI 判断偏离定位时。"
     },
     {
@@ -302,8 +302,8 @@
     {"table": "00 主控台", "field": "状态", "purpose": "主控台动作状态，只表达入口或动作是否待处理，不代表选题/制作状态。", "required": "是", "producer": "人工", "consumer": "用户", "user_editable": "是", "ai": "否", "human_judgment": "动作是否完成、暂缓或需要继续。"},
     {"table": "00 主控台", "field": "下一步", "purpose": "告诉用户下一步该打开哪张表或看哪条规则。", "required": "是", "producer": "脚本/人工", "consumer": "用户", "user_editable": "是", "ai": "否", "human_judgment": "下一步是否仍然合理。"},
     {"table": "01 来源与采样", "field": "来源角色", "purpose": "区分 current_main_competitor、current_aux_competitor、current_main_competitor_placeholder、historical_reference、system_hotspot_source、official_source、manual_entry、legacy_manual_entry。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、content_sampler.py", "user_editable": "低频", "ai": "否", "human_judgment": "来源是否仍属于当前主采样池。"},
-    {"table": "01 来源与采样", "field": "是否参与主采样", "purpose": "判断来源是否默认进入主采样和今日Top10候选输入；历史对标必须为否。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、content_sampler.py", "user_editable": "低频", "ai": "否", "human_judgment": "某个历史账号是否重新启用。"},
-    {"table": "01 来源与采样", "field": "栏目权重", "purpose": "把主对标所属栏目权重显性展示：AI业务定调15%、真实工作流改造25%、汽车与内容营销25%、AI导演工作流25%、AI项目复盘10%。系统源、官方源、手动入口可为不适用。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、Top10软配额规则", "user_editable": "低频", "ai": "否", "human_judgment": "权重是否符合当前账号阶段。"},
+    {"table": "01 来源与采样", "field": "是否参与主采样", "purpose": "判断来源是否默认进入主采样和今日今日候选池输入；历史对标必须为否。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、content_sampler.py", "user_editable": "低频", "ai": "否", "human_judgment": "某个历史账号是否重新启用。"},
+    {"table": "01 来源与采样", "field": "栏目权重", "purpose": "把主对标所属栏目权重显性展示：AI业务定调15%、真实工作流改造25%、汽车与内容营销25%、AI导演工作流25%、AI项目复盘10%。系统源、官方源、手动入口可为不适用。", "required": "是", "producer": "config/content_sources.yaml", "consumer": "用户、候选池软配额规则", "user_editable": "低频", "ai": "否", "human_judgment": "权重是否符合当前账号阶段。"},
     {"table": "02 URL投喂入口", "field": "URL", "purpose": "临时粘贴公众号文章、抖音单条视频、RSS/Atom或普通网页链接。", "required": "是", "producer": "人工", "consumer": "url_content_resolver.py", "user_editable": "是", "ai": "否", "human_judgment": "链接是否值得投喂。"},
     {"table": "02 URL投喂入口", "field": "处理状态", "purpose": "标记链接是否待解析、已解析、解析失败、重复或跳过。", "required": "否", "producer": "url_content_resolver.py/人工", "consumer": "daily_pipeline.py", "user_editable": "是", "ai": "可辅助", "human_judgment": "解析失败后是否补充可访问链接或放弃。"},
     {"table": "03 内容收件箱", "field": "处理状态", "purpose": "内容处理流状态，表示原始内容是否已分析、已转选题、跳过或重复。", "required": "是", "producer": "脚本/AI辅助/人工", "consumer": "分析脚本", "user_editable": "低频", "ai": "可参与", "human_judgment": "内容是否应跳过或重新分析。"},
@@ -320,15 +320,15 @@
     {"table": "04 分析与选题", "field": "可发布标题", "purpose": "把内部切入角度改写成更像短视频/小红书/公众号能直接使用的标题，保留具体热点事件，不批量套模板。", "required": "否", "producer": "content_sampler.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "最终标题必须由用户确认。"},
     {"table": "04 分析与选题", "field": "编辑判断分", "purpose": "综合推荐分、内容可信度、标题质量和人工编辑取舍逻辑，判断这条候选今天是否值得推进。", "required": "否", "producer": "content_sampler.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "用户可按真实业务判断调高或调低。"},
     {"table": "04 分析与选题", "field": "AI味风险", "purpose": "提示标题或角度是否过度抽象、模板化、像系统策略说明，取值为低/中/高。", "required": "否", "producer": "content_sampler.py", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "用户可按账号语感修正。"},
-    {"table": "04 分析与选题", "field": "今日建议级别", "purpose": "在Top10中进一步标出今日最值得做、可选候选、暂存观察或不建议制作，避免10条都像必须推进。", "required": "否", "producer": "content_sampler.py", "consumer": "用户、主控台", "user_editable": "是", "ai": "可参与", "human_judgment": "用户最终决定当天推进哪1条。"},
+    {"table": "04 分析与选题", "field": "今日建议级别", "purpose": "在候选池中进一步标出今日最值得做、可选候选、暂存观察或不建议制作，避免所有候选都像必须推进。", "required": "否", "producer": "content_sampler.py", "consumer": "用户、主控台", "user_editable": "是", "ai": "可参与", "human_judgment": "用户最终决定当天推进哪1条。"},
     {"table": "04 分析与选题", "field": "标题质量分", "purpose": "标题是否具体、有热点锚点、有用户痛点、不是模板话术的评分；模板化或缺少具体对象时必须降分。", "required": "否", "producer": "content_sampler.py", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "用户可按真实平台语感修正。"},
     {"table": "04 分析与选题", "field": "主编判断", "purpose": "用一句话说明这条是值得今天推进、暂存观察还是不建议制作，避免系统为了凑10条硬推。", "required": "否", "producer": "content_sampler.py", "consumer": "用户、主控台", "user_editable": "是", "ai": "可参与", "human_judgment": "用户最终判断是否推进。"},
     {"table": "04 分析与选题", "field": "不建议做的原因", "purpose": "当内容信息密度不足、人设关联弱、只有资讯价值、标题AI味高或抖音浅层不足以支撑深结论时，显性说明为什么暂存或不做。", "required": "否", "producer": "content_sampler.py", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "用户可补充真实业务现场后再改状态。"},
-    {"table": "04 分析与选题", "field": "内容类型", "purpose": "区分热点短评、工作流拆解、对标学习、踩坑提醒、资产沉淀、暂存观察，避免今日Top10全是同一种表达。", "required": "否", "producer": "content_sampler.py", "consumer": "用户、平台制作", "user_editable": "是", "ai": "可参与", "human_judgment": "类型是否符合当天精力。"},
+    {"table": "04 分析与选题", "field": "内容类型", "purpose": "区分热点短评、工作流拆解、对标学习、踩坑提醒、资产沉淀、暂存观察，避免候选池全是同一种表达。", "required": "否", "producer": "content_sampler.py", "consumer": "用户、平台制作", "user_editable": "是", "ai": "可参与", "human_judgment": "类型是否符合当天精力。"},
     {"table": "04 分析与选题", "field": "平台建议", "purpose": "建议小红书短帖、抖音短评、视频号、公众号或内部观察等表达载体，不代表自动发布。", "required": "否", "producer": "content_sampler.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "结合账号当前平台重点调整。"},
     {"table": "04 分析与选题", "field": "标题风格", "purpose": "标记标题属于热点短评型、流程拆解型、案例拆解型、风险提醒型、清单资产型或观点判断型。", "required": "否", "producer": "content_sampler.py", "consumer": "用户审查", "user_editable": "是", "ai": "可参与", "human_judgment": "避免同一天标题风格重复。"},
     {"table": "04 分析与选题", "field": "标题备选", "purpose": "给同一选题提供2-3个方向相近但表达不同的标题备选，便于人工挑选。", "required": "否", "producer": "content_sampler.py", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "最终使用哪条由用户决定。"},
-    {"table": "04 分析与选题", "field": "运行批次", "purpose": "标记Top10记录所属运行批次，今日Top10视图默认看最新批次。", "required": "否", "producer": "push_today10_to_feishu.py", "consumer": "用户、主控台", "user_editable": "否", "ai": "否", "human_judgment": "通常不人工改。"},
+    {"table": "04 分析与选题", "field": "运行批次", "purpose": "标记候选记录所属运行批次，今日候选池视图默认看最新批次。", "required": "否", "producer": "push_today10_to_feishu.py", "consumer": "用户、主控台", "user_editable": "否", "ai": "否", "human_judgment": "通常不人工改。"},
     {"table": "04 分析与选题", "field": "状态", "purpose": "选题决策流状态，决定下一步进入 Brief、本周做、暂存、归档或不做。", "required": "是", "producer": "人工为主", "consumer": "用户、Brief流程", "user_editable": "是", "ai": "可建议", "human_judgment": "最终是否做必须由用户判断。"},
     {"table": "04 分析与选题", "field": "推荐等级", "purpose": "把总分翻译成行动级别：A 立即看，B 进入候选，C 观察，D 跳过。", "required": "是", "producer": "脚本/AI", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "高分但不适合人设时可降级。"},
     {"table": "04 分析与选题", "field": "总分", "purpose": "排序工具，不是最终决定。用于减少信息筛选成本。", "required": "是", "producer": "脚本/AI", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "如果真实业务价值高，可以人工修正。"},
@@ -385,7 +385,7 @@
     {"name": "栏目与热点切入分离", "rule": "对应栏目只能从 AI业务定调、真实工作流改造、汽车与内容营销、AI导演工作流、AI项目复盘 中选择；热点切入方式单独记录产品生死线、工作流重排、非技术人机会、内容团队变化、AI导演流程、Agent落地、品牌风控/信任危机、商业化机会、项目复盘启发、对标结构学习。"},
     {"name": "场景校准", "rule": "Runway/Kling/Luma/Seedance/视频/分镜/镜头/成片优先 AI导演工作流；公众号首图/小红书卡片/教程步骤卡/视觉模板优先真实工作流改造；LlamaIndex/OpenRouter/Codex/Claude Code/Agent/MCP/API优先真实工作流改造，热点切入方式标记为Agent落地或非技术人机会；SHEIN/AI假人/虚假广告/带货/品牌/信任/合规/审核优先汽车与内容营销或AI业务定调。"},
     {"name": "标题质量", "rule": "标题必须像真实可发布选题，指向具体人群、具体问题或具体变化；避免把原始标题塞进“不是参数/哪类产品会被重做”“这类更新”“业务验收清单”“可执行动作”等系统话术。04中同时保留内部切入角度和可发布标题：内部切入角度用于解释判断，可发布标题用于前台阅读和进入Brief。"},
-    {"name": "内容类型配比", "rule": "今日Top10需要混合热点短评、工作流拆解、对标学习、踩坑提醒、资产沉淀、暂存观察等内容类型；同一批不应全部是工具壁垒、流程验收或品牌审核。"},
+    {"name": "内容类型配比", "rule": "今日候选池需要混合热点短评、工作流拆解、对标学习、踩坑提醒、资产沉淀、暂存观察等内容类型；同一批不应全部是工具壁垒、流程验收或品牌审核。"},
     {"name": "推荐动作配额", "rule": "每日立即蹭热点3-4条，进入Brief最多1-2条，本周做最多2条，其余暂存观察或不做；今日最建议动作只推荐1条。"}
   ],
   "ai_rules": [

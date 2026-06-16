@@ -1,6 +1,6 @@
 # ai-account-radar
 
-`ai-account-radar` 是「AI账号信息雷达 + 今日10选题 + 飞书执行台」。
+`ai-account-radar` 是「AI账号信息雷达 + 今日候选池 + 飞书执行台」。
 
 ## 实施判断
 
@@ -14,9 +14,9 @@
 
 ## 最快理解方式
 
-`00 主控台` 是唯一入口。每天先从这里看系统地图、今日 Top10、待办任务和异常提示。
+`00 主控台` 是唯一入口。每天先从这里看系统地图、今日候选池、待办任务和异常提示。
 
-- `04 分析与选题` 决定今天做什么：从今日 Top10 里选 1 条进入 Brief、本周做、暂存或不做。
+- `04 分析与选题` 决定今天做什么：从今日候选池里选 1 条进入 Brief、本周做、暂存或不做。
 - `05 Brief与制作` 决定怎么做成内容：补 Hook、案例、平台结构、封面、CTA 和人工判断，不生成完整成稿。
 - `06 内容任务主表` 决定今天做哪些任务：写稿、拍摄、剪辑、封面、发布、直播和复盘提醒都在这里执行。
 - `07 资产与复盘` 决定发完后是否复刻和资产化：看 24小时、72小时、7天反馈，判断是否改角度再发、沉淀清单/SOP/案例库。
@@ -32,7 +32,7 @@
 
 ## 当前主对标账号
 
-最新主对标池以这版为准，旧对标账号池已降级为历史参考/备用观察池，默认不参与今日 Top10 主流程。`01 来源与采样` 会显性展示 `名称`、`来源角色`、`栏目`、`栏目权重`、`平台`、`主页链接`、`是否参与主采样`、`默认启用`、`优先级`、`抓取方式`、`跟踪频率`、`关注重点` 和 `备注`。
+最新主对标池以这版为准，旧对标账号池已降级为历史参考/备用观察池，默认不参与今日候选池主流程。`01 来源与采样` 会显性展示 `名称`、`来源角色`、`栏目`、`栏目权重`、`平台`、`主页链接`、`是否参与主采样`、`默认启用`、`优先级`、`抓取方式`、`跟踪频率`、`关注重点` 和 `备注`。
 
 - `AI业务定调`，权重 15%：数字生命卡兹克-公众号文章、秋芝2046；数字生命卡兹克-抖音教程视频是同一权重组内的辅助源。
 - `真实工作流改造`，权重 25%：xuan酱、ami.moment。
@@ -52,7 +52,7 @@
 - `current_main_competitor`：当前主对标账号，参与主采样和栏目权重。
 - `current_aux_competitor`：当前辅助对标来源，例如卡兹克抖音教程视频；可参与采样，但不单独增加栏目配额。
 - `current_main_competitor_placeholder`：当前主对标栏目占位，例如 `AI项目复盘-待定`；显示权重缺口，但不参与主采样。
-- `historical_reference`：历史对标账号，保留为备用观察池，`default_enabled=false`，默认不参与今日Top10。
+- `historical_reference`：历史对标账号，保留为备用观察池，`default_enabled=false`，默认不参与今日候选池。
 - `system_hotspot_source`：系统热点源，例如 AIHOT精选、AIHOT日报。
 - `official_source`：官方/技术/工具源，例如 OpenAI官网动态、Anthropic Newsroom、Product Hunt AI工具、HN AI相关讨论。
 - `manual_entry`：正式手动入口；当前唯一启用入口是 `02 URL投喂入口`。
@@ -67,10 +67,10 @@
 - `data/manual/manual_items.example.jsonl`：手动导入样例，适合放抖音/小红书/视频号/公众号/AIHOT复制内容。
 - `data/manual/content_items.example.jsonl`：内容对象样例，适合放公众号正文、对标视频标题/封面/字幕/OCR/评论问题。
 - `scripts/run_radar.py`：采集与分析脚本。
-- `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和今日10选题。
+- `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和今日候选池。
 - `scripts/daily_pipeline.py`：日常总入口，默认 dry-run；显式传入 `--write-feishu` 才写入飞书。
 - `scripts/url_content_resolver.py`：正式 URL 内容采样 adapter，把公众号文章、抖音单条视频、RSS/Atom、普通网页解析成标准 ContentItem；默认只输出本地文件，显式 `--write-feishu` 才写入 `03 内容收件箱`。
-- `scripts/push_today10_to_feishu.py`：只把今日10写入飞书 `04 分析与选题`，不写后台全部候选。
+- `scripts/push_today10_to_feishu.py`：把今日候选池写入飞书 `04 分析与选题`，不写被淘汰的调试候选。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并创建 `06 内容任务主表`。
 - `scripts/content_ops_pipeline.py`：从 `04 分析与选题` 拆出 `05 Brief与制作` 平台内容和 `06 内容任务主表` 执行任务；默认 dry-run。
 - `scripts/simplify_feishu_workspace.py`：按 v0.2 白名单清理飞书视图和 `03/04` 字段，保持每张表一个主视图。
@@ -141,7 +141,7 @@ FEISHU_BASE_APP_TOKEN=xxx \
 python3 scripts/url_content_resolver.py --file data/manual/urls.example.txt --write-feishu
 ```
 
-你也可以让日常管道先解析 URL，再进入内容拆解和今日10：
+你也可以让日常管道先解析 URL，再进入内容拆解和今日候选池：
 
 ```bash
 python3 scripts/daily_pipeline.py --url-file data/manual/urls.example.txt
@@ -149,7 +149,7 @@ python3 scripts/daily_pipeline.py --url-file data/manual/urls.example.txt
 
 默认不启用 URL 解析，只有传入 `--url-file` 或 `--resolve-url-intake` 时才运行 resolver。
 
-卡兹克公众号 feed 已进入 P1 显式接入验证。默认 `daily_pipeline.py` 不会拉取公众号 feed；只有主动传入参数时才会读取下面这个 Wechat2RSS feed，把文章转成 ContentItem，进入 `03 内容收件箱` 和 `04 今日Top10` 候选：
+卡兹克公众号 feed 已进入 P1 显式接入验证。默认 `daily_pipeline.py` 不会拉取公众号 feed；只有主动传入参数时才会读取下面这个 Wechat2RSS feed，把文章转成 ContentItem，进入 `03 内容收件箱` 和 `04 今日候选池`：
 
 ```text
 https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml
@@ -219,7 +219,7 @@ FEISHU_BASE_APP_TOKEN=xxx \
 python3 scripts/daily_pipeline.py --resolve-url-intake
 ```
 
-默认仍是 dry-run，不写入飞书 `03` 或 `04`。确认字段映射、去重和今日10后再加 `--write-feishu`：
+默认仍是 dry-run，不写入飞书 `03` 或 `04`。确认字段映射、去重和今日候选池后再加 `--write-feishu`：
 
 ```bash
 FEISHU_APP_ID=xxx \
@@ -238,9 +238,9 @@ FEISHU_BASE_APP_TOKEN=xxx \
 python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 ```
 
-`--write-feishu` 会把解析出的新 URL 内容写入 `03 内容收件箱`，同时把本轮参与分析的 AIHOT 等 ContentItem 也同步进 `03`，再把今日10写入 `04 分析与选题`，并回写 `02 URL投喂入口` 的处理状态、失败原因和解析结果摘要。`02 URL投喂入口` 只作为临时链接入口，解析完成后可手动删除记录，不需要长期保留。
+`--write-feishu` 会把解析出的新 URL 内容写入 `03 内容收件箱`，同时把本轮参与分析的 AIHOT 等 ContentItem 也同步进 `03`，再把今日候选池写入 `04 分析与选题`，并回写 `02 URL投喂入口` 的处理状态、失败原因和解析结果摘要。`02 URL投喂入口` 只作为临时链接入口，解析完成后可手动删除记录，不需要长期保留。
 
-今日 Top10 还有两个来源约束：AIHOT 可以是主来源，但默认最多占 8 条；如果本轮有 URL 投喂或开启已解析 URL 复用，并且 URL 内容解析成功、分数过线，系统会优先保留至少 1 条 URL 候选进入 Top10 选择池。调试文件 `output/debug_today10_generation.csv` / `.md` 会显示每条候选是否来自已解析 URL 复用、是否进入 Top10、标题结构模板、事件锚点、业务变化判断、内部切入角度和可发布标题。
+今日候选池不再强制凑满 10 条。AIHOT 可以是主来源，但默认最多占 8 条；如果本轮有 URL 投喂或开启已解析 URL 复用，并且 URL 内容解析成功、分数过线，系统会优先保留进入候选池。调试文件 `output/debug_today10_generation.csv` / `.md` 会显示每条候选是否来自已解析 URL 复用、是否进入候选池、标题结构模板、事件锚点、业务变化判断、内部切入角度和可发布标题。
 
 确认 dry-run 输出没问题后，显式写入飞书 `04 分析与选题` 并刷新 `00 主控台`：
 
@@ -251,9 +251,9 @@ FEISHU_BASE_APP_TOKEN=xxx \
 python3 scripts/daily_pipeline.py --write-feishu
 ```
 
-`daily_pipeline.py` 会串起：读取内容源配置、抓取 AIHOT、读取手动公众号/视频样例、生成 ContentItem、生成内容拆解、筛选今日10、dry-run 展示、按需写入飞书、按需刷新主控台和输出日志。默认不写入飞书，不自动发布，不生成完整成稿。每次运行会生成一个 `运行批次`，用于在 `03 内容收件箱 / 今日采集` 和 `04 分析与选题 / 今日Top10` 中追踪本轮数据。
+`daily_pipeline.py` 会串起：读取内容源配置、抓取 AIHOT、读取手动公众号/视频样例、生成 ContentItem、生成内容拆解、筛选今日候选池、dry-run 展示、按需写入飞书、按需刷新主控台和输出日志。默认不写入飞书，不自动发布，不生成完整成稿。每次运行会生成一个 `运行批次`，用于在 `03 内容收件箱 / 今日采集` 和 `04 分析与选题 / 今日候选池` 中追踪本轮数据。
 
-`04 分析与选题` 已收敛为今日 Top10 决策表：主字段 `选题标题` 优先展示 `可发布标题`，用于日常决策和进入 Brief；`内部切入角度` 保留系统为什么这么蹭热点、从哪个业务场景切入；`内容类型`、`平台建议`、`标题风格` 和 `标题备选` 用来避免 Top10 全部变成同一种模板化表达。Top10 写入前会先经过 `editorial_judgement` 编辑判断层，额外标出 `编辑判断分`、`标题质量分`、`AI味风险`、`今日建议级别`、`主编判断` 和 `不建议做的原因`，让你能区分“今日最值得做”“可选候选”和“暂存观察”，而不是 10 条都像必须推进。没有足够人设角度或内容支撑的候选会保留在 Top10 观察池，但不生成可发布标题和标题备选。
+`04 分析与选题` 已收敛为今日候选池决策表：主字段 `选题标题` 优先展示可读标题，用于日常决策和进入 Brief。飞书默认视图只展示业务决策字段，例如 `今日建议级别`、`编辑判断分`、`AI味风险`、`内容可信度`、`推荐动作`、`原始来源标题`、`业务场景`、`推荐理由`、`不建议做的原因` 和 `可沉淀资产`。代码和调试文件仍保留更多算法字段，但默认飞书视图不展示。写入前会先经过 `editorial_judgement` 编辑判断层，让你能区分“今日最值得做”“可选候选”和“暂存观察”。没有足够人设角度或内容支撑的内容不会为了凑数进入候选池。
 
 同步来源池和栏目权重到飞书 `01 来源与采样`：
 
@@ -270,9 +270,9 @@ FEISHU_BASE_APP_TOKEN=xxx \
 python3 scripts/sync_source_sampling.py --write-feishu
 ```
 
-这个脚本只 upsert `01 来源与采样` 的来源记录和最小字段，不删除记录、不重建表、不影响今日Top10规则。
+这个脚本只 upsert `01 来源与采样` 的来源记录和最小字段，不删除记录、不重建表、不影响今日候选池规则。
 
-生成“内容采样 + 今日10选题”：
+生成“内容采样 + 今日候选池”：
 
 ```bash
 python3 scripts/content_sampler.py
@@ -288,8 +288,8 @@ python3 scripts/content_sampler.py --no-fetch-aihot
 
 - `output/content_items.csv`：内容对象，不是数据指标表。
 - `output/content_breakdowns.csv`：每条内容的钩子、结构、专业证明、商业入口、可学习点、不能照搬点。
-- `output/today_10_topics.csv`：今日10选题。
-- `output/daily_reports/today_10_topics_YYYY-MM-DD.md`：给你看的今日10选题 Markdown。
+- `output/today_10_topics.csv`：今日候选池兼容输出文件。
+- `output/daily_reports/today_10_topics_YYYY-MM-DD.md`：给你看的今日候选池 Markdown。
 
 旧雷达导入包仍可运行，但不是当前核心方向：
 
@@ -344,7 +344,7 @@ FEISHU_BASE_APP_TOKEN=xxx
 - `output/run_log.json`：运行日志和各表数量。
 - `output/content_items.csv`：AIHOT、公众号文章、对标视频、手动补充统一后的内容对象。
 - `output/content_breakdowns.csv`：内容拆解结果。
-- `output/today_10_topics.csv`：今日10选题。
+- `output/today_10_topics.csv`：今日候选池兼容输出文件。
 
 ## 系统不是黑盒
 
@@ -384,7 +384,7 @@ python3 scripts/sync_rules_dictionary.py --sync-feishu
 
 1. 每天默认打开 `00 主控台 / 今日工作台`，只看当天动作、预警、进度和临时入口。
 2. 如果想理解系统关系，再切到 `00 主控台 / 系统导航`，或看 `docs/system_map.md`。
-3. 优先看 `今日10选题`，而不是看原始内容、粉丝数、点赞数或竞品报表。
+3. 优先看 `今日候选池`，而不是看原始内容、粉丝数、点赞数或竞品报表。
 4. 进入 `04 分析与选题` 做选题决策：状态只使用 `待判断`、`进入Brief`、`本周做`、`暂存`、`归档`、`不做`。
 5. 进入 `05 Brief与制作` 补案例和制作：状态只使用 `待补案例`、`可制作`、`已制作待发布`、`已发布待复盘`、`复盘完成`。
 6. 进入 `06 内容任务主表` 看今天要完成的写稿、拍摄、封面、发布、直播和复盘任务。
@@ -404,20 +404,20 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 - `02 URL投喂入口 / URL投喂入口`
 - `03 内容收件箱 / 内容收件箱`
 - `03 内容收件箱 / 今日采集`
-- `04 分析与选题 / 今日Top10`
+- `04 分析与选题 / 今日候选池`
 - `05 Brief与制作 / Brief制作后台`
 - `06 内容任务主表 / 今日待办`
 - `07 资产与复盘 / 资产复盘后台`
 - `99 规则与字典 / 规则与字典`
 
-其中 `01 来源与采样 / 当前主对标池` 默认只看主对标、辅助对标和 AI项目复盘占位；旧字段 `来源名称`、`获取方式`、`关注重点/原始内容`、`是否主对标`、`是否重点跟踪` 不进入默认视图。`02 URL投喂入口` 是输入层，不是任务表；`03 内容收件箱` 是所有参与拆解的内容账本，包括 URL 投喂和 AIHOT；`04 分析与选题 / 今日Top10` 是选题决策区；`06 内容任务主表` 才是写稿、拍摄、剪辑、封面、发布、直播、复盘、私信跟进和资产化任务的执行表。
+其中 `01 来源与采样 / 当前主对标池` 默认只看主对标、辅助对标和 AI项目复盘占位；旧字段 `来源名称`、`获取方式`、`关注重点/原始内容`、`是否主对标`、`是否重点跟踪` 不进入默认视图。`02 URL投喂入口` 是输入层，不是任务表；`03 内容收件箱` 是所有参与拆解的内容账本，包括 URL 投喂和 AIHOT；`04 分析与选题 / 今日候选池` 是选题决策区；`06 内容任务主表` 才是写稿、拍摄、剪辑、封面、发布、直播、复盘、私信跟进和资产化任务的执行表。
 
 ## 每天打开什么
 
 每天：
 
 1. 打开 `00 主控台 / 今日工作台`。
-2. 先看 `今日10选题`、`今日必须完成`、`明日预警`、`本周内容进度`。
+2. 先看 `今日候选池`、`今日必须完成`、`明日预警`、`本周内容进度`。
 3. 再看 `待复盘内容`、`可复刻内容`、`来源异常/采集失败`。
 4. 进入 `04 分析与选题`，把值得做的选题改为 `进入Brief` 或 `本周做`。
 5. 如需把 `04` 的选题拆成 Brief 和任务，运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，它会把状态为 `进入Brief` 或 `本周做` 且未拆分的选题承接到 `05 Brief与制作` 和 `06 内容任务主表`。
@@ -469,7 +469,7 @@ python3 scripts/refresh_console_daily.py
 
 ## 评分规则
 
-当前 `今日10选题` 的评分不是过滤技术热点，而是判断“适不适合我蹭，以及从什么角度蹭”。模型更新、框架更新、平台能力变化、Agent 框架变化、AI视频模型变化都可以进入候选池；不能原样搬运资讯，但可以转成产品生死线、工作流重排、非技术人机会、内容团队变化、AI导演工作流、Agent落地或商业化机会。
+当前 `今日候选池` 的评分不是过滤技术热点，而是判断“适不适合我蹭，以及从什么角度蹭”。模型更新、框架更新、平台能力变化、Agent 框架变化、AI视频模型变化都可以进入候选池；不能原样搬运资讯，但可以转成产品生死线、工作流重排、非技术人机会、内容团队变化、AI导演工作流、Agent落地或商业化机会。
 
 `对应栏目` 和 `热点切入方式` 分开判断：
 
@@ -479,7 +479,7 @@ python3 scripts/refresh_console_daily.py
 - Runway/Kling/Luma/Seedance/视频/分镜/镜头/成片优先校准到 AI导演工作流；公众号首图、小红书卡片、教程步骤卡、视觉模板优先校准到真实工作流改造；LlamaIndex/OpenRouter/Codex/Claude Code/Agent/MCP/API 优先校准到真实工作流改造，热点切入方式标记为 Agent落地 或 非技术人机会；SHEIN、AI假人、虚假广告、带货、品牌、汽车、信任、合规、审核优先校准到 汽车与内容营销 或 AI业务定调。
 - 标题必须像真实可发布选题，指向具体人群或流程；不要把原始标题硬塞进重复模板。
 
-今日 Top10 默认栏目配额不是硬切，但会优先保持题材多样：
+今日候选池默认栏目配额不是硬切，但会优先保持题材多样：
 
 - `AI业务定调`：1-2 条。
 - `真实工作流改造`：2-3 条。
@@ -489,7 +489,7 @@ python3 scripts/refresh_console_daily.py
 
 如果某个栏目当天没有高质量候选，可以由其他高分栏目补位；日报或日志里应说明补位原因。卡兹克公众号文章属于 AI业务定调主源，卡兹克抖音教程视频属于 AI业务定调辅助源，不因为拆成两个源就让 AI业务定调过量占比。
 
-今日10选题核心权重：
+今日候选池核心权重：
 
 - 热度/时效性 20%
 - 账号角度匹配 20%
@@ -539,7 +539,7 @@ AIHOT 官方公开方式包括网页、Skill、RSS 和 REST API。公开页面�
 - 精选条目：`/api/public/items?mode=selected&take=30`
 - 日报：`/api/public/daily`
 
-如果单个 AIHOT 源返回 HTML、空内容或非 JSON，脚本会记录来源名、URL、HTTP/解析状态和返回 preview，并在主控台显示“部分源失败”；不会阻塞 AIHOT精选、内容拆解或今日Top10。
+如果单个 AIHOT 源返回 HTML、空内容或非 JSON，脚本会记录来源名、URL、HTTP/解析状态和返回 preview，并在主控台显示“部分源失败”；不会阻塞 AIHOT精选、内容拆解或今日候选池。
 
 AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚类去重、模型/产品/行业/论文/技巧分桶、固定日报。但你的二次筛选标准不是“AI 新闻重要吗”，而是“它能否进入内容团队、品牌增长、AI导演、Agent或创业项目的业务现场”。
 
@@ -579,7 +579,7 @@ ContentItem 字段包括：来源类型、平台、账号名/公众号名、内�
 - 不能照搬什么
 - 如何转成我的业务现场选题
 - 对应栏目
-- 是否值得进入今日10选题
+- 是否值得进入今日候选池
 
 ## 内容生成边界
 

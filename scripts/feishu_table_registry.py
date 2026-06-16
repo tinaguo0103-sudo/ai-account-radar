@@ -34,7 +34,7 @@ VIEW_NAMES: dict[str, list[str]] = {
     "source_sampling": ["当前主对标池", "历史参考池", "系统/官方源", "手动入口"],
     "url_inbox": ["URL投喂入口"],
     "content_inbox": ["内容收件箱", "今日采集"],
-    "topic_decision": ["今日Top10"],
+    "topic_decision": ["今日候选池", "今日最值得做", "今日Top10"],
     "brief_production": ["Brief制作后台"],
     "task_master": ["今日待办", "明日预警", "本周任务", "发布相关任务", "直播排期", "复盘任务"],
     "review_assets": ["资产复盘后台"],

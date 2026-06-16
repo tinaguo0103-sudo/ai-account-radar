@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-"""Write only today's top-10 topic rows to Feishu 04 分析与选题.
+"""Write today's candidate topic rows to Feishu 04 分析与选题.
 
 This script is intentionally narrow: it does not rebuild tables, does not
-write all candidates, and does not touch publishing/lead workflows.
+write rejected debug candidates, and does not touch publishing/lead workflows.
 """
 from __future__ import annotations
 
@@ -89,8 +89,6 @@ def read_today10(path: Path) -> list[dict[str, str]]:
         raise SystemExit(f"Missing {path}")
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    if len(rows) != 10:
-        raise SystemExit(f"Expected 10 rows in {path}, got {len(rows)}")
     return rows
 
 
@@ -207,7 +205,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
 
 
 def dry_run_print(rows: list[dict[str, str]]) -> None:
-    print(f"DRY-RUN: will write 10 今日Top10 rows to {table_name(TARGET_TABLE_KEY)}")
+    print(f"DRY-RUN: will write {len(rows)} 今日候选 rows to {table_name(TARGET_TABLE_KEY)}")
     for row in rows:
         print(
             f"{row['今日排名']}. {row['选题标题']} | "
@@ -250,35 +248,42 @@ def update_existing_top10(token: str, app_token: str, table_id: str, record: dic
     )
 
 
-def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: str) -> dict[str, Any]:
+def patch_candidate_view(token: str, app_token: str, table_id: str, view_name: str, run_id: str, visible: set[str], extra_filter: dict[str, Any] | None = None) -> dict[str, Any]:
     views = {view.get("view_name"): view for view in list_views(token, app_token, table_id)}
     created: list[str] = []
-    if "今日Top10" not in views:
+    if view_name not in views:
         payload = feishu.request_json(
             "POST",
             f"/bitable/v1/apps/{app_token}/tables/{table_id}/views",
             token=token,
-            body={"view_name": "今日Top10", "view_type": "grid"},
+            body={"view_name": view_name, "view_type": "grid"},
         )
-        views["今日Top10"] = payload.get("data", {}).get("view", payload.get("data", {}))
-        created.append("今日Top10")
+        views[view_name] = payload.get("data", {}).get("view", payload.get("data", {}))
+        created.append(view_name)
         time.sleep(0.1)
     fields = list_fields(token, app_token, table_id)
-    view = views.get("今日Top10", {})
+    view = views.get(view_name, {})
     run_field = fields.get("最近参与运行批次") or fields.get("运行批次")
     if not view.get("view_id") or not run_field:
         return {"created": created, "configured": "missing_view_or_run_field"}
-    visible = {"选题标题", "可发布标题", "内部切入角度", "内容类型", "平台建议", "标题风格", "标题备选", "编辑判断分", "标题质量分", "AI味风险", "今日建议级别", "主编判断", "不建议做的原因", "今日排名", "推荐日期", "运行批次", "是否本次新增", "状态", "推荐动作", "来源类型", "原始来源标题", "来源链接", "对应栏目", "热点切入方式", "业务场景", "推荐理由", "内容指纹", "是否建议进入制作"}
     hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
+    conditions = [{
+        "field_id": run_field["field_id"],
+        "operator": "is",
+        "value": json.dumps([run_id], ensure_ascii=False),
+    }]
+    if extra_filter and extra_filter.get("field") in fields:
+        field = fields[extra_filter["field"]]
+        conditions.append({
+            "field_id": field["field_id"],
+            "operator": extra_filter.get("operator", "is"),
+            "value": json.dumps(extra_filter.get("value", []), ensure_ascii=False),
+        })
     body = {
-        "view_name": "今日Top10",
+        "view_name": view_name,
         "property": {
             "filter_info": {
-                "conditions": [{
-                    "field_id": run_field["field_id"],
-                    "operator": "is",
-                    "value": json.dumps([run_id], ensure_ascii=False),
-                }],
+                "conditions": conditions,
                 "conjunction": "and",
             },
             "hidden_fields": hidden,
@@ -289,6 +294,33 @@ def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: s
         return {"created": created, "configured": "ok", "hidden_fields": len(hidden)}
     except Exception as exc:
         return {"created": created, "configured": f"failed:{exc}"}
+
+
+def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: str) -> dict[str, Any]:
+    # Keep the old view name for compatibility, but make the new daily view the
+    # product-facing one with fewer fields.
+    core_visible = {
+        "选题标题", "今日建议级别", "编辑判断分", "AI味风险", "内容可信度",
+        "推荐动作", "状态", "来源类型", "原始来源标题", "对应栏目", "业务场景",
+        "推荐理由", "不建议做的原因", "可沉淀资产", "相关来源", "运行批次",
+    }
+    detail_visible = core_visible | {
+        "内部切入角度", "可发布标题", "标题备选", "标题质量分", "人设匹配分",
+        "主编判断", "是否建议进入制作", "热点切入方式", "来源链接", "内容指纹",
+    }
+    return {
+        "今日候选池": patch_candidate_view(token, app_token, table_id, "今日候选池", run_id, core_visible),
+        "今日最值得做": patch_candidate_view(
+            token,
+            app_token,
+            table_id,
+            "今日最值得做",
+            run_id,
+            core_visible,
+            {"field": "今日建议级别", "operator": "is", "value": ["今日最值得做"]},
+        ),
+        "今日Top10": patch_candidate_view(token, app_token, table_id, "今日Top10", run_id, detail_visible),
+    }
 
 
 def main() -> int:

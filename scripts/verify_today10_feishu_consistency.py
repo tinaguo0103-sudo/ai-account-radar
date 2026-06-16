@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify Feishu 04 今日Top10 matches local output/today_10_topics.csv."""
+"""Verify Feishu 04 今日候选池 matches local output/today_10_topics.csv."""
 from __future__ import annotations
 
 import argparse
@@ -122,10 +122,8 @@ def main() -> int:
 
     failures: list[str] = []
     warnings: list[str] = []
-    if len(run_records) != 10:
-        failures.append(f"Feishu run record count expected 10, got {len(run_records)}")
-    if len(local_rows) != 10:
-        failures.append(f"Local Top10 count expected 10, got {len(local_rows)}")
+    if len(run_records) != len(local_rows):
+        failures.append(f"Feishu run record count expected {len(local_rows)}, got {len(run_records)}")
 
     key_counts = Counter(feishu_key(record.get("fields", {})) for record in run_records)
     duplicates = [key for key, count in key_counts.items() if count > 1 and any(key)]

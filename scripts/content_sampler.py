@@ -1168,7 +1168,7 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
     if any(k in text for k in ["黄仁勋", "纳德拉", "人物观点", "人物访谈", "共议"]):
         return {
             "角度类型": "暂存观察",
-            "我的蹭热点角度": "人物观点类热点可以帮助判断趋势，但如果没有落到产品能力、业务场景或项目经验，不适合直接占用今日Top10。",
+            "我的蹭热点角度": "人物观点类热点可以帮助判断趋势，但如果没有落到产品能力、业务场景或项目经验，不适合直接占用今日候选池。",
             "影响对象": "暂存：需要补充具体产品变化、团队动作或业务流程影响。",
             "标题": f"{event}可以观察，先别把人物观点硬改成工作流选题",
             "标题规则": "person_viewpoint_observation",
@@ -1774,7 +1774,7 @@ def breakdown(item: ContentItem) -> dict[str, Any]:
         "普通AI资讯号会怎么讲": "复述发布时间、参数、性能、融资、产品能力或官方说法。" if item.source_type == "AIHOT热点" else "通常会复述原作者观点或总结内容。",
         "我的蹭热点角度": hot["我的蹭热点角度"],
         "影响对象": hot["影响对象"],
-        "是否进入今日10选题": worth,
+        "是否进入候选初筛": worth,
         "推荐动作": action,
         "推荐分": score,
         "失败原因": item.failure_reason,
@@ -2171,9 +2171,9 @@ def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dic
 def write_today10_markdown(path: Path, topics: list[dict[str, Any]], logs: list[str]) -> None:
     best = next((t for t in topics if t["推荐动作"] == "立即蹭热点"), topics[0] if topics else None)
     lines = [
-        f"# 今日10选题 {datetime.now().strftime('%Y-%m-%d')}",
+        f"# 今日候选池 {datetime.now().strftime('%Y-%m-%d')}",
         "",
-        "定位提醒：这不是热点榜，也不是竞品数据榜。每条选题都来自 AIHOT 热点、对标视频或公众号文章的内容拆解，并被转成 AI业务系统导演 视角。",
+        "定位提醒：这不是热点榜，也不是固定 Top10。只有通过主编判断的候选才进入这里；数量可以多也可以少。",
         "",
     ]
     if best:
@@ -2280,11 +2280,11 @@ def write_debug_top10(
         ensure_publish_metadata(topic, item)
         editorial_judgement(topic, item)
         repeated, detached, kept_anchor, over_infer, review_reason = debug_flags(topic, item, template_counts)
-        in_top10 = fp in selected_fps
+        in_candidate_pool = fp in selected_fps
         rows.append({
             "今日排名": rank_by_fp.get(fp, ""),
-            "是否进入Top10": "是" if in_top10 else "否",
-            "是否进入候选但未进Top10": "否" if in_top10 else "是",
+            "是否进入候选池": "是" if in_candidate_pool else "否",
+            "是否未进入候选池": "否" if in_candidate_pool else "是",
             "原始来源标题": item.title,
             "原始来源类型": item.source_type,
             "原始摘要/片段": (item.body_snippet or item.cover_text)[:500],
@@ -2343,7 +2343,7 @@ def write_debug_top10(
     md_path = OUT / "debug_today10_generation.md"
     write_csv(csv_path, rows)
     lines = [
-        f"# 今日Top10生成诊断 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        f"# 今日候选池生成诊断 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
         "",
         "这份文件用于审计标题生成、场景映射和模板重复，不写入飞书。",
         "",
@@ -2352,7 +2352,7 @@ def write_debug_top10(
         prefix = f"## {row['今日排名']}. " if row["今日排名"] else "## 候选未入选. "
         lines.extend([
             f"{prefix}{row['最终选题标题']}",
-            f"- 是否进入Top10：{row['是否进入Top10']}",
+            f"- 是否进入候选池：{row['是否进入候选池']}",
             f"- 原始来源：{row['原始来源类型']} / {row['原始来源标题']}",
             f"- 文本使用方式：{row['文本使用方式']}",
             f"- 内部切入角度：{row['内部切入角度']}",
@@ -2520,14 +2520,44 @@ def quality_band(topic: dict[str, Any]) -> str:
     return "no"
 
 
-def select_today10(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Select Top10 after editorial judgement; column quota is only a soft tie-breaker.
+def include_in_candidate_pool(row: dict[str, Any]) -> bool:
+    """Keep only candidates that are useful for human review.
+
+    This replaces the old "fill to 10" behavior. A candidate can enter the
+    daily pool if it is production-ready, or if it is a concrete low-risk watch
+    item worth keeping. High-AI-risk watch rows stay in debug output instead of
+    polluting the Feishu work view.
+    """
+    band = quality_band(row)
+    if band == "make":
+        return True
+    if band != "watch":
+        return False
+    editor_score = int(row.get("编辑判断分", 0) or 0)
+    title_score = int(row.get("标题质量分", 0) or 0)
+    ai_risk = row.get("AI味风险", "")
+    support = row.get("内容可信度", "")
+    if ai_risk == "高":
+        return False
+    if row.get("是否只是资讯搬运") == "是":
+        return False
+    if editor_score < 68:
+        return False
+    if title_score < 65 and row.get("来源类型") != "公众号文章":
+        return False
+    if support in {"不足"}:
+        return False
+    return True
+
+
+def select_today_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Select the daily candidate pool after editorial judgement.
 
     Freeze the anti-template baseline:
     - no natural angle -> keep as watch, do not force a title;
     - insufficient support -> keep as watch, do not pretend it is production-ready;
     - weak persona fit -> keep as watch, do not rescue it with workflow/checklist wording;
-    - 今日最值得做 can be only one item; never fill it by quota.
+    - 今日最值得做 is at most three items; never fill the pool by quota.
     """
     for row in candidates:
         row["对应栏目"] = normalize_column(row["对应栏目"])
@@ -2540,7 +2570,9 @@ def select_today10(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     column_counts: dict[str, int] = {}
 
     def add(row: dict[str, Any], allow_overflow: bool = False) -> bool:
-        if row["内容指纹"] in seen_fp or len(selected) >= 10:
+        if row["内容指纹"] in seen_fp:
+            return False
+        if not include_in_candidate_pool(row):
             return False
         visible_title = (row.get("可发布标题") or row.get("来源内容") or row.get("我的选题标题", "")).strip()
         if visible_title and visible_title in seen_titles:
@@ -2563,21 +2595,10 @@ def select_today10(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
         column_counts[column] = column_counts.get(column, 0) + 1
         return True
 
-    for band in ("make", "watch"):
-        for row in sorted_candidates:
-            if quality_band(row) == band:
-                add(row)
-                if len(selected) >= 10:
-                    break
-        if len(selected) >= 10:
-            break
-
     for row in sorted_candidates:
-        add(row, allow_overflow=True)
-        if len(selected) >= 10:
-            break
+        add(row)
 
-    return selected[:10]
+    return selected
 
 
 def main() -> int:
@@ -2586,7 +2607,7 @@ def main() -> int:
     parser.add_argument("--manual", default=str(MANUAL_ITEMS))
     parser.add_argument("--write-feishu", action="store_true", help="Write all analyzed ContentItems into Feishu 03 内容收件箱 as the content ledger.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
-    parser.add_argument("--debug-top10", action="store_true", help="Write local Top10 generation diagnostics to output/debug_today10_generation.*")
+    parser.add_argument("--debug-top10", action="store_true", help="Write local candidate generation diagnostics to output/debug_today10_generation.*")
     args = parser.parse_args()
 
     run_id = args.run_id or default_run_id()
@@ -2598,10 +2619,10 @@ def main() -> int:
     candidates = [
         topic_from_breakdown(row, item_by_fp[row["内容指纹"]])
         for row in breakdown_rows
-        if row["是否进入今日10选题"] == "是"
+        if row["是否进入候选初筛"] == "是"
     ]
     candidates = apply_editorial_judgement(candidates, item_by_fp)
-    today10 = select_today10(candidates)
+    today10 = select_today_candidates(candidates)
     today10 = assign_action_quotas(today10)
     today10 = apply_editorial_judgement(today10, item_by_fp)
     today10 = assign_today_priority(today10)
@@ -2618,12 +2639,12 @@ def main() -> int:
         "run_id": run_id,
         "items": len(items),
         "breakdowns": len(breakdown_rows),
-        "today_10_topics": len(today10),
+        "today_candidates": len(today10),
         "logs": logs,
         "outputs": {
             "content_items": str(OUT / "content_items.csv"),
             "content_breakdowns": str(OUT / "content_breakdowns.csv"),
-            "today_10_topics": str(OUT / "today_10_topics.csv"),
+            "today_candidates": str(OUT / "today_10_topics.csv"),
             "today_10_markdown": str(md_path),
             "debug_top10_csv": str(OUT / "debug_today10_generation.csv"),
             "debug_top10_markdown": str(OUT / "debug_today10_generation.md"),

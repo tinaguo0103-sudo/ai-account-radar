@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression checks for human-readable 今日Top10 topic quality."""
+"""Regression checks for human-readable daily topic candidate quality."""
 from __future__ import annotations
 
 import csv
@@ -66,7 +66,7 @@ def main() -> int:
             if intish(row.get("标题质量分", "")) < 72 or intish(row.get("编辑判断分", "")) < 78:
                 failures.append(f"row {idx}: 今日最值得做 has low judgement/title score")
         if row.get("今日建议级别") == "不建议制作":
-            failures.append(f"row {idx}: 不建议制作 should not enter 今日Top10")
+            failures.append(f"row {idx}: 不建议制作 should not enter 今日候选池")
         if intish(row.get("标题质量分", "")) >= 85 and not (row.get("可发布标题") or row.get("来源内容") or "")[:4]:
             failures.append(f"row {idx}: high title score without concrete source/title")
         if row.get("来源类型") == "对标视频" and "抖音" in row.get("内容可信度", ""):
@@ -105,11 +105,11 @@ def main() -> int:
     selected_debug_final_titles = {
         row.get("最终选题标题", "")
         for row in debug_rows
-        if row.get("是否进入Top10") == "是" and row.get("最终选题标题", "")
+        if row.get("是否进入候选池") == "是" and row.get("最终选题标题", "")
     }
     better_unselected = [
         row for row in debug_rows
-        if row.get("是否进入Top10") != "是"
+        if row.get("是否进入候选池") != "是"
         and row.get("内容指纹", "") not in selected_fps
         and row.get("原始来源标题", "") not in selected_sources
         and row.get("最终选题标题", "") not in selected_debug_final_titles
@@ -119,7 +119,7 @@ def main() -> int:
         and intish(row.get("标题质量分", "")) >= 72
     ]
     if watch_count > 5 and better_unselected:
-        failures.append(f"Top10 has {watch_count} 暂存观察 while {len(better_unselected)} better production-ready candidates are unselected")
+        failures.append(f"候选池 has {watch_count} 暂存观察 while {len(better_unselected)} better production-ready candidates are unselected")
 
     weakest_selected_watch = min(
         [intish(row.get("编辑判断分", "")) for row in rows if row.get("今日建议级别") == "暂存观察"],
@@ -145,7 +145,7 @@ def main() -> int:
         return 1
     for warning in warnings:
         print(f"WARNING: {warning}")
-    print(f"Topic quality regression passed: {len(rows)} top rows, {len(debug_rows)} debug rows")
+    print(f"Topic quality regression passed: {len(rows)} candidate rows, {len(debug_rows)} debug rows")
     return 0
 
 

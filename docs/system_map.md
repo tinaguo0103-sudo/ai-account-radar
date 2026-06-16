@@ -18,7 +18,7 @@ flowchart LR
 - `01 来源与采样`：来源池和采样权重，默认看 `当前主对标池`；另有 `历史参考池`、`系统/官方源`、`手动入口` 三个视图。
 - `02 URL投喂入口`：临时粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接，交给 `url_content_resolver.py` 解析。
 - `03 内容收件箱`：后台内容账本，保存本轮参与拆解的 URL 投喂、AIHOT 和其他 ContentItem；可看 `今日采集` 视图排查来源、是否全文解析、正文长度、payload 路径、解析说明和运行批次。
-- `04 分析与选题`：今日 Top10 和选题决策区；`可发布标题`用于前台阅读，`内部切入角度`解释为什么这么蹭热点，`编辑判断分 / 标题质量分 / AI味风险 / 今日建议级别 / 主编判断 / 不建议做的原因`帮助区分真正值得推进的 1-3 条，最后决定做、不做、暂存还是进入 Brief。
+- `04 分析与选题`：今日候选池和选题决策区；默认只展示业务决策字段，用 `今日建议级别 / 编辑判断分 / AI味风险 / 内容可信度 / 推荐理由 / 不建议做的原因` 帮你判断真正值得推进的 1-3 条。
 - `05 Brief与制作`：把选题拆成平台内容和 Brief，补 Hook、案例、结构和 CTA。
 - `06 内容任务主表`：今天真正执行的写稿、拍摄、剪辑、封面、发布、直播和复盘任务。
 - `07 资产与复盘`：发布后看数据、复刻价值、改角度再发和资产化机会。
@@ -26,7 +26,7 @@ flowchart LR
 
 ## 每天怎么用
 
-打开 `00 主控台 / 今日工作台` → 看 `今日10选题` → 在 `04` 选 1 条改为 `进入Brief` 或 `本周做` → 运行 `content_ops_pipeline.py --write-feishu` 承接到 `05/06` → 进 `05` 补 Brief → 看 `06 今日待办` 执行 → 发布后进 `07` 复盘。
+打开 `00 主控台 / 今日工作台` → 看 `今日候选池` → 在 `04` 选 1 条改为 `进入Brief` 或 `本周做` → 运行 `content_ops_pipeline.py --write-feishu` 承接到 `05/06` → 进 `05` 补 Brief → 看 `06 今日待办` 执行 → 发布后进 `07` 复盘。
 
 如果只是想理解表之间怎么连，再切到 `00 主控台 / 系统导航`。不要每天看系统导航。
 
@@ -44,7 +44,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 当前默认自动源是 AIHOT、官方 RSS/Atom、官方网页/普通网页/Jina Reader 和 URL 投喂；主对标账号自动抓取仍处于 P1 阶段。抖音主页、公众号历史列表不直接进入默认流程。完整自动拉取路线见 `docs/source_autofetch_plan.md`。
 
-卡兹克公众号 Wechat2RSS 发现源已做成 P1 显式接入：只有运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时才拉取。默认流程不写入 `03 内容收件箱`，也不参与 `04 今日Top10`；如果 feed 失效，继续用 `02 URL投喂入口` 粘贴单篇文章 URL。
+卡兹克公众号 Wechat2RSS 发现源已做成 P1 显式接入：只有运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时才拉取。默认流程不写入 `03 内容收件箱`，也不参与 `04 今日候选池`；如果 feed 失效，继续用 `02 URL投喂入口` 粘贴单篇文章 URL。
 
 公众号全文 provider 已有显式 P1 路线：本地 `wewe-rss` 可通过 `python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5` 拉取卡兹克全文；默认工作流不依赖本地服务。`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。当前结论见 `docs/spikes/wechat_fulltext_provider_eval.md`。
 

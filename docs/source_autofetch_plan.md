@@ -2,7 +2,7 @@
 
 本文件用于约束 `ai-account-radar` 的自动拉取边界。当前项目默认链路仍然是：
 
-`AIHOT / 官方源 / URL投喂` -> `03 内容收件箱` -> 内容拆解 -> `04 今日Top10`
+`AIHOT / 官方源 / URL投喂` -> `03 内容收件箱` -> 内容拆解 -> `04 今日候选池`
 
 主对标账号自动抓取仍处于 P1 probe 阶段，不直接进入 `main` 的默认 `daily_pipeline.py`。
 
@@ -12,7 +12,7 @@
 
 - 当前已接入。
 - 适合默认进入 `daily_pipeline.py`。
-- 写入 `03 内容收件箱`，再参与 `04 今日Top10`。
+- 写入 `03 内容收件箱`，再参与 `04 今日候选池`。
 
 ### AIHOT日报
 
@@ -24,7 +24,7 @@
 
 - 适合默认自动拉取。
 - 用于 OpenAI、Anthropic、GitHub、产品官方博客、工具更新等公开结构化来源。
-- 适合写入 `03 内容收件箱`，再进入 Top10 候选。
+- 适合写入 `03 内容收件箱`，再进入今日候选池。
 
 ### 官方网页 / 普通网页 / Jina Reader
 
@@ -36,7 +36,7 @@
 
 - 继续作为 P0 能力保留。
 - 用户在 `02 URL投喂入口` 粘贴公众号文章、抖音单条视频、普通网页等。
-- 系统解析后写入 `03 内容收件箱`，再参与 `04 今日Top10`。
+- 系统解析后写入 `03 内容收件箱`，再参与 `04 今日候选池`。
 
 ## P0.5 测试/复盘增强
 
@@ -45,7 +45,7 @@
 - 已解析 URL 可复用参与本轮候选测试。
 - 不重复写入 `03 内容收件箱`。
 - 只更新最近参与运行批次、最近采样日期等运行追踪字段。
-- 用于规则测试、Top10 调试、对比 AIHOT + URL 混合候选效果。
+- 用于规则测试、候选池调试、对比 AIHOT + URL 混合候选效果。
 - 不作为默认日常流程。
 
 ### `--fetch-wechat-feed`
@@ -54,7 +54,7 @@
 - feed URL：`https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml`。
 - 默认 `daily_pipeline.py` 不拉取该 feed。
 - 只有用户主动运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时，feed 文章才进入本轮 ContentItem 候选池。
-- 显式加 `--write-feishu` 后，feed 内容写入 `03 内容收件箱`，再参与 `04 今日Top10` 候选。
+- 显式加 `--write-feishu` 后，feed 内容写入 `03 内容收件箱`，再参与 `04 今日候选池`。
 - 如果 feed 失效或全文解析受限，继续回退到 `02 URL投喂入口` 单篇公众号文章 URL。
 
 ### `--fetch-wechat-fulltext-provider` / `--wechat-fulltext-provider wewe-rss`
@@ -113,7 +113,7 @@
 4. 有内容指纹去重。
 5. 有失败原因记录。
 6. 不需要人工登录态。
-7. 不污染 `04 今日Top10`。
+7. 不污染 `04 今日候选池`。
 8. 可以被关闭或降级。
 
 ## 当前主对标池逐个判断
@@ -154,7 +154,7 @@
 - 抖音主页最近 N 条 PoC：`spike/source-watch-douyin-homepage`
 - 抖音 ASR / 口播转写 PoC：`spike/douyin-asr-transcript`
 
-这些 PoC 不允许直接在 `main` 上开发。PoC 默认只输出本地报告，不写飞书、不进 Top10、不改飞书表结构。
+这些 PoC 不允许直接在 `main` 上开发。PoC 默认只输出本地报告，不写飞书、不进候选池、不改飞书表结构。
 
 ## 分支治理建议
 
