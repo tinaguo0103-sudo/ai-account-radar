@@ -590,7 +590,22 @@ python3 scripts/douyin_transcript_candidates.py
 python3 scripts/douyin_video_transcribe.py --url <douyin_url> --model paraformer-v2 --confirm-free-quota --yes
 ```
 
+如果 CDP 探针已经保存了 raw payload，优先用 raw payload，避免二次打开抖音页面失败：
+
+```bash
+python3 scripts/douyin_video_transcribe.py --raw-payload output/spikes/douyin_cdp_source_watch_probe/raw_resolver/<raw>.json --model paraformer-v2 --confirm-free-quota --yes
+```
+
+如果已经有转写文件，需要复用进候选池，不要重复消耗额度：
+
+```bash
+python3 scripts/douyin_video_transcribe.py --raw-payload output/spikes/douyin_cdp_source_watch_probe/raw_resolver/<raw>.json --transcript-file output/spikes/douyin_transcripts/<video_id>_transcript.md
+python3 scripts/daily_pipeline.py --include-douyin-transcripts
+```
+
 这里默认模型为 `paraformer-v2`，因为当前已开启 paraformer 免费额度和“免费额度用完即停”。长视频默认会被成本护栏拦住；超过 `DOUYIN_ASR_MAX_SINGLE_MINUTES` 需要人工确认并显式加 `--allow-long`。
+
+对标视频进入候选池后的表达规则：只吸收话题、结构、专业证明和商业入口，不在用户可见标题里出现其他博主名字，不写“这条视频/这条内容”，不仿写原作者表达；标题必须转成你的 AI导演工作流、业务流程或内容团队语言。
 
 ## 采集边界
 

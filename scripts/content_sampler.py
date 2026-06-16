@@ -531,6 +531,7 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
             "wechat_public_html_js_content",
             "wechat_feed",
             "douyin_public_router_data",
+            "douyin_paraformer_transcript",
             "rss_atom_xml",
             "jina_reader",
         }
@@ -612,6 +613,8 @@ def choose_scene(text: str) -> str:
     visual_content_terms = ["公众号首图", "小红书卡片", "教程步骤卡", "视觉模板", "图文卡", "视觉物料", "宣传图"]
     if "claude code" in lower and any(k in text for k in ["原则", "团队", "工作方式", "验收", "harness"]):
         return "非技术Agent处理重复业务任务"
+    if any(k in text for k in ["小云雀", "AI短片", "短剧Agent", "AI短剧", "角色设定", "剧本", "分镜", "成片", "镜头", "导演工作流", "Seedance"]):
+        return "AI导演工作流与视频交付"
     if any(k in text for k in ["内容创作方法论", "内容创作", "内部分享"]):
         return "内容团队选题到Brief流程"
     if any(k in lower for k in ["miso", "speech", "voice", "asr", "grok imagine", "ppisp", "photometric"]) or any(k in text for k in ["语音模型", "口播", "视频生成", "3D重建", "光度变化"]):
@@ -794,6 +797,7 @@ FORBIDDEN_VISIBLE_TERMS = [
     "别只看发布信息", "先看任务怎么验收", "该先判断", "最该重排",
     "适合拆成一次真实任务边界测试", "适合拆成一次AI视频交付测试",
     "不该只看工具名", "只有在能说清具体产品层",
+    "这条视频", "这条内容", "对标视频真正",
 ]
 
 
@@ -821,6 +825,7 @@ def extract_event_anchor(item: ContentItem) -> str:
     text = item_text(item)
     lower = text.lower()
     title_rules = [
+        ("AI短片工作流", lambda s: "小云雀" in title_text or "ai短片" in s or "短剧agent" in s or "ai短剧" in s),
         ("Sensor Tower / ChatGPT月活", lambda s: "sensor tower" in s or ("chatgpt" in s and ("月活" in s or "10亿" in s or "10 亿" in s))),
         ("Anthropic AI恶意账户分析", lambda s: "anthropic" in s and ("恶意账户" in s or "malicious" in s or "abuse" in s)),
         ("OpenClaw 2026.6.1", lambda s: "openclaw" in s),
@@ -845,6 +850,7 @@ def extract_event_anchor(item: ContentItem) -> str:
         if predicate(title_lower):
             return label
     body_rules = [
+        ("AI短片工作流", lambda s: "小云雀" in text or "ai短片" in s or "短剧agent" in s or "ai短剧" in s),
         ("Sensor Tower / ChatGPT月活", lambda s: "sensor tower" in s or ("chatgpt" in s and ("月活" in s or "10亿" in s or "10 亿" in s))),
         ("Anthropic AI恶意账户分析", lambda s: "anthropic" in s and ("恶意账户" in s or "malicious" in s or "abuse" in s)),
         ("OpenClaw 2026.6.1", lambda s: "openclaw" in s),
@@ -1239,6 +1245,11 @@ def regular_topic_title(item: ContentItem, scene: str) -> str:
             return f"{core}，内容团队最该学的是判断流程而不是观点金句"
         return f"{core}，怎么拆成我的业务现场选题和Brief"
     if scene == "AI导演工作流与视频交付":
+        if item.fetch_method == "douyin_paraformer_transcript":
+            text = item_text(item)
+            if any(k in text for k in ["小云雀", "AI短片", "短剧Agent", "AI短剧"]):
+                return "AI短片教程真正值得拆的是创意、剧本和分镜交付"
+            return "AI视频内容真正值得拆的是从想法到验收的交付链路"
         if item.fetch_method == "douyin_public_router_data":
             return f"{core}，先别急着复刻成片，要拆它的标题、工具和交付承诺"
         return f"{core}，AI视频真正该拆的是Brief、分镜和验收"
@@ -1316,21 +1327,27 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
         if "卡兹克" in item.account_name or "数字生命卡兹克" in item.account_name:
             source_title = item.title or ""
             if any(k in source_title for k in ["内部分享", "内容创作方法论", "内容创作", "三年来总结"]):
-                return "卡兹克这场内部分享，值得学的是他怎么筛选选题"
+                return "AI内容判断力不是靠刷资讯，而是靠一套筛选选题的方法"
             if "Claude Code" in source_title or (
                 "Claude Code" in text and any(k in source_title for k in ["原则", "团队", "工作方式"])
             ):
-                return "卡兹克拆 Claude Code 这篇，最值得抄的是它的项目复盘方式"
-            return "卡兹克这篇内部分享，真正值得学的是他怎么筛选AI信息"
+                return "Claude Code团队原则里，最值得借鉴的是项目验收习惯"
+            return "AI信息太多时，真正该沉淀的是自己的选题筛选系统"
         return f"{core}最值得拆的，是它怎么让读者相信作者懂行"
     if item.source_type == "对标视频":
+        if item.fetch_method == "douyin_paraformer_transcript":
+            if any(k in text for k in ["小云雀", "AI短片", "短剧Agent", "AI短剧"]):
+                return "AI短片不是炫技，真正要拆的是剧本、资产和分镜流程"
+            if any(k in text for k in ["分镜", "镜头", "成片", "角色设定"]):
+                return "从创意到成片，AI导演工作流最缺的是一张交付清单"
+            return "口播转写后，先把钩子、结构和交付承诺拆成自己的流程"
         if item.fetch_method == "douyin_public_router_data":
             if any(k in text for k in ["小云雀", "短剧Agent", "AI短剧"]):
-                return "小云雀短剧Agent这条视频，最值得看的是它怎么承诺成片效果"
+                return "AI短剧工具先别急着跟风，先看它承诺的成片效果能不能交付"
             if any(k in text for k in ["一镜到底", "爆款视频", "视频密码"]):
-                return "这条AI爆款视频教程，先看它怎么把工具包装成交付承诺"
+                return "AI爆款视频教程真正值得看的是它怎么把工具包装成交付承诺"
             return f"{core}最值得看的，不是工具名，而是它怎么承诺结果"
-        return f"{core}这条视频，真正能学的是钩子、结构和转化入口"
+        return "AI视频选题别只看成片，要拆它怎么承诺交付结果"
 
     if "cloudflare radar" in lower or ("cloudflare" in lower and "radar" in lower):
         return "AI工具到底是真火还是虚火？Cloudflare这组流量数据给了一个判断方法"
@@ -1371,8 +1388,12 @@ def title_alternatives(topic: dict[str, Any], item: ContentItem, publishable: st
     content_type = topic.get("内容类型", "")
     alternatives = [publishable]
     if content_type == "对标学习":
-        alternatives.append(f"{short_title(item.title)}这条内容，真正值得学的是专业感怎么建立")
-        alternatives.append("同样讲AI，为什么这类内容更容易让人相信你做过项目")
+        if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
+            alternatives.append("普通人做AI短片，先补剧本、角色和分镜这三步")
+            alternatives.append("AI视频教程别只看工具演示，要看它怎么把结果交付出来")
+        else:
+            alternatives.append("AI视频内容要先拆交付承诺，再判断能不能变成自己的服务流程")
+            alternatives.append("同样讲AI视频，为什么有些内容更像真实项目而不是工具演示")
     elif content_type == "踩坑提醒":
         alternatives.append(f"{event}不是八卦，是AI内容上线前的风险提醒")
         alternatives.append("AI素材别急着投放，先过一遍这几个风险点")
@@ -1437,6 +1458,8 @@ NEWS_ONLY_TERMS = ["发布", "更新", "开源", "上线", "融资", "论文", "
 def content_credibility(item: ContentItem) -> str:
     if item.source_type == "公众号文章":
         return "全文" if is_full_text_item(item) == "是" else "摘要"
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
+        return "抖音转写"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
         return "抖音浅层"
     if item.source_type == "AIHOT热点":
@@ -1492,6 +1515,9 @@ def title_lint(title: str, item: ContentItem) -> tuple[int, str, list[str]]:
     if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data" and any(k in title for k in ["口播", "镜头结构", "评论区", "完整"]):
         penalties += 25
         reasons.append("超过抖音浅层解析可支撑范围")
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript" and any(k in title for k in [item.account_name, "博主", "这条视频", "这条内容"] if k):
+        penalties += 28
+        reasons.append("对标视频标题不应露出来源身份或像仿写")
     score = max(0, 100 - penalties)
     if score >= 78:
         risk = "低"
@@ -1512,6 +1538,8 @@ def persona_match_score(topic: dict[str, Any], item: ContentItem) -> tuple[int, 
     score = min(100, 30 + len(hits) * 10)
     if item.source_type == "公众号文章" and is_full_text_item(item) == "是":
         score += 10
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
+        score += 10
     if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
         score -= 12
     score = max(0, min(100, score))
@@ -1528,6 +1556,8 @@ def is_news_only(topic: dict[str, Any], item: ContentItem, persona_score: int) -
 def support_level(topic: dict[str, Any], item: ContentItem) -> str:
     if item.source_type == "公众号文章":
         return "足够" if is_full_text_item(item) == "是" else "不足"
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
+        return "足够" if len(item.body_snippet or "") >= 500 else "摘要可用"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
         return "浅层"
     if item.source_type == "AIHOT热点":
@@ -1541,6 +1571,8 @@ def editor_visible_note(topic: dict[str, Any], item: ContentItem, suggested: str
             return "这条和账号人设强相关，且有全文支撑，可以拆成一篇对标学习。"
         if item.source_type == "AIHOT热点":
             return "这条有热点窗口，也能接到我的AI业务系统视角，适合今天推进。"
+        if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
+            return "这条有口播转写支撑，可以吸收结构和交付逻辑，但标题必须转成自己的业务语言。"
         return "这条能体现我的内容现场和项目判断，适合进入制作。"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
         return "抖音浅层解析只有标题和文案，适合观察选题包装，不适合直接做深拆。"
@@ -1565,7 +1597,7 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     support = support_level(topic, item)
     news_only = is_news_only(topic, item, persona_score)
     base = int(topic.get("推荐分", 0) or 0)
-    credibility_bonus = {"全文": 12, "AIHOT摘要": 5, "摘要": 0, "抖音浅层": -10}.get(credibility, 0)
+    credibility_bonus = {"全文": 12, "抖音转写": 10, "AIHOT摘要": 5, "摘要": 0, "抖音浅层": -10}.get(credibility, 0)
     action_bonus = 5 if topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"} else -5
     editor_score = max(0, min(100, round(base * 0.45 + title_score * 0.2 + persona_score * 0.25 + credibility_bonus + action_bonus)))
     not_recommend: list[str] = []
@@ -1669,6 +1701,8 @@ def title_generation_rule(item: ContentItem, scene: str) -> str:
         return "article_fulltext_subject"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
         return "douyin_shallow_title_only"
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
+        return "douyin_transcript_to_own_director_workflow"
     return f"competitor_{scene}"
 
 
@@ -1752,7 +1786,8 @@ def breakdown(item: ContentItem) -> dict[str, Any]:
         elif hot.get("标题规则") in {"ai_gateway_ops_validation", "enterprise_ai_partnership_workflow"}:
             column = "AI项目复盘"
     else:
-        column = normalize_column(item.column or COLUMN_BY_SCENE.get(scene, "真实工作流改造"))
+        scene_column = normalize_column(COLUMN_BY_SCENE.get(scene, ""))
+        column = scene_column or normalize_column(item.column or "真实工作流改造")
     return {
         "内容指纹": item.fingerprint,
         "来源类型": item.source_type,
@@ -1859,7 +1894,7 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "业务变化判断": infer_business_change(item, scene),
         "标题结构模板": title_structure_template(topic_title),
         "是否来自已解析URL复用": item.reused_url,
-        "候选来源方式": "URL投喂/复用" if item.fetch_method in {"wechat_public_html_js_content", "douyin_public_router_data", "rss_atom_xml", "jina_reader"} else item.source_type,
+        "候选来源方式": "URL投喂/复用" if item.fetch_method in {"wechat_public_html_js_content", "douyin_public_router_data", "douyin_paraformer_transcript", "rss_atom_xml", "jina_reader"} else item.source_type,
     }
 
 
@@ -1965,6 +2000,8 @@ def is_full_text_item(item: ContentItem) -> str:
 def parse_note(item: ContentItem) -> str:
     hint = f"{item.parse_hint}；" if item.parse_hint else ""
     if item.source_type == "对标视频" and item.platform == "抖音":
+        if item.fetch_method == "douyin_paraformer_transcript":
+            return hint + "P1口播转写：已用 paraformer 转写进入内容拆解；仍不含评论区问题和画面OCR。"
         return hint + "P0浅层解析：当前仅含标题/文案/作者/封面/发布时间，不含口播字幕和评论区。"
     if is_full_text_item(item) == "是":
         raw_len = item.raw_text_length or len(item.body_snippet or "")
@@ -1998,7 +2035,7 @@ def item_to_content_inbox_fields(item: ContentItem, run_id: str, is_new: bool, d
         "正文/全文": body[:20000],
         "正文长度": str(raw_len),
         "是否全文解析": is_full_text_item(item),
-        "原始payload路径": item.ocr_text if item.fetch_method in {"wechat_public_html_js_content", "wechat_feed", "douyin_public_router_data", "rss_atom_xml", "jina_reader"} else "",
+        "原始payload路径": item.ocr_text if item.fetch_method in {"wechat_public_html_js_content", "wechat_feed", "douyin_public_router_data", "douyin_paraformer_transcript", "rss_atom_xml", "jina_reader"} else "",
         "解析说明": parse_note(item),
         "运行日期": date,
         "运行批次": run_id if is_new else "",
@@ -2241,6 +2278,8 @@ def text_basis(item: ContentItem) -> str:
         return "摘要/片段"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
         return "抖音P0浅层字段：标题/文案/作者/封面/标签/下载链接，不含口播转写"
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
+        return "抖音P1口播转写：基于ASR文本拆结构，不含评论区和画面OCR"
     if item.source_type == "AIHOT热点":
         return "AIHOT摘要/日报条目"
     return "当前可获取文本"
@@ -2262,6 +2301,8 @@ def debug_flags(topic: dict[str, Any], item: ContentItem, template_counts: dict[
         reasons.append("标题未明显保留原始热点事件词")
     if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
         reasons.append("抖音仅浅层解析，缺口播字幕/评论，深度结论需人工复核")
+    if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
+        reasons.append("抖音已有口播转写，可深拆结构，但标题必须转成自己的业务语言")
     if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
         reasons.append("公众号未达到全文解析阈值")
     if over_infer == "是":

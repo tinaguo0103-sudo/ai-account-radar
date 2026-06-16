@@ -28,6 +28,8 @@ URL_RESOLVED_MANUAL = OUT / "url_content_items_manual.jsonl"
 WECHAT_FEED_RESOLVED = OUT / "wechat_feed_content_items.jsonl"
 WECHAT_FEED_RESOLVED_MANUAL = OUT / "wechat_feed_content_items_manual.jsonl"
 WECHAT_FULLTEXT_RESOLVED_MANUAL = OUT / "wechat_fulltext_provider_items.jsonl"
+DOUYIN_CDP_RESOLVED_MANUAL = OUT / "spikes" / "douyin_cdp_source_watch_probe" / "content_items_manual.jsonl"
+DOUYIN_TRANSCRIPTS_MANUAL = OUT / "spikes" / "douyin_transcripts" / "transcribed_content_items.jsonl"
 COMBINED_MANUAL = OUT / "daily_pipeline_manual_combined.jsonl"
 DEFAULT_WECHAT_FEED_CONFIG = ROOT / "config" / "wechat_feed_candidates.yaml"
 DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG = ROOT / "config" / "wechat_fulltext_provider.example.yaml"
@@ -132,6 +134,11 @@ def main() -> int:
     parser.add_argument("--wechat-fulltext-provider-config", default=str(DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG), help="Config for explicit WeChat fulltext provider intake.")
     parser.add_argument("--wechat-fulltext-provider", default="", help="Provider id/name to fetch, e.g. wewe-rss. Only used with explicit WeChat fulltext provider mode.")
     parser.add_argument("--wechat-feed-limit", type=int, default=5, help="Max articles to fetch per WeChat feed when --fetch-wechat-feed is enabled.")
+    parser.add_argument("--fetch-douyin-cdp-source-watch", action="store_true", help="Explicit P1 mode: sample configured Douyin homepages through a logged-in local Chrome CDP session. Default is off.")
+    parser.add_argument("--douyin-cdp", default=os.getenv("DOUYIN_CDP_URL", "http://127.0.0.1:9333"), help="Chrome DevTools endpoint for explicit Douyin homepage probe.")
+    parser.add_argument("--douyin-account-limit", type=int, default=5, help="Max Douyin accounts to probe when --fetch-douyin-cdp-source-watch is enabled.")
+    parser.add_argument("--douyin-video-limit", type=int, default=3, help="Max videos per Douyin account when --fetch-douyin-cdp-source-watch is enabled.")
+    parser.add_argument("--include-douyin-transcripts", action="store_true", help="Explicit P1 mode: include already transcribed Douyin ContentItems. Does not call ASR.")
     args = parser.parse_args()
 
     if args.write_feishu or args.resolve_url_intake or args.include_resolved_url_intake:
@@ -203,6 +210,27 @@ def main() -> int:
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
         manual_inputs.append(WECHAT_FULLTEXT_RESOLVED_MANUAL)
+
+    if args.fetch_douyin_cdp_source_watch:
+        douyin_cmd = [
+            "node",
+            str(ROOT / "scripts" / "douyin_cdp_source_watch_probe.mjs"),
+            "--cdp",
+            args.douyin_cdp,
+            "--account-limit",
+            str(args.douyin_account_limit),
+            "--video-limit",
+            str(args.douyin_video_limit),
+        ]
+        steps.append(run_step("fetch explicit Douyin homepage samples through Chrome CDP", douyin_cmd, env=step_env))
+        if steps[-1]["returncode"] != 0:
+            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
+            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
+            return steps[-1]["returncode"]
+        manual_inputs.append(DOUYIN_CDP_RESOLVED_MANUAL)
+
+    if args.include_douyin_transcripts:
+        manual_inputs.append(DOUYIN_TRANSCRIPTS_MANUAL)
 
     if len(manual_inputs) > 1:
         manual_path = str(combine_manual_jsonl(manual_inputs, COMBINED_MANUAL))
