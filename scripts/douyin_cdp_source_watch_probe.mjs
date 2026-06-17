@@ -132,6 +132,56 @@ function extractVideoLinksFromText(text, videoLimit) {
   return { ids: ids.slice(0, videoLimit), links };
 }
 
+function fingerprint(input) {
+  let hash = 5381;
+  for (let i = 0; i < input.length; i += 1) {
+    hash = ((hash << 5) + hash) + input.charCodeAt(i);
+    hash &= 0xffffffff;
+  }
+  return `douyin_cdp_${(hash >>> 0).toString(16)}`;
+}
+
+function normalizeCardText(text) {
+  const lines = String(text || "")
+    .split(/\n+/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .filter((line) => !["置顶", "热点", "共创", "广告"].includes(line))
+    .filter((line) => !/^\d+(?:\.\d+)?万?$/.test(line));
+  return lines.join(" ")
+    .replace(/\s+/g, " ")
+    .replace(/打开看看|去看看|查看详情/g, "")
+    .trim();
+}
+
+function buildFallbackContentItem(row, link, index) {
+  const cards = row.video_cards || [];
+  const card = cards.find((item) => item.href === link || item.url === link || link.endsWith(String(item.video_id || ""))) || {};
+  const title = normalizeCardText(card.text || "");
+  const body = title || `${row.account_name || "抖音对标账号"}主页发现作品：${link}`;
+  return {
+    "来源类型": "对标视频",
+    "平台": "抖音",
+    "账号名/公众号名": row.account_name || "",
+    "内容标题": title || `${row.account_name || "抖音"}主页作品 ${index + 1}`,
+    "内容链接": link,
+    "内容形态": "short_video_homepage_card",
+    "封面文字": "",
+    "正文/字幕/简介片段": body,
+    "发布时间": "",
+    "评论区问题": "",
+    "截图/OCR文本": "",
+    "抓取方式": "douyin_cdp_homepage_card",
+    "抓取状态": "success",
+    "失败原因": "",
+    "内容指纹": fingerprint(`${row.account_name || ""}|${link}|${body}`),
+    "正文原始长度": body.length,
+    "正文是否截断": "否",
+    "是否来自已解析URL复用": "否",
+    "解析说明": "从登录态主页作品区提取标题/文案卡片；未做口播转写、评论抓取或视频理解。适合标题先筛选，人工确认后再转写。",
+  };
+}
+
 async function probeAccount(cdp, source, options) {
   const homepage = source.url || source.homepage_url || "";
   if (!homepage) {
@@ -156,6 +206,17 @@ async function probeAccount(cdp, source, options) {
     await new Promise((resolve) => setTimeout(resolve, options.waitMs));
     const result = await client.send("Runtime.evaluate", {
       expression: `(() => {
+        const videoAnchors = Array.from(document.querySelectorAll('a[href*="/video/"], a[href*="modal_id="]')).map(a => {
+          const href = a.href || "";
+          const id = (href.match(/(?:\\/video\\/|modal_id=)(\\d{10,})/) || [])[1] || "";
+          let text = a.innerText || a.getAttribute("aria-label") || a.title || "";
+          let node = a;
+          for (let i = 0; i < 4 && node && text.length < 20; i += 1) {
+            node = node.parentElement;
+            if (node && node.innerText) text = node.innerText;
+          }
+          return { href, id, text: String(text || "").slice(0, 1000) };
+        });
         const anchors = Array.from(document.querySelectorAll('a[href]')).map(a => a.href).join('\\n');
         const html = document.documentElement ? document.documentElement.outerHTML : '';
         const text = document.body ? document.body.innerText : '';
@@ -163,6 +224,7 @@ async function probeAccount(cdp, source, options) {
           title: document.title,
           url: location.href,
           anchors,
+          videoAnchors,
           text: text.slice(0, 5000),
           htmlSnippet: html.slice(0, 50000),
           loginHint: /登录|验证码|验证|captcha|verify/i.test(text + html)
@@ -195,6 +257,12 @@ async function probeAccount(cdp, source, options) {
       current_url: payload.url || "",
       video_ids: trustedWorks ? extracted.ids : [],
       video_links: trustedWorks ? extracted.links : [],
+      video_cards: trustedWorks ? (payload.videoAnchors || []).filter((item) => extracted.ids.includes(item.id)).map((item) => ({
+        video_id: item.id,
+        href: item.href,
+        url: `https://www.douyin.com/video/${item.id}`,
+        text: item.text || "",
+      })) : [],
       untrusted_video_ids: trustedWorks ? [] : extracted.ids,
       untrusted_video_links: trustedWorks ? [] : extracted.links,
       text_preview: payload.text || "",
@@ -287,6 +355,21 @@ async function main() {
       stderr: proc.stderr?.slice(-4000) || "",
     };
   }
+
+  const manualJsonl = path.join(options.outDir, "content_items_manual.jsonl");
+  const fallbackItems = [];
+  for (const row of rows) {
+    for (const [index, link] of (row.video_links || []).entries()) {
+      fallbackItems.push(buildFallbackContentItem(row, link, index));
+    }
+  }
+  fs.writeFileSync(
+    manualJsonl,
+    fallbackItems.map((item) => JSON.stringify(item)).join("\n") + (fallbackItems.length ? "\n" : ""),
+    "utf8",
+  );
+  resolverResult.manual_jsonl = manualJsonl;
+  resolverResult.homepage_card_items = fallbackItems.length;
 
   const output = {
     ok: true,
