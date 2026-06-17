@@ -21,7 +21,26 @@ from feishu_table_registry import TABLES, resolve_table_id
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TODAY10 = ROOT / "output" / "today_10_topics.csv"
+LEGACY_TODAY10 = ROOT / "output" / "today_10_topics.csv"
+LATEST_WRITE_TODAY10 = ROOT / "output" / "latest_write" / "today_10_topics.csv"
+LEGACY_LOG = ROOT / "output" / "content_sampler_log.json"
+
+
+def legacy_today10_is_official() -> bool:
+    if not LEGACY_LOG.exists():
+        return False
+    try:
+        data = json.loads(LEGACY_LOG.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    return (
+        data.get("mode") == "write-feishu"
+        or "feishu_content_ledger" in data
+        or bool(data.get("mirrors", {}).get("latest_write"))
+    )
+
+
+TODAY10 = LATEST_WRITE_TODAY10 if LATEST_WRITE_TODAY10.exists() else (LEGACY_TODAY10 if legacy_today10_is_official() else LATEST_WRITE_TODAY10)
 TOPIC_READY_STATUSES = {"进入Brief", "本周做"}
 BRIEF_FIELDS = ["关联选题", "一句话核心判断", "目标用户", "内容结构", "人工补充", "制作状态", "备注"]
 TOPIC_MARK_FIELD = "是否已拆平台内容"

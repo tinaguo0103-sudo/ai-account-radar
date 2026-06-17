@@ -231,7 +231,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 
 `--write-feishu` 会把解析出的新 URL 内容写入 `03 内容收件箱`，同时把本轮参与分析的 AIHOT 等 ContentItem 也同步进 `03`，再把今日候选池写入 `04 分析与选题`，并回写 `02 URL投喂入口` 的处理状态、失败原因和解析结果摘要。`02 URL投喂入口` 只作为临时链接入口，解析完成后可手动删除记录，不需要长期保留。
 
-今日候选池不再强制凑满 10 条。AIHOT 可以是主来源，但默认最多占 8 条；如果本轮有 URL 投喂或开启已解析 URL 复用，并且 URL 内容解析成功、分数过线，系统会优先保留进入候选池。调试文件 `output/debug_today10_generation.csv` / `.md` 会显示每条候选是否来自已解析 URL 复用、是否进入候选池、标题结构模板、事件锚点、业务变化判断、内部切入角度和可发布标题。
+今日候选池不再强制凑满 10 条。AIHOT 可以是主来源，但默认最多占 8 条；如果本轮有 URL 投喂或开启已解析 URL 复用，并且 URL 内容解析成功、分数过线，系统会优先保留进入候选池。调试文件会写入本轮批次目录，例如 `output/dry_runs/run_*/debug_today10_generation.csv` 或 `output/runs/run_*/debug_today10_generation.csv`，并同步到 `output/latest_dry_run/` 或 `output/latest_write/`，用于查看每条候选是否来自已解析 URL 复用、是否进入候选池、标题结构模板、事件锚点、业务变化判断、内部切入角度和可发布标题。
 
 确认 dry-run 输出没问题后，显式写入飞书 `04 分析与选题` 并刷新 `00 主控台`：
 
@@ -243,6 +243,15 @@ python3 scripts/daily_pipeline.py --write-feishu
 ```
 
 `daily_pipeline.py` 会串起：读取内容源配置、抓取 AIHOT、读取手动公众号/视频样例、生成 ContentItem、生成内容拆解、筛选今日候选池、dry-run 展示、按需写入飞书、按需刷新主控台和输出日志。默认不写入飞书，不自动发布，不生成完整成稿。每次运行会生成一个 `运行批次`，用于在 `03 内容收件箱 / 今日采集` 和 `04 分析与选题 / 今日候选池` 中追踪本轮数据。
+
+输出文件分层：
+
+- `output/dry_runs/<run_id>/`：每次 dry-run 的完整本地输出，不写飞书，也不会覆盖正式结果。
+- `output/runs/<run_id>/`：每次 `--write-feishu` 的正式运行输出，和飞书写入批次一致。
+- `output/latest_dry_run/`：最近一次 dry-run 的快捷副本。
+- `output/latest_write/`：最近一次正式写入飞书的快捷副本，主控台和内容作战台默认以这里为准。
+- `output/latest/`：最近一次运行的快捷副本，可能是 dry-run，也可能是正式写入，仅用于调试。
+- `output/today_10_topics.csv` 等根目录兼容文件只在正式 `--write-feishu` 后更新，用来兼容旧脚本；dry-run 不会再覆盖这些文件。
 
 `04 分析与选题` 已收敛为今日候选池决策表：主字段 `选题标题` 优先展示可读标题，用于日常决策和进入 Brief。飞书默认视图只展示业务决策字段，例如 `今日建议级别`、`编辑判断分`、`AI味风险`、`内容可信度`、`推荐动作`、`原始来源标题`、`业务场景`、`推荐理由`、`不建议做的原因` 和 `可沉淀资产`。代码和调试文件仍保留更多算法字段，但默认飞书视图不展示。写入前会先经过 `editorial_judgement` 编辑判断层，让你能区分“今日最值得做”“可选候选”和“暂存观察”。没有足够人设角度或内容支撑的内容不会为了凑数进入候选池。
 
@@ -279,10 +288,11 @@ python3 scripts/content_sampler.py --no-fetch-aihot
 
 输出文件：
 
-- `output/content_items.csv`：内容对象，不是数据指标表。
-- `output/content_breakdowns.csv`：每条内容的钩子、结构、专业证明、商业入口、可学习点、不能照搬点。
-- `output/today_10_topics.csv`：今日候选池兼容输出文件。
-- `output/daily_reports/today_10_topics_YYYY-MM-DD.md`：给你看的今日候选池 Markdown。
+- `output/dry_runs/<run_id>/content_items.csv`：dry-run 的内容对象，不是数据指标表。
+- `output/dry_runs/<run_id>/content_breakdowns.csv`：dry-run 的内容拆解结果。
+- `output/dry_runs/<run_id>/today_10_topics.csv`：dry-run 的今日候选池。
+- `output/latest_dry_run/`：最近一次 dry-run 快捷副本。
+- 正式写入后，对应文件会在 `output/runs/<run_id>/` 和 `output/latest_write/` 中保留；根目录 `output/today_10_topics.csv` 只代表最近一次正式写入飞书的兼容输出。
 
 旧雷达导入包仍可运行，但不是当前核心方向：
 
@@ -335,9 +345,9 @@ FEISHU_BASE_APP_TOKEN=xxx
 - `output/system_rules_dictionary.csv`：规则与字典表，可导入飞书。
 - `output/system_rules_dictionary.xlsx`：规则与字典 Excel 版。
 - `output/run_log.json`：运行日志和各表数量。
-- `output/content_items.csv`：AIHOT、公众号文章、对标视频、手动补充统一后的内容对象。
-- `output/content_breakdowns.csv`：内容拆解结果。
-- `output/today_10_topics.csv`：今日候选池兼容输出文件。
+- `output/latest_write/`：最近一次正式写入飞书的内容对象、拆解结果和今日候选池。
+- `output/latest_dry_run/`：最近一次 dry-run 的内容对象、拆解结果和今日候选池。
+- `output/today_10_topics.csv`：最近一次正式写入飞书的兼容输出文件，dry-run 不再覆盖。
 
 ## 系统不是黑盒
 

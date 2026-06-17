@@ -19,6 +19,7 @@ from feishu_table_registry import VIEW_NAMES, resolve_table_id, table_name
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
 REPORT_DIR = OUT / "daily_reports"
+LATEST_WRITE_DIR = OUT / "latest_write"
 BASE_URL = "https://my.feishu.cn/base"
 
 APP_TOKEN_ENV = "FEISHU_BASE_APP_TOKEN"
@@ -57,6 +58,20 @@ def now_cn() -> str:
 
 def today_slug() -> str:
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def legacy_sampler_log_is_official(path: Path) -> bool:
+    if not path.exists():
+        return False
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    return (
+        data.get("mode") == "write-feishu"
+        or "feishu_content_ledger" in data
+        or bool(data.get("mirrors", {}).get("latest_write"))
+    )
 
 
 def table_url(app_token: str, table_id: str) -> str:
@@ -224,7 +239,10 @@ def top_records(records: list[dict[str, Any]], n: int = 5) -> list[dict[str, Any
 
 
 def load_run_errors() -> list[str]:
-    sampler_log = OUT / "content_sampler_log.json"
+    sampler_log = LATEST_WRITE_DIR / "content_sampler_log.json"
+    if not sampler_log.exists():
+        legacy_log = OUT / "content_sampler_log.json"
+        sampler_log = legacy_log if legacy_sampler_log_is_official(legacy_log) else sampler_log
     if sampler_log.exists():
         try:
             data = json.loads(sampler_log.read_text(encoding="utf-8"))
@@ -638,8 +656,13 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
 
 
 def load_today_10() -> dict[str, Any]:
-    path = OUT / "today_10_topics.csv"
-    report = REPORT_DIR / f"today_10_topics_{today_slug()}.md"
+    path = LATEST_WRITE_DIR / "today_10_topics.csv"
+    legacy_log = OUT / "content_sampler_log.json"
+    if not path.exists() and legacy_sampler_log_is_official(legacy_log):
+        path = OUT / "today_10_topics.csv"
+    report = LATEST_WRITE_DIR / f"today_10_topics_{today_slug()}.md"
+    if not report.exists():
+        report = REPORT_DIR / f"today_10_topics_{today_slug()}.md"
     if not path.exists():
         return {"count": 0, "top": "尚未生成", "report": str(report)}
     import csv

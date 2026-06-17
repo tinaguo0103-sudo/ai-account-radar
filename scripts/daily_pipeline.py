@@ -65,6 +65,7 @@ def require_feishu_env() -> None:
 def write_run_log(steps: list[dict[str, Any]], mode: str, run_id: str = "") -> Path:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     path = LOG_DIR / f"daily_pipeline_{datetime.now().strftime('%Y-%m-%d')}.json"
+    output_dir = pipeline_output_dir(run_id, mode == "write-feishu") if run_id else OUT
     payload = {
         "ok": all(step["returncode"] == 0 for step in steps),
         "mode": mode,
@@ -72,16 +73,20 @@ def write_run_log(steps: list[dict[str, Any]], mode: str, run_id: str = "") -> P
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "steps": steps,
         "outputs": {
-            "today_10_topics": str(OUT / "today_10_topics.csv"),
-            "today_10_markdown": str(OUT / "daily_reports" / f"today_10_topics_{datetime.now().strftime('%Y-%m-%d')}.md"),
+            "run_output_dir": str(output_dir),
+            "today_10_topics": str(output_dir / "today_10_topics.csv"),
+            "today_10_markdown": str(output_dir / f"today_10_topics_{datetime.now().strftime('%Y-%m-%d')}.md"),
         },
     }
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
-def today10_count() -> int:
-    path = OUT / "today_10_topics.csv"
+def pipeline_output_dir(run_id: str, write_feishu: bool) -> Path:
+    return OUT / ("runs" if write_feishu else "dry_runs") / run_id
+
+
+def today10_count(path: Path) -> int:
     if not path.exists() or not path.read_text(encoding="utf-8-sig").strip():
         return 0
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
@@ -242,7 +247,9 @@ def main() -> int:
         print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return steps[-1]["returncode"]
 
-    generated_count = today10_count()
+    output_dir = pipeline_output_dir(run_id, args.write_feishu)
+    today10_path = output_dir / "today_10_topics.csv"
+    generated_count = today10_count(today10_path)
     if generated_count == 0:
         log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
         print(json.dumps({
@@ -251,11 +258,12 @@ def main() -> int:
             "today_10_topics": 0,
             "wrote_feishu": False,
             "log": str(log_path),
-            "note": "No daily topic candidates generated. Check URL parsing failures in output/content_items.csv and output/content_breakdowns.csv.",
+            "run_output_dir": str(output_dir),
+            "note": f"No daily topic candidates generated. Check URL parsing failures in {output_dir / 'content_items.csv'} and {output_dir / 'content_breakdowns.csv'}.",
         }, ensure_ascii=False, indent=2))
         return 0
 
-    dry_run_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py")]
+    dry_run_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py"), "--input", str(today10_path)]
     steps.append(run_step("dry-run 今日候选池 Feishu write", dry_run_cmd))
     if steps[-1]["returncode"] != 0:
         log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
@@ -263,14 +271,14 @@ def main() -> int:
         return steps[-1]["returncode"]
 
     if args.write_feishu:
-        write_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py"), "--write", "--run-id", run_id]
+        write_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py"), "--input", str(today10_path), "--write", "--run-id", run_id]
         steps.append(run_step("write 今日候选池 to Feishu 04 分析与选题", write_cmd, env=step_env))
         if steps[-1]["returncode"] != 0:
             log_path = write_run_log(steps, "write-feishu", run_id)
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
 
-        verify_cmd = [py, str(ROOT / "scripts" / "verify_today10_feishu_consistency.py"), "--run-id", run_id]
+        verify_cmd = [py, str(ROOT / "scripts" / "verify_today10_feishu_consistency.py"), "--input", str(today10_path), "--run-id", run_id]
         steps.append(run_step("verify Feishu 04 今日候选池 consistency", verify_cmd, env=step_env))
         if steps[-1]["returncode"] != 0:
             log_path = write_run_log(steps, "write-feishu", run_id)
@@ -286,6 +294,8 @@ def main() -> int:
         "ok": ok,
         "mode": "write-feishu" if args.write_feishu else "dry-run",
         "run_id": run_id,
+        "run_output_dir": str(output_dir),
+        "today_10_topics": str(today10_path),
         "log": str(log_path),
         "wrote_feishu": bool(args.write_feishu and ok),
     }, ensure_ascii=False, indent=2))

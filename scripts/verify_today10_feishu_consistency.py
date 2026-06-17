@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Verify Feishu 04 今日候选池 matches local output/today_10_topics.csv."""
+"""Verify Feishu 04 今日候选池 matches a local today candidate CSV."""
 from __future__ import annotations
 
 import argparse
@@ -13,7 +13,7 @@ from typing import Any
 
 import push_to_feishu as feishu
 from feishu_table_registry import TABLES, resolve_table_id
-from push_today10_to_feishu import TODAY10, map_row, today_slug
+from push_today10_to_feishu import default_today10_path, map_row, today_slug
 
 
 TARGET_TABLE_KEY = "topic_decision"
@@ -67,8 +67,8 @@ VISIBLE_FIELDS = [
 ]
 
 
-def read_local(run_id: str) -> list[dict[str, str]]:
-    with TODAY10.open("r", encoding="utf-8-sig", newline="") as handle:
+def read_local(run_id: str, path: Path) -> list[dict[str, str]]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     date = today_slug()
     return [map_row(row, idx, date, run_id) for idx, row in enumerate(rows, start=1)]
@@ -110,7 +110,9 @@ def feishu_key(fields: dict[str, Any]) -> tuple[str, str]:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True, help="Run id that was just written to Feishu.")
+    parser.add_argument("--input", default="", help="Path to the local today candidate CSV that was written.")
     args = parser.parse_args()
+    input_path = Path(args.input) if args.input else default_today10_path()
 
     app_token = os.getenv("FEISHU_BASE_APP_TOKEN")
     if not app_token:
@@ -122,7 +124,7 @@ def main() -> int:
     if not table_id:
         raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
 
-    local_rows = read_local(args.run_id)
+    local_rows = read_local(args.run_id, input_path)
     records = all_records(token, app_token, table_id)
     run_records = [record for record in records if normalize(record.get("fields", {}).get("运行批次")) == args.run_id]
     feishu_by_key = {feishu_key(record.get("fields", {})): record for record in run_records}
@@ -177,6 +179,7 @@ def main() -> int:
     report = {
         "ok": not failures,
         "run_id": args.run_id,
+        "input": str(input_path),
         "local_rows": len(local_rows),
         "feishu_rows": len(run_records),
         "level_counts": dict(level_counts),

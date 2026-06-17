@@ -2,6 +2,7 @@
 """Regression checks for human-readable daily topic candidate quality."""
 from __future__ import annotations
 
+import argparse
 import csv
 import sys
 from pathlib import Path
@@ -10,6 +11,8 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 TODAY10 = ROOT / "output" / "today_10_topics.csv"
 DEBUG = ROOT / "output" / "debug_today10_generation.csv"
+LATEST_TODAY10 = ROOT / "output" / "latest" / "today_10_topics.csv"
+LATEST_DEBUG = ROOT / "output" / "latest" / "debug_today10_generation.csv"
 
 FORBIDDEN_VISIBLE_TERMS = [
     "自查表", "少做一小时", "这类更新", "可执行动作", "业务动作", "业务验收清单",
@@ -43,8 +46,14 @@ def intish(value: str) -> int:
 
 
 def main() -> int:
-    rows = read_csv(TODAY10)
-    debug_rows = read_csv(DEBUG)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("--input", default="", help="Path to today candidate CSV. Defaults to output/latest/today_10_topics.csv, then legacy output/today_10_topics.csv.")
+    parser.add_argument("--debug", default="", help="Path to debug CSV. Defaults to output/latest/debug_today10_generation.csv, then legacy output/debug_today10_generation.csv.")
+    args = parser.parse_args()
+    today10_path = Path(args.input) if args.input else (LATEST_TODAY10 if LATEST_TODAY10.exists() else TODAY10)
+    debug_path = Path(args.debug) if args.debug else (LATEST_DEBUG if LATEST_DEBUG.exists() else DEBUG)
+    rows = read_csv(today10_path)
+    debug_rows = read_csv(debug_path)
     failures: list[str] = []
     warnings: list[str] = []
     debug_by_fp = {row.get("内容指纹", ""): row for row in debug_rows if row.get("内容指纹", "")}
@@ -149,6 +158,8 @@ def main() -> int:
     for warning in warnings:
         print(f"WARNING: {warning}")
     print(f"Topic quality regression passed: {len(rows)} candidate rows, {len(debug_rows)} debug rows")
+    print(f"checked today10={today10_path}")
+    print(f"checked debug={debug_path}")
     return 0
 
 

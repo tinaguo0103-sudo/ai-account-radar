@@ -216,7 +216,7 @@
       "why": "回答这条内容为什么值得看、和账号定位有什么关系、从哪个业务场景切入、下一步做不做。",
       "input": "03 内容收件箱、AIHOT 分析、对标分析、人工判断。",
       "output": "05 Brief与制作、00 主控台、07 资产与复盘、后续日报。",
-      "upstream": "03 内容收件箱、today_10_topics.csv、push_today10_to_feishu.py、AIHOT 和对标内容拆解。",
+      "upstream": "03 内容收件箱、output/runs/<run_id>/today_10_topics.csv、push_today10_to_feishu.py、AIHOT 和对标内容拆解。dry-run 输出在 output/dry_runs/<run_id>/，不得覆盖最近一次正式写入结果。",
       "downstream": "05 Brief与制作、06 内容任务主表、07 资产与复盘、00 主控台。",
       "daily_usage": "daily",
       "producer": "规则分析、AI 分析、人工主编判断。",

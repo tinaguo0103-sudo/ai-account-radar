@@ -15,6 +15,7 @@ import html
 import json
 import os
 import re
+import shutil
 import sys
 import time
 from dataclasses import dataclass
@@ -32,6 +33,11 @@ from feishu_table_registry import resolve_table_id, table_name
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
 REPORT_DIR = OUT / "daily_reports"
+RUNS_DIR = OUT / "runs"
+DRY_RUNS_DIR = OUT / "dry_runs"
+LATEST_DIR = OUT / "latest"
+LATEST_WRITE_DIR = OUT / "latest_write"
+LATEST_DRY_RUN_DIR = OUT / "latest_dry_run"
 CONTENT_SOURCES = ROOT / "config" / "content_sources.yaml"
 MANUAL_ITEMS = ROOT / "data" / "manual" / "content_items.example.jsonl"
 DEFAULT_UA = (
@@ -1955,6 +1961,50 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
+def run_output_dir(run_id: str, write_feishu: bool) -> Path:
+    base = RUNS_DIR if write_feishu else DRY_RUNS_DIR
+    return base / run_id
+
+
+def copy_output_file(src: Path, dst: Path) -> None:
+    if not src.exists():
+        return
+    dst.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(src, dst)
+
+
+def replace_latest_dir(src_dir: Path, dst_dir: Path) -> None:
+    if dst_dir.exists():
+        shutil.rmtree(dst_dir)
+    dst_dir.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copytree(src_dir, dst_dir)
+
+
+def mirror_run_outputs(run_dir: Path, write_feishu: bool, report_path: Path) -> dict[str, str]:
+    """Expose stable aliases without letting dry-runs overwrite official files."""
+    replace_latest_dir(run_dir, LATEST_DIR)
+    if write_feishu:
+        replace_latest_dir(run_dir, LATEST_WRITE_DIR)
+        copy_output_file(run_dir / "content_items.csv", OUT / "content_items.csv")
+        copy_output_file(run_dir / "content_breakdowns.csv", OUT / "content_breakdowns.csv")
+        copy_output_file(run_dir / "today_10_topics.csv", OUT / "today_10_topics.csv")
+        copy_output_file(run_dir / "debug_today10_generation.csv", OUT / "debug_today10_generation.csv")
+        copy_output_file(run_dir / "debug_today10_generation.md", OUT / "debug_today10_generation.md")
+        copy_output_file(run_dir / "content_sampler_log.json", OUT / "content_sampler_log.json")
+        copy_output_file(report_path, REPORT_DIR / report_path.name)
+        return {
+            "latest": str(LATEST_DIR),
+            "latest_write": str(LATEST_WRITE_DIR),
+            "legacy_official_today_candidates": str(OUT / "today_10_topics.csv"),
+        }
+    replace_latest_dir(run_dir, LATEST_DRY_RUN_DIR)
+    return {
+        "latest": str(LATEST_DIR),
+        "latest_dry_run": str(LATEST_DRY_RUN_DIR),
+        "note": "dry-run outputs do not overwrite output/today_10_topics.csv or output/latest_write/",
+    }
+
+
 def item_row(item: ContentItem) -> dict[str, Any]:
     return {
         "来源类型": item.source_type,
@@ -2398,6 +2448,7 @@ def write_debug_top10(
     candidates: list[dict[str, Any]],
     breakdown_by_fp: dict[str, dict[str, Any]],
     item_by_fp: dict[str, ContentItem],
+    output_dir: Path,
 ) -> None:
     for topic in topics:
         item = item_by_fp.get(topic.get("内容指纹", ""))
@@ -2477,8 +2528,8 @@ def write_debug_top10(
             "内容指纹": fp,
             "内容结构": row.get("内容结构", ""),
         })
-    csv_path = OUT / "debug_today10_generation.csv"
-    md_path = OUT / "debug_today10_generation.md"
+    csv_path = output_dir / "debug_today10_generation.csv"
+    md_path = output_dir / "debug_today10_generation.md"
     write_csv(csv_path, rows)
     lines = [
         f"# 今日候选池生成诊断 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -2753,10 +2804,12 @@ def main() -> int:
     parser.add_argument("--manual", default=str(MANUAL_ITEMS))
     parser.add_argument("--write-feishu", action="store_true", help="Write all analyzed ContentItems into Feishu 03 内容收件箱 as the content ledger.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
-    parser.add_argument("--debug-top10", action="store_true", help="Write local candidate generation diagnostics to output/debug_today10_generation.*")
+    parser.add_argument("--debug-top10", action="store_true", help="Write local candidate generation diagnostics into this run's output directory.")
     args = parser.parse_args()
 
     run_id = args.run_id or default_run_id()
+    output_dir = run_output_dir(run_id, args.write_feishu)
+    output_dir.mkdir(parents=True, exist_ok=True)
     items, logs = collect_items(not args.no_fetch_aihot, Path(args.manual))
     item_rows = [item_row(item) for item in items]
     breakdown_rows = [breakdown(item) for item in items]
@@ -2772,33 +2825,43 @@ def main() -> int:
     today10 = assign_action_quotas(today10)
     today10 = apply_editorial_judgement(today10, item_by_fp)
     today10 = assign_today_priority(today10)
-    write_debug_top10(today10, candidates, breakdown_by_fp, item_by_fp)
+    write_debug_top10(today10, candidates, breakdown_by_fp, item_by_fp, output_dir)
 
-    write_csv(OUT / "content_items.csv", item_rows)
-    write_csv(OUT / "content_breakdowns.csv", breakdown_rows)
-    write_csv(OUT / "today_10_topics.csv", today10)
-    REPORT_DIR.mkdir(parents=True, exist_ok=True)
-    md_path = REPORT_DIR / f"today_10_topics_{datetime.now().strftime('%Y-%m-%d')}.md"
+    write_csv(output_dir / "content_items.csv", item_rows)
+    write_csv(output_dir / "content_breakdowns.csv", breakdown_rows)
+    write_csv(output_dir / "today_10_topics.csv", today10)
+    md_path = output_dir / f"today_10_topics_{datetime.now().strftime('%Y-%m-%d')}.md"
     write_today10_markdown(md_path, today10, logs)
     run_log = {
         "generated_at": now_iso(),
         "run_id": run_id,
+        "mode": "write-feishu" if args.write_feishu else "dry-run",
+        "output_dir": str(output_dir),
         "items": len(items),
         "breakdowns": len(breakdown_rows),
         "today_candidates": len(today10),
         "logs": logs,
         "outputs": {
-            "content_items": str(OUT / "content_items.csv"),
-            "content_breakdowns": str(OUT / "content_breakdowns.csv"),
-            "today_candidates": str(OUT / "today_10_topics.csv"),
+            "content_items": str(output_dir / "content_items.csv"),
+            "content_breakdowns": str(output_dir / "content_breakdowns.csv"),
+            "today_candidates": str(output_dir / "today_10_topics.csv"),
             "today_10_markdown": str(md_path),
-            "debug_top10_csv": str(OUT / "debug_today10_generation.csv"),
-            "debug_top10_markdown": str(OUT / "debug_today10_generation.md"),
+            "debug_top10_csv": str(output_dir / "debug_today10_generation.csv"),
+            "debug_top10_markdown": str(output_dir / "debug_today10_generation.md"),
         },
     }
     if args.write_feishu:
         run_log["feishu_content_ledger"] = write_content_ledger_to_feishu(items, run_id)
-    (OUT / "content_sampler_log.json").write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
+    log_path = output_dir / "content_sampler_log.json"
+    run_log["outputs"]["content_sampler_log"] = str(log_path)
+    run_log["mirrors"] = mirror_run_outputs(output_dir, args.write_feishu, md_path)
+    log_path.write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
+    if args.write_feishu:
+        copy_output_file(log_path, OUT / "content_sampler_log.json")
+        copy_output_file(log_path, LATEST_WRITE_DIR / "content_sampler_log.json")
+    else:
+        copy_output_file(log_path, LATEST_DRY_RUN_DIR / "content_sampler_log.json")
+        copy_output_file(log_path, LATEST_DIR / "content_sampler_log.json")
     print(json.dumps(run_log, ensure_ascii=False, indent=2))
     return 0
 

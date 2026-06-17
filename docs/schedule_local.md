@@ -12,6 +12,8 @@ python3 scripts/daily_pipeline.py
 
 dry-run 会抓取 AIHOT、读取手动内容样例、生成内容拆解和今日候选池，并打印将写入飞书的候选摘要；不会写入飞书。
 
+dry-run 输出只写入 `output/dry_runs/<run_id>/`，并同步到 `output/latest_dry_run/`。它不会覆盖最近一次正式写入飞书的 `output/latest_write/`，也不会覆盖根目录兼容文件 `output/today_10_topics.csv`。
+
 只使用手动样例、不访问 AIHOT：
 
 ```bash
@@ -32,6 +34,7 @@ python3 scripts/daily_pipeline.py --write-feishu
 写入边界：
 
 - 只写入 `04 分析与选题` 的今日候选池。
+- 正式输出写入 `output/runs/<run_id>/`，并同步到 `output/latest_write/`；根目录 `output/today_10_topics.csv` 仅作为最近一次正式写入的兼容文件。
 - 不写入被淘汰的调试候选。
 - 不新增业务表。
 - 不自动发布。

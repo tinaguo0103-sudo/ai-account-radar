@@ -23,6 +23,8 @@ from feishu_table_registry import TABLES, resolve_table_id, table_name
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
 TODAY10 = OUT / "today_10_topics.csv"
+LATEST_WRITE_TODAY10 = OUT / "latest_write" / "today_10_topics.csv"
+LEGACY_LOG = OUT / "content_sampler_log.json"
 TARGET_TABLE_KEY = "topic_decision"
 REQUIRED_FIELDS = [
     "选题标题",
@@ -90,6 +92,31 @@ def read_today10(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     return rows
+
+
+def default_today10_path() -> Path:
+    if LATEST_WRITE_TODAY10.exists():
+        return LATEST_WRITE_TODAY10
+    if TODAY10.exists() and legacy_today10_is_official():
+        return TODAY10
+    raise SystemExit(
+        "No official today candidate CSV found. Use --input with a run-specific CSV, "
+        "or run daily_pipeline.py --write-feishu to create output/latest_write/."
+    )
+
+
+def legacy_today10_is_official() -> bool:
+    if not LEGACY_LOG.exists():
+        return False
+    try:
+        data = json.loads(LEGACY_LOG.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return False
+    return (
+        data.get("mode") == "write-feishu"
+        or "feishu_content_ledger" in data
+        or bool(data.get("mirrors", {}).get("latest_write"))
+    )
 
 
 def today_slug() -> str:
@@ -346,15 +373,17 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true", help="Actually write to Feishu. Default is dry-run only.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
+    parser.add_argument("--input", default="", help="Path to the today candidate CSV for this run.")
     args = parser.parse_args()
 
     date = today_slug()
     run_id = args.run_id or default_run_id()
-    mapped = [map_row(row, idx, date, run_id) for idx, row in enumerate(read_today10(TODAY10), start=1)]
+    input_path = Path(args.input) if args.input else default_today10_path()
+    mapped = [map_row(row, idx, date, run_id) for idx, row in enumerate(read_today10(input_path), start=1)]
     dry_run_print(mapped)
 
     if not args.write:
-        print(json.dumps({"ok": True, "mode": "dry-run", "rows": len(mapped)}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": True, "mode": "dry-run", "rows": len(mapped), "input": str(input_path)}, ensure_ascii=False, indent=2))
         return 0
 
     app_token = os.getenv("FEISHU_BASE_APP_TOKEN")
@@ -406,6 +435,7 @@ def main() -> int:
         "mode": "write",
         "table": TABLES[TARGET_TABLE_KEY],
         "run_id": run_id,
+        "input": str(input_path),
         "created_fields": created_fields,
         "created_records": created_records,
         "updated_existing": updated_existing,
