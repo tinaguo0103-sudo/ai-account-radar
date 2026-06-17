@@ -83,8 +83,6 @@ def main() -> int:
             deep_terms = ["口播全文", "评论区", "镜头结构", "完整视频", "分镜流程", "交付清单"]
             if contains_any(visible_text, deep_terms):
                 failures.append(f"row {idx}: douyin shallow item overclaims deep video analysis")
-            if row.get("今日建议级别") == "今日最值得做" or row.get("推荐动作") in {"进入Brief", "本周做", "立即蹭热点"}:
-                failures.append(f"row {idx}: douyin shallow item should stay as 转写观察, not production-ready")
         if row.get("来源类型") == "公众号文章" and row.get("内容可信度") != "全文":
             if row.get("推荐动作") in {"进入Brief", "本周做"}:
                 failures.append(f"row {idx}: non-full article promoted as deep work")

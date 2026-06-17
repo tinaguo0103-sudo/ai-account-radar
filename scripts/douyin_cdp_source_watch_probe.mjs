@@ -262,12 +262,18 @@ async function probeAccount(cdp, browserClient, source, options) {
         const anchors = Array.from(document.querySelectorAll('a[href]')).map(a => a.href).join('\\n');
         const html = document.documentElement ? document.documentElement.outerHTML : '';
         const text = document.body ? document.body.innerText : '';
+        const worksStart = text.indexOf('日期筛选');
+        const worksEnd = worksStart >= 0 ? text.indexOf('广告投放', worksStart) : -1;
+        const worksText = worksStart >= 0
+          ? text.slice(worksStart, worksEnd > worksStart ? worksEnd : Math.min(text.length, worksStart + 4000))
+          : '';
         return JSON.stringify({
           title: document.title,
           url: location.href,
           anchors,
           videoAnchors,
           text: text.slice(0, 5000),
+          worksText: worksText.slice(0, 4000),
           htmlSnippet: html.slice(0, 50000),
           loginHint: /登录|验证码|验证|captcha|verify/i.test(text + html)
         });
@@ -278,14 +284,16 @@ async function probeAccount(cdp, browserClient, source, options) {
     const payload = JSON.parse(result.result.value || "{}");
     const combined = `${payload.anchors || ""}\n${payload.htmlSnippet || ""}`;
     const extracted = extractVideoLinksFromText(combined, options.videoLimit);
-    const accountWorksFailed = /服务异常|重新刷新拉取数据/.test(payload.text || "");
+    const worksText = payload.worksText || "";
+    const worksLoaded = worksText.replace(/\s/g, "").length >= 80;
+    const accountWorksFailed = /服务异常|重新刷新拉取数据/.test(payload.text || "") || !worksLoaded;
     const trustedWorks = extracted.ids.length && !accountWorksFailed;
     const status = trustedWorks ? "success" : (payload.loginHint ? "needs_login_or_verification" : "partial_untrusted");
     const failure = trustedWorks
       ? ""
       : (
           accountWorksFailed
-            ? "主页作品区加载异常，发现的视频 ID 可能来自热门推荐，不作为账号最近作品。"
+            ? "主页作品区未可信加载，发现的视频 ID 可能来自热门推荐或页脚，不作为账号最近作品。"
             : (payload.loginHint ? "页面疑似需要登录/验证后才能看到作品链接" : "页面已渲染但未发现可信作品 ID，可能仍是 JS 壳或作品列表懒加载")
         );
     return {
@@ -308,6 +316,7 @@ async function probeAccount(cdp, browserClient, source, options) {
       untrusted_video_ids: trustedWorks ? [] : extracted.ids,
       untrusted_video_links: trustedWorks ? [] : extracted.links,
       text_preview: payload.text || "",
+      works_preview: worksText,
       boundary: "低频只读；不导出cookie/token/profile；不抓评论；不下载视频。",
     };
   } catch (error) {

@@ -810,7 +810,6 @@ FORBIDDEN_VISIBLE_TERMS = [
 
 DOUYIN_SHALLOW_METHODS = {"douyin_public_router_data", "video_shallow_or_manual", "douyin_homepage_card"}
 
-
 def is_douyin_shallow_item(item: ContentItem) -> bool:
     return item.source_type == "对标视频" and item.platform == "抖音" and item.fetch_method in DOUYIN_SHALLOW_METHODS
 
@@ -1254,12 +1253,12 @@ def regular_topic_title(item: ContentItem, scene: str) -> str:
     lower = text.lower()
     if is_douyin_shallow_item(item):
         if any(k in text for k in ["Excel", "表格", "PPT", "办公"]):
-            return "抖音办公教程值得先转写：看它承诺替用户省掉哪段手工流程"
+            return "Excel别手搓背后，真正值得拆的是重复表格流程怎么交给AI"
         if any(k in text for k in ["小云雀", "短剧Agent", "AI短剧", "AI短片", "Seedance", "AI视频"]):
-            return "AI视频教程值得先转写：看它承诺的成片结果是否可交付"
+            return "小云雀这类短剧Agent，最值得看的不是生成速度而是成片流程"
         if any(k in text for k in ["Claude", "Codex", "Agent", "智能体", "Skills", "Vibe"]):
-            return "Agent教程值得先转写：看它把任务边界讲到什么程度"
-        return "抖音教程值得先转写：看它承诺解决哪个具体任务"
+            return "Claude Code教程真正能借鉴的，是它怎么把工具讲成任务流程"
+        return f"{core}，真正值得拆的是它承诺解决哪个具体任务"
     if item.source_type == "公众号文章":
         source_title = item.title or ""
         if any(k in source_title for k in ["Prompt该退环境", "Loop Engineering", "Prompt"]):
@@ -1287,10 +1286,10 @@ def regular_topic_title(item: ContentItem, scene: str) -> str:
             return "AI视频内容真正值得拆的是从想法到验收的交付链路"
         if is_douyin_shallow_item(item):
             if any(k in text for k in ["小云雀", "短剧Agent", "AI短剧", "AI短片"]):
-                return "AI短剧标题先看成片承诺，值得再转写拆流程"
+                return "小云雀短剧Agent这类产品，真正变化的是AI视频成片流程"
             if any(k in text for k in ["一镜到底", "爆款视频", "视频密码", "教程"]):
-                return "抖音视频教程先看结果承诺，值得再转写拆结构"
-            return f"{core}，先判断任务场景，值得再转写深拆"
+                return "AI视频教程的价值，不在技巧清单，而在它承诺什么成片结果"
+            return f"{core}，先看它把AI视频任务讲成了什么交付结果"
         return f"{core}，AI视频真正该拆的是Brief、分镜和验收"
     if scene == "非技术Agent处理重复业务任务":
         return f"{core}，先看它能不能说清任务边界"
@@ -1392,10 +1391,10 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
             return "口播转写后，先把钩子、结构和交付承诺拆成自己的流程"
         if is_douyin_shallow_item(item):
             if any(k in text for k in ["小云雀", "短剧Agent", "AI短剧"]):
-                return "AI短剧工具先看成片承诺，值得再转写拆流程"
+                return "小云雀短剧Agent这类产品，真正变化的是AI视频成片流程"
             if any(k in text for k in ["一镜到底", "爆款视频", "视频密码"]):
-                return "AI爆款视频教程先看结果承诺，值得再转写拆结构"
-            return f"{core}先判断任务场景，值得再转写深拆"
+                return "AI爆款视频教程的价值，不在技巧清单，而在成片结果承诺"
+            return f"{core}，先看它把任务讲成了什么交付结果"
         return "AI视频选题别只看成片，要拆它怎么承诺交付结果"
 
     if "cloudflare radar" in lower or ("cloudflare" in lower and "radar" in lower):
@@ -1589,8 +1588,6 @@ def persona_match_score(topic: dict[str, Any], item: ContentItem) -> tuple[int, 
         score += 10
     if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
         score += 10
-    if is_douyin_shallow_item(item):
-        score -= 25
     score = max(0, min(100, score))
     return score, hits
 
@@ -1623,8 +1620,6 @@ def editor_visible_note(topic: dict[str, Any], item: ContentItem, suggested: str
         if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
             return "这条有口播转写支撑，可以吸收结构和交付逻辑，但标题必须转成自己的业务语言。"
         return "这条能体现我的内容现场和项目判断，适合进入制作。"
-    if is_douyin_shallow_item(item):
-        return "抖音浅层解析只有标题和文案，适合判断是否值得转写，不适合直接做深拆。"
     if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
         return "只有摘要，能看出方向，但缺全文细节，先暂存。"
     if support in {"不足", "浅层"}:
@@ -1646,7 +1641,7 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     support = support_level(topic, item)
     news_only = is_news_only(topic, item, persona_score)
     base = int(topic.get("推荐分", 0) or 0)
-    credibility_bonus = {"全文": 12, "抖音转写": 10, "AIHOT摘要": 5, "摘要": 0, "抖音浅层": -20}.get(credibility, 0)
+    credibility_bonus = {"全文": 12, "抖音转写": 10, "AIHOT摘要": 5, "摘要": 0, "抖音浅层": 0}.get(credibility, 0)
     action_bonus = 5 if topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"} else -5
     editor_score = max(0, min(100, round(base * 0.45 + title_score * 0.2 + persona_score * 0.25 + credibility_bonus + action_bonus)))
     not_recommend: list[str] = []
@@ -1664,8 +1659,6 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
         not_recommend.append("解析文本支撑不足")
     if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
         not_recommend.append("公众号不是全文解析，不能当作深度拆解推进")
-    if credibility == "抖音浅层":
-        not_recommend.append("只有标题/文案/封面等浅层信息，只能判断是否值得转写，不能直接下深结论")
     if title_score < 65:
         not_recommend.append("标题 AI 味或抽象词偏重")
     if editor_score < 68:
@@ -1679,9 +1672,6 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     suggested = "是" if editor_score >= 78 and title_score >= 72 and persona_score >= 60 and ai_risk != "高" and news_only == "否" else ("暂存观察" if editor_score >= 55 else "否")
     if topic.get("推荐动作") == "暂存观察":
         suggested = "暂存观察"
-    if is_douyin_shallow_item(item):
-        suggested = "暂存观察"
-        topic["推荐动作"] = "暂存观察"
     if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
         suggested = "暂存观察"
     if suggested != "是" and topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"}:
@@ -2738,8 +2728,6 @@ def include_in_candidate_pool(row: dict[str, Any]) -> bool:
     if title_score < 65 and row.get("来源类型") != "公众号文章":
         return False
     if support in {"不足"}:
-        return False
-    if row.get("来源类型") == "对标视频" and support == "抖音浅层" and editor_score < 75:
         return False
     return True
 
