@@ -699,31 +699,31 @@ def asset_for_scene(scene: str) -> str:
 
 def old_pain(scene: str) -> str:
     return {
-        "内容团队选题到Brief流程": "追热点和看对标很多，但选题缺判断，Brief缺业务场景，发布后难复盘。",
-        "AI导演工作流与视频交付": "只会写prompt和展示画面，缺Brief、分镜、修改逻辑和验收标准。",
-        "非技术Agent处理重复业务任务": "把Agent当聊天机器人，任务边界、输入输出和验收标准不清。",
-        "汽车与内容营销流程": "AI素材、卖点表达和带货内容进入投放前，缺少品牌一致性、真实性、合规性和风险审核。",
-        "项目复盘与能力产品化": "只记录动作和情绪，没有把能力沉淀成模板、案例和服务入口。",
+        "内容团队选题到Brief流程": "我现在容易把热点、对标内容和个人判断分开处理，最后选题能写，但缺少业务场景、判断依据和可复盘模板。",
+        "AI导演工作流与视频交付": "我容易只看AI视频工具效果，真正进入交付时还要补Brief、分镜、素材修改、成片验收和客户能看懂的结果说明。",
+        "非技术Agent处理重复业务任务": "我会看到很多Agent/模型更新，但如果不拆成自己的输入、步骤、输出、验收和异常处理，就很难进入真实生产环境。",
+        "汽车与内容营销流程": "AI素材、卖点表达和带货内容进入投放前，如果没有真实性、品牌一致性和合规审核，就会变成增长风险。",
+        "项目复盘与能力产品化": "我做过的AI项目如果只停留在过程记录，就不能沉淀成案例、模板、服务入口或下一次可复用的交付方法。",
     }[scene]
 
 
 def ai_entry(scene: str) -> str:
     return {
-        "内容团队选题到Brief流程": "用AI做资料筛选、内容拆解、选题评分和Brief提纲，但最终判断由人完成。",
-        "AI导演工作流与视频交付": "AI生成素材，人负责Brief、分镜、节奏、修改和验收。",
-        "非技术Agent处理重复业务任务": "把重复任务拆成输入、步骤、输出、验收和异常处理，再交给Agent执行可重复部分。",
+        "内容团队选题到Brief流程": "用AI先做资料归并、对标拆解和初筛，我再补业务现场判断，把一条内容推进成Brief而不是停在资讯摘要。",
+        "AI导演工作流与视频交付": "让AI承担素材生成和版本尝试，我保留Brief、分镜取舍、节奏判断、修改意见和最终验收。",
+        "非技术Agent处理重复业务任务": "先把我自己的任务拆成可交接说明，再让Agent处理资料整理、初稿生成、检查清单和异常记录。",
         "汽车与内容营销流程": "用AI辅助识别素材风险、提炼产品卖点、检查品牌调性和生成投放前审核清单，但最终由人确认。",
-        "项目复盘与能力产品化": "用AI整理项目过程、失败点、可复用模板和服务入口。",
+        "项目复盘与能力产品化": "用AI整理项目过程、失败点、可复用模板和服务入口，再由我判断哪些能变成产品化资产。",
     }[scene]
 
 
 def show_result(scene: str) -> str:
     return {
-        "内容团队选题到Brief流程": "旧流程/新流程对比表 + 可领取Brief模板",
-        "AI导演工作流与视频交付": "一页Brief + 三个镜头节点 + 修改前后对比",
-        "非技术Agent处理重复业务任务": "任务拆解表 + Agent输入输出样例 + 验收清单",
+        "内容团队选题到Brief流程": "我的旧选题流程/新选题流程对比 + 一页Brief样例",
+        "AI导演工作流与视频交付": "我的一页Brief + 3个分镜节点 + 修改前后验收截图",
+        "非技术Agent处理重复业务任务": "我的任务拆解表 + Agent输入输出样例 + 验收标准",
         "汽车与内容营销流程": "AI素材审核流程图 + 汽车/品牌内容投放前风险清单",
-        "项目复盘与能力产品化": "项目复盘卡 + 能力产品化清单",
+        "项目复盘与能力产品化": "我的项目复盘卡 + 能力产品化清单",
     }[scene]
 
 
@@ -839,9 +839,10 @@ def extract_event_anchor(item: ContentItem) -> str:
     lower = text.lower()
     title_rules = [
         ("AI短片工作流", lambda s: "小云雀" in title_text or "ai短片" in s or "短剧agent" in s or "ai短剧" in s),
+        ("小米 MiMo Claw", lambda s: "mimo claw" in s or ("小米" in title_text and "Claw" in title_text)),
         ("Sensor Tower / ChatGPT月活", lambda s: "sensor tower" in s or ("chatgpt" in s and ("月活" in s or "10亿" in s or "10 亿" in s))),
         ("Anthropic AI恶意账户分析", lambda s: "anthropic" in s and ("恶意账户" in s or "malicious" in s or "abuse" in s)),
-        ("OpenClaw 2026.6.1", lambda s: "openclaw" in s),
+        ("OpenClaw 2026.6.1", lambda s: "openclaw" in s and "mimo claw" not in s),
         ("Cloudflare AI Gateway", lambda s: "cloudflare ai gateway" in s),
         ("Cloudflare Radar", lambda s: "cloudflare radar" in s),
         ("Ideogram v4.0", lambda s: "ideogram" in s),
@@ -864,9 +865,10 @@ def extract_event_anchor(item: ContentItem) -> str:
             return label
     body_rules = [
         ("AI短片工作流", lambda s: "小云雀" in text or "ai短片" in s or "短剧agent" in s or "ai短剧" in s),
+        ("小米 MiMo Claw", lambda s: "mimo claw" in s or ("小米" in text and "Claw" in text)),
         ("Sensor Tower / ChatGPT月活", lambda s: "sensor tower" in s or ("chatgpt" in s and ("月活" in s or "10亿" in s or "10 亿" in s))),
         ("Anthropic AI恶意账户分析", lambda s: "anthropic" in s and ("恶意账户" in s or "malicious" in s or "abuse" in s)),
-        ("OpenClaw 2026.6.1", lambda s: "openclaw" in s),
+        ("OpenClaw 2026.6.1", lambda s: "openclaw" in s and "mimo claw" not in s),
         ("Cloudflare AI Gateway", lambda s: "cloudflare ai gateway" in s),
         ("Cloudflare Radar", lambda s: "cloudflare radar" in s),
         ("Ideogram v4.0", lambda s: "ideogram" in s),
@@ -926,6 +928,54 @@ def compose_topic_title(event_anchor: str, business_change: str, audience: str, 
     if constraint == "asset":
         return f"{event_anchor}提醒{audience}，要把{business_change}沉淀成一张检查表"
     return f"{event_anchor}正在改的不是工具名，而是{audience}的{business_change}"
+
+
+def own_scenario_angle(topic: dict[str, Any], item: ContentItem) -> str:
+    """Explain why this topic belongs to this account's lived workflow."""
+    text = item_text(item)
+    lower = text.lower()
+    title_lower = (item.title or "").lower()
+    title = item.title or topic.get("来源内容", "")
+    if "mimo claw" in title_lower or ("小米" in title and "Claw" in title) or ("金山办公" in title):
+        return "我会拿它测试自己的文档生产场景：一堆资料、表格和旧文档，能不能从整理、提纲到Brief初稿少跑几轮。"
+    if "claude code" in lower and any(k in text for k in ["原则", "团队", "工作方式", "项目"]):
+        return "我会把它拿来改自己的AI项目生产环境：不是学团队口号，而是把需求确认、阶段交付、失败回滚和结果验收写成一张项目检查表。"
+    if any(k in title_lower for k in ["minimax", "1m token", "long context"]) or any(k in title for k in ["100万", "1M token", "长上下文", "200万", "2M token"]):
+        return "我会拿它测试资料到Brief的真实痛点：以前要分多轮整理资料、抽取观点、对齐结构、生成Brief和复核，现在看能不能把前四步压成一次长上下文任务。"
+    if any(k in title for k in ["AI失调", "公开聊天数据", "失调"]):
+        return "这类公共议题我先不硬做成选题；除非能补到和我账号相关的AI系统安全、内容风控或项目异常处理案例。"
+    if any(k in text for k in ["小云雀", "短剧Agent", "AI短剧", "AI短片", "Seedance"]):
+        return "我会把它拆成AI导演交付测试：不是复述工具多强，而是看从剧本、资产、分镜到成片，哪些环节能交给AI，哪些仍要由导演验收。"
+    if any(k in text for k in ["Excel", "表格", "办公", "PPT"]):
+        return "我会把它放进自己的运营表格场景：先选一个重复表格任务，看AI能不能从原始资料到可用表格一次跑通，并留下人工复核点。"
+    if any(k in lower for k in ["cloudflare", "radar"]) or any(k in text for k in ["流量", "增长", "热度"]):
+        return "我会把它用在账号选题复盘：不只看热度，而是判断一个AI工具或话题到底是真需求、爬虫噪音，还是平台虚火。"
+    if any(k in text for k in ["品牌", "素材", "审核", "带货", "AI假人", "Shein"]):
+        return "我会把它放进品牌内容上线前的风控场景：AI生成素材不是能不能做，而是投放前谁检查真实性、风险承诺和品牌一致性。"
+    if item.source_type == "公众号文章":
+        return "我会先拆它的判断结构，再转成自己的选题方法：它怎么筛信息、怎么建立信任、怎么证明自己不是搬运资讯。"
+    if item.source_type == "对标视频":
+        return "我会先吸收它的选题承诺和结构，再转成自己的业务语言：不露出对标账号，也不照搬表达。"
+    return f"我会先把《{short_title(title)}》放进一个真实业务场景，判断它能不能改造我的内容生产、AI导演或Agent任务流程。"
+
+
+def focus_point(topic: dict[str, Any], item: ContentItem) -> str:
+    scene = topic.get("业务场景", "")
+    text = item_text(item)
+    lower = text.lower()
+    if "claude code" in lower and any(k in text for k in ["原则", "团队", "工作方式", "项目"]):
+        return "重点体现：我如何把别人团队的工作原则，改成自己可执行的AI项目验收习惯。"
+    if any(k in lower for k in ["minimax", "long context"]) or any(k in text for k in ["长上下文", "100万", "200万", "1M token", "2M token"]):
+        return "重点体现：模型能力升级以后，我具体减少了哪几步资料处理和Brief整理。"
+    if "AI导演" in scene or any(k in text for k in ["小云雀", "短剧", "AI视频"]):
+        return "重点体现：AI视频不是工具演示，而是从任务承诺到成片验收的交付链路。"
+    if "Agent" in scene or any(k in text for k in ["Agent", "智能体", "Codex", "Claude Code"]):
+        return "重点体现：非技术人如何定义任务边界、输入输出和验收标准。"
+    if "内容团队" in scene or "Brief" in scene:
+        return "重点体现：如何从热点和对标内容里筛出能进入Brief的真实选题。"
+    if "品牌" in scene or "营销" in scene:
+        return "重点体现：AI内容上线前的品牌信任、素材风险和人工复核。"
+    return "重点体现：这条内容如何被我拿来改造一个真实流程，而不是复述资讯。"
 
 
 def is_agent_task_content(text: str) -> bool:
@@ -1033,6 +1083,22 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
             "影响对象": "个人Agent、设备端自动化、非技术任务流、隐私和验收标准。",
             "标题": compose_topic_title(event, infer_business_change(item, scene), "非技术团队", "asset"),
             "标题规则": "local_first_agent_validation",
+        }
+    if "mimo claw" in lower or ("小米" in text and "Claw" in text) or "金山办公" in text:
+        return {
+            "角度类型": "Agent落地",
+            "我的蹭热点角度": "MiMo Claw接到金山办公这件事，适合拿来测试我的文档生产流程：资料整理、提纲、Brief初稿和人工复核能不能少跑几轮。",
+            "影响对象": "文档生产、办公资料整理、内容Brief、企业知识库和非技术团队办公Agent。",
+            "标题": "小米 MiMo Claw接入金山办公后，我会先测资料到Brief能不能少跑几轮",
+            "标题规则": "mimo_claw_office_brief_workflow",
+        }
+    if any(k in text for k in ["AI失调", "公开聊天数据", "失调"]) and not any(k in text for k in ["品牌", "内容安全", "风控", "项目复盘"]):
+        return {
+            "角度类型": "暂存观察",
+            "我的蹭热点角度": "公开聊天数据预测AI失调有研究价值，但现在还缺少能落到我账号的业务现场：内容风控、Agent异常处理或项目验收案例。",
+            "影响对象": "暂存：需要补到AI系统安全、内容风控或项目异常处理场景，才适合转成选题。",
+            "标题": "公开聊天数据预测AI失调可以观察，先别硬改成工作流选题",
+            "标题规则": "ai_misalignment_observation",
         }
     if any(k in lower for k in ["ppisp", "photometric"]) or any(k in text for k in ["3D重建", "光度变化"]):
         return {
@@ -1179,9 +1245,9 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
     if any(k in lower for k in ["minimax", "1m token", "long context"]) or any(k in text for k in ["100万", "1M token", "长上下文", "解码加速"]):
         return {
             "角度类型": "Agent落地",
-            "我的蹭热点角度": "长上下文和解码加速的价值，不是炫参数，而是让资料整理、验收和多步Agent任务更可能一次跑完。",
+            "我的蹭热点角度": "我会拿长上下文升级来改造资料到Brief的流程：以前分几轮整理、提炼、结构化和复核，现在看能不能压成一次长资料任务。",
             "影响对象": "Agent工作流、长文档处理、项目资料整理、内容复盘和非技术任务验收。",
-            "标题": f"{event}后，先看长资料任务能不能交接给Agent",
+            "标题": f"{event}后，我会先测资料整理到Brief能不能少跑几轮",
             "标题规则": "long_context_agent_workflow",
         }
     if any(k in text for k in ["黄仁勋", "纳德拉", "人物观点", "人物访谈", "共议"]):
@@ -1274,7 +1340,7 @@ def regular_topic_title(item: ContentItem, scene: str) -> str:
         if any(k in source_title for k in ["内部分享", "内容创作方法论", "内容创作", "三年来总结"]):
             return "AI内容判断力不是靠刷资讯，而是靠一套筛选选题的方法"
         if "claude code" in lower and any(k in text for k in ["原则", "团队", "工作方式", "harness", "验收"]):
-            return "Claude Code团队的5条原则，最值得学的是项目交付习惯"
+            return "Claude Code团队原则，我会改成自己的AI项目验收习惯"
         if any(k in text for k in ["方法论", "内容创作", "内部分享", "团队"]):
             return f"{core}，内容团队最该学的是判断流程而不是观点金句"
         return f"{core}，怎么拆成我的业务现场选题和Brief"
@@ -1413,8 +1479,12 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
         return "AI假人带货翻车后，品牌内容团队最该补的是素材审核流程"
     if "llm-wiki" in lower or "karpathy" in lower:
         return "Karpathy把AI知识做成llm-wiki后，内容团队也该有自己的资料入口"
+    if "mimo claw" in lower or ("小米" in text and "Claw" in text) or "金山办公" in text:
+        return "小米 MiMo Claw接入金山办公后，我会先测资料到Brief能不能少跑几轮"
+    if any(k in text for k in ["AI失调", "公开聊天数据", "失调"]):
+        return "公开聊天数据预测AI失调可以观察，先别硬改成工作流选题"
     if "minimax" in lower or "长上下文" in text or "100万" in text:
-        return "长上下文继续升级后，AI助理最该先解决资料整理这件事"
+        return f"{event_short}后，我会先测资料整理到Brief能不能少跑几轮"
     if "nemotron" in lower and any(k in text for k in ["种子", "问答", "合成"]):
         return "Nemotron开始合成任务数据后，普通团队也该重看自己的训练材料"
     if "nemotron" in lower and ("ultra" in lower or "nvidia" in lower):
@@ -1501,6 +1571,11 @@ PERSONA_TERMS = [
     "素材", "转化", "服务", "工具链", "自动化",
 ]
 NEWS_ONLY_TERMS = ["发布", "更新", "开源", "上线", "融资", "论文", "排行榜", "版本", "指南"]
+SCENE_GROUNDING_TERMS = [
+    "我", "自己的", "生产环境", "真实", "场景", "痛点", "资料", "Brief",
+    "验收", "交付", "复盘", "表格", "素材", "上线前", "客户", "项目",
+    "少跑几轮", "流程", "检查表", "清单", "任务",
+]
 
 
 def content_credibility(item: ContentItem) -> str:
@@ -1530,10 +1605,29 @@ def real_user_question(topic: dict[str, Any], item: ContentItem) -> str:
 
 def why_today(topic: dict[str, Any], item: ContentItem) -> str:
     if item.source_type == "AIHOT热点":
-        return "今天仍在热点窗口，适合借势讲一个具体影响，而不是复述新闻。"
+        return f"今天仍在热点窗口，但要落到我自己的使用场景：{own_scenario_angle(topic, item)}"
     if item.reused_url == "是":
-        return "这是已投喂内容复用测试，适合和当天热点一起比较选题质量。"
-    return "来源内容已进入本轮候选，适合判断是否值得拆成自己的表达。"
+        return f"这是已投喂内容复用测试，适合验证它能否进入我的内容生产链路：{focus_point(topic, item)}"
+    return f"来源内容已进入本轮候选，关键不是复述它，而是判断能否改造我的具体流程：{focus_point(topic, item)}"
+
+
+def scenario_grounding_score(topic: dict[str, Any], item: ContentItem) -> int:
+    text = " ".join([
+        topic.get("可发布标题", ""),
+        topic.get("我的蹭热点角度", ""),
+        topic.get("业务场景", ""),
+        topic.get("旧流程痛点", ""),
+        topic.get("AI介入点", ""),
+        topic.get("可展示结果", ""),
+        topic.get("推荐理由", ""),
+        item.title,
+        item.body_snippet[:300],
+    ])
+    hits = list(dict.fromkeys([term for term in SCENE_GROUNDING_TERMS if term in text]))
+    score = min(100, 25 + len(hits) * 9)
+    if any(term in text for term in ["我会", "我的", "自己"]):
+        score += 12
+    return max(0, min(100, score))
 
 
 def title_lint(title: str, item: ContentItem) -> tuple[int, str, list[str]]:
@@ -1612,23 +1706,19 @@ def support_level(topic: dict[str, Any], item: ContentItem) -> str:
 
 
 def editor_visible_note(topic: dict[str, Any], item: ContentItem, suggested: str, not_recommend: list[str], persona_score: int, support: str) -> str:
+    own_angle = own_scenario_angle(topic, item)
+    focus = focus_point(topic, item)
     if suggested == "是":
-        if item.source_type == "公众号文章" and is_full_text_item(item) == "是":
-            return "这条和账号人设强相关，且有全文支撑，可以拆成一篇对标学习。"
-        if item.source_type == "AIHOT热点":
-            return "这条有热点窗口，也能接到我的AI业务系统视角，适合今天推进。"
-        if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
-            return "这条有口播转写支撑，可以吸收结构和交付逻辑，但标题必须转成自己的业务语言。"
-        return "这条能体现我的内容现场和项目判断，适合进入制作。"
+        return f"{own_angle} {focus}"
     if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
-        return "只有摘要，能看出方向，但缺全文细节，先暂存。"
+        return f"只有摘要，先不深做；但可以先看方向是否贴近我的业务现场。{focus}"
     if support in {"不足", "浅层"}:
-        return "信息支撑还不够，先暂存，等补到案例、全文或口播再判断。"
+        return f"信息支撑还不够，先暂存；如果要推进，需要补一个我自己的真实场景或案例。{focus}"
     if persona_score < 60:
-        return "和当前账号人设关联还不够强，先暂存。"
+        return "和当前账号人设关联还不够强，先暂存；除非能补出我自己的业务现场使用方式。"
     if not_recommend:
         return not_recommend[0]
-    return "能看出方向，但今天还缺一个足够具体的切入点，先暂存。"
+    return f"能看出方向，但今天还缺一个足够具体的切入点。{focus}"
 
 
 def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, Any]:
@@ -1638,12 +1728,13 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     template_hits = list(dict.fromkeys(forbidden_title_hits(combined_visible)))
     title_score, ai_risk, lint_reasons = title_lint(title, item)
     persona_score, persona_hits = persona_match_score(topic, item)
+    grounding_score = scenario_grounding_score(topic, item)
     support = support_level(topic, item)
     news_only = is_news_only(topic, item, persona_score)
     base = int(topic.get("推荐分", 0) or 0)
     credibility_bonus = {"全文": 12, "抖音转写": 10, "AIHOT摘要": 5, "摘要": 0, "抖音浅层": 0}.get(credibility, 0)
     action_bonus = 5 if topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"} else -5
-    editor_score = max(0, min(100, round(base * 0.45 + title_score * 0.2 + persona_score * 0.25 + credibility_bonus + action_bonus)))
+    editor_score = max(0, min(100, round(base * 0.36 + title_score * 0.18 + persona_score * 0.22 + grounding_score * 0.14 + credibility_bonus + action_bonus)))
     not_recommend: list[str] = []
     if template_hits:
         not_recommend.append(f"用户可见字段命中模板词：{','.join(template_hits)}")
@@ -1653,6 +1744,8 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
         not_recommend.append("没有足够自然、具体、有人味的可发布标题")
     if persona_score < 60:
         not_recommend.append("和AI内容系统/营销/导演/项目现场的人设关联弱")
+    if grounding_score < 62:
+        not_recommend.append("还没落到我的具体业务现场或工作生活痛点")
     if news_only == "是":
         not_recommend.append("目前更像资讯搬运，缺少我的项目现场角度")
     if support == "不足":
@@ -1668,8 +1761,8 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     if topic.get("推荐动作") == "暂存观察":
         not_recommend.append("当前推荐动作已是暂存观察，先不生成可发布标题")
 
-    editor_score = max(0, min(100, round(base * 0.45 + title_score * 0.2 + persona_score * 0.25 + credibility_bonus + action_bonus)))
-    suggested = "是" if editor_score >= 78 and title_score >= 72 and persona_score >= 60 and ai_risk != "高" and news_only == "否" else ("暂存观察" if editor_score >= 55 else "否")
+    editor_score = max(0, min(100, round(base * 0.36 + title_score * 0.18 + persona_score * 0.22 + grounding_score * 0.14 + credibility_bonus + action_bonus)))
+    suggested = "是" if editor_score >= 78 and title_score >= 72 and persona_score >= 60 and grounding_score >= 62 and ai_risk != "高" and news_only == "否" else ("暂存观察" if editor_score >= 55 else "否")
     if topic.get("推荐动作") == "暂存观察":
         suggested = "暂存观察"
     if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
@@ -1884,6 +1977,8 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
             "可展示结果": "视觉物料验收表 + 修改反馈示例",
             "可沉淀资产": "内容视觉物料验收清单",
         }
+    own_angle = own_scenario_angle({"业务场景": profile["业务场景"]}, item)
+    focus = focus_point({"业务场景": profile["业务场景"]}, item)
     return {
         "我的选题标题": topic_title,
         "内部切入角度": topic_title,
@@ -1919,14 +2014,14 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "热点切入方式": row["热点切入方式"],
         "这个热点为什么值得蹭": row["这个热点为什么值得蹭"],
         "普通AI资讯号会怎么讲": row["普通AI资讯号会怎么讲"],
-        "我的蹭热点角度": row["我的蹭热点角度"],
+        "我的蹭热点角度": own_angle,
         "影响对象": row["影响对象"],
         "业务场景": profile["业务场景"],
         "旧流程痛点": profile["旧流程痛点"],
         "AI介入点": profile["AI介入点"],
         "可展示结果": profile["可展示结果"],
         "可沉淀资产": profile["可沉淀资产"],
-        "推荐理由": f"{row['标题/前三秒钩子']}；{row['专业性证明方式']}；适合转成{scene}。",
+        "推荐理由": f"{own_angle} {focus}",
         "推荐动作": row["推荐动作"],
         "推荐分": row["推荐分"],
         "内容指纹": row["内容指纹"],
@@ -2637,8 +2732,12 @@ def similar_asset_key(topic: dict[str, Any]) -> str:
 
 def topic_theme_key(topic: dict[str, Any]) -> tuple[str, str, str, str]:
     if topic.get("来源类型") != "AIHOT热点":
-        source_title = re.sub(r"\s+", "", topic.get("来源内容", "")).lower()
-        return ("source", source_title[:80], topic.get("来源类型", ""), "")
+        return (
+            topic["业务场景"],
+            topic["热点切入方式"],
+            similar_asset_key(topic),
+            topic.get("标题生成规则", ""),
+        )
     return (
         topic["业务场景"],
         topic["热点切入方式"],
@@ -2658,11 +2757,10 @@ def merge_same_theme(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
             continue
         kept = by_key[key]
         related = [part for part in kept.get("相关来源", "").split("；") if part]
-        if topic["热点切入方式"] in {"内容团队变化", "AI导演流程", "品牌风控/信任危机"}:
-            related_source = f"{topic['来源类型']}：{topic['来源内容']}"
-            kept_source = f"{kept['来源类型']}：{kept['来源内容']}"
-            if related_source != kept_source:
-                related.append(related_source)
+        related_source = f"{topic['来源类型']}：{topic['来源内容']}"
+        kept_source = f"{kept['来源类型']}：{kept['来源内容']}"
+        if related_source != kept_source:
+            related.append(related_source)
         kept["相关来源"] = "；".join(dict.fromkeys(related))
     return merged
 
