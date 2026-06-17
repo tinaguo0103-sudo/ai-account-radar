@@ -153,7 +153,7 @@ DOUYIN_ASR_MAX_COST_YUAN=<如需硬成本上限再填写>
 python3 scripts/start_douyin_cdp_chrome.py --port 9333
 ```
 
-这条命令默认使用 `hidden` 模式，尽量不把专用 Chrome 顶到前台。登录过期、验证码或扫码时再临时前台打开：
+这条命令默认使用 `hidden` 模式，尽量不把专用 Chrome 顶到前台。主页采样脚本会使用后台 target 打开博主页，并尽量最小化专用 Chrome，避免每个主页采样时反复弹窗。登录过期、验证码或扫码时再临时前台打开：
 
 ```bash
 python3 scripts/start_douyin_cdp_chrome.py --port 9333 --foreground

@@ -52,7 +52,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 当前可用的抖音主页轻量探针是 `scripts/douyin_source_watch_probe.py`。它只输出本地报告和 ContentItem，不写飞书、不进 `03/04`、不接默认 `daily_pipeline.py`。如果公开主页无法解析最近作品，下一步再进入 MediaCrawler + 抖音小号登录态的 P1 验证。
 
-另有 `scripts/douyin_cdp_source_watch_probe.mjs` 用于本机 Chrome 登录态复验。它通过 Chrome DevTools Protocol 低频打开主对标抖音主页，只在发现可信账号作品 ID 时才复用单条视频 resolver；如果页面返回服务异常或混入热门推荐，脚本会标记为 `needs_login_or_verification` / `partial_untrusted`，不输出 ContentItem。为避免打扰日常工作，先用 `scripts/start_douyin_cdp_chrome.py --port 9333` 以默认 `hidden` 模式后台启动专用 Chrome；需要登录/验证码时再用 `--foreground` 前台打开。
+另有 `scripts/douyin_cdp_source_watch_probe.mjs` 用于本机 Chrome 登录态复验。它通过 Chrome DevTools Protocol 低频打开主对标抖音主页，只在发现可信账号作品 ID 时才复用单条视频 resolver；如果页面返回服务异常或混入热门推荐，脚本会标记为 `needs_login_or_verification` / `partial_untrusted`，不输出 ContentItem。为避免打扰日常工作，先用 `scripts/start_douyin_cdp_chrome.py --port 9333` 以默认 `hidden` 模式后台启动专用 Chrome；采样时脚本使用后台 target 并尽量最小化专用 Chrome，需要登录/验证码时再用 `--foreground` 前台打开。
 
 抖音转写也不是默认流程。先运行 `scripts/douyin_transcript_candidates.py`，从主页采样结果里筛出值得转写的 1-2 条；只有显式执行 `scripts/douyin_video_transcribe.py --raw-payload <raw.json> --model paraformer-v2 --confirm-free-quota --yes` 才会调用百炼 ASR。已经转写过的视频可用 `--transcript-file` 重新包装成 ContentItem，再通过 `daily_pipeline.py --include-douyin-transcripts` 进入候选池，不重复消耗额度。
 

@@ -58,13 +58,6 @@ async function getJson(url) {
   return response.json();
 }
 
-async function createTab(cdp, url) {
-  const endpoint = `${cdp.replace(/\/$/, "")}/json/new?${encodeURIComponent(url)}`;
-  const response = await fetch(endpoint, { method: "PUT" });
-  if (!response.ok) throw new Error(`Cannot create Chrome tab: HTTP ${response.status}`);
-  return response.json();
-}
-
 class CdpClient {
   constructor(wsUrl) {
     this.wsUrl = wsUrl;
@@ -116,6 +109,44 @@ class CdpClient {
     } catch {
       // ignore close failures
     }
+  }
+}
+
+async function waitForTargetWebSocket(cdp, targetId) {
+  const base = cdp.replace(/\/$/, "");
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    const targets = await getJson(`${base}/json/list`);
+    const target = targets.find((item) => item.id === targetId);
+    if (target?.webSocketDebuggerUrl) return target;
+    await new Promise((resolve) => setTimeout(resolve, 250));
+  }
+  throw new Error(`Cannot find background Chrome target websocket: ${targetId}`);
+}
+
+async function createBackgroundTab(cdp, browserClient) {
+  const result = await browserClient.send("Target.createTarget", {
+    url: "about:blank",
+    background: true,
+  });
+  const targetId = result.targetId;
+  if (!targetId) throw new Error(`Chrome did not return targetId: ${JSON.stringify(result)}`);
+  const target = await waitForTargetWebSocket(cdp, targetId);
+  await minimizeTargetWindow(browserClient, targetId);
+  return target;
+}
+
+async function minimizeTargetWindow(browserClient, targetId) {
+  try {
+    const result = await browserClient.send("Browser.getWindowForTarget", { targetId });
+    if (result.windowId) {
+      await browserClient.send("Browser.setWindowBounds", {
+        windowId: result.windowId,
+        bounds: { windowState: "minimized" },
+      });
+    }
+  } catch {
+    // Some Chrome targets do not expose a window. Background target creation is
+    // still the main focus-avoidance mechanism, so minimizing is best-effort.
   }
 }
 
@@ -182,7 +213,7 @@ function buildFallbackContentItem(row, link, index) {
   };
 }
 
-async function probeAccount(cdp, source, options) {
+async function probeAccount(cdp, browserClient, source, options) {
   const homepage = source.url || source.homepage_url || "";
   if (!homepage) {
     return {
@@ -197,12 +228,13 @@ async function probeAccount(cdp, source, options) {
   let tab;
   let client;
   try {
-    tab = await createTab(cdp, homepage);
+    tab = await createBackgroundTab(cdp, browserClient);
     client = new CdpClient(tab.webSocketDebuggerUrl);
     await client.open();
     await client.send("Runtime.enable");
     await client.send("Page.enable");
     await client.send("Page.navigate", { url: homepage });
+    await minimizeTargetWindow(browserClient, tab.id);
     await new Promise((resolve) => setTimeout(resolve, options.waitMs));
     const result = await client.send("Runtime.evaluate", {
       expression: `(() => {
@@ -283,7 +315,7 @@ async function probeAccount(cdp, source, options) {
     client?.close();
     if (tab?.id) {
       try {
-        await fetch(`${cdp.replace(/\/$/, "")}/json/close/${tab.id}`);
+        await browserClient.send("Target.closeTarget", { targetId: tab.id });
       } catch {
         // ignore close failures
       }
@@ -313,8 +345,14 @@ async function main() {
 
   const sources = selectedSources(loadSources(options.config), options.accountLimit);
   const rows = [];
-  for (const source of sources) {
-    rows.push(await probeAccount(options.cdp, source, options));
+  const browserClient = new CdpClient(version.webSocketDebuggerUrl);
+  await browserClient.open();
+  try {
+    for (const source of sources) {
+      rows.push(await probeAccount(options.cdp, browserClient, source, options));
+    }
+  } finally {
+    browserClient.close();
   }
   const videoLinks = Array.from(new Set(rows.flatMap((row) => row.video_links || [])));
   let resolverResult = {
