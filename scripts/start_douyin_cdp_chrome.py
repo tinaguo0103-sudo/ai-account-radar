@@ -20,6 +20,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROFILE = ROOT / ".local_services" / "douyin-chrome-profile"
 DEFAULT_URL = "https://www.douyin.com/"
 CHROME_APP = "Google Chrome"
+CHROME_BINARY = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 
 def cdp_version(port: int) -> dict | None:
@@ -30,10 +31,34 @@ def cdp_version(port: int) -> dict | None:
         return None
 
 
-def launch_chrome(port: int, profile: Path, url: str, foreground: bool) -> subprocess.CompletedProcess:
+def launch_headless_chrome(port: int, profile: Path, url: str) -> tuple[subprocess.Popen, Path]:
+    profile = profile.expanduser().resolve()
+    profile.mkdir(parents=True, exist_ok=True)
+    log_path = ROOT / ".local_services" / f"douyin-chrome-headless-{port}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = [
+        str(CHROME_BINARY),
+        "--headless=new",
+        "--disable-gpu",
+        "--disable-dev-shm-usage",
+        "--disable-background-networking",
+        "--remote-allow-origins=*",
+        f"--remote-debugging-port={port}",
+        f"--user-data-dir={profile}",
+        "--no-first-run",
+        "--no-default-browser-check",
+        url,
+    ]
+    handle = log_path.open("ab")
+    proc = subprocess.Popen(cmd, cwd=ROOT, stdout=handle, stderr=handle)
+    return proc, log_path
+
+
+def launch_chrome(port: int, profile: Path, url: str, mode: str) -> subprocess.CompletedProcess:
+    profile = profile.expanduser().resolve()
     profile.mkdir(parents=True, exist_ok=True)
     cmd = ["/usr/bin/open"]
-    if not foreground:
+    if mode == "hidden":
         # -g avoids stealing focus; -j asks LaunchServices to hide the app at launch.
         cmd.extend(["-g", "-j"])
     cmd.extend([
@@ -44,6 +69,7 @@ def launch_chrome(port: int, profile: Path, url: str, foreground: bool) -> subpr
         f"--user-data-dir={profile}",
         "--no-first-run",
         "--no-default-browser-check",
+        "--start-minimized",
         url,
     ])
     return subprocess.run(cmd, text=True, capture_output=True, check=False)
@@ -54,10 +80,20 @@ def main() -> int:
     parser.add_argument("--port", type=int, default=9333)
     parser.add_argument("--profile", default=str(DEFAULT_PROFILE))
     parser.add_argument("--url", default=DEFAULT_URL)
-    parser.add_argument("--foreground", action="store_true", help="Bring Chrome to foreground for login/verification.")
+    parser.add_argument("--mode", choices=["hidden", "foreground", "headless"], default="hidden", help="hidden opens a background/minimized app; foreground is for login/verification; headless is experimental and may not work with Douyin login.")
+    parser.add_argument("--foreground", action="store_true", help="Alias for --mode foreground, useful for login/verification.")
+    parser.add_argument("--hidden-window", action="store_true", help="Alias for --mode hidden, the normal background sampling mode.")
+    parser.add_argument("--headless", action="store_true", help="Alias for --mode headless. Experimental; use only when no login/verification is required.")
     parser.add_argument("--check-only", action="store_true", help="Only check whether CDP is already available.")
     parser.add_argument("--wait-seconds", type=float, default=4.0)
     args = parser.parse_args()
+    profile_path = Path(args.profile).expanduser().resolve()
+    if args.foreground:
+        args.mode = "foreground"
+    if args.hidden_window:
+        args.mode = "hidden"
+    if args.headless:
+        args.mode = "headless"
 
     existing = cdp_version(args.port)
     if existing:
@@ -66,7 +102,7 @@ def main() -> int:
             "status": "already_running",
             "cdp": f"http://127.0.0.1:{args.port}",
             "browser": existing.get("Browser", ""),
-            "profile": str(Path(args.profile)),
+            "profile": str(profile_path),
             "next_probe": f"node scripts/douyin_cdp_source_watch_probe.mjs --cdp http://127.0.0.1:{args.port} --account-limit 3 --video-limit 3",
         }, ensure_ascii=False, indent=2))
         return 0
@@ -76,11 +112,26 @@ def main() -> int:
             "ok": False,
             "status": "not_running",
             "cdp": f"http://127.0.0.1:{args.port}",
-            "next_step": "Run without --check-only to launch the dedicated Chrome profile.",
+            "next_step": "Run without --check-only to launch the dedicated Chrome profile. Default mode is hidden; use --foreground only for login/verification.",
         }, ensure_ascii=False, indent=2))
         return 2
 
-    proc = launch_chrome(args.port, Path(args.profile), args.url, args.foreground)
+    if args.mode == "headless":
+        if not CHROME_BINARY.exists():
+            print(json.dumps({
+                "ok": False,
+                "status": "chrome_binary_not_found",
+                "path": str(CHROME_BINARY),
+                "next_step": "Use --mode hidden or install Google Chrome in /Applications.",
+            }, ensure_ascii=False, indent=2))
+            return 1
+        proc, log_path = launch_headless_chrome(args.port, profile_path, args.url)
+        stdout = ""
+        stderr = f"headless log: {log_path}"
+    else:
+        proc = launch_chrome(args.port, profile_path, args.url, args.mode)
+        stdout = proc.stdout[-1000:]
+        stderr = proc.stderr[-1000:]
     time.sleep(args.wait_seconds)
     version = cdp_version(args.port)
     ok = version is not None
@@ -89,11 +140,13 @@ def main() -> int:
         "status": "started" if ok else "launch_failed_or_not_ready",
         "cdp": f"http://127.0.0.1:{args.port}",
         "browser": (version or {}).get("Browser", ""),
-        "profile": str(Path(args.profile)),
-        "foreground": args.foreground,
-        "stdout": proc.stdout[-1000:],
-        "stderr": proc.stderr[-1000:],
-        "login_note": "If Douyin asks for login/verification, rerun with --foreground or open the dedicated Chrome window manually. Do not share QR/cookie/token in chat.",
+        "profile": str(profile_path),
+        "mode": args.mode,
+        "pid": getattr(proc, "pid", None),
+        "stdout": stdout,
+        "stderr": stderr,
+        "log_path": str(log_path) if args.mode == "headless" else "",
+        "login_note": "Default hidden mode starts the dedicated Chrome in the background. If Douyin asks for login/verification, rerun with --foreground. Do not share QR/cookie/token in chat.",
         "next_probe": f"node scripts/douyin_cdp_source_watch_probe.mjs --cdp http://127.0.0.1:{args.port} --account-limit 3 --video-limit 3",
     }, ensure_ascii=False, indent=2))
     return 0 if ok else 1

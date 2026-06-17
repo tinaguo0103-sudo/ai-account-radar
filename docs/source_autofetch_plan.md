@@ -92,7 +92,7 @@
 - 当前已有轻量探针：`scripts/douyin_source_watch_probe.py`。它读取当前主对标池里的抖音主页，尝试从公开页面发现作品 ID；如果发现作品 ID，就复用单条视频 resolver 输出本地 ContentItem。它不写飞书、不保存登录态、不下载视频、不抓评论。
 - 2026-06-16 复验结果：秋芝2046、xuan酱公开页面可访问但更像 JS 壳，未解析出作品 ID；ami.moment 缺主页链接。结论是无登录公开主页不足以稳定发现最近 N 条。
 - 当前已有 Chrome CDP 探针：`scripts/douyin_cdp_source_watch_probe.mjs`。它只连接本机远程调试 Chrome，不导出 profile，不保存 cookie/token，不写飞书。2026-06-16 更新：使用专用 Chrome profile 和抖音小号登录后，秋芝2046、xuan酱、数字游牧人、数字生命卡兹克-抖音教程视频等账号已能低频拿到可信主页作品，并复用单条 resolver 生成本地 ContentItem。它仍是 P1 显式探针，不进入默认 `daily_pipeline.py`。
-- 为避免干扰用户日常 Chrome，使用 `scripts/start_douyin_cdp_chrome.py --port 9333` 后台启动或复用专用 Chrome。需要登录/验证码时再加 `--foreground`。
+- 为避免干扰用户日常 Chrome，使用 `scripts/start_douyin_cdp_chrome.py --port 9333` 以默认 `hidden` 模式后台启动或复用专用 Chrome。需要登录/验证码时再加 `--foreground`，登录完成后回到默认 hidden 模式采样。`--headless` 仅作为实验模式保留，不作为抖音登录态采样首选。
 - 口播转写不默认执行。先用 `scripts/douyin_transcript_candidates.py` 根据标题/文案/时长筛选候选；确认值得转写后，再显式调用 `scripts/douyin_video_transcribe.py --raw-payload <raw.json> --model paraformer-v2 --confirm-free-quota --yes`。长视频默认被成本护栏拦截。
 - 已转写内容可通过 `scripts/douyin_video_transcribe.py --raw-payload <raw.json> --transcript-file <transcript.md>` 包装成标准 ContentItem，再用 `python3 scripts/daily_pipeline.py --include-douyin-transcripts` 显式进入候选池。这个流程不重复消耗 ASR 额度，不默认写飞书。
 - 对标视频只提供话题、结构和交付逻辑，不作为可复制表达。用户可见标题不得出现其他博主名字，也不要写成“这条视频/这条内容”的模仿式标题。

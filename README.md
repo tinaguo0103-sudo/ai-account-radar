@@ -576,7 +576,7 @@ python3 scripts/start_douyin_cdp_chrome.py --port 9333
 node scripts/douyin_cdp_source_watch_probe.mjs --cdp http://127.0.0.1:9333 --account-limit 3 --video-limit 3
 ```
 
-`start_douyin_cdp_chrome.py` 默认用后台方式启动专用 Chrome，尽量不抢当前桌面焦点；只有需要登录/验证码时才加 `--foreground`。2026-06-16 复验结果：在专用 Chrome 登录抖音小号后，CDP 探针可以从秋芝2046、xuan酱等主页拿到多条可信作品，并复用单条视频 resolver 输出本地 ContentItem。它仍属于 P1 显式低频探针，不进入默认 `daily_pipeline.py`。
+`start_douyin_cdp_chrome.py` 默认使用 `hidden` 模式启动/复用专用 Chrome，尽量不抢当前桌面焦点；只有需要登录/验证码时才加 `--foreground`。如果只是采样已经登录过的专用 profile，不要用 `--foreground`。`--headless` 仅作为实验模式保留，抖音登录态/校验场景不优先使用。2026-06-16 复验结果：在专用 Chrome 登录抖音小号后，CDP 探针可以从秋芝2046、xuan酱等主页拿到多条可信作品，并复用单条视频 resolver 输出本地 ContentItem。它仍属于 P1 显式低频探针，不进入默认 `daily_pipeline.py`。
 
 抖音口播转写不默认跑。先用标题/文案/时长做候选筛选：
 

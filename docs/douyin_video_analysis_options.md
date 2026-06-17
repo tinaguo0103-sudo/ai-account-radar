@@ -153,7 +153,7 @@ DOUYIN_ASR_MAX_COST_YUAN=<如需硬成本上限再填写>
 python3 scripts/start_douyin_cdp_chrome.py --port 9333
 ```
 
-如果需要登录/验证码，再临时前台打开：
+这条命令默认使用 `hidden` 模式，尽量不把专用 Chrome 顶到前台。登录过期、验证码或扫码时再临时前台打开：
 
 ```bash
 python3 scripts/start_douyin_cdp_chrome.py --port 9333 --foreground
