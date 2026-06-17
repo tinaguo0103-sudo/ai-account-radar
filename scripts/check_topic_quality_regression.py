@@ -16,6 +16,7 @@ FORBIDDEN_VISIBLE_TERMS = [
     "别只看发布信息", "先看任务怎么验收", "该先判断", "最该重排",
     "适合拆成一次真实任务边界测试", "适合拆成一次AI视频交付测试",
     "不该只看工具名", "只有在能说清具体产品层",
+    "这条视频", "这条内容", "对标视频真正", "博主", "老师", "带着它的", "玛卡巴卡",
 ]
 VISIBLE_FIELDS = [
     "我的选题标题", "可发布标题", "标题备选", "推荐理由", "我的蹭热点角度",
@@ -70,9 +71,11 @@ def main() -> int:
         if intish(row.get("标题质量分", "")) >= 85 and not (row.get("可发布标题") or row.get("来源内容") or "")[:4]:
             failures.append(f"row {idx}: high title score without concrete source/title")
         if row.get("来源类型") == "对标视频" and "抖音" in row.get("内容可信度", ""):
-            deep_terms = ["口播全文", "评论区", "镜头结构", "完整视频"]
+            deep_terms = ["口播全文", "评论区", "镜头结构", "完整视频", "分镜流程", "交付清单"]
             if contains_any(visible_text, deep_terms):
                 failures.append(f"row {idx}: douyin shallow item overclaims deep video analysis")
+            if row.get("今日建议级别") == "今日最值得做" or row.get("推荐动作") in {"进入Brief", "本周做", "立即蹭热点"}:
+                failures.append(f"row {idx}: douyin shallow item should stay as 转写观察, not production-ready")
         if row.get("来源类型") == "公众号文章" and row.get("内容可信度") != "全文":
             if row.get("推荐动作") in {"进入Brief", "本周做"}:
                 failures.append(f"row {idx}: non-full article promoted as deep work")

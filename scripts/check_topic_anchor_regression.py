@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Local regression checks for 今日Top10 event anchor extraction."""
+"""Local regression checks for 今日候选池 event anchor extraction."""
 from __future__ import annotations
 
 from content_sampler import ContentItem, extract_event_anchor

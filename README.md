@@ -149,34 +149,25 @@ python3 scripts/daily_pipeline.py --url-file data/manual/urls.example.txt
 
 默认不启用 URL 解析，只有传入 `--url-file` 或 `--resolve-url-intake` 时才运行 resolver。
 
-卡兹克公众号 feed 已进入 P1 显式接入验证。默认 `daily_pipeline.py` 不会拉取公众号 feed；只有主动传入参数时才会读取下面这个 Wechat2RSS feed，把文章转成 ContentItem，进入 `03 内容收件箱` 和 `04 今日候选池`：
+卡兹克公众号公共 feed 只保留为“发现源”说明，不再进入候选池。原因是 Wechat2RSS 能发现文章列表，但不能稳定提供全文；我们真正需要的是公众号全文拆解。若要做卡兹克公众号内容，请优先使用本地 `wewe-rss` 全文 provider，或把单篇文章 URL 丢进 `02 URL投喂入口`。
 
 ```text
 https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml
 ```
 
-本地验证 feed：
+本地验证公共 feed 只用于排查发现源，不参与 `04 今日候选池`：
 
 ```bash
 python3 scripts/wechat_feed_intake.py --config config/wechat_feed_candidates.yaml --limit 5 --dry-run
 ```
 
-显式把 feed 合入日常管道 dry-run：
+下面命令仍保留兼容，但现在是 no-op 提醒，不会把公共 feed 合入候选池：
 
 ```bash
 python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5
 ```
 
-确认质量后，显式写入飞书：
-
-```bash
-FEISHU_APP_ID=xxx \
-FEISHU_APP_SECRET=xxx \
-FEISHU_BASE_APP_TOKEN=xxx \
-python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5 --write-feishu
-```
-
-如果 feed 失效，继续回退到 `02 URL投喂入口` 单篇公众号文章 URL。当前 feed 条目会尝试调用公众号全文解析；如果微信页面限制导致全文解析失败，系统保留 feed 摘要、失败原因和原始 payload 路径，不伪装成全文。
+如果 feed 失效或缺全文，不需要修它；继续使用 `wewe-rss` 全文 provider 或 `02 URL投喂入口` 单篇公众号文章 URL。
 
 卡兹克公众号全文 provider 已作为 P1 显式源接入。本地 `wewe-rss` 服务启动并订阅 `数字生命卡兹克` 后，可以显式拉取全文：
 
@@ -190,7 +181,7 @@ python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-full
 python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5 --write-feishu
 ```
 
-默认 `python3 scripts/daily_pipeline.py` 不拉取 `wewe-rss`，也不依赖本地全文服务。`wewe-rss` 只作为低频 P1 全文补充源；如果本地服务不可用，继续回退到 Wechat2RSS 发现源或 `02 URL投喂入口` 单篇文章 URL。
+默认 `python3 scripts/daily_pipeline.py` 不拉取 `wewe-rss`，也不依赖本地全文服务。`wewe-rss` 是低频 P1 全文源；如果本地服务不可用，回退到 `02 URL投喂入口` 单篇文章 URL，不再用公共 feed 摘要补候选。
 
 规则测试时，如果飞书里没有新的待处理 URL，但你想让已解析过的公众号/抖音内容重新参与本轮候选池，可以显式加复用参数：
 
@@ -547,11 +538,11 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 
 ## 自动拉取边界
 
-当前默认自动源是 AIHOT精选、AIHOT日报、官方 RSS/Atom、官方网页/普通网页/Jina Reader，以及 `02 URL投喂入口` 的单条 URL 投喂。主对标账号自动抓取仍处于 P1：抖音主页最近 N 条、公众号历史文章列表不直接进入默认 `daily_pipeline.py`。`--include-resolved-url-intake` 只用于复用已解析 URL 做规则测试，不作为默认日常流程；卡兹克公众号 Wechat2RSS 发现源只在显式传 `--fetch-wechat-feed` 时拉取，本地 `wewe-rss` 全文源只在显式传 `--fetch-wechat-fulltext-provider` 或 `--wechat-fulltext-provider wewe-rss` 时拉取。
+当前默认自动源是 AIHOT精选、AIHOT日报、官方 RSS/Atom、官方网页/普通网页/Jina Reader，以及 `02 URL投喂入口` 的单条 URL 投喂。主对标账号自动抓取仍处于 P1：抖音主页最近 N 条、公众号历史文章列表不直接进入默认 `daily_pipeline.py`。`--include-resolved-url-intake` 只用于复用已解析 URL 做规则测试，不作为默认日常流程；卡兹克公众号 Wechat2RSS 公共 feed 已降级为发现源说明，不再进入候选池；本地 `wewe-rss` 全文源只在显式传 `--fetch-wechat-fulltext-provider` 或 `--wechat-fulltext-provider wewe-rss` 时拉取。
 
 完整路线、主对标池逐个判断和未来 PoC 分支命名见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md)。
 
-卡兹克公众号发现源与全文源的结论见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md) 和 [docs/spikes/wechat_fulltext_provider_eval.md](docs/spikes/wechat_fulltext_provider_eval.md)。当前口径是：Wechat2RSS 公共 feed 适合发现文章列表，不是稳定全文源；`wewe-rss` 已验证可作为本地全文 provider，但必须显式启用；`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。默认流程不依赖这些服务。
+卡兹克公众号发现源与全文源的结论见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md) 和 [docs/spikes/wechat_fulltext_provider_eval.md](docs/spikes/wechat_fulltext_provider_eval.md)。当前口径是：Wechat2RSS 公共 feed 只适合发现文章列表，不进入候选池；`wewe-rss` 已验证可作为本地全文 provider，但必须显式启用；`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。默认流程不依赖这些服务。
 
 抖音开源工具评估见 [docs/spikes/douyin_open_source_tool_eval.md](docs/spikes/douyin_open_source_tool_eval.md)。当前口径是：单条视频 metadata 继续使用项目内 `url_content_resolver.py`；账号主页最近 N 条的 P1 候选是 `MediaCrawler`，但需要抖音小号和本机浏览器登录态，必须单独 probe；口播字幕/ASR 的 P1 候选是 `douyin-mcp-server`、`wanyi-watermark` 或 `social-post-extractor-mcp`，需要显式命令和 ASR key，不进入默认流程。
 

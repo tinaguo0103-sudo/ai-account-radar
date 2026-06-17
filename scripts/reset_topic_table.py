@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Reset 04 分析与选题 to the clean 今日Top10 field set.
+"""Reset 04 分析与选题 to the clean 今日候选池 field set.
 
 Use only when test data can be removed. The table itself is preserved.
 """

@@ -296,9 +296,19 @@ def patch_candidate_view(token: str, app_token: str, table_id: str, view_name: s
         return {"created": created, "configured": f"failed:{exc}"}
 
 
+def delete_view_if_exists(token: str, app_token: str, table_id: str, view_name: str) -> dict[str, Any]:
+    views = {view.get("view_name"): view for view in list_views(token, app_token, table_id)}
+    view = views.get(view_name)
+    if not view or not view.get("view_id"):
+        return {"deleted": False, "reason": "missing"}
+    try:
+        feishu.request_json("DELETE", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view['view_id']}", token=token)
+        return {"deleted": True}
+    except Exception as exc:
+        return {"deleted": False, "reason": f"failed:{exc}"}
+
+
 def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: str) -> dict[str, Any]:
-    # Keep the old view name for compatibility, but make the new daily view the
-    # product-facing one with fewer fields.
     core_visible = {
         "选题标题", "今日建议级别", "编辑判断分", "AI味风险", "内容可信度",
         "推荐动作", "状态", "来源类型", "原始来源标题", "对应栏目", "业务场景",
@@ -319,7 +329,16 @@ def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: s
             core_visible,
             {"field": "今日建议级别", "operator": "is", "value": ["今日最值得做"]},
         ),
-        "今日Top10": patch_candidate_view(token, app_token, table_id, "今日Top10", run_id, detail_visible),
+        "暂存观察": patch_candidate_view(
+            token,
+            app_token,
+            table_id,
+            "暂存观察",
+            run_id,
+            detail_visible,
+            {"field": "今日建议级别", "operator": "is", "value": ["暂存观察"]},
+        ),
+        "删除旧今日Top10视图": delete_view_if_exists(token, app_token, table_id, "今日Top10"),
     }
 
 

@@ -10,7 +10,7 @@
 python3 scripts/daily_pipeline.py
 ```
 
-dry-run 会抓取 AIHOT、读取手动内容样例、生成内容拆解和今日10，并打印将写入飞书的 10 条摘要；不会写入飞书。
+dry-run 会抓取 AIHOT、读取手动内容样例、生成内容拆解和今日候选池，并打印将写入飞书的候选摘要；不会写入飞书。
 
 只使用手动样例、不访问 AIHOT：
 
@@ -31,8 +31,8 @@ python3 scripts/daily_pipeline.py --write-feishu
 
 写入边界：
 
-- 只写入 `04 分析与选题` 的今日10。
-- 不写入后台全部候选。
+- 只写入 `04 分析与选题` 的今日候选池。
+- 不写入被淘汰的调试候选。
 - 不新增业务表。
 - 不自动发布。
 - 不生成完整成稿。
@@ -77,4 +77,4 @@ FEISHU_BASE_APP_TOKEN=你的BaseAppToken \
 python3 scripts/daily_pipeline.py --write-feishu
 ```
 
-当前不建议开启 launchd 定时任务。等确认今日10质量和飞书写入节奏稳定后，再创建本机定时任务。
+当前不建议开启 launchd 定时任务。等确认今日候选池质量和飞书写入节奏稳定后，再创建本机定时任务。

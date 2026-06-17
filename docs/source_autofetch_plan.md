@@ -50,12 +50,12 @@
 
 ### `--fetch-wechat-feed`
 
-- 卡兹克公众号 feed 已从候选验证进入 P1 显式接入验证。
+- 卡兹克公众号公共 feed 已降级为发现源说明，不再进入日常候选池。
 - feed URL：`https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml`。
 - 默认 `daily_pipeline.py` 不拉取该 feed。
-- 只有用户主动运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时，feed 文章才进入本轮 ContentItem 候选池。
-- 显式加 `--write-feishu` 后，feed 内容写入 `03 内容收件箱`，再参与 `04 今日候选池`。
-- 如果 feed 失效或全文解析受限，继续回退到 `02 URL投喂入口` 单篇公众号文章 URL。
+- 主动运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时，脚本只输出 no-op 提醒，不会把公共 feed 摘要写入 `03` 或送入 `04`。
+- 原因：公共 feed 能发现文章列表，但不能稳定提供全文；摘要会让选题继续有“资讯味”和“猜测感”。
+- 如果要处理卡兹克公众号文章，使用本地 `wewe-rss` 全文 provider，或把单篇公众号文章 URL 放入 `02 URL投喂入口`。
 
 ### `--fetch-wechat-fulltext-provider` / `--wechat-fulltext-provider wewe-rss`
 
@@ -67,7 +67,7 @@
 - `scripts/wechat_fulltext_provider_probe.py` 已作为显式 provider adapter 使用：读取本地 `wewe-rss` 输出，转成标准 ContentItem；默认 `daily_pipeline.py` 不调用。
 - 显式 dry-run：`python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5`。
 - 显式写入：`python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5 --write-feishu`。
-- 如果同时需要“发现源 + 全文源”混合候选，可运行：`python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5`。
+- 如需全文候选，只运行全文源：`python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5`。公共 feed 不再和全文源混合进候选池。
 
 ## P1 单独 PoC / source_watch_probe
 
@@ -76,7 +76,7 @@
 ### 公众号自动发现最新文章
 
 - 重点源：数字生命卡兹克-公众号文章。
-- 单篇公众号 URL 解析已经可用；Wechat2RSS feed 已做成 P1 显式接入能力。
+- 单篇公众号 URL 解析已经可用；Wechat2RSS feed 只作为发现源说明，不再作为候选来源。
 - 可研究方向：以 `wewe-rss` 作为低频全文 provider；其他公众号 RSS/订阅服务只作为备选。
 - 这类方案通常需要单独部署、维护、登录态或服务配置，不能直接接入默认流程。
 - 当前 P1 只允许显式拉取，不进入默认流程；正式默认化前需要连续稳定性、去重和字段完整性验证。
@@ -129,9 +129,9 @@
 
 - 平台：微信公众号。
 - 当前能力：单篇 URL 解析可用，全文解析可用。
-- 自动发现：Wechat2RSS feed 已验证可读，并已接入显式参数。
+- 自动发现：Wechat2RSS feed 已验证可读，但已降级为发现源说明，不进入候选池。
 - 全文 provider：本地 `wewe-rss` 已验证可输出最近文章全文，并已接入显式参数。
-- 推荐：继续用 `--fetch-wechat-feed` 做发现源观察；需要全文时显式加 `--wechat-fulltext-provider wewe-rss` 或单独运行 `--fetch-wechat-fulltext-provider`。稳定后再讨论是否默认化。
+- 推荐：需要全文时显式运行 `--fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss`，或用 `02 URL投喂入口` 放单篇文章 URL。公共 feed 不再进入候选池，避免摘要污染判断。
 - 不进入默认 `daily_pipeline.py`。
 
 ### 数字生命卡兹克-抖音教程视频

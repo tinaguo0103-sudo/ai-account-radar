@@ -18,7 +18,7 @@ import re
 import sys
 import time
 from dataclasses import dataclass
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any
@@ -98,6 +98,7 @@ CONTENT_INBOX_FIELDS = [
     "最近采样日期",
     "是否重复",
     "处理状态",
+    "保留策略",
 ]
 
 
@@ -798,7 +799,14 @@ FORBIDDEN_VISIBLE_TERMS = [
     "适合拆成一次真实任务边界测试", "适合拆成一次AI视频交付测试",
     "不该只看工具名", "只有在能说清具体产品层",
     "这条视频", "这条内容", "对标视频真正",
+    "博主", "老师", "带着它的", "玛卡巴卡",
 ]
+
+DOUYIN_SHALLOW_METHODS = {"douyin_public_router_data", "video_shallow_or_manual", "douyin_homepage_card"}
+
+
+def is_douyin_shallow_item(item: ContentItem) -> bool:
+    return item.source_type == "对标视频" and item.platform == "抖音" and item.fetch_method in DOUYIN_SHALLOW_METHODS
 
 
 def forbidden_title_hits(text: str) -> list[str]:
@@ -1238,7 +1246,28 @@ def regular_topic_title(item: ContentItem, scene: str) -> str:
         return hotspot_angle(item, scene).get("标题") or specific_event_title(item)
     text = item_text(item)
     lower = text.lower()
+    if is_douyin_shallow_item(item):
+        if any(k in text for k in ["Excel", "表格", "PPT", "办公"]):
+            return "抖音办公教程值得先转写：看它承诺替用户省掉哪段手工流程"
+        if any(k in text for k in ["小云雀", "短剧Agent", "AI短剧", "AI短片", "Seedance", "AI视频"]):
+            return "AI视频教程值得先转写：看它承诺的成片结果是否可交付"
+        if any(k in text for k in ["Claude", "Codex", "Agent", "智能体", "Skills", "Vibe"]):
+            return "Agent教程值得先转写：看它把任务边界讲到什么程度"
+        return "抖音教程值得先转写：看它承诺解决哪个具体任务"
     if item.source_type == "公众号文章":
+        source_title = item.title or ""
+        if any(k in source_title for k in ["Prompt该退环境", "Loop Engineering", "Prompt"]):
+            return "Prompt退环境后，真正要学的是把AI任务跑成闭环"
+        if any(k in source_title for k in ["毕业生", "证明自己是人类", "AI检测"]):
+            return "AI检测变成信任问题后，内容团队该补哪套人机边界说明"
+        if any(k in source_title for k in ["AI文明", "乌托邦", "团灭"]):
+            return "AI文明实验值得拆的不是热闹，而是多Agent任务边界和失控机制"
+        if "WorkBuddy" in source_title:
+            return "WorkBuddy这类Agent产品，最值得拆的是任务交接和验收方式"
+        if any(k in source_title for k in ["GLM-5.2", "Coding模型", "国产Coding"]):
+            return "国产Coding模型继续升级后，非技术团队该看项目交付而不是榜单"
+        if any(k in source_title for k in ["内部分享", "内容创作方法论", "内容创作", "三年来总结"]):
+            return "AI内容判断力不是靠刷资讯，而是靠一套筛选选题的方法"
         if "claude code" in lower and any(k in text for k in ["原则", "团队", "工作方式", "harness", "验收"]):
             return "Claude Code团队的5条原则，最值得学的是项目交付习惯"
         if any(k in text for k in ["方法论", "内容创作", "内部分享", "团队"]):
@@ -1250,8 +1279,12 @@ def regular_topic_title(item: ContentItem, scene: str) -> str:
             if any(k in text for k in ["小云雀", "AI短片", "短剧Agent", "AI短剧"]):
                 return "AI短片教程真正值得拆的是创意、剧本和分镜交付"
             return "AI视频内容真正值得拆的是从想法到验收的交付链路"
-        if item.fetch_method == "douyin_public_router_data":
-            return f"{core}，先别急着复刻成片，要拆它的标题、工具和交付承诺"
+        if is_douyin_shallow_item(item):
+            if any(k in text for k in ["小云雀", "短剧Agent", "AI短剧", "AI短片"]):
+                return "AI短剧标题先看成片承诺，值得再转写拆流程"
+            if any(k in text for k in ["一镜到底", "爆款视频", "视频密码", "教程"]):
+                return "抖音视频教程先看结果承诺，值得再转写拆结构"
+            return f"{core}，先判断任务场景，值得再转写深拆"
         return f"{core}，AI视频真正该拆的是Brief、分镜和验收"
     if scene == "非技术Agent处理重复业务任务":
         return f"{core}，先看它能不能说清任务边界"
@@ -1326,6 +1359,16 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
     if item.source_type == "公众号文章":
         if "卡兹克" in item.account_name or "数字生命卡兹克" in item.account_name:
             source_title = item.title or ""
+            if any(k in source_title for k in ["Prompt该退环境", "Loop Engineering", "Prompt"]):
+                return "Prompt退环境后，非技术团队要学的是把AI任务跑成闭环"
+            if any(k in source_title for k in ["毕业生", "证明自己是人类", "AI检测"]):
+                return "AI检测把毕业生逼成流程问题后，内容团队该补人机边界说明"
+            if any(k in source_title for k in ["AI文明", "乌托邦", "团灭"]):
+                return "AI文明实验不是科幻段子，而是多Agent失控边界测试"
+            if "WorkBuddy" in source_title:
+                return "WorkBuddy这类Agent产品，先看它怎么定义任务交接和验收"
+            if any(k in source_title for k in ["GLM-5.2", "Coding模型", "国产Coding"]):
+                return "国产Coding模型升级后，非技术团队该看项目交付而不是榜单"
             if any(k in source_title for k in ["内部分享", "内容创作方法论", "内容创作", "三年来总结"]):
                 return "AI内容判断力不是靠刷资讯，而是靠一套筛选选题的方法"
             if "Claude Code" in source_title or (
@@ -1341,12 +1384,12 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
             if any(k in text for k in ["分镜", "镜头", "成片", "角色设定"]):
                 return "从创意到成片，AI导演工作流最缺的是一张交付清单"
             return "口播转写后，先把钩子、结构和交付承诺拆成自己的流程"
-        if item.fetch_method == "douyin_public_router_data":
+        if is_douyin_shallow_item(item):
             if any(k in text for k in ["小云雀", "短剧Agent", "AI短剧"]):
-                return "AI短剧工具先别急着跟风，先看它承诺的成片效果能不能交付"
+                return "AI短剧工具先看成片承诺，值得再转写拆流程"
             if any(k in text for k in ["一镜到底", "爆款视频", "视频密码"]):
-                return "AI爆款视频教程真正值得看的是它怎么把工具包装成交付承诺"
-            return f"{core}最值得看的，不是工具名，而是它怎么承诺结果"
+                return "AI爆款视频教程先看结果承诺，值得再转写拆结构"
+            return f"{core}先判断任务场景，值得再转写深拆"
         return "AI视频选题别只看成片，要拆它怎么承诺交付结果"
 
     if "cloudflare radar" in lower or ("cloudflare" in lower and "radar" in lower):
@@ -1460,7 +1503,7 @@ def content_credibility(item: ContentItem) -> str:
         return "全文" if is_full_text_item(item) == "是" else "摘要"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
         return "抖音转写"
-    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+    if is_douyin_shallow_item(item):
         return "抖音浅层"
     if item.source_type == "AIHOT热点":
         return "AIHOT摘要"
@@ -1512,10 +1555,10 @@ def title_lint(title: str, item: ContentItem) -> tuple[int, str, list[str]]:
     if any(k in title for k in STRATEGY_TITLE_PHRASES):
         penalties += 25
         reasons.append("像策略说明，不像标题")
-    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data" and any(k in title for k in ["口播", "镜头结构", "评论区", "完整"]):
+    if is_douyin_shallow_item(item) and any(k in title for k in ["口播", "镜头结构", "评论区", "完整", "分镜流程", "交付清单"]):
         penalties += 25
         reasons.append("超过抖音浅层解析可支撑范围")
-    if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript" and any(k in title for k in [item.account_name, "博主", "这条视频", "这条内容"] if k):
+    if item.source_type == "对标视频" and any(k in title for k in [item.account_name, "博主", "老师", "这条视频", "这条内容", "玛卡巴卡"] if k):
         penalties += 28
         reasons.append("对标视频标题不应露出来源身份或像仿写")
     score = max(0, 100 - penalties)
@@ -1540,8 +1583,8 @@ def persona_match_score(topic: dict[str, Any], item: ContentItem) -> tuple[int, 
         score += 10
     if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
         score += 10
-    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
-        score -= 12
+    if is_douyin_shallow_item(item):
+        score -= 25
     score = max(0, min(100, score))
     return score, hits
 
@@ -1558,7 +1601,7 @@ def support_level(topic: dict[str, Any], item: ContentItem) -> str:
         return "足够" if is_full_text_item(item) == "是" else "不足"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
         return "足够" if len(item.body_snippet or "") >= 500 else "摘要可用"
-    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+    if is_douyin_shallow_item(item):
         return "浅层"
     if item.source_type == "AIHOT热点":
         return "摘要可用"
@@ -1574,8 +1617,8 @@ def editor_visible_note(topic: dict[str, Any], item: ContentItem, suggested: str
         if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
             return "这条有口播转写支撑，可以吸收结构和交付逻辑，但标题必须转成自己的业务语言。"
         return "这条能体现我的内容现场和项目判断，适合进入制作。"
-    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
-        return "抖音浅层解析只有标题和文案，适合观察选题包装，不适合直接做深拆。"
+    if is_douyin_shallow_item(item):
+        return "抖音浅层解析只有标题和文案，适合判断是否值得转写，不适合直接做深拆。"
     if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
         return "只有摘要，能看出方向，但缺全文细节，先暂存。"
     if support in {"不足", "浅层"}:
@@ -1597,7 +1640,7 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     support = support_level(topic, item)
     news_only = is_news_only(topic, item, persona_score)
     base = int(topic.get("推荐分", 0) or 0)
-    credibility_bonus = {"全文": 12, "抖音转写": 10, "AIHOT摘要": 5, "摘要": 0, "抖音浅层": -10}.get(credibility, 0)
+    credibility_bonus = {"全文": 12, "抖音转写": 10, "AIHOT摘要": 5, "摘要": 0, "抖音浅层": -20}.get(credibility, 0)
     action_bonus = 5 if topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"} else -5
     editor_score = max(0, min(100, round(base * 0.45 + title_score * 0.2 + persona_score * 0.25 + credibility_bonus + action_bonus)))
     not_recommend: list[str] = []
@@ -1616,7 +1659,7 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
         not_recommend.append("公众号不是全文解析，不能当作深度拆解推进")
     if credibility == "抖音浅层":
-        not_recommend.append("只有标题/文案/封面等浅层信息，缺口播和评论，不适合直接下深结论")
+        not_recommend.append("只有标题/文案/封面等浅层信息，只能判断是否值得转写，不能直接下深结论")
     if title_score < 65:
         not_recommend.append("标题 AI 味或抽象词偏重")
     if editor_score < 68:
@@ -1630,6 +1673,9 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     suggested = "是" if editor_score >= 78 and title_score >= 72 and persona_score >= 60 and ai_risk != "高" and news_only == "否" else ("暂存观察" if editor_score >= 55 else "否")
     if topic.get("推荐动作") == "暂存观察":
         suggested = "暂存观察"
+    if is_douyin_shallow_item(item):
+        suggested = "暂存观察"
+        topic["推荐动作"] = "暂存观察"
     if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
         suggested = "暂存观察"
     if suggested != "是" and topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"}:
@@ -1699,7 +1745,7 @@ def title_generation_rule(item: ContentItem, scene: str) -> str:
         return hotspot_angle(item, scene).get("标题规则", "aihot_unknown")
     if item.source_type == "公众号文章":
         return "article_fulltext_subject"
-    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+    if is_douyin_shallow_item(item):
         return "douyin_shallow_title_only"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
         return "douyin_transcript_to_own_director_workflow"
@@ -2044,6 +2090,7 @@ def item_to_content_inbox_fields(item: ContentItem, run_id: str, is_new: bool, d
         "最近采样日期": date,
         "是否重复": "是" if duplicate else "否",
         "处理状态": "重复" if duplicate else ("跳过" if failed else "待分析"),
+        "保留策略": "普通",
     }
 
 
@@ -2071,24 +2118,54 @@ def update_record_fields(token: str, app_token: str, table_id: str, record_id: s
     )
 
 
-def ensure_content_inbox_today_view(token: str, app_token: str, table_id: str) -> dict[str, Any]:
+def ensure_content_inbox_view(
+    token: str,
+    app_token: str,
+    table_id: str,
+    view_name: str,
+    visible: set[str],
+    conditions: list[dict[str, Any]] | None = None,
+    conjunction: str = "and",
+) -> dict[str, Any]:
     views = {view.get("view_name"): view for view in list_views(token, app_token, table_id)}
     created: list[str] = []
-    if "今日采集" not in views:
+    if view_name not in views:
         payload = feishu.request_json(
             "POST",
             f"/bitable/v1/apps/{app_token}/tables/{table_id}/views",
             token=token,
-            body={"view_name": "今日采集", "view_type": "grid"},
+            body={"view_name": view_name, "view_type": "grid"},
         )
-        views["今日采集"] = payload.get("data", {}).get("view", payload.get("data", {}))
-        created.append("今日采集")
+        views[view_name] = payload.get("data", {}).get("view", payload.get("data", {}))
+        created.append(view_name)
         time.sleep(0.1)
     fields = fields_by_name(token, app_token, table_id)
-    view = views.get("今日采集", {})
+    view = views.get(view_name, {})
+    if not view.get("view_id"):
+        return {"created": created, "configured": "missing_view"}
+    hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
+    body = {
+        "view_name": view_name,
+        "property": {
+            "hidden_fields": hidden,
+        },
+    }
+    if conditions is not None:
+        body["property"]["filter_info"] = {
+            "conditions": conditions,
+            "conjunction": conjunction,
+        }
+    try:
+        feishu.request_json("PATCH", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view['view_id']}", token=token, body=body)
+        return {"created": created, "configured": "ok", "hidden_fields": len(hidden)}
+    except Exception as exc:
+        return {"created": created, "configured": f"failed:{exc}"}
+
+
+def ensure_content_inbox_today_view(token: str, app_token: str, table_id: str) -> dict[str, Any]:
+    fields = fields_by_name(token, app_token, table_id)
     date_field = fields.get("最近采样日期") or fields.get("运行日期")
-    if not view.get("view_id") or not date_field:
-        return {"created": created, "configured": "missing_view_or_date_field"}
+    keep_field = fields.get("保留策略")
     visible = {
         "标题",
         "来源类型",
@@ -2103,27 +2180,33 @@ def ensure_content_inbox_today_view(token: str, app_token: str, table_id: str) -
         "处理状态",
         "最近采样日期",
         "最近参与运行批次",
+        "保留策略",
     }
-    hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
-    body = {
-        "view_name": "今日采集",
-        "property": {
-            "filter_info": {
-                "conditions": [{
-                    "field_id": date_field["field_id"],
-                    "operator": "is",
-                    "value": json.dumps([today_slug()], ensure_ascii=False),
-                }],
-                "conjunction": "and",
-            },
-            "hidden_fields": hidden,
-        },
+    if not date_field:
+        return {"今日采集": {"configured": "missing_date_field"}}
+    today_condition = [{
+        "field_id": date_field["field_id"],
+        "operator": "is",
+        "value": json.dumps([today_slug()], ensure_ascii=False),
+    }]
+    recent_dates = [(datetime.now() - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(15)]
+    recent_conditions = [{
+        "field_id": date_field["field_id"],
+        "operator": "is",
+        "value": json.dumps([date], ensure_ascii=False),
+    } for date in recent_dates]
+    permanent_conditions = []
+    if keep_field:
+        permanent_conditions = [{
+            "field_id": keep_field["field_id"],
+            "operator": "is",
+            "value": json.dumps(["永久保留"], ensure_ascii=False),
+        }]
+    return {
+        "今日采集": ensure_content_inbox_view(token, app_token, table_id, "今日采集", visible, today_condition),
+        "最近15天": ensure_content_inbox_view(token, app_token, table_id, "最近15天", visible, recent_conditions, "or"),
+        "永久保留": ensure_content_inbox_view(token, app_token, table_id, "永久保留", visible, permanent_conditions if permanent_conditions else None),
     }
-    try:
-        feishu.request_json("PATCH", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view['view_id']}", token=token, body=body)
-        return {"created": created, "configured": "ok", "hidden_fields": len(hidden)}
-    except Exception as exc:
-        return {"created": created, "configured": f"failed:{exc}"}
 
 
 def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dict[str, Any]:
@@ -2276,7 +2359,7 @@ def text_basis(item: ContentItem) -> str:
         if item.reused_url == "是":
             return "复用内容不完整：仅摘要"
         return "摘要/片段"
-    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+    if is_douyin_shallow_item(item):
         return "抖音P0浅层字段：标题/文案/作者/封面/标签/下载链接，不含口播转写"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
         return "抖音P1口播转写：基于ASR文本拆结构，不含评论区和画面OCR"
@@ -2293,13 +2376,13 @@ def debug_flags(topic: dict[str, Any], item: ContentItem, template_counts: dict[
     anchor = extract_event_anchor(item)
     kept_anchor = "是" if not anchor or anchor[:4] in title or specific_event_title(item)[:4] in title else "否"
     detached = "否" if kept_anchor == "是" else "是"
-    over_infer = "是" if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data" and any(k in title for k in ["完整", "口播全文", "镜头结构", "评论"]) else "否"
+    over_infer = "是" if is_douyin_shallow_item(item) and any(k in title for k in ["完整", "口播全文", "镜头结构", "评论"]) else "否"
     reasons: list[str] = []
     if repeated == "是":
         reasons.append(f"同批标题结构 {template} 重复")
     if detached == "是":
         reasons.append("标题未明显保留原始热点事件词")
-    if item.source_type == "对标视频" and item.fetch_method == "douyin_public_router_data":
+    if is_douyin_shallow_item(item):
         reasons.append("抖音仅浅层解析，缺口播字幕/评论，深度结论需人工复核")
     if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
         reasons.append("抖音已有口播转写，可深拆结构，但标题必须转成自己的业务语言")
@@ -2512,6 +2595,9 @@ def similar_asset_key(topic: dict[str, Any]) -> str:
 
 
 def topic_theme_key(topic: dict[str, Any]) -> tuple[str, str, str, str]:
+    if topic.get("来源类型") != "AIHOT热点":
+        source_title = re.sub(r"\s+", "", topic.get("来源内容", "")).lower()
+        return ("source", source_title[:80], topic.get("来源类型", ""), "")
     return (
         topic["业务场景"],
         topic["热点切入方式"],
@@ -2558,10 +2644,10 @@ def editorial_sort_key(topic: dict[str, Any]) -> tuple[int, int, int, int, int, 
     suggested = 1 if topic.get("是否建议进入制作") == "是" else 0
     return (
         suggested,
-        ai_risk_rank(topic),
         int(topic.get("编辑判断分", 0) or 0),
-        int(topic.get("标题质量分", 0) or 0),
         credibility_rank(topic),
+        ai_risk_rank(topic),
+        int(topic.get("标题质量分", 0) or 0),
         int(topic.get("人设匹配分", 0) or 0),
         int(topic.get("推荐分", 0) or 0),
     )
@@ -2602,6 +2688,8 @@ def include_in_candidate_pool(row: dict[str, Any]) -> bool:
         return False
     if support in {"不足"}:
         return False
+    if row.get("来源类型") == "对标视频" and support == "抖音浅层" and editor_score < 75:
+        return False
     return True
 
 
@@ -2621,6 +2709,7 @@ def select_today_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, 
     selected: list[dict[str, Any]] = []
     seen_fp: set[str] = set()
     seen_titles: set[str] = set()
+    seen_source_titles: set[str] = set()
     template_counts: dict[str, int] = {}
     column_counts: dict[str, int] = {}
 
@@ -2632,6 +2721,9 @@ def select_today_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, 
         visible_title = (row.get("可发布标题") or row.get("来源内容") or row.get("我的选题标题", "")).strip()
         if visible_title and visible_title in seen_titles:
             return False
+        source_title = re.sub(r"\s+", "", row.get("来源内容", "")).lower()
+        if source_title and source_title in seen_source_titles:
+            return False
         if row.get("来源类型") == "AIHOT热点" and not allow_overflow:
             if sum(1 for item in selected if item.get("来源类型") == "AIHOT热点") >= 8:
                 return False
@@ -2639,13 +2731,12 @@ def select_today_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, 
         if template != "specific" and template_counts.get(template, 0) >= 2:
             return False
         column = normalize_column(row.get("对应栏目", ""))
-        _minimum, maximum = TOP10_COLUMN_LIMITS.get(column, (0, 10))
-        if not allow_overflow and quality_band(row) != "make" and column_counts.get(column, 0) >= maximum:
-            return False
         selected.append(row)
         seen_fp.add(row["内容指纹"])
         if visible_title:
             seen_titles.add(visible_title)
+        if source_title:
+            seen_source_titles.add(source_title)
         template_counts[template] = template_counts.get(template, 0) + 1
         column_counts[column] = column_counts.get(column, 0) + 1
         return True

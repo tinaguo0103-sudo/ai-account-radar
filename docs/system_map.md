@@ -44,11 +44,11 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 当前默认自动源是 AIHOT、官方 RSS/Atom、官方网页/普通网页/Jina Reader 和 URL 投喂；主对标账号自动抓取仍处于 P1 阶段。抖音主页、公众号历史列表不直接进入默认流程。完整自动拉取路线见 `docs/source_autofetch_plan.md`。
 
-卡兹克公众号 Wechat2RSS 发现源已做成 P1 显式接入：只有运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时才拉取。默认流程不写入 `03 内容收件箱`，也不参与 `04 今日候选池`；如果 feed 失效，继续用 `02 URL投喂入口` 粘贴单篇文章 URL。
+卡兹克公众号 Wechat2RSS 公共 feed 已降级为发现源说明，不再进入 `03 内容收件箱` 或 `04 今日候选池`。公众号候选以全文为准：优先用本地 `wewe-rss` 全文 provider，或者在 `02 URL投喂入口` 粘贴单篇文章 URL。
 
 公众号全文 provider 已有显式 P1 路线：本地 `wewe-rss` 可通过 `python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5` 拉取卡兹克全文；默认工作流不依赖本地服务。`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。当前结论见 `docs/spikes/wechat_fulltext_provider_eval.md`。
 
-抖音主页和字幕增强仍是 P1 probe，不是日常入口。单条视频 metadata 继续走 `url_content_resolver.py`；主页最近 N 条优先评估 `MediaCrawler`；字幕/ASR 只适合显式命令和 API key。当前结论见 `docs/spikes/douyin_open_source_tool_eval.md`。
+抖音主页和字幕增强仍是 P1 probe，不是日常入口。单条视频 metadata 和主页标题文案采样只能判断“是否值得转写”，不直接做深拆；字幕/ASR 只适合显式命令和 API key。当前结论见 `docs/spikes/douyin_open_source_tool_eval.md`。
 
 当前可用的抖音主页轻量探针是 `scripts/douyin_source_watch_probe.py`。它只输出本地报告和 ContentItem，不写飞书、不进 `03/04`、不接默认 `daily_pipeline.py`。如果公开主页无法解析最近作品，下一步再进入 MediaCrawler + 抖音小号登录态的 P1 验证。
 
