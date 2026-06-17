@@ -548,13 +548,13 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 
 ## 自动拉取边界
 
-当前默认自动源是 AIHOT精选、AIHOT日报、官方 RSS/Atom、官方网页/普通网页/Jina Reader，以及 `02 URL投喂入口` 的单条 URL 投喂。主对标账号自动抓取仍处于 P1：抖音主页最近 N 条、公众号历史文章列表不直接进入默认 `daily_pipeline.py`。`--include-resolved-url-intake` 只用于复用已解析 URL 做规则测试，不作为默认日常流程；卡兹克公众号 Wechat2RSS 公共 feed 已降级为发现源说明，不再进入候选池；本地 `wewe-rss` 全文源只在显式传 `--fetch-wechat-fulltext-provider` 或 `--wechat-fulltext-provider wewe-rss` 时拉取。
+当前默认自动源是 AIHOT精选、AIHOT日报、官方 RSS/Atom、官方网页/普通网页/Jina Reader、`02 URL投喂入口` 的单条 URL 投喂，以及主对标抖音账号主页的标题/文案采样。抖音主页采样会默认尝试启动或复用本机专用 Chrome CDP；单账号失败会重试，重试仍失败就记录失败原因并跳到下一个账号，不阻塞 AIHOT、公众号、URL 投喂和候选池生成。临时不想跑抖音时可加 `--no-fetch-douyin`。`--include-resolved-url-intake` 只用于复用已解析 URL 做规则测试，不作为默认日常流程；卡兹克公众号 Wechat2RSS 公共 feed 已降级为发现源说明，不再进入候选池；本地 `wewe-rss` 全文源只在显式传 `--fetch-wechat-fulltext-provider` 或 `--wechat-fulltext-provider wewe-rss` 时拉取。
 
 完整路线、主对标池逐个判断和未来 PoC 分支命名见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md)。
 
 卡兹克公众号发现源与全文源的结论见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md) 和 [docs/spikes/wechat_fulltext_provider_eval.md](docs/spikes/wechat_fulltext_provider_eval.md)。当前口径是：Wechat2RSS 公共 feed 只适合发现文章列表，不进入候选池；`wewe-rss` 已验证可作为本地全文 provider，但必须显式启用；`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。默认流程不依赖这些服务。
 
-抖音开源工具评估见 [docs/spikes/douyin_open_source_tool_eval.md](docs/spikes/douyin_open_source_tool_eval.md)。当前口径是：单条视频 metadata 继续使用项目内 `url_content_resolver.py`；账号主页最近 N 条的 P1 候选是 `MediaCrawler`，但需要抖音小号和本机浏览器登录态，必须单独 probe；口播字幕/ASR 的 P1 候选是 `douyin-mcp-server`、`wanyi-watermark` 或 `social-post-extractor-mcp`，需要显式命令和 ASR key，不进入默认流程。
+抖音开源工具评估见 [docs/spikes/douyin_open_source_tool_eval.md](docs/spikes/douyin_open_source_tool_eval.md)。当前口径是：单条视频 metadata 继续使用项目内 `url_content_resolver.py`；账号主页标题/文案采样使用 `douyin_cdp_source_watch_probe.mjs` 进入默认日常流程，但只做低频只读、标题先筛选，不抓评论、不下载视频、不转写；口播字幕/ASR 的 P1 候选是 `douyin-mcp-server`、`wanyi-watermark` 或 `social-post-extractor-mcp`，需要显式命令和 ASR key，不进入默认流程。
 
 当前已有一个低频主页探针：
 
@@ -577,7 +577,7 @@ python3 scripts/start_douyin_cdp_chrome.py --port 9333
 node scripts/douyin_cdp_source_watch_probe.mjs --cdp http://127.0.0.1:9333 --account-limit 3 --video-limit 3
 ```
 
-`start_douyin_cdp_chrome.py` 默认使用 `hidden` 模式启动/复用专用 Chrome，尽量不抢当前桌面焦点；只有需要登录/验证码时才加 `--foreground`。如果只是采样已经登录过的专用 profile，不要用 `--foreground`。CDP 探针会用后台 target 打开主页，并尽量最小化专用 Chrome，避免每个博主页采样时反复弹窗。`--headless` 仅作为实验模式保留，抖音登录态/校验场景不优先使用。2026-06-16 复验结果：在专用 Chrome 登录抖音小号后，CDP 探针可以从秋芝2046、xuan酱等主页拿到多条可信作品，并复用单条视频 resolver 输出本地 ContentItem。它仍属于 P1 显式低频探针，不进入默认 `daily_pipeline.py`。
+`start_douyin_cdp_chrome.py` 默认使用 `hidden` 模式启动/复用专用 Chrome，尽量不抢当前桌面焦点；只有需要登录/验证码时才加 `--foreground`。如果只是采样已经登录过的专用 profile，不要用 `--foreground`。CDP 探针会用后台 target 打开主页，并尽量最小化专用 Chrome，避免每个博主页采样时反复弹窗。`--headless` 仅作为实验模式保留，抖音登录态/校验场景不优先使用。2026-06-16 复验结果：在专用 Chrome 登录抖音小号后，CDP 探针可以从秋芝2046、xuan酱等主页拿到多条可信作品，并复用单条视频 resolver 输出本地 ContentItem。它现在作为默认日常内容源之一进入 `daily_pipeline.py`，但失败只记录，不阻塞其他来源。
 
 抖音口播转写不默认跑。先用标题/文案/时长做候选筛选：
 
@@ -613,7 +613,7 @@ python3 scripts/daily_pipeline.py --include-douyin-transcripts
 - 不绕过登录、验证码、反爬或平台限制。
 - 不保存账号密码、cookie、token。
 - 不强抓抖音、小红书、视频号等高风险平台。
-- 抖音默认流程仍只支持单条视频浅采样：标题/文案、作者、视频 ID、封面、发布时间、标签、下载链接记录；不下载视频，不抓评论，不做默认转写。主页最近 N 条已通过专用 Chrome CDP + 小号登录态做低频 P1 探针验证，但不进入默认流程。口播转写使用显式命令和成本护栏，优先 `paraformer-v2`。
+- 抖音默认流程支持主对标主页标题/文案低频采样，以及单条视频浅采样：标题/文案、作者、视频 ID、封面、发布时间、标签、下载链接记录；不下载视频，不抓评论，不做默认转写。主页采样失败会记录原因并跳过，不阻塞其他来源。口播转写使用显式命令和成本护栏，优先 `paraformer-v2`。
 - 小红书、Twitter/X、Reddit 暂不接入正式采样链路。
 - 能通过 RSS、公开网页、公开 API、AIHOT、GitHub、Product Hunt、Hacker News、官方博客稳定获取的内容，才进入自动化。
 

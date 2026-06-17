@@ -27,6 +27,7 @@ function parseArgs() {
     accountLimit: 3,
     videoLimit: 3,
     waitMs: 7000,
+    retries: 2,
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -36,6 +37,7 @@ function parseArgs() {
     else if (arg === "--account-limit") options.accountLimit = Number(args[++i]);
     else if (arg === "--video-limit") options.videoLimit = Number(args[++i]);
     else if (arg === "--wait-ms") options.waitMs = Number(args[++i]);
+    else if (arg === "--retries") options.retries = Number(args[++i]);
   }
   return options;
 }
@@ -323,6 +325,21 @@ async function probeAccount(cdp, browserClient, source, options) {
   }
 }
 
+async function probeAccountWithRetry(cdp, browserClient, source, options) {
+  let last = null;
+  const attempts = Math.max(1, options.retries || 1);
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    const result = await probeAccount(cdp, browserClient, source, options);
+    result.attempts = attempt;
+    last = result;
+    if (result.status === "success") return result;
+    if (attempt < attempts) {
+      await new Promise((resolve) => setTimeout(resolve, Math.min(5000, 1000 * attempt)));
+    }
+  }
+  return last;
+}
+
 async function main() {
   const options = parseArgs();
   fs.mkdirSync(options.outDir, { recursive: true });
@@ -349,7 +366,7 @@ async function main() {
   await browserClient.open();
   try {
     for (const source of sources) {
-      rows.push(await probeAccount(options.cdp, browserClient, source, options));
+      rows.push(await probeAccountWithRetry(options.cdp, browserClient, source, options));
     }
   } finally {
     browserClient.close();

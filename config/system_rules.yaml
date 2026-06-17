@@ -55,7 +55,7 @@
     },
     {
       "name": "抖音能力分层",
-      "rule": "P0为单条视频浅层解析：标题/文案、作者、视频ID、封面、发布时间、标签、下载链接，不下载视频；P1为下载或访问视频后通过ASR/OCR提取口播字幕和画面文字，需要DASHSCOPE_API_KEY/百炼API key等外部凭证；P2为账号主页最近N条和评论区问题，除非稳定且无需登录，否则暂缓。"
+      "rule": "P0为抖音主页标题/文案低频采样和单条视频浅层解析：主页采样通过专用Chrome CDP获取主对标账号最近作品标题/文案，单条解析获取作者、视频ID、封面、发布时间、标签、下载链接；不下载视频、不抓评论、不默认转写。P1为用户确认后通过ASR/OCR提取口播字幕和画面文字，需要DASHSCOPE_API_KEY/百炼API key等外部凭证；评论区问题和更深视频理解暂缓。"
     },
     {
       "name": "AIHOT日报接口",
@@ -71,7 +71,7 @@
     },
     {
       "name": "URL采样暂不支持",
-      "rule": "默认暂不支持抖音主页自动抓最近N条、抖音口播/字幕转写、评论区抓取、小红书、Twitter/X、Reddit；不得保存cookie/token/API key或绕过登录验证码反爬。抖音ASR/OCR只能作为显式P1增强，不进入默认P0链路。"
+      "rule": "默认支持主对标抖音主页标题/文案低频采样，但不下载视频、不抓评论、不自动转写；单账号失败会重试并跳过，不阻塞其他来源。默认暂不支持抖音口播/字幕转写、评论区抓取、小红书、Twitter/X、Reddit；不得保存cookie/token/API key或绕过登录验证码反爬。抖音ASR/OCR只能作为显式P1增强，不进入默认P0链路。"
     },
     {
       "name": "今日候选池标题质量约束",
@@ -103,7 +103,7 @@
     },
     {
       "name": "自动拉取分级",
-      "rule": "P0 自动拉取仅限 AIHOT精选、AIHOT日报、官方RSS/Atom、公开网页/Jina Reader、URL投喂和稳定公开API；Wechat2RSS 公共 feed 只作为发现源说明，不进入候选池；公众号内容以wewe-rss全文provider或单篇URL投喂为准。主对标抖音主页最近N条、公众号历史文章列表、评论区抓取需要单独 source_watch_probe，不直接进入默认主流程。"
+      "rule": "P0 自动拉取包含 AIHOT精选、AIHOT日报、官方RSS/Atom、公开网页/Jina Reader、URL投喂、稳定公开API，以及主对标抖音主页标题/文案低频采样；Wechat2RSS 公共 feed 只作为发现源说明，不进入候选池；公众号内容以wewe-rss全文provider或单篇URL投喂为准。公众号历史文章列表、抖音评论区抓取和视频转写需要单独 source_watch_probe 或显式命令，不直接进入默认主流程。"
     }
   ],
   "today_top10_quota": {

@@ -16,6 +16,7 @@ import csv
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from local_env import load_local_env
 
@@ -54,6 +55,17 @@ def run_step(name: str, command: list[str], env: dict[str, str] | None = None) -
         "stdout": result.stdout[-4000:],
         "stderr": result.stderr[-4000:],
     }
+
+
+def run_optional_step(name: str, command: list[str], env: dict[str, str] | None = None) -> dict[str, Any]:
+    result = run_step(name, command, env=env)
+    original_returncode = result["returncode"]
+    if original_returncode != 0:
+        result["optional_returncode"] = original_returncode
+        result["returncode"] = 0
+        result["optional_failed"] = True
+        result["note"] = "Optional source failed; daily pipeline continues."
+    return result
 
 
 def require_feishu_env() -> None:
@@ -95,6 +107,11 @@ def today10_count(path: Path) -> int:
 
 def new_run_id() -> str:
     return f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+
+
+def cdp_port(cdp_url: str) -> int:
+    parsed = urlparse(cdp_url)
+    return parsed.port or 9333
 
 
 def row_key(row: dict[str, Any]) -> str:
@@ -139,10 +156,12 @@ def main() -> int:
     parser.add_argument("--wechat-fulltext-provider-config", default=str(DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG), help="Config for explicit WeChat fulltext provider intake.")
     parser.add_argument("--wechat-fulltext-provider", default="", help="Provider id/name to fetch, e.g. wewe-rss. Only used with explicit WeChat fulltext provider mode.")
     parser.add_argument("--wechat-feed-limit", type=int, default=5, help="Max articles to fetch per WeChat feed when --fetch-wechat-feed is enabled.")
-    parser.add_argument("--fetch-douyin-cdp-source-watch", action="store_true", help="Explicit P1 mode: sample configured Douyin homepages through a logged-in local Chrome CDP session. Default is off.")
+    parser.add_argument("--fetch-douyin-cdp-source-watch", action="store_true", help="Compatibility flag: Douyin homepage title/caption sampling is now attempted by default unless --no-fetch-douyin is set.")
+    parser.add_argument("--no-fetch-douyin-cdp-source-watch", "--no-fetch-douyin", dest="no_fetch_douyin_cdp_source_watch", action="store_true", help="Skip daily Douyin homepage title/caption sampling.")
     parser.add_argument("--douyin-cdp", default=os.getenv("DOUYIN_CDP_URL", "http://127.0.0.1:9333"), help="Chrome DevTools endpoint for explicit Douyin homepage probe.")
-    parser.add_argument("--douyin-account-limit", type=int, default=5, help="Max Douyin accounts to probe when --fetch-douyin-cdp-source-watch is enabled.")
+    parser.add_argument("--douyin-account-limit", type=int, default=12, help="Max Douyin accounts to probe in daily source-watch sampling.")
     parser.add_argument("--douyin-video-limit", type=int, default=3, help="Max videos per Douyin account when --fetch-douyin-cdp-source-watch is enabled.")
+    parser.add_argument("--douyin-retries", type=int, default=2, help="Retries per Douyin account before skipping to the next account.")
     parser.add_argument("--include-douyin-transcripts", action="store_true", help="Explicit P1 mode: include already transcribed Douyin ContentItems. Does not call ASR.")
     args = parser.parse_args()
 
@@ -210,7 +229,16 @@ def main() -> int:
             return steps[-1]["returncode"]
         manual_inputs.append(WECHAT_FULLTEXT_RESOLVED_MANUAL)
 
-    if args.fetch_douyin_cdp_source_watch:
+    fetch_douyin = not args.no_fetch_douyin_cdp_source_watch or args.fetch_douyin_cdp_source_watch
+    if fetch_douyin:
+        chrome_cmd = [
+            py,
+            str(ROOT / "scripts" / "start_douyin_cdp_chrome.py"),
+            "--port",
+            str(cdp_port(args.douyin_cdp)),
+        ]
+        chrome_step = run_optional_step("start/reuse background Douyin Chrome CDP", chrome_cmd, env=step_env)
+        steps.append(chrome_step)
         douyin_cmd = [
             "node",
             str(ROOT / "scripts" / "douyin_cdp_source_watch_probe.mjs"),
@@ -220,13 +248,13 @@ def main() -> int:
             str(args.douyin_account_limit),
             "--video-limit",
             str(args.douyin_video_limit),
+            "--retries",
+            str(args.douyin_retries),
         ]
-        steps.append(run_step("fetch explicit Douyin homepage samples through Chrome CDP", douyin_cmd, env=step_env))
-        if steps[-1]["returncode"] != 0:
-            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
-            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
-            return steps[-1]["returncode"]
-        manual_inputs.append(DOUYIN_CDP_RESOLVED_MANUAL)
+        douyin_step = run_optional_step("fetch daily Douyin homepage title/caption samples through Chrome CDP", douyin_cmd, env=step_env)
+        steps.append(douyin_step)
+        if not douyin_step.get("optional_failed") and DOUYIN_CDP_RESOLVED_MANUAL.exists():
+            manual_inputs.append(DOUYIN_CDP_RESOLVED_MANUAL)
 
     if args.include_douyin_transcripts:
         manual_inputs.append(DOUYIN_TRANSCRIPTS_MANUAL)

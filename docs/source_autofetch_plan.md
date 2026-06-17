@@ -4,7 +4,7 @@
 
 `AIHOT / 官方源 / URL投喂` -> `03 内容收件箱` -> 内容拆解 -> `04 今日候选池`
 
-主对标账号自动抓取仍处于 P1 probe 阶段，不直接进入 `main` 的默认 `daily_pipeline.py`。
+主对标抖音账号的主页标题/文案采样已经进入 `main` 的默认 `daily_pipeline.py`。它只做低频只读采样：抓主页最近作品标题/文案和单条视频 metadata，不下载视频、不抓评论、不做自动转写；单账号失败会重试，重试仍失败就记录原因并继续下一个账号。
 
 ## P0 默认自动拉取
 
@@ -71,7 +71,7 @@
 
 ## P1 单独 PoC / source_watch_probe
 
-这类来源不允许直接进入 `main` 的默认 `daily_pipeline.py`。必须单独开分支做 PoC。
+这类来源不允许直接进入 `main` 的默认 `daily_pipeline.py`，除非已经像抖音主页标题/文案采样一样完成低频验证、失败降级和不阻塞策略。新平台、新深度能力仍必须单独开分支做 PoC。
 
 ### 公众号自动发现最新文章
 
@@ -91,12 +91,12 @@
 - 已盘点开源路线：`Agent-Reach` 更适合作为工具清单而不是正式依赖；当前 `_ROUTER_DATA` 单条解析比本轮测试的 `douyin-mcp-server` 更适合 metadata；`MediaCrawler` 是账号主页最近 N 条的 P1 主候选；`Douyin_TikTok_Download_API` 能力全但需要自部署和 Cookie/风控配置，暂作备选。详见 `docs/spikes/douyin_open_source_tool_eval.md`。
 - 当前已有轻量探针：`scripts/douyin_source_watch_probe.py`。它读取当前主对标池里的抖音主页，尝试从公开页面发现作品 ID；如果发现作品 ID，就复用单条视频 resolver 输出本地 ContentItem。它不写飞书、不保存登录态、不下载视频、不抓评论。
 - 2026-06-16 复验结果：秋芝2046、xuan酱公开页面可访问但更像 JS 壳，未解析出作品 ID；ami.moment 缺主页链接。结论是无登录公开主页不足以稳定发现最近 N 条。
-- 当前已有 Chrome CDP 探针：`scripts/douyin_cdp_source_watch_probe.mjs`。它只连接本机远程调试 Chrome，不导出 profile，不保存 cookie/token，不写飞书。2026-06-16 更新：使用专用 Chrome profile 和抖音小号登录后，秋芝2046、xuan酱、数字游牧人、数字生命卡兹克-抖音教程视频等账号已能低频拿到可信主页作品，并复用单条 resolver 生成本地 ContentItem。它仍是 P1 显式探针，不进入默认 `daily_pipeline.py`。
+- 当前已有 Chrome CDP 探针：`scripts/douyin_cdp_source_watch_probe.mjs`。它只连接本机远程调试 Chrome，不导出 profile，不保存 cookie/token。2026-06-16 更新：使用专用 Chrome profile 和抖音小号登录后，秋芝2046、xuan酱、数字游牧人、数字生命卡兹克-抖音教程视频等账号已能低频拿到可信主页作品，并复用单条 resolver 生成本地 ContentItem。它现在默认进入 `daily_pipeline.py`，正式 `--write-feishu` 时和其他来源一样写入 `03 内容收件箱` 并参与 `04 今日候选池`；失败只记录，不阻塞其他来源。
 - 为避免干扰用户日常 Chrome，使用 `scripts/start_douyin_cdp_chrome.py --port 9333` 以默认 `hidden` 模式后台启动或复用专用 Chrome。采样时 CDP 探针使用后台 target 打开主页，并尽量最小化专用 Chrome，避免每个博主页采样时反复弹窗。需要登录/验证码时再加 `--foreground`，登录完成后回到默认 hidden 模式采样。`--headless` 仅作为实验模式保留，不作为抖音登录态采样首选。
 - 口播转写不默认执行。先用 `scripts/douyin_transcript_candidates.py` 根据标题/文案/时长筛选候选；确认值得转写后，再显式调用 `scripts/douyin_video_transcribe.py --raw-payload <raw.json> --model paraformer-v2 --confirm-free-quota --yes`。长视频默认被成本护栏拦截。
 - 已转写内容可通过 `scripts/douyin_video_transcribe.py --raw-payload <raw.json> --transcript-file <transcript.md>` 包装成标准 ContentItem，再用 `python3 scripts/daily_pipeline.py --include-douyin-transcripts` 显式进入候选池。这个流程不重复消耗 ASR 额度，不默认写飞书。
 - 对标视频只提供话题、结构和交付逻辑，不作为可复制表达。用户可见标题不得出现其他博主名字，也不要写成“这条视频/这条内容”的模仿式标题。
-- P1 只允许单独分支 probe，不进入 `main` 默认流程。
+- 抖音主页标题/文案采样已进入 `main` 默认流程；抖音口播转写、画面 OCR、评论区问题和更深的视频理解仍然只允许显式 P1，不进入默认流程。
 
 ### 评论区问题抓取
 
