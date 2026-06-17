@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 import urllib.request
+import urllib.parse
 from pathlib import Path
 
 
@@ -29,6 +30,25 @@ def cdp_version(port: int) -> dict | None:
             return json.loads(response.read().decode("utf-8"))
     except Exception:
         return None
+
+
+def open_cdp_target(port: int, url: str) -> dict | None:
+    try:
+        encoded = urllib.parse.quote(url, safe=":/?&=%#")
+        request = urllib.request.Request(f"http://127.0.0.1:{port}/json/new?{encoded}", method="PUT")
+        with urllib.request.urlopen(request, timeout=3) as response:
+            return json.loads(response.read().decode("utf-8"))
+    except Exception:
+        return None
+
+
+def activate_chrome() -> None:
+    subprocess.run(
+        ["/usr/bin/osascript", "-e", f'tell application "{CHROME_APP}" to activate'],
+        text=True,
+        capture_output=True,
+        check=False,
+    )
 
 
 def launch_headless_chrome(port: int, profile: Path, url: str) -> tuple[subprocess.Popen, Path]:
@@ -97,12 +117,20 @@ def main() -> int:
 
     existing = cdp_version(args.port)
     if existing:
+        opened_target = None
+        if args.mode == "foreground":
+            opened_target = open_cdp_target(args.port, args.url)
+            activate_chrome()
+            time.sleep(args.wait_seconds)
         print(json.dumps({
             "ok": True,
-            "status": "already_running",
+            "status": "already_running_foreground" if args.mode == "foreground" else "already_running",
             "cdp": f"http://127.0.0.1:{args.port}",
             "browser": existing.get("Browser", ""),
             "profile": str(profile_path),
+            "mode": args.mode,
+            "opened_url": args.url if opened_target else "",
+            "opened_target_id": (opened_target or {}).get("id", ""),
             "next_probe": f"node scripts/douyin_cdp_source_watch_probe.mjs --cdp http://127.0.0.1:{args.port} --account-limit 3 --video-limit 3",
         }, ensure_ascii=False, indent=2))
         return 0

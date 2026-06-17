@@ -28,6 +28,7 @@ function parseArgs() {
     videoLimit: 3,
     waitMs: 7000,
     retries: 2,
+    onlyAccountNames: "",
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -38,6 +39,7 @@ function parseArgs() {
     else if (arg === "--video-limit") options.videoLimit = Number(args[++i]);
     else if (arg === "--wait-ms") options.waitMs = Number(args[++i]);
     else if (arg === "--retries") options.retries = Number(args[++i]);
+    else if (arg === "--only-account-names") options.onlyAccountNames = args[++i] || "";
   }
   return options;
 }
@@ -49,9 +51,15 @@ function loadSources(configPath) {
 
 function selectedSources(sources, limit) {
   const roles = new Set(["current_main_competitor", "current_aux_competitor"]);
+  const only = new Set(String(limit.onlyAccountNames || "")
+    .split(",")
+    .map((name) => name.trim())
+    .filter(Boolean));
+  const max = Number(limit.accountLimit || 0);
   return sources
     .filter((source) => source.platform === "抖音" && roles.has(source.source_role))
-    .slice(0, limit);
+    .filter((source) => !only.size || only.has(source.account_name || source.name || ""))
+    .slice(0, max);
 }
 
 async function getJson(url) {
@@ -360,7 +368,7 @@ async function main() {
     process.exit(2);
   }
 
-  const sources = selectedSources(loadSources(options.config), options.accountLimit);
+  const sources = selectedSources(loadSources(options.config), options);
   const rows = [];
   const browserClient = new CdpClient(version.webSocketDebuggerUrl);
   await browserClient.open();

@@ -30,6 +30,8 @@ WECHAT_FEED_RESOLVED = OUT / "wechat_feed_content_items.jsonl"
 WECHAT_FEED_RESOLVED_MANUAL = OUT / "wechat_feed_content_items_manual.jsonl"
 WECHAT_FULLTEXT_RESOLVED_MANUAL = OUT / "wechat_fulltext_provider_items.jsonl"
 DOUYIN_CDP_RESOLVED_MANUAL = OUT / "spikes" / "douyin_cdp_source_watch_probe" / "content_items_manual.jsonl"
+DOUYIN_CDP_RETRY_DIR = OUT / "spikes" / "douyin_cdp_source_watch_probe_verification_retry"
+DOUYIN_CDP_RETRY_MANUAL = DOUYIN_CDP_RETRY_DIR / "content_items_manual.jsonl"
 DOUYIN_TRANSCRIPTS_MANUAL = OUT / "spikes" / "douyin_transcripts" / "transcribed_content_items.jsonl"
 COMBINED_MANUAL = OUT / "daily_pipeline_manual_combined.jsonl"
 DEFAULT_WECHAT_FEED_CONFIG = ROOT / "config" / "wechat_feed_candidates.yaml"
@@ -114,6 +116,30 @@ def cdp_port(cdp_url: str) -> int:
     return parsed.port or 9333
 
 
+def douyin_verification_rows(result_path: Path) -> list[dict[str, Any]]:
+    if not result_path.exists():
+        return []
+    try:
+        payload = json.loads(result_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return []
+    rows = payload.get("rows") or []
+    return [
+        row for row in rows
+        if row.get("status") == "needs_login_or_verification"
+        and (row.get("account_name") or row.get("homepage_url"))
+    ]
+
+
+def csv_names(rows: list[dict[str, Any]]) -> str:
+    names = []
+    for row in rows:
+        name = str(row.get("account_name") or "").strip()
+        if name and name not in names:
+            names.append(name)
+    return ",".join(names)
+
+
 def row_key(row: dict[str, Any]) -> str:
     return str(row.get("内容指纹") or row.get("内容链接") or row.get("内容标题") or "")
 
@@ -162,6 +188,8 @@ def main() -> int:
     parser.add_argument("--douyin-account-limit", type=int, default=12, help="Max Douyin accounts to probe in daily source-watch sampling.")
     parser.add_argument("--douyin-video-limit", type=int, default=3, help="Max videos per Douyin account when --fetch-douyin-cdp-source-watch is enabled.")
     parser.add_argument("--douyin-retries", type=int, default=2, help="Retries per Douyin account before skipping to the next account.")
+    parser.add_argument("--douyin-verification-action", choices=["foreground", "log-only"], default="foreground", help="When a Douyin account needs login/verification, foreground the dedicated Chrome for user handling or only log it.")
+    parser.add_argument("--douyin-verification-wait-seconds", type=float, default=60.0, help="Seconds to wait after foregrounding Chrome for Douyin login/verification before retrying affected accounts.")
     parser.add_argument("--include-douyin-transcripts", action="store_true", help="Explicit P1 mode: include already transcribed Douyin ContentItems. Does not call ASR.")
     args = parser.parse_args()
 
@@ -253,8 +281,43 @@ def main() -> int:
         ]
         douyin_step = run_optional_step("fetch daily Douyin homepage title/caption samples through Chrome CDP", douyin_cmd, env=step_env)
         steps.append(douyin_step)
+        verification_rows = douyin_verification_rows(OUT / "spikes" / "douyin_cdp_source_watch_probe" / "cdp_probe_results.json")
+        if verification_rows and args.douyin_verification_action == "foreground":
+            first_homepage = str(verification_rows[0].get("homepage_url") or "https://www.douyin.com/")
+            foreground_cmd = [
+                py,
+                str(ROOT / "scripts" / "start_douyin_cdp_chrome.py"),
+                "--port",
+                str(cdp_port(args.douyin_cdp)),
+                "--foreground",
+                "--url",
+                first_homepage,
+                "--wait-seconds",
+                str(args.douyin_verification_wait_seconds),
+            ]
+            steps.append(run_optional_step("foreground Douyin Chrome for login/verification", foreground_cmd, env=step_env))
+            retry_names = csv_names(verification_rows)
+            retry_cmd = [
+                "node",
+                str(ROOT / "scripts" / "douyin_cdp_source_watch_probe.mjs"),
+                "--cdp",
+                args.douyin_cdp,
+                "--out-dir",
+                str(DOUYIN_CDP_RETRY_DIR),
+                "--account-limit",
+                str(max(len(verification_rows), 1)),
+                "--video-limit",
+                str(args.douyin_video_limit),
+                "--retries",
+                str(args.douyin_retries),
+                "--only-account-names",
+                retry_names,
+            ]
+            steps.append(run_optional_step("retry Douyin accounts after user verification", retry_cmd, env=step_env))
         if not douyin_step.get("optional_failed") and DOUYIN_CDP_RESOLVED_MANUAL.exists():
             manual_inputs.append(DOUYIN_CDP_RESOLVED_MANUAL)
+        if DOUYIN_CDP_RETRY_MANUAL.exists():
+            manual_inputs.append(DOUYIN_CDP_RETRY_MANUAL)
 
     if args.include_douyin_transcripts:
         manual_inputs.append(DOUYIN_TRANSCRIPTS_MANUAL)
