@@ -110,6 +110,23 @@ CANDIDATE_CONTEXT_FIELDS = [
     "内容指纹",
 ]
 
+ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
+LEVEL_ALIASES = {
+    "备选": "可选候选",
+    "备选候选": "可选候选",
+    "备选，不占今日前三": "可选候选",
+    "候选": "可选候选",
+    "可做候选": "可选候选",
+    "进入候选": "可选候选",
+    "观察": "暂存观察",
+    "暂存": "暂存观察",
+    "待观察": "暂存观察",
+    "不做": "不建议制作",
+    "放弃": "不建议制作",
+    "不推荐": "不建议制作",
+}
+NON_PUBLISH_LEVELS = {"暂存观察", "不建议制作"}
+
 DIRECTION_ALIASES = {
     "AI汽车与品牌增长": "汽车与内容营销",
     "AI导演工作流与视频交付": "AI导演工作流",
@@ -178,6 +195,122 @@ def intish(value: Any) -> int:
         return int(float(str(value or 0)))
     except ValueError:
         return 0
+
+
+def compact_text(value: str) -> str:
+    return re.sub(r"[\s\W_]+", "", (value or "").lower())
+
+
+def source_title_values(row: dict[str, str]) -> list[str]:
+    values: list[str] = []
+    for field in ["原始来源标题", "来源内容", "来源标题", "我的选题标题"]:
+        value = (row.get(field, "") or "").strip()
+        if value:
+            values.append(value)
+    return values
+
+
+def is_same_as_source(title: str, row: dict[str, str]) -> bool:
+    normalized = compact_text(title)
+    if not normalized:
+        return False
+    for source in source_title_values(row):
+        source_norm = compact_text(source)
+        if normalized and source_norm and normalized == source_norm:
+            return True
+    return False
+
+
+def normalize_level(value: str) -> str:
+    cleaned = (value or "").strip()
+    if cleaned in ALLOWED_LEVELS:
+        return cleaned
+    if cleaned in LEVEL_ALIASES:
+        return LEVEL_ALIASES[cleaned]
+    for key, target in LEVEL_ALIASES.items():
+        if key and key in cleaned:
+            return target
+    if "最值得" in cleaned or cleaned in {"S", "强推"}:
+        return "今日最值得做"
+    if "不建议" in cleaned or "放弃" in cleaned:
+        return "不建议制作"
+    if "暂存" in cleaned or "观察" in cleaned:
+        return "暂存观察"
+    if cleaned:
+        return "可选候选"
+    return "暂存观察"
+
+
+def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
+    out = dict(row)
+    level = normalize_level(out.get("今日建议级别") or out.get("候选状态"))
+    out["今日建议级别"] = level
+    out["候选状态"] = level
+
+    publishable = (out.get("可发布标题", "") or "").strip()
+    alternatives = (out.get("标题备选", "") or "").strip()
+
+    if level in NON_PUBLISH_LEVELS:
+        if publishable or alternatives:
+            reason = out.get("不建议做的原因") or out.get("降级原因") or out.get("推荐动作原因")
+            extra = "暂存/不建议项不生成可发布标题，避免把内部判断误当成发布选题。"
+            out["不建议做的原因"] = f"{reason}；{extra}".strip("；")
+        out["可发布标题"] = ""
+        out["标题备选"] = ""
+        out["是否建议进入制作"] = "否"
+        if level == "不建议制作":
+            out["推荐动作"] = "放弃"
+        elif out.get("推荐动作") not in {"补证据", "存素材", "观察"}:
+            out["推荐动作"] = "观察"
+        return out
+
+    if publishable and is_same_as_source(publishable, out):
+        reason = out.get("降级原因") or out.get("推荐动作原因") or out.get("不建议做的原因")
+        extra = "可发布标题与原始来源标题相同，说明还没有转成用户自己的表达，先降级为暂存观察。"
+        out["今日建议级别"] = "暂存观察"
+        out["候选状态"] = "暂存观察"
+        out["可发布标题"] = ""
+        out["标题备选"] = ""
+        out["是否建议进入制作"] = "否"
+        out["推荐动作"] = "观察"
+        out["降级原因"] = f"{reason}；{extra}".strip("；")
+        out["不建议做的原因"] = out["降级原因"]
+        return out
+
+    if level == "今日最值得做":
+        out["是否建议进入制作"] = "是"
+    elif not out.get("是否建议进入制作"):
+        out["是否建议进入制作"] = "否"
+    return out
+
+
+def wants_top_today(row: dict[str, str]) -> bool:
+    if row.get("今日建议级别") == "今日最值得做":
+        return True
+    if row.get("推荐等级") != "S":
+        return False
+    if "是" not in (row.get("是否建议进入制作") or ""):
+        return False
+    text = "\n".join([
+        row.get("主编判断", ""),
+        row.get("推荐理由", ""),
+        row.get("一句话Brief", ""),
+    ])
+    return any(term in text for term in ["今日必须", "今日值得", "必须做", "最值得", "强人设", "主选题"])
+
+
+def normalize_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    normalized = [normalize_skill_row(row) for row in rows]
+    top_candidates = [idx for idx, row in enumerate(normalized) if wants_top_today(row)]
+    for idx in top_candidates[:3]:
+        normalized[idx]["今日建议级别"] = "今日最值得做"
+        normalized[idx]["候选状态"] = "今日最值得做"
+        normalized[idx]["是否建议进入制作"] = "是"
+    for idx in top_candidates[3:]:
+        if normalized[idx].get("今日建议级别") == "今日最值得做":
+            normalized[idx]["今日建议级别"] = "可选候选"
+            normalized[idx]["候选状态"] = "可选候选"
+    return normalized
 
 
 def blob(row: dict[str, str]) -> str:
@@ -473,7 +606,7 @@ def run_codex_skill(rows: list[dict[str, str]], model: str, timeout: int) -> tup
         out["Skill编辑层"] = "ai-account-editorial-director"
         out["Skill参考文件"] = str(SKILL_REFERENCE)
         enriched.append(out)
-    return enriched, {
+    return normalize_batch(enriched), {
         "codex_rows": len(by_index),
         "batch_notes": payload.get("batch_notes", ""),
         "model": model or "codex-default",
@@ -538,13 +671,13 @@ def main() -> int:
         if args.engine == "codex":
             enriched, engine_meta = run_codex_skill(rows, args.codex_model, args.timeout)
         else:
-            enriched = [enrich(row) for row in rows]
+            enriched = normalize_batch([enrich(row) for row in rows])
             engine_meta = {"mode": "explicit_deterministic"}
     except Exception as exc:
         if not args.allow_deterministic_fallback:
             raise
         engine = "deterministic"
-        enriched = [enrich(row) for row in rows]
+        enriched = normalize_batch([enrich(row) for row in rows])
         engine_meta = {"fallback_after_error": str(exc)}
     fields = fieldnames_for(enriched, original_fields)
     if input_path.resolve() == output_path.resolve():

@@ -90,6 +90,55 @@ REQUIRED_FIELDS = [
     "相关来源",
     "内容指纹",
 ]
+ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
+LEVEL_ALIASES = {
+    "备选": "可选候选",
+    "备选候选": "可选候选",
+    "备选，不占今日前三": "可选候选",
+    "候选": "可选候选",
+    "观察": "暂存观察",
+    "暂存": "暂存观察",
+    "不做": "不建议制作",
+    "放弃": "不建议制作",
+}
+
+
+def normalize_level(value: str) -> str:
+    cleaned = (value or "").strip()
+    if cleaned in ALLOWED_LEVELS:
+        return cleaned
+    if cleaned in LEVEL_ALIASES:
+        return LEVEL_ALIASES[cleaned]
+    for key, target in LEVEL_ALIASES.items():
+        if key and key in cleaned:
+            return target
+    if "最值得" in cleaned:
+        return "今日最值得做"
+    if "不建议" in cleaned:
+        return "不建议制作"
+    if "暂存" in cleaned or "观察" in cleaned:
+        return "暂存观察"
+    return "可选候选" if cleaned else ""
+
+
+def short_text(value: str, limit: int = 38) -> str:
+    text = " ".join((value or "").split())
+    return text if len(text) <= limit else text[:limit].rstrip() + "..."
+
+
+def display_title_for(row: dict[str, str], publishable_title: str) -> str:
+    if publishable_title:
+        return publishable_title
+    level = normalize_level(row.get("今日建议级别", ""))
+    direction = row.get("对应方向") or row.get("对应栏目") or "候选"
+    source = row.get("来源内容") or row.get("原始来源标题") or row.get("我的选题标题") or "未命名来源"
+    if level == "不建议制作":
+        reason = row.get("不建议做的原因") or row.get("降级原因") or "不符合当前账号主线"
+        return f"不建议制作：{short_text(reason)}"
+    if level == "暂存观察":
+        reason = row.get("不建议做的原因") or row.get("降级原因") or row.get("推荐动作原因") or direction
+        return f"暂存观察：{short_text(reason)}"
+    return row.get("我的选题标题") or f"{direction}候选：{short_text(source)}"
 ACTION_STATUS = {
     "立即蹭热点": "待判断",
     "进入Brief": "进入Brief",
@@ -188,12 +237,13 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str, str]:
     status = ACTION_STATUS.get(row.get("推荐动作", ""), "待判断")
     publishable_title = row.get("可发布标题", "")
-    display_title = publishable_title or row.get("来源内容", "") or row.get("我的选题标题", "")
+    level = normalize_level(row.get("今日建议级别", ""))
+    display_title = display_title_for(row, publishable_title)
     internal_angle = row.get("内部切入角度") or row.get("我的选题标题", "")
     recommendation_reason = row.get("推荐理由", "")
     return {
         "选题标题": display_title,
-        "候选状态": row.get("候选状态", row.get("今日建议级别", "")),
+        "候选状态": normalize_level(row.get("候选状态", "")) or level,
         "推荐等级": row.get("推荐等级", ""),
         "我的选题标题": row.get("我的选题标题", ""),
         "内部切入角度": internal_angle,
@@ -227,7 +277,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "内容可信度": row.get("内容可信度", ""),
         "AI味风险": row.get("AI味风险", ""),
         "是否建议进入制作": row.get("是否建议进入制作", ""),
-        "今日建议级别": row.get("今日建议级别", ""),
+        "今日建议级别": level,
         "主编判断": row.get("主编判断", ""),
         "模板词命中情况": row.get("模板词命中情况", ""),
         "不建议做的原因": row.get("不建议做的原因", ""),

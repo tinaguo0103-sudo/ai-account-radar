@@ -27,6 +27,24 @@ VISIBLE_FIELDS = [
     "我的选题标题", "可发布标题", "标题备选", "推荐理由", "我的蹭热点角度",
     "选题标题", "内部切入角度",
 ]
+ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
+
+
+def compact_text(value: str) -> str:
+    import re
+
+    return re.sub(r"[\s\W_]+", "", (value or "").lower())
+
+
+def same_as_source(title: str, row: dict[str, str]) -> bool:
+    normalized = compact_text(title)
+    if not normalized:
+        return False
+    for field in ["原始来源标题", "来源内容", "来源标题"]:
+        source = compact_text(row.get(field, ""))
+        if source and source == normalized:
+            return True
+    return False
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -79,10 +97,16 @@ def main() -> int:
     debug_by_fp = {row.get("内容指纹", ""): row for row in debug_rows if row.get("内容指纹", "")}
 
     for idx, row in enumerate(rows, start=1):
+        if row.get("今日建议级别") not in ALLOWED_LEVELS:
+            failures.append(f"row {idx}: non-standard 今日建议级别: {row.get('今日建议级别')!r}")
         visible_text = "\n".join(row.get(field, "") for field in VISIBLE_FIELDS)
         hits = contains_any(visible_text, FORBIDDEN_VISIBLE_TERMS)
         if hits:
             failures.append(f"row {idx}: visible fields contain forbidden template terms: {','.join(hits)}")
+        if same_as_source(row.get("可发布标题", ""), row):
+            failures.append(f"row {idx}: publishable title equals original source title")
+        if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and not row.get("可发布标题", "").strip():
+            failures.append(f"row {idx}: {row.get('今日建议级别')} has no rewritten publishable title")
         if row.get("推荐动作") in {"暂存观察", "不做"} or row.get("今日建议级别") in {"暂存观察", "不建议制作"}:
             if row.get("可发布标题", "").strip() or row.get("标题备选", "").strip():
                 failures.append(f"row {idx}: {row.get('今日建议级别')} still has publishable title/options")
