@@ -84,6 +84,10 @@ def read_local(run_id: str, path: Path) -> list[dict[str, str]]:
     return [map_row(row, idx, date, run_id) for idx, row in enumerate(rows, start=1)]
 
 
+def is_visible_candidate(row: dict[str, str]) -> bool:
+    return row.get("今日建议级别") not in {"暂存观察", "不建议制作"}
+
+
 def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     page_token = ""
@@ -134,7 +138,8 @@ def main() -> int:
     if not table_id:
         raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
 
-    local_rows = read_local(args.run_id, input_path)
+    all_local_rows = read_local(args.run_id, input_path)
+    local_rows = [row for row in all_local_rows if is_visible_candidate(row)]
     records = all_records(token, app_token, table_id)
     run_records = [record for record in records if normalize(record.get("fields", {}).get("运行批次")) == args.run_id]
     feishu_by_key = {feishu_key(record.get("fields", {})): record for record in run_records}
@@ -190,6 +195,7 @@ def main() -> int:
         "ok": not failures,
         "run_id": args.run_id,
         "input": str(input_path),
+        "local_rows_all": len(all_local_rows),
         "local_rows": len(local_rows),
         "feishu_rows": len(run_records),
         "level_counts": dict(level_counts),
