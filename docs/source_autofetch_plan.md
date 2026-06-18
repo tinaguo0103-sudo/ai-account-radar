@@ -4,7 +4,9 @@
 
 `AIHOT / 官方源 / URL投喂` -> `03 内容收件箱` -> 内容拆解 -> `04 今日候选池`
 
-主对标抖音账号的主页标题/文案采样已经进入 `main` 的默认 `daily_pipeline.py`。它只做低频只读采样：抓主页最近作品标题/文案和单条视频 metadata，不下载视频、不抓评论、不做自动转写；单账号失败会重试，重试仍失败就记录原因并继续下一个账号。
+主对标抖音账号的主页标题/文案采样已经进入 `main` 的默认 `daily_pipeline.py`，但它有同日采集闸门：每天最多实际访问一次抖音主页；同一天后续运行默认复用 `output/source_collection_cache/YYYY-MM-DD/` 的缓存结果。它只做低频只读采样：抓主页最近作品标题/文案和单条视频 metadata，不下载视频、不抓评论、不做自动转写；单账号失败会重试，重试仍失败就记录原因并继续下一个账号。
+
+测试规则：修改选题、Skill、飞书字段写入时，不重新采集抖音；只有改采集逻辑、主页链接、登录状态或明确复验采集时，才使用 `--force-fetch-douyin`。
 
 ## P0 默认自动拉取
 
@@ -91,7 +93,7 @@
 - 已盘点开源路线：`Agent-Reach` 更适合作为工具清单而不是正式依赖；当前 `_ROUTER_DATA` 单条解析比本轮测试的 `douyin-mcp-server` 更适合 metadata；`MediaCrawler` 是账号主页最近 N 条的 P1 主候选；`Douyin_TikTok_Download_API` 能力全但需要自部署和 Cookie/风控配置，暂作备选。详见 `docs/spikes/douyin_open_source_tool_eval.md`。
 - 当前已有轻量探针：`scripts/douyin_source_watch_probe.py`。它读取当前主对标池里的抖音主页，尝试从公开页面发现作品 ID；如果发现作品 ID，就复用单条视频 resolver 输出本地 ContentItem。它不写飞书、不保存登录态、不下载视频、不抓评论。
 - 2026-06-16 复验结果：秋芝2046、xuan酱公开页面可访问但更像 JS 壳，未解析出作品 ID；ami.moment 缺主页链接。结论是无登录公开主页不足以稳定发现最近 N 条。
-- 当前已有 Chrome CDP 探针：`scripts/douyin_cdp_source_watch_probe.mjs`。它只连接本机远程调试 Chrome，不导出 profile，不保存 cookie/token。2026-06-16 更新：使用专用 Chrome profile 和抖音小号登录后，秋芝2046、xuan酱、数字游牧人、数字生命卡兹克-抖音教程视频等账号已能低频拿到可信主页作品，并复用单条 resolver 生成本地 ContentItem。它现在默认进入 `daily_pipeline.py`，正式 `--write-feishu` 时和其他来源一样写入 `03 内容收件箱` 并参与 `04 今日候选池`；普通失败只记录，不阻塞其他来源。
+- 当前已有 Chrome CDP 探针：`scripts/douyin_cdp_source_watch_probe.mjs`。它只连接本机远程调试 Chrome，不导出 profile，不保存 cookie/token。2026-06-16 更新：使用专用 Chrome profile 和抖音小号登录后，秋芝2046、xuan酱、数字游牧人、数字生命卡兹克-抖音教程视频等账号已能低频拿到可信主页作品，并复用单条 resolver 生成本地 ContentItem。它现在默认进入 `daily_pipeline.py`，正式 `--write-feishu` 时和其他来源一样写入 `03 内容收件箱` 并参与 `04 今日候选池`；普通失败只记录，不阻塞其他来源。同一天重复运行不会再次访问抖音主页，除非显式传 `--force-fetch-douyin`。
 - 为避免干扰用户日常 Chrome，使用 `scripts/start_douyin_cdp_chrome.py --port 9333` 以默认 `hidden` 模式后台启动或复用专用 Chrome。采样时 CDP 探针使用后台 target 打开主页，并尽量最小化专用 Chrome，避免每个博主页采样时反复弹窗。若某个账号明确需要登录/验证码，daily pipeline 会前台打开专用 Chrome 到该账号主页，等待用户处理后只重试这些账号；无人值守可用 `--douyin-verification-action log-only` 只记录不弹窗。`--headless` 仅作为实验模式保留，不作为抖音登录态采样首选。
 - 口播转写不默认执行。先用 `scripts/douyin_transcript_candidates.py` 根据标题/文案/时长筛选候选；确认值得转写后，再显式调用 `scripts/douyin_video_transcribe.py --raw-payload <raw.json> --model paraformer-v2 --confirm-free-quota --yes`。长视频默认被成本护栏拦截。
 - 已转写内容可通过 `scripts/douyin_video_transcribe.py --raw-payload <raw.json> --transcript-file <transcript.md>` 包装成标准 ContentItem，再用 `python3 scripts/daily_pipeline.py --include-douyin-transcripts` 显式进入候选池。这个流程不重复消耗 ASR 额度，不默认写飞书。

@@ -86,7 +86,7 @@
 - `scripts/run_radar.py`：采集与分析脚本。
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和初筛后的今日候选池。
 - `scripts/editorial_skill_runner.py`：全局 Skill 的主编层执行脚本，默认调用本机已登录的 Codex CLI，读取 `ai-account-editorial-director` 与案例库后重判候选，并输出 `一句话Brief / 我的场景拆解 / 我的思考点 / 重点体现 / 可调用案例 / 证据强度` 等业务字段。`--engine deterministic` 只作为显式离线应急选项。
-- `scripts/daily_pipeline.py`：日常总入口，默认 dry-run；显式传入 `--write-feishu` 才写入飞书。
+- `scripts/daily_pipeline.py`：日常总入口；日常使用加 `--write-feishu` 写入飞书，默认本地模式只用于开发验证。抖音主页采集默认同一天只跑一次，后续运行复用当天缓存。
 - `scripts/url_content_resolver.py`：正式 URL 内容采样 adapter，把公众号文章、抖音单条视频、RSS/Atom、普通网页解析成标准 ContentItem；默认只输出本地文件，显式 `--write-feishu` 才写入 `03 内容收件箱`。
 - `scripts/push_today10_to_feishu.py`：把今日候选池写入飞书 `04 分析与选题`，不写被淘汰的调试候选。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并创建 `06 内容任务主表`。
@@ -102,19 +102,37 @@
 
 ## 一键运行
 
-日常总入口，默认 dry-run，不写飞书：
+日常正式入口，写入飞书：
 
 ```bash
-python3 scripts/daily_pipeline.py
+python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 ```
 
-只用手动样例、不访问 AIHOT：
+这条命令会处理 `02 URL投喂入口` 的新链接、复用当天抖音主页采集缓存、拉取公开热点源，并把结果写入 `03 内容收件箱`、`04 分析与选题` 和 `00 主控台`。日常不要先跑一遍 dry-run；dry-run 只在改采集、改规则或排查 bug 时使用。
+
+开发验证但不访问 AIHOT：
 
 ```bash
 python3 scripts/daily_pipeline.py --no-fetch-aihot
 ```
 
-你只丢 URL 的正式用法：
+如果只是测试 Skill、标题质量、飞书写入字段，不要重新采集，优先使用最近一次正式输出：
+
+```bash
+python3 scripts/editorial_skill_runner.py \
+  --engine codex \
+  --input output/latest_write/today_10_topics.csv \
+  --output output/latest_write/today_10_topics.csv \
+  --report output/latest_write/editorial_skill_report.json
+```
+
+只有修改了抖音采集逻辑、主页链接、登录状态，或者明确要复验采集时，才强制重新采集抖音：
+
+```bash
+python3 scripts/daily_pipeline.py --resolve-url-intake --force-fetch-douyin --write-feishu
+```
+
+单独排查 URL 解析时，可以只运行 resolver：
 
 ```bash
 python3 scripts/url_content_resolver.py --file data/manual/urls.example.txt --dry-run
@@ -143,12 +161,13 @@ python3 scripts/url_content_resolver.py --file data/manual/urls.example.txt --dr
 
 暂不支持：
 
-- 抖音账号主页自动抓最近 N 条；
 - 抖音口播/字幕转写；
 - 评论区抓取；
 - 小红书；
 - Twitter/X；
 - Reddit。
+
+主对标抖音账号主页现在支持低频标题/文案采样，并带同日缓存；它不是全量主页爬虫，不抓评论、不批量历史、不自动转写。
 
 解析失败会保留失败原因，不会静默丢弃。确认本地输出没问题后，显式写入飞书 `03 内容收件箱`：
 
@@ -225,16 +244,16 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 FEISHU_APP_ID=xxx \
 FEISHU_APP_SECRET=xxx \
 FEISHU_BASE_APP_TOKEN=xxx \
-python3 scripts/daily_pipeline.py --resolve-url-intake
+python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 ```
 
-默认仍是 dry-run，不写入飞书 `03` 或 `04`。确认字段映射、去重和今日候选池后再加 `--write-feishu`：
+这就是日常正式路径，不需要先 dry-run。脚本会处理新 URL，复用当天抖音主页采集缓存，写入飞书并刷新主控台。只有在改动 URL resolver、字段映射或采集逻辑时，才先去掉 `--write-feishu` 做开发验证：
 
 ```bash
 FEISHU_APP_ID=xxx \
 FEISHU_APP_SECRET=xxx \
 FEISHU_BASE_APP_TOKEN=xxx \
-python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
+python3 scripts/daily_pipeline.py --resolve-url-intake
 ```
 
 如果本机遇到 `open.feishu.cn` DNS 解析失败，可临时指定飞书开放平台域名：
@@ -251,7 +270,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 
 今日候选池不再强制凑满 10 条。AIHOT 可以是主来源，但默认最多占 8 条；如果本轮有 URL 投喂或开启已解析 URL 复用，并且 URL 内容解析成功、分数过线，系统会优先保留进入候选池。主对标抖音主页标题/文案也和其他来源一样参与评分、进入候选、生成标题；只是不能编造未采到的口播全文、评论区、镜头结构或完整视频理解。调试文件会写入本轮批次目录，例如 `output/dry_runs/run_*/debug_today10_generation.csv` 或 `output/runs/run_*/debug_today10_generation.csv`，并同步到 `output/latest_dry_run/` 或 `output/latest_write/`，用于查看每条候选是否来自已解析 URL 复用、是否进入候选池、标题结构模板、事件锚点、业务变化判断、内部切入角度和可发布标题。
 
-确认 dry-run 输出没问题后，显式写入飞书 `04 分析与选题` 并刷新 `00 主控台`：
+如果当天没有新 URL，只想跑一次日常热点/对标更新并写入飞书：
 
 ```bash
 FEISHU_APP_ID=xxx \
@@ -260,7 +279,14 @@ FEISHU_BASE_APP_TOKEN=xxx \
 python3 scripts/daily_pipeline.py --write-feishu
 ```
 
-`daily_pipeline.py` 会串起：读取内容源配置、抓取 AIHOT、读取手动公众号/视频样例、生成 ContentItem、生成内容拆解、代码初筛今日候选池、通过 `editorial_skill_runner.py` 直接调用全局 `ai-account-editorial-director` Skill 做主编判断、dry-run 展示、按需写入飞书、按需刷新主控台和输出日志。默认不写入飞书，不自动发布，不生成完整成稿。每次运行会生成一个 `运行批次`，用于在 `03 内容收件箱 / 今日采集` 和 `04 分析与选题 / 今日候选池` 中追踪本轮数据。
+`daily_pipeline.py` 会串起：读取内容源配置、拉取公开热点源、复用或低频采集主对标抖音主页标题文案、读取 URL 投喂/公众号全文/转写样例、生成 ContentItem、生成内容拆解、代码初筛今日候选池、通过 `editorial_skill_runner.py` 调用全局 `ai-account-editorial-director` Skill 做主编判断、按需写入飞书、刷新主控台和输出日志。日常使用应写入飞书；脚本默认本地模式只用于开发安全验证。不自动发布，不生成完整成稿。每次运行会生成一个 `运行批次`，用于在 `03 内容收件箱 / 今日采集` 和 `04 分析与选题 / 今日候选池` 中追踪本轮数据。
+
+采集频率边界：
+
+- 抖音主页采集同一天默认只跑一次；当天再次运行会复用 `output/source_collection_cache/YYYY-MM-DD/` 的缓存结果。
+- 只有修改采集逻辑、主页链接、登录态或需要排查采集问题时，才加 `--force-fetch-douyin`。
+- 测试 Skill、标题质量、字段写入或飞书读回时，不要重新跑平台采集，使用 `output/latest_write/` 或当天缓存。
+- 如需完全跳过抖音采集，可加 `--no-fetch-douyin`。
 
 输出文件分层：
 

@@ -1,9 +1,10 @@
 #!/usr/bin/env python3
 """Daily entrypoint for AI account radar.
 
-Default mode is dry-run: generate content objects, breakdowns and 今日候选池,
-then print the rows that would be written to Feishu. Use --write-feishu to
-write only the daily candidate pool to 04 分析与选题 and refresh 00 主控台.
+Daily operation should write to Feishu with --write-feishu. The default remains
+local-only for development safety. Platform collection is guarded so risky
+sources such as Douyin are collected at most once per day unless explicitly
+forced for collection-logic testing.
 """
 from __future__ import annotations
 
@@ -40,6 +41,7 @@ DOUYIN_TRANSCRIPTS_MANUAL = OUT / "spikes" / "douyin_transcripts" / "transcribed
 COMBINED_MANUAL = OUT / "daily_pipeline_manual_combined.jsonl"
 DEFAULT_WECHAT_FEED_CONFIG = ROOT / "config" / "wechat_feed_candidates.yaml"
 DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG = ROOT / "config" / "wechat_fulltext_provider.example.yaml"
+SOURCE_CACHE_DIR = OUT / "source_collection_cache"
 
 load_local_env()
 
@@ -127,6 +129,80 @@ def new_run_id() -> str:
     return f"run_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
 
 
+def today_key() -> str:
+    return datetime.now().strftime("%Y-%m-%d")
+
+
+def douyin_cache_manifest_path() -> Path:
+    return SOURCE_CACHE_DIR / today_key() / "douyin_cdp_source_watch.json"
+
+
+def read_json(path: Path) -> dict[str, Any]:
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
+def file_modified_today(path: Path) -> bool:
+    if not path.exists():
+        return False
+    modified = datetime.fromtimestamp(path.stat().st_mtime).strftime("%Y-%m-%d")
+    return modified == today_key()
+
+
+def douyin_cache_ready() -> bool:
+    manifest = read_json(douyin_cache_manifest_path())
+    if manifest.get("date") != today_key() or manifest.get("status") != "ok":
+        return False
+    manual_path = Path(str(manifest.get("manual_jsonl") or DOUYIN_CDP_RESOLVED_MANUAL))
+    return manual_path.exists() and file_modified_today(manual_path)
+
+
+def cached_douyin_manual_paths() -> list[Path]:
+    manifest = read_json(douyin_cache_manifest_path())
+    paths: list[Path] = []
+    for key in ("manual_jsonl", "retry_manual_jsonl"):
+        value = str(manifest.get(key) or "").strip()
+        if value:
+            path = Path(value)
+            if path.exists() and file_modified_today(path):
+                paths.append(path)
+    if not paths and DOUYIN_CDP_RESOLVED_MANUAL.exists() and file_modified_today(DOUYIN_CDP_RESOLVED_MANUAL):
+        paths.append(DOUYIN_CDP_RESOLVED_MANUAL)
+    return paths
+
+
+def write_douyin_cache_manifest(status: str, run_id: str, steps: list[dict[str, Any]], note: str = "") -> None:
+    payload = {
+        "date": today_key(),
+        "status": status,
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "run_id": run_id,
+        "manual_jsonl": str(DOUYIN_CDP_RESOLVED_MANUAL) if DOUYIN_CDP_RESOLVED_MANUAL.exists() else "",
+        "retry_manual_jsonl": str(DOUYIN_CDP_RETRY_MANUAL) if DOUYIN_CDP_RETRY_MANUAL.exists() and file_modified_today(DOUYIN_CDP_RETRY_MANUAL) else "",
+        "note": note,
+        "steps": [
+            {
+                "name": step.get("name"),
+                "returncode": step.get("returncode"),
+                "optional_failed": step.get("optional_failed", False),
+            }
+            for step in steps
+            if "Douyin" in str(step.get("name", "")) or "douyin" in " ".join(str(part) for part in step.get("command", []))
+        ],
+    }
+    write_json(douyin_cache_manifest_path(), payload)
+
+
 def cdp_port(cdp_url: str) -> int:
     parsed = urlparse(cdp_url)
     return parsed.port or 9333
@@ -206,6 +282,8 @@ def main() -> int:
     parser.add_argument("--douyin-retries", type=int, default=2, help="Retries per Douyin account before skipping to the next account.")
     parser.add_argument("--douyin-verification-action", choices=["foreground", "log-only"], default="foreground", help="When a Douyin account needs login/verification, foreground the dedicated Chrome for user handling or only log it.")
     parser.add_argument("--douyin-verification-wait-seconds", type=float, default=60.0, help="Seconds to wait after foregrounding Chrome for Douyin login/verification before retrying affected accounts.")
+    parser.add_argument("--force-fetch-douyin", action="store_true", help="Force Douyin homepage collection even if today's source cache exists. Use only when testing collection logic or after manually changing links/login.")
+    parser.add_argument("--no-reuse-source-cache", action="store_true", help="Disable same-day source cache reuse. Normally do not use this for Douyin to avoid account risk.")
     parser.add_argument("--include-douyin-transcripts", action="store_true", help="Explicit P1 mode: include already transcribed Douyin ContentItems. Does not call ASR.")
     args = parser.parse_args()
 
@@ -275,65 +353,85 @@ def main() -> int:
 
     fetch_douyin = not args.no_fetch_douyin_cdp_source_watch or args.fetch_douyin_cdp_source_watch
     if fetch_douyin:
-        chrome_cmd = [
-            py,
-            str(ROOT / "scripts" / "start_douyin_cdp_chrome.py"),
-            "--port",
-            str(cdp_port(args.douyin_cdp)),
-        ]
-        chrome_step = run_optional_step("start/reuse background Douyin Chrome CDP", chrome_cmd, env=step_env)
-        steps.append(chrome_step)
-        douyin_cmd = [
-            "node",
-            str(ROOT / "scripts" / "douyin_cdp_source_watch_probe.mjs"),
-            "--cdp",
-            args.douyin_cdp,
-            "--account-limit",
-            str(args.douyin_account_limit),
-            "--video-limit",
-            str(args.douyin_video_limit),
-            "--retries",
-            str(args.douyin_retries),
-        ]
-        douyin_step = run_optional_step("fetch daily Douyin homepage title/caption samples through Chrome CDP", douyin_cmd, env=step_env)
-        steps.append(douyin_step)
-        verification_rows = douyin_verification_rows(OUT / "spikes" / "douyin_cdp_source_watch_probe" / "cdp_probe_results.json")
-        if verification_rows and args.douyin_verification_action == "foreground":
-            first_homepage = str(verification_rows[0].get("homepage_url") or "https://www.douyin.com/")
-            foreground_cmd = [
+        reuse_douyin_cache = not args.no_reuse_source_cache and not args.force_fetch_douyin and douyin_cache_ready()
+        if reuse_douyin_cache:
+            cached_paths = cached_douyin_manual_paths()
+            manual_inputs.extend(cached_paths)
+            cache_step = {
+                "name": "reuse today's Douyin source cache",
+                "command": ["source-cache", "douyin_cdp_source_watch", "--date", today_key()],
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+                "returncode": 0,
+                "stdout": f"Reused {len(cached_paths)} cached Douyin ContentItem file(s). Use --force-fetch-douyin only when testing collection logic.",
+                "stderr": "",
+            }
+            print("\n== reuse today's Douyin source cache ==")
+            print(cache_step["stdout"])
+            steps.append(cache_step)
+        else:
+            chrome_cmd = [
                 py,
                 str(ROOT / "scripts" / "start_douyin_cdp_chrome.py"),
                 "--port",
                 str(cdp_port(args.douyin_cdp)),
-                "--foreground",
-                "--url",
-                first_homepage,
-                "--wait-seconds",
-                str(args.douyin_verification_wait_seconds),
             ]
-            steps.append(run_optional_step("foreground Douyin Chrome for login/verification", foreground_cmd, env=step_env))
-            retry_names = csv_names(verification_rows)
-            retry_cmd = [
+            chrome_step = run_optional_step("start/reuse background Douyin Chrome CDP", chrome_cmd, env=step_env)
+            steps.append(chrome_step)
+            douyin_cmd = [
                 "node",
                 str(ROOT / "scripts" / "douyin_cdp_source_watch_probe.mjs"),
                 "--cdp",
                 args.douyin_cdp,
-                "--out-dir",
-                str(DOUYIN_CDP_RETRY_DIR),
                 "--account-limit",
-                str(max(len(verification_rows), 1)),
+                str(args.douyin_account_limit),
                 "--video-limit",
                 str(args.douyin_video_limit),
                 "--retries",
                 str(args.douyin_retries),
-                "--only-account-names",
-                retry_names,
             ]
-            steps.append(run_optional_step("retry Douyin accounts after user verification", retry_cmd, env=step_env))
-        if not douyin_step.get("optional_failed") and DOUYIN_CDP_RESOLVED_MANUAL.exists():
-            manual_inputs.append(DOUYIN_CDP_RESOLVED_MANUAL)
-        if DOUYIN_CDP_RETRY_MANUAL.exists():
-            manual_inputs.append(DOUYIN_CDP_RETRY_MANUAL)
+            douyin_step = run_optional_step("fetch daily Douyin homepage title/caption samples through Chrome CDP", douyin_cmd, env=step_env)
+            steps.append(douyin_step)
+            verification_rows = douyin_verification_rows(OUT / "spikes" / "douyin_cdp_source_watch_probe" / "cdp_probe_results.json")
+            if verification_rows and args.douyin_verification_action == "foreground":
+                first_homepage = str(verification_rows[0].get("homepage_url") or "https://www.douyin.com/")
+                foreground_cmd = [
+                    py,
+                    str(ROOT / "scripts" / "start_douyin_cdp_chrome.py"),
+                    "--port",
+                    str(cdp_port(args.douyin_cdp)),
+                    "--foreground",
+                    "--url",
+                    first_homepage,
+                    "--wait-seconds",
+                    str(args.douyin_verification_wait_seconds),
+                ]
+                steps.append(run_optional_step("foreground Douyin Chrome for login/verification", foreground_cmd, env=step_env))
+                retry_names = csv_names(verification_rows)
+                retry_cmd = [
+                    "node",
+                    str(ROOT / "scripts" / "douyin_cdp_source_watch_probe.mjs"),
+                    "--cdp",
+                    args.douyin_cdp,
+                    "--out-dir",
+                    str(DOUYIN_CDP_RETRY_DIR),
+                    "--account-limit",
+                    str(max(len(verification_rows), 1)),
+                    "--video-limit",
+                    str(args.douyin_video_limit),
+                    "--retries",
+                    str(args.douyin_retries),
+                    "--only-account-names",
+                    retry_names,
+                ]
+                steps.append(run_optional_step("retry Douyin accounts after user verification", retry_cmd, env=step_env))
+            if not douyin_step.get("optional_failed") and DOUYIN_CDP_RESOLVED_MANUAL.exists():
+                manual_inputs.append(DOUYIN_CDP_RESOLVED_MANUAL)
+            if DOUYIN_CDP_RETRY_MANUAL.exists() and file_modified_today(DOUYIN_CDP_RETRY_MANUAL):
+                manual_inputs.append(DOUYIN_CDP_RETRY_MANUAL)
+            if not douyin_step.get("optional_failed") and DOUYIN_CDP_RESOLVED_MANUAL.exists() and file_modified_today(DOUYIN_CDP_RESOLVED_MANUAL):
+                write_douyin_cache_manifest("ok", run_id, steps, note="Douyin source collection completed; later same-day runs should reuse this cache.")
+            else:
+                write_douyin_cache_manifest("failed", run_id, steps, note="Douyin source collection did not produce a fresh manual JSONL; same-day cache will not be reused.")
 
     if args.include_douyin_transcripts:
         manual_inputs.append(DOUYIN_TRANSCRIPTS_MANUAL)

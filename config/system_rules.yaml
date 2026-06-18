@@ -68,6 +68,10 @@
       "rule": "P0为抖音主页标题/文案低频采样和单条视频浅层解析：主页采样通过专用Chrome CDP获取主对标账号最近作品标题/文案，单条解析获取作者、视频ID、封面、发布时间、标签、下载链接；不下载视频、不抓评论、不默认转写。单账号普通失败会重试后跳过；如果明确需要登录/验证，daily pipeline 会前台打开专用 Chrome 让用户处理，再只重试这些账号。P1为用户确认后通过ASR/OCR提取口播字幕和画面文字，需要DASHSCOPE_API_KEY/百炼API key等外部凭证；评论区问题和更深视频理解暂缓。"
     },
     {
+      "name": "采集频率与测试边界",
+      "rule": "日常正式运行以写入飞书为准；dry-run 仅用于开发验证。平台型采集尤其是抖音主页采样每天最多实际访问一次，成功后写入 output/source_collection_cache/YYYY-MM-DD/，同一天后续运行默认复用缓存。测试 Skill、标题质量、选题筛选或飞书字段写入时不得重新采集平台数据；只有修改采集逻辑、主页链接、登录状态或明确复验采集时，才使用 --force-fetch-douyin。"
+    },
+    {
       "name": "AIHOT日报接口",
       "rule": "AIHOT精选使用 /api/public/items?mode=selected&take=30；AIHOT日报使用 /api/public/daily。不得把 AIHOT 首页 HTML 当 JSON 解析。单个AIHOT源失败时记录来源名、URL、状态、失败原因和preview，显示部分源失败但不阻塞主流程。"
     },

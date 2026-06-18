@@ -2,17 +2,29 @@
 
 当前先不启用定时任务。这里仅记录以后确认稳定后如何开启。
 
-## 1. 先做 dry-run 测试
+## 1. 日常正式运行
 
 在项目目录运行：
 
 ```bash
-python3 scripts/daily_pipeline.py
+python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 ```
 
-dry-run 会抓取 AIHOT、读取手动内容样例、生成内容拆解和今日候选池，并打印将写入飞书的候选摘要；不会写入飞书。
+日常使用以飞书为准，不需要先 dry-run。脚本会处理 `02 URL投喂入口` 的新链接，复用当天抖音主页采集缓存，生成今日候选池，写入 `03 内容收件箱`、`04 分析与选题` 并刷新 `00 主控台`。
 
-dry-run 输出只写入 `output/dry_runs/<run_id>/`，并同步到 `output/latest_dry_run/`。它不会覆盖最近一次正式写入飞书的 `output/latest_write/`，也不会覆盖根目录兼容文件 `output/today_10_topics.csv`。
+抖音主页采集默认同一天只跑一次；当天再次运行会复用 `output/source_collection_cache/YYYY-MM-DD/` 里的采集结果，避免反复触发平台风控。只有改采集逻辑、主页链接、登录态或明确复验采集时，才加：
+
+```bash
+python3 scripts/daily_pipeline.py --resolve-url-intake --force-fetch-douyin --write-feishu
+```
+
+## 2. 开发验证和排障
+
+dry-run 只用于改代码、改采集规则或排查字段问题，不作为日常步骤：
+
+```bash
+python3 scripts/daily_pipeline.py --resolve-url-intake
+```
 
 只使用手动样例、不访问 AIHOT：
 
@@ -20,15 +32,14 @@ dry-run 输出只写入 `output/dry_runs/<run_id>/`，并同步到 `output/lates
 python3 scripts/daily_pipeline.py --no-fetch-aihot
 ```
 
-## 2. 正式写入飞书
-
-确认 dry-run 质量稳定后，再显式加 `--write-feishu`：
+只测试 Skill 或标题判断时，不要重新采集，直接复用最近一次正式输出：
 
 ```bash
-FEISHU_APP_ID=你的AppID \
-FEISHU_APP_SECRET=你的AppSecret \
-FEISHU_BASE_APP_TOKEN=你的BaseAppToken \
-python3 scripts/daily_pipeline.py --write-feishu
+python3 scripts/editorial_skill_runner.py \
+  --engine codex \
+  --input output/latest_write/today_10_topics.csv \
+  --output output/latest_write/today_10_topics.csv \
+  --report output/latest_write/editorial_skill_report.json
 ```
 
 写入边界：
@@ -64,12 +75,6 @@ output/logs/daily_pipeline_YYYY-MM-DD.json
 - 飞书权限不足：检查自建应用是否有多维表格读写权限。
 
 ## 5. 手动重跑
-
-dry-run：
-
-```bash
-python3 scripts/daily_pipeline.py
-```
 
 正式写入：
 
