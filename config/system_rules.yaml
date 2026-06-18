@@ -97,7 +97,7 @@
     },
     {
       "name": "今日候选池编辑判断层",
-      "rule": "候选池输出前必须先做 editorial_judgement：先按“AI领域玩家 / 懂营销、懂内容、懂导演、正在做 AI 业务系统的人”这个人设判断，再决定是否进入候选池和是否给可发布标题。判断字段包括人设匹配分、真实用户问题、我的账号为什么能讲、今天为什么值得做、是否只是资讯搬运、是否有足够内容支撑、不建议做的原因、内容可信度、编辑判断分、标题质量分、AI味风险和是否建议进入制作。可发布标题只给编辑判断分、标题质量分、人设匹配分和内容支撑都达标的候选；抖音浅层内容与其他来源一样参与评分和候选判断，但标题与推荐理由只能基于已采到的标题、文案、封面和公开元数据，不得声称口播全文、评论区、镜头结构或完整视频理解。"
+      "rule": "候选池输出前必须先做 content_sampler.py 的 editorial_judgement，再经过 scripts/editorial_skill_runner.py 按全局 Skill ai-account-editorial-director 的字段契约补齐前台主编字段。判断字段包括人设匹配分、真实用户问题、我的账号为什么能讲、今天为什么值得做、是否只是资讯搬运、是否有足够内容支撑、不建议做的原因、内容可信度、编辑判断分、标题质量分、AI味风险、是否建议进入制作，以及 Skill 主编层输出的一句话Brief、我的场景拆解、我的思考点、重点体现、可调用案例、内容核心冲突、视频呈现方式和证据强度。可发布标题只给编辑判断分、标题质量分、人设匹配分和内容支撑都达标的候选；抖音浅层内容与其他来源一样参与评分和候选判断，但标题与推荐理由只能基于已采到的标题、文案、封面和公开元数据，不得声称口播全文、评论区、镜头结构或完整视频理解。"
     },
     {
       "name": "AI味检测规则",
@@ -351,6 +351,16 @@
     {"table": "04 分析与选题", "field": "适合平台", "purpose": "判断更适合短视频、小红书、公众号还是 X。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户、制作", "user_editable": "是", "ai": "可参与", "human_judgment": "平台判断要结合账号当前精力。"},
     {"table": "04 分析与选题", "field": "可学习点/为什么重要", "purpose": "对标内容写可学习结构，热点内容写为什么重要。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "学习结构，不复制内容。"},
     {"table": "04 分析与选题", "field": "不能照搬/风险提示", "purpose": "说明不能复制对方人设、数据、案例；AIHOT 摘要必须回原文核对。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "发布前必须人工核对。"},
+    {"table": "04 分析与选题", "field": "候选状态", "purpose": "Skill 主编层的前台状态，通常同步今日建议级别，用于用户快速判断推进优先级。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "用户最终决定推进、暂存或不做。"},
+    {"table": "04 分析与选题", "field": "对应方向", "purpose": "Skill 主编层归一后的账号方向，避免旧栏目名称或别名影响前台判断。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "方向是否真的贴合账号定位。"},
+    {"table": "04 分析与选题", "field": "一句话Brief", "purpose": "用一句话说明这条候选到底要讲什么，必须能看出我的判断，而不是简单概括来源。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "是否符合真实表达。"},
+    {"table": "04 分析与选题", "field": "我的场景拆解", "purpose": "说明这条内容能接到我的哪个真实场景，例如AI账号系统、飞书执行台、商业视频交付、封面Skill、RunBY、MuseIn、车企内容营销或导演工作流。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "是否真有个人业务现场。"},
+    {"table": "04 分析与选题", "field": "我的思考点", "purpose": "说明我准备从哪个角度切入，重点体现我的判断、经验或方法。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "是否像本人能讲的话。"},
+    {"table": "04 分析与选题", "field": "重点体现", "purpose": "说明内容重点要证明什么，通常是旧流程如何被AI重写、什么结果可展示、什么资产可沉淀。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "是否足够具体。"},
+    {"table": "04 分析与选题", "field": "可调用案例", "purpose": "标注可调用的用户案例库案例，帮助候选从资讯变成个人经验表达。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "案例是否匹配。"},
+    {"table": "04 分析与选题", "field": "内容核心冲突", "purpose": "说明这条内容的冲突，例如工具更新与业务落地、传统流程与AI Native、普通教程与真实交付。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "冲突是否真实。"},
+    {"table": "04 分析与选题", "field": "视频呈现方式", "purpose": "建议这条内容适合口播、屏幕录制、流程图、案例复盘、分镜演示、成片对比、飞书台演示等呈现方式。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户、制作", "user_editable": "是", "ai": "可参与", "human_judgment": "是否适合当前制作精力。"},
+    {"table": "04 分析与选题", "field": "证据强度", "purpose": "标注强/中/弱，帮助判断这条候选是否足以进入Brief，还是需要补证据。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "证据是否够。"},
     {"table": "05 Brief与制作", "field": "一句话核心判断", "purpose": "内容的主判断，不是完整文案。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "最终观点必须由用户确认。"},
     {"table": "05 Brief与制作", "field": "开头3秒", "purpose": "短视频/图文开头的注意力切口，只提供方向，不替代成稿。", "required": "是", "producer": "脚本/AI", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "是否符合本人表达风格。"},
     {"table": "05 Brief与制作", "field": "内容结构", "purpose": "提供提纲结构，如冲突判断、痛点、AI介入点、结果、边界和CTA。", "required": "是", "producer": "脚本/AI", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "是否适合该平台和素材。"},

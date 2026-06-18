@@ -13,6 +13,7 @@ import os
 import subprocess
 import sys
 import csv
+import shutil
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,9 @@ from local_env import load_local_env
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
 LOG_DIR = OUT / "logs"
+LATEST_DIR = OUT / "latest"
+LATEST_DRY_RUN_DIR = OUT / "latest_dry_run"
+LATEST_WRITE_DIR = OUT / "latest_write"
 DEFAULT_MANUAL = ROOT / "data" / "manual" / "content_items.example.jsonl"
 URL_RESOLVED = OUT / "url_content_items.jsonl"
 URL_RESOLVED_MANUAL = OUT / "url_content_items_manual.jsonl"
@@ -98,6 +102,18 @@ def write_run_log(steps: list[dict[str, Any]], mode: str, run_id: str = "") -> P
 
 def pipeline_output_dir(run_id: str, write_feishu: bool) -> Path:
     return OUT / ("runs" if write_feishu else "dry_runs") / run_id
+
+
+def sync_enriched_candidate_mirrors(today_path: Path, report_path: Path, write_feishu: bool) -> None:
+    """Keep latest pointers aligned after the editorial skill runner mutates CSV."""
+    mirror_dirs = [LATEST_DIR, LATEST_WRITE_DIR if write_feishu else LATEST_DRY_RUN_DIR]
+    for directory in mirror_dirs:
+        directory.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(today_path, directory / "today_10_topics.csv")
+        if report_path.exists():
+            shutil.copy2(report_path, directory / "editorial_skill_report.json")
+    if write_feishu:
+        shutil.copy2(today_path, OUT / "today_10_topics.csv")
 
 
 def today10_count(path: Path) -> int:
@@ -353,6 +369,24 @@ def main() -> int:
             "note": f"No daily topic candidates generated. Check URL parsing failures in {output_dir / 'content_items.csv'} and {output_dir / 'content_breakdowns.csv'}.",
         }, ensure_ascii=False, indent=2))
         return 0
+
+    editorial_report_path = output_dir / "editorial_skill_report.json"
+    editorial_cmd = [
+        py,
+        str(ROOT / "scripts" / "editorial_skill_runner.py"),
+        "--input",
+        str(today10_path),
+        "--output",
+        str(today10_path),
+        "--report",
+        str(editorial_report_path),
+    ]
+    steps.append(run_step("apply ai-account-editorial-director fields", editorial_cmd, env=step_env))
+    if steps[-1]["returncode"] != 0:
+        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
+        print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
+        return steps[-1]["returncode"]
+    sync_enriched_candidate_mirrors(today10_path, editorial_report_path, args.write_feishu)
 
     dry_run_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py"), "--input", str(today10_path)]
     steps.append(run_step("dry-run 今日候选池 Feishu write", dry_run_cmd))

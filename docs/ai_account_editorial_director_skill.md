@@ -104,3 +104,25 @@ ContentItem -> code 初筛 -> ai-account-editorial-director -> 04 分析与选�
 ```
 
 不要把 Skill 的人设判断继续拆成大量硬编码标题模板。
+
+## 当前接入状态
+
+当前已经新增 `scripts/editorial_skill_runner.py` 作为 Skill 主编层桥接脚本。它不调用外部 LLM，而是按全局 Skill 的字段契约，把 `content_sampler.py` 输出的候选补齐为飞书前台可读字段：
+
+- `一句话Brief`
+- `我的场景拆解`
+- `我的思考点`
+- `重点体现`
+- `可调用案例`
+- `内容核心冲突`
+- `视频呈现方式`
+- `证据强度`
+- `Skill编辑层`
+
+这样 `daily_pipeline.py` 的实际链路已经变为：
+
+```text
+采集 -> 标准化 -> 代码初筛 -> Skill字段契约主编层 -> 04 分析与选题
+```
+
+后续如果要接真正的 LLM/Skill 调用，可以替换 `editorial_skill_runner.py` 的内部生成逻辑，保持输入输出字段不变。
