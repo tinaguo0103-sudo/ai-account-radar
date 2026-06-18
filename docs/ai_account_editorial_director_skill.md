@@ -107,7 +107,7 @@ ContentItem -> code 初筛 -> ai-account-editorial-director -> 04 分析与选�
 
 ## 当前接入状态
 
-当前已经新增 `scripts/editorial_skill_runner.py` 作为 Skill 主编层桥接脚本。它不调用外部 LLM，而是按全局 Skill 的字段契约，把 `content_sampler.py` 输出的候选补齐为飞书前台可读字段：
+当前已经新增 `scripts/editorial_skill_runner.py` 作为 Skill 主编层执行脚本。它默认调用本机已登录的 Codex CLI，在只读模式下读取全局 Skill 和案例库参考，对 `content_sampler.py` 输出的候选重新做一轮批量主编判断，并补齐飞书前台可读字段：
 
 - `一句话Brief`
 - `我的场景拆解`
@@ -125,4 +125,4 @@ ContentItem -> code 初筛 -> ai-account-editorial-director -> 04 分析与选�
 采集 -> 标准化 -> 代码初筛 -> Skill字段契约主编层 -> 04 分析与选题
 ```
 
-后续如果要接真正的 LLM/Skill 调用，可以替换 `editorial_skill_runner.py` 的内部生成逻辑，保持输入输出字段不变。
+`--engine deterministic` 只作为显式离线应急选项，不是默认生产路径。后续如果要换成 OpenAI API 或其他模型服务，也应保持输入输出字段不变。

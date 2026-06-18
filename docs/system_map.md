@@ -58,7 +58,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 对标视频进入候选池后，只借鉴话题、结构、专业证明和商业入口。用户可见标题要转成自己的 AI导演/业务流程语言，不出现其他博主名字，也不写“这条视频/这条内容”。
 
-选题编辑判断已抽成全局 Skill：`ai-account-editorial-director`，路径是 `/Users/congcong/.codex/skills/ai-account-editorial-director`。代码负责采集、标准化、去重和初筛；`scripts/editorial_skill_runner.py` 负责把候选转成更像用户自己的“场景拆解、思考点、重点体现和可调用案例”，再写入 `04 分析与选题`。详细说明见 `docs/ai_account_editorial_director_skill.md`。
+选题编辑判断已抽成全局 Skill：`ai-account-editorial-director`，路径是 `/Users/congcong/.codex/skills/ai-account-editorial-director`。代码负责采集、标准化、去重和初筛；`scripts/editorial_skill_runner.py` 默认直接调用本机 Codex CLI，让这个全局 Skill 重新做主编判断，把候选转成更像用户自己的“场景拆解、思考点、重点体现和可调用案例”，再写入 `04 分析与选题`。详细说明见 `docs/ai_account_editorial_director_skill.md`。
 
 当前主链路是：
 
@@ -67,7 +67,7 @@ AIHOT / 公众号全文 / 抖音主页标题文案 / URL投喂
 → ContentItem
 → 03 内容收件箱
 → content_sampler.py 初筛和去重
-→ editorial_skill_runner.py 按 ai-account-editorial-director 补主编字段
+→ editorial_skill_runner.py 调用 ai-account-editorial-director 做主编筛选
 → 04 分析与选题 / 今日候选池
 ```
 

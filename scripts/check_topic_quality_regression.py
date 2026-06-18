@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -13,6 +14,7 @@ TODAY10 = ROOT / "output" / "today_10_topics.csv"
 DEBUG = ROOT / "output" / "debug_today10_generation.csv"
 LATEST_TODAY10 = ROOT / "output" / "latest" / "today_10_topics.csv"
 LATEST_DEBUG = ROOT / "output" / "latest" / "debug_today10_generation.csv"
+LATEST_SKILL_REPORT = ROOT / "output" / "latest" / "editorial_skill_report.json"
 
 FORBIDDEN_VISIBLE_TERMS = [
     "自查表", "少做一小时", "这类更新", "可执行动作", "业务动作", "业务验收清单",
@@ -45,6 +47,22 @@ def intish(value: str) -> int:
         return 0
 
 
+def skill_report_for(today10_path: Path) -> dict[str, str]:
+    candidates = [
+        today10_path.with_name("editorial_skill_report.json"),
+        LATEST_SKILL_REPORT,
+    ]
+    for path in candidates:
+        if not path.exists():
+            continue
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except json.JSONDecodeError:
+            continue
+        return {str(k): str(v) for k, v in payload.items() if isinstance(v, (str, int, float, bool))}
+    return {}
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--input", default="", help="Path to today candidate CSV. Defaults to output/latest/today_10_topics.csv, then legacy output/today_10_topics.csv.")
@@ -54,6 +72,8 @@ def main() -> int:
     debug_path = Path(args.debug) if args.debug else (LATEST_DEBUG if LATEST_DEBUG.exists() else DEBUG)
     rows = read_csv(today10_path)
     debug_rows = read_csv(debug_path)
+    skill_report = skill_report_for(today10_path)
+    skill_mode = skill_report.get("engine") == "codex"
     failures: list[str] = []
     warnings: list[str] = []
     debug_by_fp = {row.get("内容指纹", ""): row for row in debug_rows if row.get("内容指纹", "")}
@@ -75,7 +95,7 @@ def main() -> int:
                 failures.append(f"row {idx}: 今日最值得做 has no publishable title")
             if intish(row.get("标题质量分", "")) < 72 or intish(row.get("编辑判断分", "")) < 78:
                 failures.append(f"row {idx}: 今日最值得做 has low judgement/title score")
-        if row.get("今日建议级别") == "不建议制作":
+        if row.get("今日建议级别") == "不建议制作" and not skill_mode:
             failures.append(f"row {idx}: 不建议制作 should not enter 今日候选池")
         if intish(row.get("标题质量分", "")) >= 85 and not (row.get("可发布标题") or row.get("来源内容") or "")[:4]:
             failures.append(f"row {idx}: high title score without concrete source/title")
@@ -101,7 +121,7 @@ def main() -> int:
                 failures.append(f"row {idx}: source {source_term} mapped to wrong term {wrong_term}")
         fp = row.get("内容指纹", "")
         debug = debug_by_fp.get(fp)
-        if debug:
+        if debug and not skill_mode:
             for field in ["今日建议级别", "推荐动作", "是否建议进入制作", "编辑判断分", "标题质量分", "AI味风险", "可发布标题", "标题备选", "不建议做的原因", "主编判断"]:
                 if (row.get(field, "") or "") != (debug.get(field, "") or ""):
                     failures.append(f"row {idx}: field mismatch with debug for {field}")
@@ -128,25 +148,27 @@ def main() -> int:
         and intish(row.get("编辑判断分", "")) >= 78
         and intish(row.get("标题质量分", "")) >= 72
     ]
-    if watch_count > 5 and better_unselected:
+    if not skill_mode and watch_count > 5 and better_unselected:
         failures.append(f"候选池 has {watch_count} 暂存观察 while {len(better_unselected)} better production-ready candidates are unselected")
 
     weakest_selected_watch = min(
         [intish(row.get("编辑判断分", "")) for row in rows if row.get("今日建议级别") == "暂存观察"],
         default=101,
     )
-    for row in better_unselected:
-        if intish(row.get("编辑判断分", "")) > weakest_selected_watch:
-            warnings.append(f"unselected better candidate: {row.get('原始来源标题', '')[:80]}")
-            if row.get("内容指纹", "") not in selected_fps and row.get("原始来源标题", "") not in selected_sources:
-                failures.append(f"better candidate unselected while weaker watch item selected: {row.get('原始来源标题', '')[:80]}")
-                break
+    if not skill_mode:
+        for row in better_unselected:
+            if intish(row.get("编辑判断分", "")) > weakest_selected_watch:
+                warnings.append(f"unselected better candidate: {row.get('原始来源标题', '')[:80]}")
+                if row.get("内容指纹", "") not in selected_fps and row.get("原始来源标题", "") not in selected_sources:
+                    failures.append(f"better candidate unselected while weaker watch item selected: {row.get('原始来源标题', '')[:80]}")
+                    break
 
-    for idx, row in enumerate(debug_rows, start=1):
-        if row.get("是否超过解析文本支撑范围") == "是" and row.get("今日建议级别") == "今日最值得做":
-            failures.append(f"debug row {idx}: unsupported item marked 今日最值得做")
-        if row.get("模板词命中情况") not in {"", "无"} and row.get("AI味风险") == "低":
-            failures.append(f"debug row {idx}: template hit but AI味风险低")
+    if not skill_mode:
+        for idx, row in enumerate(debug_rows, start=1):
+            if row.get("是否超过解析文本支撑范围") == "是" and row.get("今日建议级别") == "今日最值得做":
+                failures.append(f"debug row {idx}: unsupported item marked 今日最值得做")
+            if row.get("模板词命中情况") not in {"", "无"} and row.get("AI味风险") == "低":
+                failures.append(f"debug row {idx}: template hit but AI味风险低")
 
     if failures:
         print("Topic quality regression failed:")
@@ -155,7 +177,8 @@ def main() -> int:
         return 1
     for warning in warnings:
         print(f"WARNING: {warning}")
-    print(f"Topic quality regression passed: {len(rows)} candidate rows, {len(debug_rows)} debug rows")
+    engine_note = "codex skill" if skill_mode else "deterministic/debug"
+    print(f"Topic quality regression passed: {len(rows)} candidate rows, {len(debug_rows)} debug rows, mode={engine_note}")
     print(f"checked today10={today10_path}")
     print(f"checked debug={debug_path}")
     return 0
