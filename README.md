@@ -28,6 +28,8 @@
 
 项目已新增全局 Skill：`ai-account-editorial-director`，安装在 `/Users/congcong/.codex/skills/ai-account-editorial-director`。它负责把 AIHOT、公众号全文、抖音对标内容和候选池内容，转成更贴近 **AI业务系统导演** 人设的选题判断，输出“可发布标题、我的场景拆解、我的思考点、重点体现、可调用案例、证据强度、推荐动作”等业务字段。
 
+Skill 运行时不再只把完整案例库整篇塞进 prompt。当前结构是：`references/persona-brief.md` 作为短底稿，`references/persona-and-cases.md` 作为完整档案；`editorial_skill_runner.py` 会先给每条候选匹配 1-3 个母场景，再要求 Skill 输出 `关联母场景 / 借用方式 / 不能声称的部分 / 我的真实/相邻场景`，最后才生成标题和 Brief 字段。
+
 这个 Skill 不是采集器，也不是自动成稿器；它是代码初筛之后的编辑判断层。详细说明和分享方式见 `docs/ai_account_editorial_director_skill.md`。
 
 ## 已理解的账号定位
@@ -308,6 +310,8 @@ python3 scripts/editorial_skill_runner.py \
 ```
 
 这一步会调用本机已登录的 Codex CLI 和全局 `ai-account-editorial-director` Skill。它会覆盖候选的主编判断字段，但不会拉取 AIHOT、不会打开抖音、不会写飞书。
+
+在 Codex 对话里手动调用这个脚本时，偶尔会看到权限审查，不是因为全局 Skill 不能被项目使用，而是因为脚本会启动本机 `codex exec` 子进程并写入 `~/.codex` 的运行状态。命令前缀已尽量收敛到 `python3 scripts/editorial_skill_runner.py`；日常在本机终端运行项目脚本时，不会把这个审批流程暴露成业务步骤。
 
 `04 分析与选题` 已收敛为今日候选池决策表：主字段 `选题标题` 优先展示可读标题，用于日常决策和进入 Brief。飞书默认视图只展示业务决策字段，例如 `今日建议级别`、`编辑判断分`、`AI味风险`、`内容可信度`、`推荐动作`、`原始来源标题`、`一句话Brief`、`我的场景拆解`、`我的思考点`、`重点体现`、`可调用案例`、`证据强度`、`推荐理由`、`不建议做的原因` 和 `可沉淀资产`。代码和调试文件仍保留更多算法字段，但默认飞书视图不展示。写入前会先经过 `content_sampler.py` 的初筛和 `editorial_skill_runner.py` 的真实 Skill 主编判断，让你能区分“今日最值得做”“可选候选”“暂存观察”和“不建议制作”。没有足够人设角度或内容支撑的内容不会为了凑数进入候选池。
 

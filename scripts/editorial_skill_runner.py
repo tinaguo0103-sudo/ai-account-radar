@@ -30,8 +30,13 @@ ROOT = Path(__file__).resolve().parents[1]
 SKILL_DIR = Path.home() / ".codex" / "skills" / "ai-account-editorial-director"
 SKILL_MD = SKILL_DIR / "SKILL.md"
 SKILL_REFERENCE = SKILL_DIR / "references" / "persona-and-cases.md"
+SKILL_PERSONA_BRIEF = SKILL_DIR / "references" / "persona-brief.md"
 
 EXTRA_FIELDS = [
+    "关联母场景",
+    "借用方式",
+    "不能声称的部分",
+    "我的真实/相邻场景",
     "候选状态",
     "推荐等级",
     "对应方向",
@@ -48,6 +53,10 @@ EXTRA_FIELDS = [
 ]
 
 SKILL_FIELDS = [
+    "关联母场景",
+    "借用方式",
+    "不能声称的部分",
+    "我的真实/相邻场景",
     "候选状态",
     "推荐等级",
     "可发布标题",
@@ -108,6 +117,44 @@ CANDIDATE_CONTEXT_FIELDS = [
     "业务变化判断",
     "候选来源方式",
     "内容指纹",
+]
+
+MOTHER_SCENES = [
+    {
+        "name": "AI账号信息雷达 / 飞书执行台",
+        "keywords": ["飞书", "选题", "Brief", "内容收件箱", "信息雷达", "AIHOT", "候选池", "主编", "Skill", "公众号", "抖音采样"],
+        "borrow": "借用用户正在搭的 AI账号信息雷达：采集、去重、摘要、字段化判断、主编Skill、从热点到Brief。",
+        "can_show": "飞书字段、候选池、判断规则、主编备注、状态流转、从内容到Brief的链路。",
+        "cannot_claim": "不能说已经完全自动替用户决定观点；只能说系统辅助筛选和主编判断。",
+    },
+    {
+        "name": "商业视频 / AI导演工作流",
+        "keywords": ["视频", "短剧", "短片", "分镜", "镜头", "导演", "成片", "剪辑", "口播", "配音", "Runway", "Kling", "Luma", "Seedance", "广告视频", "动画"],
+        "borrow": "借用用户商业视频交付经验：Brief、分镜、角色资产、镜头、返修、审美和成片验收。",
+        "can_show": "分镜表、镜头验收、角色一致性、成片前后对比、返修清单。",
+        "cannot_claim": "没有转写或完整素材时，不能声称看过口播全文、评论区、镜头结构或完整视频。",
+    },
+    {
+        "name": "内容生产自动化 Skill",
+        "keywords": ["封面", "首图", "卡片", "小红书", "图文", "长文", "PPT", "排版", "HTML", "CSS", "品牌一致性", "视觉物料", "导出"],
+        "borrow": "借用用户封面自动化、公众号长文转小红书、PPT/图文卡片等内容生产Skill经验。",
+        "can_show": "脚本理解、标题提炼、卡片页规划、排版QA、品牌规则、跨平台适配。",
+        "cannot_claim": "不能把单个生图/设计更新说成已解决完整内容策略。",
+    },
+    {
+        "name": "Agent / AI业务系统",
+        "keywords": ["Agent", "智能体", "Claude", "Codex", "MCP", "自动化", "任务", "验收", "目录", "文件夹", "状态", "框架", "Eve", "Omnigent"],
+        "borrow": "借用用户把AI接进业务系统的思路：任务边界、输入输出、状态、失败记录、验收标准和资产化。",
+        "can_show": "任务表、验收表、目录结构、状态流转、失败样例、输入输出字段。",
+        "cannot_claim": "不能说非技术人无成本完成复杂工程系统；只能讲轻量任务边界和业务验收。",
+    },
+    {
+        "name": "汽车与内容营销",
+        "keywords": ["汽车", "车企", "车主", "发布会", "品牌", "营销", "传播", "CEO", "IP", "信任", "带货", "素材审核", "Shein"],
+        "borrow": "借用用户车企/品牌/内容营销业务现场：传统传播慢、内容资产复用差、AI Native改造营销流程。",
+        "can_show": "内容资产流、品牌一致性审核、素材风险清单、车主运营/发布会传播复盘。",
+        "cannot_claim": "不能做普通车评、行情判断或泛汽车资讯。",
+    },
 ]
 
 ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
@@ -203,7 +250,7 @@ def compact_text(value: str) -> str:
 
 def source_title_values(row: dict[str, str]) -> list[str]:
     values: list[str] = []
-    for field in ["原始来源标题", "来源内容", "来源标题", "我的选题标题"]:
+    for field in ["原始来源标题", "来源内容", "来源标题"]:
         value = (row.get(field, "") or "").strip()
         if value:
             values.append(value)
@@ -300,6 +347,9 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
         out["是否建议进入制作"] = "是"
     elif not out.get("是否建议进入制作"):
         out["是否建议进入制作"] = "否"
+    if publishable:
+        out["我的选题标题"] = publishable
+        out["选题标题"] = publishable
     return out
 
 
@@ -348,6 +398,26 @@ def blob(row: dict[str, str]) -> str:
     ])
 
 
+def matched_mother_scenes(row: dict[str, str], limit: int = 3) -> list[dict[str, str]]:
+    text = blob(row).lower()
+    matches: list[tuple[int, dict[str, str]]] = []
+    for scene in MOTHER_SCENES:
+        score = sum(1 for keyword in scene["keywords"] if keyword.lower() in text)
+        if score:
+            matches.append((score, scene))
+    if not matches:
+        direction = normalize_direction(row.get("对应栏目", ""))
+        fallback_name = {
+            "AI业务定调": "AI账号信息雷达 / 飞书执行台",
+            "真实工作流改造": "AI账号信息雷达 / 飞书执行台",
+            "AI导演工作流": "商业视频 / AI导演工作流",
+            "汽车与内容营销": "汽车与内容营销",
+            "AI项目复盘": "Agent / AI业务系统",
+        }.get(direction, "AI账号信息雷达 / 飞书执行台")
+        matches = [(1, scene) for scene in MOTHER_SCENES if scene["name"] == fallback_name]
+    return [scene for _score, scene in sorted(matches, key=lambda item: item[0], reverse=True)[:limit]]
+
+
 def normalize_direction(value: str) -> str:
     value = (value or "").strip()
     value = DIRECTION_ALIASES.get(value, value)
@@ -379,6 +449,9 @@ def evidence_strength(row: dict[str, str]) -> str:
 
 
 def callable_case(row: dict[str, str]) -> str:
+    if row.get("关联母场景"):
+        borrow = row.get("借用方式", "")
+        return f"{row['关联母场景']}；{borrow}".strip("；")
     text = blob(row)
     for terms, case in CASE_RULES:
         if any(term.lower() in text.lower() for term in terms):
@@ -471,7 +544,12 @@ def one_sentence_brief(row: dict[str, str]) -> str:
 
 def enrich(row: dict[str, str]) -> dict[str, str]:
     direction = normalize_direction(row.get("对应栏目", ""))
+    scene = matched_mother_scenes(row)[0]
     out = dict(row)
+    out["关联母场景"] = row.get("关联母场景") or scene["name"]
+    out["借用方式"] = row.get("借用方式") or scene["borrow"]
+    out["不能声称的部分"] = row.get("不能声称的部分") or scene["cannot_claim"]
+    out["我的真实/相邻场景"] = row.get("我的真实/相邻场景") or scene["can_show"]
     out["候选状态"] = row.get("今日建议级别") or row.get("是否建议进入制作") or "暂存观察"
     out["推荐等级"] = grade(row)
     out["对应方向"] = direction
@@ -506,6 +584,7 @@ def compact_candidate(row: dict[str, str], index: int) -> dict[str, str | int]:
         value = row.get(field, "")
         if value:
             payload[field] = value[:1800]
+    payload["关联母场景候选"] = json.dumps(matched_mother_scenes(row), ensure_ascii=False)
     return payload
 
 
@@ -541,7 +620,7 @@ def codex_output_schema() -> dict[str, Any]:
 
 def build_codex_prompt(rows: list[dict[str, str]]) -> str:
     skill_text = load_text(SKILL_MD)
-    reference_text = load_text(SKILL_REFERENCE)
+    persona_brief = load_text(SKILL_PERSONA_BRIEF)
     candidates = [compact_candidate(row, idx) for idx, row in enumerate(rows)]
     return f"""你现在必须使用全局 Skill `ai-account-editorial-director` 做主编判断。
 
@@ -554,6 +633,8 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 - 抖音浅层内容可以进入候选，也可以成为今日最值得做；但只能基于标题、文案、封面、公开元数据推断，不能声称看过口播、评论或镜头结构。
 - 暂存观察不要生成可发布标题和标题备选。
 - 标题和字段必须落到用户自己的真实场景：AI账号系统、飞书执行台、AI导演工作流、商业视频交付、封面Skill、公众号长文转小红书卡片、RunBY、MuseIn、车企/内容营销等。
+- 必须先使用 `关联母场景候选` 判断这条内容能借用哪个用户场景，再输出标题。不要先套标题再补解释。
+- 每行必须输出 `关联母场景`、`借用方式`、`不能声称的部分`、`我的真实/相邻场景`，并让它们影响 `可发布标题`、`我的场景拆解` 和 `主编判断`。
 - 输出必须严格符合 JSON Schema；不要输出 Markdown。
 
 请重写/覆盖这些字段：
@@ -569,9 +650,12 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 {skill_text}
 </SKILL.md>
 
-<persona-and-cases.md>
-{reference_text}
-</persona-and-cases.md>
+<persona-brief.md>
+{persona_brief}
+</persona-brief.md>
+
+完整案例库路径：{SKILL_REFERENCE}
+本次不把完整长文全部塞入上下文；你必须优先使用上面的压缩底稿，以及每条候选里的 `关联母场景候选`。
 
 <candidate_rows_json>
 {json.dumps(candidates, ensure_ascii=False, indent=2)}

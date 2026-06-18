@@ -24,11 +24,13 @@ ai-account-editorial-director/
 ├── agents/
 │   └── openai.yaml
 └── references/
+    ├── persona-brief.md
     └── persona-and-cases.md
 ```
 
 - `SKILL.md`：触发条件、主编判断流程、四个方向的核心判断、案例使用方式、禁用表达和质量底线。
-- `references/persona-and-cases.md`：人设、四个方向、案例库、表达风格、选题公式、改写样例，以及压缩版主编直觉。
+- `references/persona-brief.md`：从完整案例库提炼出的运行底稿。它直接写清人设、五个母场景、标题风格、候选分级和抖音浅层边界，是每次自动判断优先使用的文件。
+- `references/persona-and-cases.md`：完整人设与案例档案，用来追溯细节和继续扩展案例，不作为每次批量判断时唯一依赖的长上下文。
 - `agents/openai.yaml`：用于技能列表展示的名称、描述和默认提示。
 
 ## 什么时候用
@@ -44,6 +46,10 @@ ai-account-editorial-director/
 
 Skill 默认按业务可读字段输出，但字段不是模板。字段要像主编写给内容创作者的判断备注，而不是为了填表而写模块化句子。
 
+- 关联母场景
+- 借用方式
+- 不能声称的部分
+- 我的真实/相邻场景
 - 候选状态
 - 推荐等级
 - 可发布标题
@@ -70,6 +76,20 @@ Skill 现在按三层证据判断，而不是强行“每条贴一个案例”�
 3. `只作观察`：来源很热，但无法接到用户业务现场、四个方向或可展示资产，只能暂存或不建议制作。
 
 这能避免两个问题：一是过度依赖已有案例导致选题范围变窄；二是完全脱离案例导致输出泛化、AI味重。
+
+## 自动链路如何真正使用案例库
+
+`scripts/editorial_skill_runner.py` 不再把完整案例库整篇塞进 prompt 后让模型自己找重点。现在流程是：
+
+```text
+候选内容
+→ 代码按关键词和栏目匹配 1-3 个母场景
+→ prompt 注入 persona-brief.md + 每条候选的关联母场景候选
+→ Skill 必须输出 关联母场景 / 借用方式 / 不能声称的部分 / 我的真实或相邻场景
+→ 再生成 我的场景拆解、我的思考点、重点体现和可发布标题
+```
+
+这样做的目的，是避免“看起来读了案例库、实际输出还是泛模板”。模型必须先说明这条内容如何连接用户的真实/相邻场景，再决定是否值得进入候选。
 
 ## 分享和迁移
 
@@ -119,8 +139,12 @@ ContentItem -> code 初筛 -> ai-account-editorial-director -> 04 分析与选�
 
 ## 当前接入状态
 
-当前已经新增 `scripts/editorial_skill_runner.py` 作为 Skill 主编层执行脚本。它默认调用本机已登录的 Codex CLI，在只读模式下读取全局 Skill 和案例库参考，对 `content_sampler.py` 输出的候选重新做一轮批量主编判断，并补齐飞书前台可读字段：
+当前已经新增 `scripts/editorial_skill_runner.py` 作为 Skill 主编层执行脚本。它默认调用本机已登录的 Codex CLI，在只读模式下读取全局 Skill、`persona-brief.md` 和每条候选匹配到的母场景包，对 `content_sampler.py` 输出的候选重新做一轮批量主编判断，并补齐飞书前台可读字段：
 
+- `关联母场景`
+- `借用方式`
+- `不能声称的部分`
+- `我的真实/相邻场景`
 - `一句话Brief`
 - `我的场景拆解`
 - `我的思考点`
