@@ -91,6 +91,7 @@ REQUIRED_FIELDS = [
     "内容指纹",
 ]
 ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
+FEISHU_VISIBLE_LEVELS = {"今日最值得做", "可选候选"}
 LEVEL_ALIASES = {
     "备选": "可选候选",
     "备选候选": "可选候选",
@@ -153,6 +154,14 @@ def read_today10(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
     return rows
+
+
+def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], int]:
+    visible = [
+        row for row in rows
+        if normalize_level(row.get("今日建议级别", "")) in FEISHU_VISIBLE_LEVELS
+    ]
+    return visible, len(rows) - len(visible)
 
 
 def default_today10_path() -> Path:
@@ -456,11 +465,20 @@ def main() -> int:
     date = today_slug()
     run_id = args.run_id or default_run_id()
     input_path = Path(args.input) if args.input else default_today10_path()
-    mapped = [map_row(row, idx, date, run_id) for idx, row in enumerate(read_today10(input_path), start=1)]
+    source_rows, omitted_rows = feishu_visible_rows(read_today10(input_path))
+    mapped = [map_row(row, idx, date, run_id) for idx, row in enumerate(source_rows, start=1)]
     dry_run_print(mapped)
+    if omitted_rows:
+        print(f"INFO: omitted {omitted_rows} 暂存观察/不建议制作 rows from Feishu 04 今日候选池.")
 
     if not args.write:
-        print(json.dumps({"ok": True, "mode": "dry-run", "rows": len(mapped), "input": str(input_path)}, ensure_ascii=False, indent=2))
+        print(json.dumps({
+            "ok": True,
+            "mode": "dry-run",
+            "rows": len(mapped),
+            "omitted_rows": omitted_rows,
+            "input": str(input_path),
+        }, ensure_ascii=False, indent=2))
         return 0
 
     app_token = os.getenv("FEISHU_BASE_APP_TOKEN")
@@ -517,6 +535,7 @@ def main() -> int:
         "created_records": created_records,
         "updated_existing": updated_existing,
         "skipped_existing": len(mapped) - len(to_create),
+        "omitted_rows": omitted_rows,
         "created_titles": created_titles,
         "updated_titles": updated_titles,
         "today_view": ensure_today_top10_view(token, app_token, table_id, run_id),
