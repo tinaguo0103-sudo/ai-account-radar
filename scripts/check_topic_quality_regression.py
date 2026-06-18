@@ -15,6 +15,9 @@ DEBUG = ROOT / "output" / "debug_today10_generation.csv"
 LATEST_TODAY10 = ROOT / "output" / "latest" / "today_10_topics.csv"
 LATEST_DEBUG = ROOT / "output" / "latest" / "debug_today10_generation.csv"
 LATEST_SKILL_REPORT = ROOT / "output" / "latest" / "editorial_skill_report.json"
+LATEST_WRITE_TODAY10 = ROOT / "output" / "latest_write" / "today_10_topics.csv"
+LATEST_WRITE_DEBUG = ROOT / "output" / "latest_write" / "debug_today10_generation.csv"
+LATEST_WRITE_SKILL_REPORT = ROOT / "output" / "latest_write" / "editorial_skill_report.json"
 
 FORBIDDEN_VISIBLE_TERMS = [
     "自查表", "少做一小时", "这类更新", "可执行动作", "业务动作", "业务验收清单",
@@ -68,6 +71,7 @@ def intish(value: str) -> int:
 def skill_report_for(today10_path: Path) -> dict[str, str]:
     candidates = [
         today10_path.with_name("editorial_skill_report.json"),
+        LATEST_WRITE_SKILL_REPORT,
         LATEST_SKILL_REPORT,
     ]
     for path in candidates:
@@ -86,8 +90,8 @@ def main() -> int:
     parser.add_argument("--input", default="", help="Path to today candidate CSV. Defaults to output/latest/today_10_topics.csv, then legacy output/today_10_topics.csv.")
     parser.add_argument("--debug", default="", help="Path to debug CSV. Defaults to output/latest/debug_today10_generation.csv, then legacy output/debug_today10_generation.csv.")
     args = parser.parse_args()
-    today10_path = Path(args.input) if args.input else (LATEST_TODAY10 if LATEST_TODAY10.exists() else TODAY10)
-    debug_path = Path(args.debug) if args.debug else (LATEST_DEBUG if LATEST_DEBUG.exists() else DEBUG)
+    today10_path = Path(args.input) if args.input else (LATEST_WRITE_TODAY10 if LATEST_WRITE_TODAY10.exists() else (LATEST_TODAY10 if LATEST_TODAY10.exists() else TODAY10))
+    debug_path = Path(args.debug) if args.debug else (LATEST_WRITE_DEBUG if LATEST_WRITE_DEBUG.exists() else (LATEST_DEBUG if LATEST_DEBUG.exists() else DEBUG))
     rows = read_csv(today10_path)
     debug_rows = read_csv(debug_path)
     skill_report = skill_report_for(today10_path)

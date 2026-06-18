@@ -33,6 +33,13 @@ SKILL_REFERENCE = SKILL_DIR / "references" / "persona-and-cases.md"
 SKILL_PERSONA_BRIEF = SKILL_DIR / "references" / "persona-brief.md"
 
 EXTRA_FIELDS = [
+    "热点钩子",
+    "普通人会怎么讲",
+    "我会怎么讲",
+    "场景依据",
+    "真实/相邻案例",
+    "我的改造动作",
+    "需要补的证据",
     "关联母场景",
     "借用方式",
     "不能声称的部分",
@@ -53,6 +60,13 @@ EXTRA_FIELDS = [
 ]
 
 SKILL_FIELDS = [
+    "热点钩子",
+    "普通人会怎么讲",
+    "我会怎么讲",
+    "场景依据",
+    "真实/相邻案例",
+    "我的改造动作",
+    "需要补的证据",
     "关联母场景",
     "借用方式",
     "不能声称的部分",
@@ -155,6 +169,34 @@ MOTHER_SCENES = [
         "can_show": "内容资产流、品牌一致性审核、素材风险清单、车主运营/发布会传播复盘。",
         "cannot_claim": "不能做普通车评、行情判断或泛汽车资讯。",
     },
+]
+
+HOT_HOOK_TERMS = [
+    "Claude Code",
+    "Claude Design",
+    "Claude",
+    "Codex",
+    "Vercel Eve",
+    "Eve",
+    "Omnigent",
+    "MCP",
+    "Agent",
+    "Seedance",
+    "小云雀",
+    "Runway",
+    "Kling",
+    "Luma",
+    "Sora",
+    "Midjourney",
+    "Ideogram",
+    "豆包",
+    "Gemini",
+    "GPT",
+    "OpenAI",
+    "MOSS-TTS",
+    "SGLang-Omni",
+    "Kickart",
+    "baoyu-design",
 ]
 
 ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
@@ -393,7 +435,7 @@ def normalize_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
 
 def blob(row: dict[str, str]) -> str:
     return "\n".join(str(row.get(key, "")) for key in [
-        "来源内容", "可发布标题", "内部切入角度", "我的蹭热点角度", "业务场景",
+        "原始来源标题", "来源内容", "来源标题", "可发布标题", "内部切入角度", "我的蹭热点角度", "业务场景",
         "旧流程痛点", "AI介入点", "可展示结果", "可沉淀资产", "推荐理由",
     ])
 
@@ -416,6 +458,31 @@ def matched_mother_scenes(row: dict[str, str], limit: int = 3) -> list[dict[str,
         }.get(direction, "AI账号信息雷达 / 飞书执行台")
         matches = [(1, scene) for scene in MOTHER_SCENES if scene["name"] == fallback_name]
     return [scene for _score, scene in sorted(matches, key=lambda item: item[0], reverse=True)[:limit]]
+
+
+def hot_hook(row: dict[str, str]) -> str:
+    text = " ".join([
+        row.get("原始来源标题", ""),
+        row.get("来源内容", ""),
+        row.get("来源标题", ""),
+        row.get("我的选题标题", ""),
+        row.get("事件锚点", ""),
+        row.get("相关来源", ""),
+    ])
+    lower_text = text.lower()
+    found: list[str] = []
+    for term in HOT_HOOK_TERMS:
+        if term.lower() in lower_text and term not in found:
+            found.append(term)
+    if found:
+        return " / ".join(found[:3])
+    tokens = re.findall(r"\b[A-Z][A-Za-z0-9._-]{2,}(?:\s+[A-Z][A-Za-z0-9._-]{2,})?\b", text)
+    ignored = {"AI", "API", "RSS", "URL", "HTML", "CSS", "PPT", "TTS", "ASR", "QA"}
+    for token in tokens:
+        cleaned = token.strip()
+        if cleaned and cleaned not in ignored:
+            return cleaned[:80]
+    return ""
 
 
 def normalize_direction(value: str) -> str:
@@ -465,6 +532,41 @@ def callable_case(row: dict[str, str]) -> str:
         "AI项目复盘": "Austin AIGC商业视频交付Skill",
     }
     return fallback.get(direction, "从全网AI热点到飞书选题台")
+
+
+def scene_basis(row: dict[str, str]) -> str:
+    text = blob(row).lower()
+    true_case_terms = [
+        "飞书", "信息雷达", "选题台", "brief", "商业动画", "austin", "neurovia",
+        "封面", "小红书", "runby", "musein", "汽车", "车企", "电车奥利奥",
+    ]
+    if any(term in text for term in true_case_terms):
+        return "真实案例"
+    if matched_mother_scenes(row):
+        return "相邻推演"
+    return "仅热点观察"
+
+
+def ordinary_take(row: dict[str, str]) -> str:
+    hook = hot_hook(row) or row.get("来源内容", "")[:24]
+    return f"普通资讯号大概率会讲「{hook}」发布了什么、能力多强、怎么使用。"
+
+
+def my_take(row: dict[str, str]) -> str:
+    scene = matched_mother_scenes(row)[0]["name"]
+    hook = hot_hook(row)
+    prefix = f"我会保留「{hook}」这个热点入口，" if hook else "我会借这个话题，"
+    return f"{prefix}但落点不是资讯，而是把它放进「{scene}」里验证旧流程哪一步能被AI重写。"
+
+
+def transformation_action(row: dict[str, str]) -> str:
+    basis = scene_basis(row)
+    scene = matched_mother_scenes(row)[0]["name"]
+    if basis == "真实案例":
+        return f"拿已有「{scene}」相关案例做一次改造复盘：旧流程、AI介入点、人保留的判断、可展示资产都要说清。"
+    if basis == "相邻推演":
+        return f"基于「{scene}」做相邻验证：先设计字段表、流程图或验收清单，再决定是否进入Brief。"
+    return "先只观察热度和来源证据，等能接到具体业务动作或案例素材后再做。"
 
 
 def scene_breakdown(row: dict[str, str]) -> str:
@@ -546,6 +648,13 @@ def enrich(row: dict[str, str]) -> dict[str, str]:
     direction = normalize_direction(row.get("对应栏目", ""))
     scene = matched_mother_scenes(row)[0]
     out = dict(row)
+    out["热点钩子"] = row.get("热点钩子") or hot_hook(row)
+    out["普通人会怎么讲"] = row.get("普通人会怎么讲") or ordinary_take(row)
+    out["我会怎么讲"] = row.get("我会怎么讲") or my_take(row)
+    out["场景依据"] = row.get("场景依据") or scene_basis(row)
+    out["真实/相邻案例"] = row.get("真实/相邻案例") or callable_case(out)
+    out["我的改造动作"] = row.get("我的改造动作") or transformation_action(row)
+    out["需要补的证据"] = row.get("需要补的证据") or ("补自己的流程截图、字段表、验收清单或项目素材。" if out["场景依据"] != "真实案例" else "补可展示截图或过程证据，避免只讲观点。")
     out["关联母场景"] = row.get("关联母场景") or scene["name"]
     out["借用方式"] = row.get("借用方式") or scene["borrow"]
     out["不能声称的部分"] = row.get("不能声称的部分") or scene["cannot_claim"]
@@ -585,6 +694,8 @@ def compact_candidate(row: dict[str, str], index: int) -> dict[str, str | int]:
         if value:
             payload[field] = value[:1800]
     payload["关联母场景候选"] = json.dumps(matched_mother_scenes(row), ensure_ascii=False)
+    payload["热点钩子候选"] = hot_hook(row)
+    payload["场景依据候选"] = scene_basis(row)
     return payload
 
 
@@ -635,6 +746,9 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 - 标题和字段必须落到用户自己的真实场景：AI账号系统、飞书执行台、AI导演工作流、商业视频交付、封面Skill、公众号长文转小红书卡片、RunBY、MuseIn、车企/内容营销等。
 - 必须先使用 `关联母场景候选` 判断这条内容能借用哪个用户场景，再输出标题。不要先套标题再补解释。
 - 每行必须输出 `关联母场景`、`借用方式`、`不能声称的部分`、`我的真实/相邻场景`，并让它们影响 `可发布标题`、`我的场景拆解` 和 `主编判断`。
+- 如果 `热点钩子候选` 存在，标题或一句话Brief里优先保留一个最有识别度的工具/模型/产品名；但后半句必须落到用户自己的业务动作。
+- 每行必须输出 `热点钩子`、`普通人会怎么讲`、`我会怎么讲`、`场景依据`、`真实/相邻案例`、`我的改造动作`、`需要补的证据`。
+- `场景依据` 只能是：真实案例、相邻推演、仅热点观察。真实案例可以更强推荐；相邻推演可以进入候选但要写清“我会拿它去测/改/验证”；仅热点观察原则上暂存。
 - 输出必须严格符合 JSON Schema；不要输出 Markdown。
 
 请重写/覆盖这些字段：
