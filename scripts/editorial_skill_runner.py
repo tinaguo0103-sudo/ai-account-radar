@@ -249,6 +249,8 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
 
     publishable = (out.get("可发布标题", "") or "").strip()
     alternatives = (out.get("标题备选", "") or "").strip()
+    score = intish(out.get("编辑判断分") or out.get("推荐分"))
+    title_score = intish(out.get("标题质量分"))
 
     if level in NON_PUBLISH_LEVELS:
         if publishable or alternatives:
@@ -262,6 +264,19 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
             out["推荐动作"] = "放弃"
         elif out.get("推荐动作") not in {"补证据", "存素材", "观察"}:
             out["推荐动作"] = "观察"
+        return out
+
+    if not publishable:
+        reason = out.get("不建议做的原因") or out.get("降级原因") or out.get("推荐动作原因")
+        extra = "Skill 没有给出可发布标题，先降级为暂存观察，避免无标题候选进入前台。"
+        out["今日建议级别"] = "暂存观察"
+        out["候选状态"] = "暂存观察"
+        out["可发布标题"] = ""
+        out["标题备选"] = ""
+        out["是否建议进入制作"] = "否"
+        out["推荐动作"] = "观察"
+        out["降级原因"] = f"{reason}；{extra}".strip("；")
+        out["不建议做的原因"] = out["降级原因"]
         return out
 
     if publishable and is_same_as_source(publishable, out):
@@ -278,6 +293,10 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
         return out
 
     if level == "今日最值得做":
+        out["是否建议进入制作"] = "是"
+    elif out.get("推荐等级") == "S" and "是" in (out.get("是否建议进入制作") or "") and score >= 90 and title_score >= 85:
+        out["今日建议级别"] = "今日最值得做"
+        out["候选状态"] = "今日最值得做"
         out["是否建议进入制作"] = "是"
     elif not out.get("是否建议进入制作"):
         out["是否建议进入制作"] = "否"
@@ -302,6 +321,15 @@ def wants_top_today(row: dict[str, str]) -> bool:
 def normalize_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     normalized = [normalize_skill_row(row) for row in rows]
     top_candidates = [idx for idx, row in enumerate(normalized) if wants_top_today(row)]
+    if not top_candidates:
+        scored = [
+            (intish(row.get("编辑判断分")), intish(row.get("标题质量分")), idx)
+            for idx, row in enumerate(normalized)
+            if row.get("推荐等级") == "S"
+            and "是" in (row.get("是否建议进入制作") or "")
+            and row.get("可发布标题", "").strip()
+        ]
+        top_candidates = [idx for _score, _title_score, idx in sorted(scored, reverse=True)[:3]]
     for idx in top_candidates[:3]:
         normalized[idx]["今日建议级别"] = "今日最值得做"
         normalized[idx]["候选状态"] = "今日最值得做"

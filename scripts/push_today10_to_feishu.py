@@ -132,12 +132,11 @@ def display_title_for(row: dict[str, str], publishable_title: str) -> str:
     level = normalize_level(row.get("今日建议级别", ""))
     direction = row.get("对应方向") or row.get("对应栏目") or "候选"
     source = row.get("来源内容") or row.get("原始来源标题") or row.get("我的选题标题") or "未命名来源"
+    source_label = short_text(source, 42)
     if level == "不建议制作":
-        reason = row.get("不建议做的原因") or row.get("降级原因") or "不符合当前账号主线"
-        return f"不建议制作：{short_text(reason)}"
+        return f"不建议制作｜{source_label}"
     if level == "暂存观察":
-        reason = row.get("不建议做的原因") or row.get("降级原因") or row.get("推荐动作原因") or direction
-        return f"暂存观察：{short_text(reason)}"
+        return f"暂存观察｜{source_label}"
     return row.get("我的选题标题") or f"{direction}候选：{short_text(source)}"
 ACTION_STATUS = {
     "立即蹭热点": "待判断",
