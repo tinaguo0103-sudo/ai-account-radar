@@ -24,6 +24,12 @@
 
 更短的系统地图见 `docs/system_map.md`。
 
+## 全局选题 Skill
+
+项目已新增全局 Skill：`ai-account-editorial-director`，安装在 `/Users/congcong/.codex/skills/ai-account-editorial-director`。它负责把 AIHOT、公众号全文、抖音对标内容和候选池内容，转成更贴近 **AI业务系统导演** 人设的选题判断，输出“可发布标题、我的场景拆解、我的思考点、重点体现、可调用案例、证据强度、推荐动作”等业务字段。
+
+这个 Skill 不是采集器，也不是自动成稿器；它是代码初筛之后的编辑判断层。详细说明和分享方式见 `docs/ai_account_editorial_director_skill.md`。
+
 ## 已理解的账号定位
 
 你不是 AI 新闻号、工具搬运号或提示词教程号。你的账号是“懂营销、懂内容、懂导演、正在做 AI 业务系统的人”。内容要把 AI 从工具、模型和热点，翻译成内容团队、品牌增长和创业项目可执行的流程、资产和结果。
