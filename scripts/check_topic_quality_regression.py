@@ -43,7 +43,7 @@ FORBIDDEN_TITLE_TERMS = [
     "别再给Agent起名字",
 ]
 VISIBLE_FIELDS = [
-    "我的选题标题", "可发布标题", "标题备选", "主编自由稿", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
+    "我的选题标题", "可发布标题", "标题备选", "主编自由稿", "点击钩子", "观众为什么会点", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
     "推荐理由", "我的蹭热点角度",
     "选题标题", "内部切入角度",
 ]
@@ -150,6 +150,9 @@ def main() -> int:
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
             if not row.get("主编自由稿", "").strip():
                 failures.append(f"row {idx}: {row.get('今日建议级别')} missing 主编自由稿")
+            for field in ["点击钩子", "观众为什么会点"]:
+                if not row.get(field, "").strip():
+                    failures.append(f"row {idx}: {row.get('今日建议级别')} missing click-hook field {field}")
             for field in ["我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据"]:
                 if not row.get(field, "").strip():
                     failures.append(f"row {idx}: {row.get('今日建议级别')} missing proposal-card field {field}")
