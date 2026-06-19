@@ -33,6 +33,7 @@ SKILL_REFERENCE = SKILL_DIR / "references" / "persona-and-cases.md"
 SKILL_PERSONA_BRIEF = SKILL_DIR / "references" / "persona-brief.md"
 
 EXTRA_FIELDS = [
+    "主编自由稿",
     "我的真实矛盾",
     "选题判断",
     "原始钩子",
@@ -66,6 +67,7 @@ EXTRA_FIELDS = [
 ]
 
 SKILL_FIELDS = [
+    "主编自由稿",
     "我的真实矛盾",
     "选题判断",
     "原始钩子",
@@ -252,7 +254,7 @@ VISIBLE_TEXT_REPLACEMENTS = {
     "最该重排": "真正要改掉",
 }
 
-TITLE_AIISH_TERMS = [
+TITLE_FORBIDDEN_TERMS = [
     "字段表",
     "交付QA",
     "验收记录的目录",
@@ -267,45 +269,6 @@ TITLE_AIISH_TERMS = [
     "我最想",
     "听起来很美",
     "别再给Agent起名字",
-]
-
-HUMAN_TITLE_PATTERNS = [
-    (
-        ("一个内容团队如何用 AI 重做选题到 Brief 流程", "Brief不是模板", "选题台", "字段表"),
-        "这篇Brief流程，我会拿来补选题台的验收层",
-    ),
-    (
-        ("小云雀", "Seedance", "短剧Agent"),
-        "小云雀这次更新，我会先放进AI短片交付里跑一遍",
-    ),
-    (
-        ("Vercel", "Eve", "每个智能体就是一个文件目录"),
-        "Vercel Eve真正提醒我的，是Agent要把项目经验留成目录",
-    ),
-    (
-        ("Omnigent", "AI智能体团队元框架"),
-        "Omnigent这类多Agent，我会先问：它怎么进真实执行台？",
-    ),
-    (
-        ("Claude Design", "品牌一致", "封面Skill"),
-        "Claude Design这次更新，我会先拿来测封面返工能不能少一轮",
-    ),
-    (
-        ("MOSS-TTS", "SGLang-Omni", "48 kHz", "配音"),
-        "MOSS-TTS像不像真人不是重点，重点是能不能跟上成片节奏",
-    ),
-    (
-        ("Kickart", "广告视频", "车企素材"),
-        "Kickart 3.0提效之前，我先看它能不能过品牌广告交付",
-    ),
-    (
-        ("豆包", "Excel", "表格"),
-        "豆包做表格这件事，我会先拿来测选题判断能不能自动化",
-    ),
-    (
-        ("baoyu-design", "动画视频导出", "交付QA"),
-        "baoyu-design能本地导出后，我才会认真看它的商业交付价值",
-    ),
 ]
 
 DIRECTION_ALIASES = {
@@ -403,42 +366,17 @@ def is_same_as_source(title: str, row: dict[str, str]) -> bool:
 
 
 def humanize_publishable_title(row: dict[str, str], title: str) -> str:
-    """Make titles sound like a person opening a short video, not an internal note."""
+    """Only clean title text; never rewrite by a fixed template.
+
+    The editorial Skill owns title invention. Code may prevent obvious leakage
+    and whitespace noise, but it must not replace a weak title with another
+    hard-coded pattern, otherwise every batch slowly converges to the same few
+    sentence shapes.
+    """
     cleaned = (title or "").strip()
     if not cleaned:
         return cleaned
-    blob = "\n".join([
-        cleaned,
-        row.get("原始来源标题", ""),
-        row.get("来源内容", ""),
-        row.get("热点钩子", ""),
-        row.get("我的真实矛盾", ""),
-        row.get("我的切入", ""),
-    ])
-    title_needs_help = any(term in cleaned for term in TITLE_AIISH_TERMS)
-    for triggers, replacement in HUMAN_TITLE_PATTERNS:
-        main_trigger = triggers[0]
-        if main_trigger and main_trigger in blob:
-            return replacement
-    replacements = {
-        "是一张能复盘取舍的字段表": "是自己的AI选题验收方式",
-        "先交出分镜返修记录": "要看它能不能进入AI短片交付流程",
-        "是一套会留下验收记录的目录": "是它能不能把项目经验变成可验收目录",
-        "先把每一步输入输出写进执行台": "要看它怎么进入真实执行台",
-        "要证明的是能少掉一次人工改版": "我会先拿来验证能不能少掉一轮返工",
-        "先过车企素材风险清单再谈提效": "要先看能不能进入品牌广告视频交付流程",
-        "我要看它能不能填准选题复核点": "是能不能承接我的选题判断",
-        "才开始进入交付QA": "我真正关心的是它能不能进入商业交付链路",
-        "别急着夸": "我会把",
-        "我先看它返修时会不会翻车": "放进AI短片交付流程里验证",
-        "别再给Agent起名字了，我只看它做完有没有留记录": "Vercel Eve对我有用，不是因为它叫Agent，而是它把项目经验变成可验收目录",
-        "多Agent听起来很美，我最怕它把流程越做越乱": "我会把Omnigent改成一个问题：多Agent协作怎么进入真实执行台？",
-        "豆包做表格不稀奇，稀奇的是能不能帮我复核选题": "豆包表格对我有用的地方，是能不能承接我的选题判断",
-    }
-    for old, new in replacements.items():
-        cleaned = cleaned.replace(old, new)
-    cleaned = cleaned.replace("后，短剧Agent先别讲多香，", "后，别急着夸，")
-    return cleaned
+    return " ".join(cleaned.split())
 
 
 def normalize_level(value: str) -> str:
@@ -875,6 +813,10 @@ def enrich(row: dict[str, str]) -> dict[str, str]:
     direction = normalize_direction(row.get("对应栏目", ""))
     scene = matched_mother_scenes(row)[0]
     out = dict(row)
+    out["主编自由稿"] = row.get("主编自由稿") or (
+        f"{real_tension(row)} {editorial_judgement(row)} "
+        f"{my_entry(row)} {showable_evidence(row)}"
+    )
     out["我的真实矛盾"] = row.get("我的真实矛盾") or real_tension(row)
     out["选题判断"] = row.get("选题判断") or editorial_judgement(row)
     out["原始钩子"] = row.get("原始钩子") or original_hook(row)
@@ -982,16 +924,21 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 - 如果 `热点钩子候选` 存在，标题或一句话Brief里优先保留一个最有识别度的工具/模型/产品名；但后半句必须落到用户自己的业务动作。
 - 每行必须输出 `热点钩子`、`普通人会怎么讲`、`我会怎么讲`、`场景依据`、`真实/相邻案例`、`我的改造动作`、`需要补的证据`。
 - `场景依据` 只能是：真实案例、相邻推演、仅热点观察。真实案例可以更强推荐；相邻推演可以进入候选但要写清“我会拿它去测/改/验证”；仅热点观察原则上暂存。
+- 这一版必须执行“两阶段主编法”：
+  1. 先写 `主编自由稿`，长度约 120-220 字，像用户自己在选题前写给自己的判断备忘。它要自然写清：来源触发了什么、它和我的哪个真实/相邻业务现场有关、旧流程卡在哪里、我准备拿它改/测/验证什么、我不能声称什么、它到底值不值得做。
+  2. 再从 `主编自由稿` 里提炼 `可发布标题`、`我的真实矛盾`、`选题判断`、`我的切入`、`我准备怎么讲`、`一句话Brief` 等结构化字段。不要先写字段再倒推自由稿。
+- `主编自由稿` 不能写成字段清单，也不能像助理汇报；它应该像一个懂业务、懂内容、懂导演的人在临拍前想清楚“我为什么要讲这条”。
 - 生成标题前，必须先写出 `我的真实矛盾`：用户为什么非要讲这条，它对应的真实业务冲突是什么。它不能是来源摘要、栏目分类或“我会把X放进Y流程”。
-- 生成标题前，必须先完成“业务现场复盘”：旧流程原来怎么做、谁参与、卡在哪里；AI具体改哪一步；用户保留什么判断；最后展示什么证据。这个复盘必须写进 `我的真实矛盾`、`我的场景拆解`、`我的思考点`、`重点体现`、`我的改造动作`。
+- 生成标题前，必须先完成“业务现场复盘”：旧流程原来怎么做、谁参与、卡在哪里；AI具体改哪一步；用户保留什么判断；最后展示什么证据。这个复盘必须写进 `主编自由稿`，再沉淀到 `我的真实矛盾`、`我的场景拆解`、`我的思考点`、`重点体现`、`我的改造动作`。
 - 禁止只写“我会把 X 放进 Y 流程里看”。这只是分类，不是用户现场。必须补出具体旧流程、具体改造动作和具体证据。
 - 标题不能只停在“X + 流程/系统/验收”。如果用了“我会/我想测/我更想看”，后半句必须具体到一轮返修、一次改版、一张字段表、一套验收记录、一步 Brief 压缩、一次内容资产复用。
-- 同一批标题不要批量使用 `X后，我先看/我只关心/能不能`。如果连续出现这种结构，必须改成真实矛盾型、旧流程对比型、交付边界型或项目复盘型。
+- 同一批标题不要批量使用同一骨架，例如 `X后，我先看...`、`X真正...不是...而是...`、`我会把X改成Y`。这些只是表达可能性，不是模板。发现相似骨架超过 2 条时，必须回到 `主编自由稿`，重新找每条内容自己的真实矛盾。
 - 标题必须通过“真人开口测试”：如果用户不能直接对着镜头把这句话说出来，就重写。标题不要像内部字段、咨询报告或系统提示。
 - 标题里少用抽象内部词：`字段表/交付QA/验收记录目录/素材风险清单/选题复核点/要证明的是`。这些可以放在解释字段里，标题要换成更口语的动作，例如“我先看它会不会翻车”“我会先查一遍风险”“我想拿来改封面返工”。
-- 优先使用这些真人标题结构：`别急着夸X，我先看...`、`X不稀奇，稀奇的是...`、`我做X踩的第一个坑...`、`X再强，过不了Y也没用`、`我会先拿X去测...`。
+- 不要使用固定标题结构库。案例里的标题只作为语气和判断方式参考，不能把它们批量套到新候选上。
+- 标题禁止使用这些已经模板化/抬杠化的句式或词：`不稀奇`、`别急着夸`、`我最怕`、`听起来很美`、`别再给Agent起名字`、`不该只看工具名`、`最该重排`、`背后哪类工具失去壁垒`。
 - 标题要像用户吸收了热点后自己的判断，不要像在模仿对标博主；不出现“某某最值得抄/最值得学”。
-- 每行必须先输出 `我的真实矛盾`、`选题判断`、`原始钩子`、`我的切入`、`我准备怎么讲`、`可展示证据`。这六个字段是飞书前台主编提案卡，必须像写给用户看的判断，不要像算法推理。
+- 每行必须先输出 `主编自由稿`、`我的真实矛盾`、`选题判断`、`原始钩子`、`我的切入`、`我准备怎么讲`、`可展示证据`。这些字段是飞书前台主编提案卡，必须像写给用户看的判断，不要像算法推理。
 - 前台字段必须用第一人称工作备忘口吻。不要写“用户当前/用户自己的/适合用户/用户可以”，要写“我现在/我自己的/适合我/我可以”。
 - `选题判断` 不要像助理汇报“这条最贴用户场景”，要像用户自判“这条我今天值得做，因为它刚好能讲清我现在卡住的...”。`我准备怎么讲` 必须像拍摄前给自己的备忘。
 - `一句话Brief / 我的场景拆解 / 我的思考点 / 重点体现` 只能作为提案卡的补充，不要四个字段重复同一套模板句。

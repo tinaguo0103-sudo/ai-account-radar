@@ -30,6 +30,7 @@ REQUIRED_FIELDS = [
     "选题标题",
     "候选状态",
     "推荐等级",
+    "主编自由稿",
     "我的真实矛盾",
     "选题判断",
     "原始钩子",
@@ -266,6 +267,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "选题标题": display_title,
         "候选状态": normalize_level(row.get("候选状态", "")) or level,
         "推荐等级": row.get("推荐等级", ""),
+        "主编自由稿": row.get("主编自由稿", ""),
         "我的真实矛盾": row.get("我的真实矛盾", ""),
         "选题判断": row.get("选题判断", ""),
         "原始钩子": row.get("原始钩子", ""),
@@ -449,6 +451,7 @@ def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: s
     core_visible = {
         "选题标题", "今日建议级别", "编辑判断分", "AI味风险", "内容可信度",
         "推荐动作", "状态", "来源类型", "原始来源标题", "对应栏目",
+        "主编自由稿",
         "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
         "推荐理由", "不建议做的原因", "可沉淀资产",
     }

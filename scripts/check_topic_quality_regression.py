@@ -43,7 +43,7 @@ FORBIDDEN_TITLE_TERMS = [
     "别再给Agent起名字",
 ]
 VISIBLE_FIELDS = [
-    "我的选题标题", "可发布标题", "标题备选", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
+    "我的选题标题", "可发布标题", "标题备选", "主编自由稿", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
     "推荐理由", "我的蹭热点角度",
     "选题标题", "内部切入角度",
 ]
@@ -76,6 +76,22 @@ def read_csv(path: Path) -> list[dict[str, str]]:
 
 def contains_any(text: str, terms: list[str]) -> list[str]:
     return [term for term in terms if term in (text or "")]
+
+
+def contains_unqualified_any(text: str, terms: list[str]) -> list[str]:
+    """Find terms unless the sentence is explicitly saying the evidence is missing."""
+    value = text or ""
+    hits: list[str] = []
+    negations = ["不能声称", "不能说", "不能假装", "没有", "未拿到", "没拿到", "缺少", "不含", "不是"]
+    for term in terms:
+        start = value.find(term)
+        if start < 0:
+            continue
+        window = value[max(0, start - 32): start + len(term)]
+        if any(neg in window for neg in negations):
+            continue
+        hits.append(term)
+    return hits
 
 
 def intish(value: str) -> int:
@@ -132,6 +148,8 @@ def main() -> int:
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and not row.get("可发布标题", "").strip():
             failures.append(f"row {idx}: {row.get('今日建议级别')} has no rewritten publishable title")
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
+            if not row.get("主编自由稿", "").strip():
+                failures.append(f"row {idx}: {row.get('今日建议级别')} missing 主编自由稿")
             for field in ["我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据"]:
                 if not row.get(field, "").strip():
                     failures.append(f"row {idx}: {row.get('今日建议级别')} missing proposal-card field {field}")
@@ -156,7 +174,7 @@ def main() -> int:
             failures.append(f"row {idx}: high title score without concrete source/title")
         if row.get("来源类型") == "对标视频" and "抖音" in row.get("内容可信度", ""):
             deep_terms = ["口播全文", "评论区", "镜头结构", "完整视频", "分镜流程", "交付清单"]
-            if contains_any(visible_text, deep_terms):
+            if contains_unqualified_any(visible_text, deep_terms):
                 failures.append(f"row {idx}: douyin shallow item overclaims deep video analysis")
         if row.get("来源类型") == "公众号文章" and row.get("内容可信度") != "全文":
             if row.get("推荐动作") in {"进入Brief", "本周做"}:
