@@ -1,0 +1,7 @@
+interface:
+  display_name: "AI账号主编判断"
+  short_description: "把AI来源转成业务现场选题"
+  brand_color: "#2563EB"
+  default_prompt: "使用 $ai-account-editorial-director，把这些 AIHOT、公众号或短视频来源转成贴合 AI业务系统导演人设的候选选题，并输出场景拆解、思考点、重点体现和下一步动作。"
+policy:
+  allow_implicit_invocation: true

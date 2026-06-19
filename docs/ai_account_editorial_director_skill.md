@@ -16,6 +16,26 @@
 
 因为它在 `~/.codex/skills/` 下，所以不是项目私有 Skill，可以在其他 Codex 对话和其他项目里调用。
 
+## 仓库备份与公开分享版本
+
+当前仓库是公开仓库，因此仓库内只保存脱敏版 Skill：
+
+```text
+skills/ai-account-editorial-director/
+```
+
+这份版本保留人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。它适合作为 Git 可追踪基线，也适合单独分享。
+
+本机全局 Skill `/Users/congcong/.codex/skills/ai-account-editorial-director` 可以继续保留更完整的私有案例版。日常生产运行优先使用本机私有版；仓库版用于备份结构、分享和迁移。
+
+如需把仓库脱敏版安装到全局目录：
+
+```bash
+python3 scripts/sync_editorial_skill.py --install-public --yes
+```
+
+脚本会先备份当前全局 Skill。不要在公开仓库提交私有版的 `persona-and-cases.md`。
+
 ## Skill 文件结构
 
 ```text
@@ -84,7 +104,7 @@ Skill 默认按业务可读字段输出，但字段不是模板。字段要像�
 
 Skill 现在按三层证据判断，而不是强行“每条贴一个案例”：
 
-1. `真实案例支撑`：能直接接到飞书选题台、商业动画成片、Austin商业视频Skill、Neurovia导演工作流、RunBY、MuseIn、车企内容营销等案例。
+1. `真实案例支撑`：能直接接到内容选题台、商业动画成片、商业视频交付、AI导演工作流、AI营销/产品项目、车企内容营销等案例类型。
 2. `相邻场景推演`：没有完全对应案例，但可以从用户人设和已有案例合理推演。例如新 Agent 框架可以推演到飞书执行台的分工、状态和验收；新视频模型可以推演到商业视频交付里的返修和成片验收；新设计工具可以推演到封面Skill、品牌资产库和小红书卡片生产。
 3. `只作观察`：来源很热，但无法接到用户业务现场、四个方向或可展示资产，只能暂存或不建议制作。
 
@@ -168,10 +188,10 @@ Skill 还必须区分 `热点钩子` 和 `我的内容`。遇到 Claude Code、C
 
 ## 分享和迁移
 
-如果要单独分享这个 Skill，可以复制整个目录：
+如果要单独分享这个 Skill，请复制仓库里的脱敏版目录：
 
 ```bash
-cp -R /Users/congcong/.codex/skills/ai-account-editorial-director ./ai-account-editorial-director
+cp -R skills/ai-account-editorial-director ./ai-account-editorial-director
 ```
 
 别人安装时，把目录放到自己的全局 Skills 目录：

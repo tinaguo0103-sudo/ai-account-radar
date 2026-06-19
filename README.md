@@ -28,6 +28,8 @@
 
 项目已新增全局 Skill：`ai-account-editorial-director`，安装在 `/Users/congcong/.codex/skills/ai-account-editorial-director`。它负责把 AIHOT、公众号全文、抖音对标内容和候选池内容，转成更贴近 **AI业务系统导演** 人设的选题判断，输出“可发布标题、我的场景拆解、我的思考点、重点体现、可调用案例、证据强度、推荐动作”等业务字段。
 
+仓库里也保留了一份可公开分享的脱敏版 Skill：`skills/ai-account-editorial-director/`。这份版本只包含人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。当前本机全局 Skill 可以继续保留更完整的私有案例版；仓库版本作为可追踪、可分享的 public-safe baseline。
+
 Skill 运行时不再只把完整案例库整篇塞进 prompt。当前结构是：`references/persona-brief.md` 作为短底稿，`references/persona-and-cases.md` 作为完整档案；`editorial_skill_runner.py` 会先给每条候选匹配 1-3 个母场景，再要求 Skill 输出 `热点钩子 / 普通人会怎么讲 / 我会怎么讲 / 场景依据 / 真实或相邻案例 / 我的改造动作 / 需要补的证据 / 关联母场景 / 借用方式 / 不能声称的部分 / 我的真实或相邻场景`，最后才生成标题和 Brief 字段。
 
 这条 Skill 的目标不是把候选硬套进已给案例，而是把用户案例当作经验锚点：遇到 Claude Code、Claude Design、Vercel Eve、Seedance、小云雀、Runway、Kling 等热门工具或模型时，允许保留热点名做入口，再基于用户“AI业务系统导演”的人设外推到相邻业务场景。输出必须区分 `真实案例 / 相邻推演 / 仅热点观察`，避免把合理推演写成已经做过的事实。
@@ -37,6 +39,20 @@ Skill 运行时不再只把完整案例库整篇塞进 prompt。当前结构是�
 这些前台字段必须用第一人称工作备忘口吻，不写“用户当前/适合用户/用户可以”这类助理汇报语气。`选题判断` 要像“这条我今天值得做，因为它刚好能讲清我现在卡住的……”，`我准备怎么讲` 要像拍摄前给自己的展开备注。
 
 这个 Skill 不是采集器，也不是自动成稿器；它是代码初筛之后的编辑判断层。详细说明和分享方式见 `docs/ai_account_editorial_director_skill.md`。
+
+如需把仓库里的脱敏版安装成全局 Skill，可先预览：
+
+```bash
+python3 scripts/sync_editorial_skill.py
+```
+
+确认要用公开版覆盖本机全局 Skill 时再运行：
+
+```bash
+python3 scripts/sync_editorial_skill.py --install-public --yes
+```
+
+脚本会先备份当前全局 Skill。注意：这会把更完整的私有版替换为公开脱敏版，日常生产环境通常不需要执行。
 
 ## 已理解的账号定位
 
@@ -94,6 +110,7 @@ Skill 运行时不再只把完整案例库整篇塞进 prompt。当前结构是�
 - `scripts/run_radar.py`：采集与分析脚本。
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和初筛后的今日候选池。
 - `scripts/editorial_skill_runner.py`：全局 Skill 的主编层执行脚本，默认调用本机已登录的 Codex CLI，读取 `ai-account-editorial-director` 与案例库后重判候选。它要求 Skill 先完成 `Gate` 主编门控，输出 `主编筛选 / 主编自由稿 / 我的真实矛盾 / 场景依据 / 证据强度 / title_permission`；再整理 `Pitch` 主编提案卡；最后只有 `title_permission=可发布标题` 才写入 `可发布标题 / 标题备选`。`--engine deterministic` 只作为显式离线应急选项。
+- `scripts/sync_editorial_skill.py`：把仓库中的公开脱敏版 `skills/ai-account-editorial-director/` 安装到全局 Codex Skills。默认 dry-run；只有显式 `--install-public --yes` 才会替换全局 Skill，并会先备份原目录。
 - `scripts/daily_pipeline.py`：日常总入口；日常使用加 `--write-feishu` 写入飞书，默认本地模式只用于开发验证。抖音主页采集默认同一天只跑一次，后续运行复用当天缓存。
 - `scripts/url_content_resolver.py`：正式 URL 内容采样 adapter，把公众号文章、抖音单条视频、RSS/Atom、普通网页解析成标准 ContentItem；默认只输出本地文件，显式 `--write-feishu` 才写入 `03 内容收件箱`。
 - `scripts/push_today10_to_feishu.py`：把今日候选池写入飞书 `04 分析与选题`，不写被淘汰的调试候选。
