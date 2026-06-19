@@ -43,7 +43,7 @@ FORBIDDEN_TITLE_TERMS = [
     "别再给Agent起名字",
 ]
 VISIBLE_FIELDS = [
-    "我的选题标题", "可发布标题", "标题备选", "主编自由稿", "点击钩子", "观众为什么会点", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
+    "我的选题标题", "可发布标题", "标题备选", "主编筛选", "主编自由稿", "标题工作坊", "标题自审", "点击钩子", "观众为什么会点", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
     "推荐理由", "我的蹭热点角度",
     "选题标题", "内部切入角度",
 ]
@@ -82,7 +82,7 @@ def contains_unqualified_any(text: str, terms: list[str]) -> list[str]:
     """Find terms unless the sentence is explicitly saying the evidence is missing."""
     value = text or ""
     hits: list[str] = []
-    negations = ["不能声称", "不能说", "不能假装", "没有", "未拿到", "没拿到", "缺少", "不含", "不是"]
+    negations = ["不能声称", "不能直接声称", "不能说", "不能假装", "不能展示", "不能当成", "没有", "未拿到", "没拿到", "缺少", "不含", "不是"]
     for term in terms:
         start = value.find(term)
         if start < 0:
@@ -148,8 +148,9 @@ def main() -> int:
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and not row.get("可发布标题", "").strip():
             failures.append(f"row {idx}: {row.get('今日建议级别')} has no rewritten publishable title")
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
-            if not row.get("主编自由稿", "").strip():
-                failures.append(f"row {idx}: {row.get('今日建议级别')} missing 主编自由稿")
+            for field in ["主编筛选", "主编自由稿", "标题工作坊", "标题自审"]:
+                if not row.get(field, "").strip():
+                    failures.append(f"row {idx}: {row.get('今日建议级别')} missing staged editorial field {field}")
             for field in ["点击钩子", "观众为什么会点"]:
                 if not row.get(field, "").strip():
                     failures.append(f"row {idx}: {row.get('今日建议级别')} missing click-hook field {field}")
