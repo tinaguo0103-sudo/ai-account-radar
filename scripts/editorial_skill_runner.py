@@ -33,6 +33,11 @@ SKILL_REFERENCE = SKILL_DIR / "references" / "persona-and-cases.md"
 SKILL_PERSONA_BRIEF = SKILL_DIR / "references" / "persona-brief.md"
 
 EXTRA_FIELDS = [
+    "选题判断",
+    "原始钩子",
+    "我的切入",
+    "我准备怎么讲",
+    "可展示证据",
     "热点钩子",
     "普通人会怎么讲",
     "我会怎么讲",
@@ -60,6 +65,11 @@ EXTRA_FIELDS = [
 ]
 
 SKILL_FIELDS = [
+    "选题判断",
+    "原始钩子",
+    "我的切入",
+    "我准备怎么讲",
+    "可展示证据",
     "热点钩子",
     "普通人会怎么讲",
     "我会怎么讲",
@@ -569,6 +579,56 @@ def transformation_action(row: dict[str, str]) -> str:
     return "先只观察热度和来源证据，等能接到具体业务动作或案例素材后再做。"
 
 
+def editorial_judgement(row: dict[str, str]) -> str:
+    level = row.get("今日建议级别") or row.get("候选状态") or "暂存观察"
+    hook = hot_hook(row)
+    basis = scene_basis(row)
+    if level == "今日最值得做":
+        return f"值得优先做：{hook or '这个来源'}能接到用户真实业务现场，并且有机会展示流程改造或资产结果。"
+    if level == "可选候选":
+        return f"可以进入候选：{hook or '这个来源'}有可借的角度，但还需要补证据或补一轮自己的测试。"
+    if level == "不建议制作":
+        return f"不建议制作：目前只能停在资讯或工具层，和用户业务现场关系弱。"
+    return f"暂存观察：{basis}，还没形成足够清楚的用户现场和展示证据。"
+
+
+def original_hook(row: dict[str, str]) -> str:
+    hook = hot_hook(row)
+    if hook:
+        return hook
+    source = row.get("原始来源标题") or row.get("来源内容") or row.get("我的选题标题")
+    return short_sentence(source, 80)
+
+
+def short_sentence(value: str, limit: int = 120) -> str:
+    text = " ".join((value or "").split())
+    return text if len(text) <= limit else text[:limit].rstrip() + "..."
+
+
+def my_entry(row: dict[str, str]) -> str:
+    scene = matched_mother_scenes(row)[0]["name"]
+    action = transformation_action(row)
+    return f"不按资讯讲，落到「{scene}」：{action}"
+
+
+def how_i_would_tell(row: dict[str, str]) -> str:
+    breakdown = scene_breakdown(row)
+    thinking = thinking_point(row)
+    return f"开头先点出来源钩子，再立刻转到我的现场。主体讲：{breakdown} 我的判断是：{thinking}"
+
+
+def showable_evidence(row: dict[str, str]) -> str:
+    evidence = row.get("可展示结果") or row.get("可沉淀资产")
+    if evidence:
+        return evidence
+    basis = scene_basis(row)
+    if basis == "真实案例":
+        return "可展示已有流程截图、字段表、Brief、验收表、分镜/封面/成片片段或改造前后对比。"
+    if basis == "相邻推演":
+        return "需要补一轮自己的测试截图、字段表、流程图或失败样例，再决定是否制作。"
+    return "目前缺少可展示证据，只适合观察。"
+
+
 def scene_breakdown(row: dict[str, str]) -> str:
     scene = row.get("业务场景") or normalize_direction(row.get("对应栏目", ""))
     pain = row.get("旧流程痛点", "")
@@ -648,6 +708,11 @@ def enrich(row: dict[str, str]) -> dict[str, str]:
     direction = normalize_direction(row.get("对应栏目", ""))
     scene = matched_mother_scenes(row)[0]
     out = dict(row)
+    out["选题判断"] = row.get("选题判断") or editorial_judgement(row)
+    out["原始钩子"] = row.get("原始钩子") or original_hook(row)
+    out["我的切入"] = row.get("我的切入") or my_entry(row)
+    out["我准备怎么讲"] = row.get("我准备怎么讲") or how_i_would_tell(row)
+    out["可展示证据"] = row.get("可展示证据") or showable_evidence(row)
     out["热点钩子"] = row.get("热点钩子") or hot_hook(row)
     out["普通人会怎么讲"] = row.get("普通人会怎么讲") or ordinary_take(row)
     out["我会怎么讲"] = row.get("我会怎么讲") or my_take(row)
@@ -752,6 +817,8 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 - 生成标题前，必须先完成“业务现场复盘”：旧流程原来怎么做、谁参与、卡在哪里；AI具体改哪一步；用户保留什么判断；最后展示什么证据。这个复盘必须写进 `我的场景拆解`、`我的思考点`、`重点体现`、`我的改造动作`。
 - 禁止只写“我会把 X 放进 Y 流程里看”。这只是分类，不是用户现场。必须补出具体旧流程、具体改造动作和具体证据。
 - 标题不能只停在“X + 流程/系统/验收”。如果用了“我会/我想测/我更想看”，后半句必须具体到一轮返修、一次改版、一张字段表、一套验收记录、一步 Brief 压缩、一次内容资产复用。
+- 每行必须先输出 `选题判断`、`原始钩子`、`我的切入`、`我准备怎么讲`、`可展示证据`。这五个字段是飞书前台主编提案卡，必须像写给用户看的判断，不要像算法推理。
+- `一句话Brief / 我的场景拆解 / 我的思考点 / 重点体现` 只能作为提案卡的补充，不要四个字段重复同一套模板句。
 - 输出必须严格符合 JSON Schema；不要输出 Markdown。
 
 请重写/覆盖这些字段：

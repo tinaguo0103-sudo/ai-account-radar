@@ -30,6 +30,11 @@ REQUIRED_FIELDS = [
     "选题标题",
     "候选状态",
     "推荐等级",
+    "选题判断",
+    "原始钩子",
+    "我的切入",
+    "我准备怎么讲",
+    "可展示证据",
     "热点钩子",
     "普通人会怎么讲",
     "我会怎么讲",
@@ -260,6 +265,11 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "选题标题": display_title,
         "候选状态": normalize_level(row.get("候选状态", "")) or level,
         "推荐等级": row.get("推荐等级", ""),
+        "选题判断": row.get("选题判断", ""),
+        "原始钩子": row.get("原始钩子", ""),
+        "我的切入": row.get("我的切入", ""),
+        "我准备怎么讲": row.get("我准备怎么讲", ""),
+        "可展示证据": row.get("可展示证据", ""),
         "热点钩子": row.get("热点钩子", ""),
         "普通人会怎么讲": row.get("普通人会怎么讲", ""),
         "我会怎么讲": row.get("我会怎么讲", ""),
@@ -436,14 +446,15 @@ def delete_view_if_exists(token: str, app_token: str, table_id: str, view_name: 
 def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: str) -> dict[str, Any]:
     core_visible = {
         "选题标题", "今日建议级别", "编辑判断分", "AI味风险", "内容可信度",
-        "推荐动作", "状态", "来源类型", "原始来源标题", "对应栏目", "业务场景",
-        "一句话Brief", "我的场景拆解", "我的思考点", "重点体现", "可调用案例",
-        "证据强度", "推荐理由", "不建议做的原因", "可沉淀资产",
+        "推荐动作", "状态", "来源类型", "原始来源标题", "对应栏目",
+        "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
+        "推荐理由", "不建议做的原因", "可沉淀资产",
     }
     detail_visible = core_visible | {
         "内部切入角度", "可发布标题", "标题备选", "标题质量分", "人设匹配分",
         "主编判断", "是否建议进入制作", "热点切入方式", "来源链接", "内容指纹",
         "内容核心冲突", "视频呈现方式", "Skill编辑层",
+        "一句话Brief", "我的场景拆解", "我的思考点", "重点体现", "可调用案例", "证据强度",
     }
     return {
         "今日候选池": patch_candidate_view(token, app_token, table_id, "今日候选池", run_id, core_visible),
