@@ -60,7 +60,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 对标视频进入候选池后，只借鉴话题、结构、专业证明和商业入口。用户可见标题要转成自己的 AI导演/业务流程语言，不出现其他博主名字，也不写“这条视频/这条内容”。
 
-选题编辑判断已抽成全局 Skill：`ai-account-editorial-director`，路径是 `/Users/congcong/.codex/skills/ai-account-editorial-director`。代码负责采集、标准化、去重和初筛；`scripts/editorial_skill_runner.py` 默认直接调用本机 Codex CLI，让这个全局 Skill 先做 `主编筛选` 和 `主编自由稿`，再做 `标题工作坊` 和 `标题自审`，最后从点击理由里提炼场景拆解、思考点、重点体现、可调用案例和可发布标题，写入 `04 分析与选题`。详细说明见 `docs/ai_account_editorial_director_skill.md`。
+选题编辑判断已抽成全局 Skill：`ai-account-editorial-director`，路径是 `/Users/congcong/.codex/skills/ai-account-editorial-director`。代码负责采集、标准化、去重和初筛；`scripts/editorial_skill_runner.py` 默认直接调用本机 Codex CLI，让这个全局 Skill 按 `Gate -> Pitch -> Title` 做判断：先判断是否能接到我的真实/相邻业务现场和证据是否足够，再整理主编提案卡，最后只有 `title_permission=可发布标题` 时才写入可发布标题和标题备选。详细说明见 `docs/ai_account_editorial_director_skill.md`。
 
 当前主链路是：
 

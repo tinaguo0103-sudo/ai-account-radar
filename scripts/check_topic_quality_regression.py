@@ -43,7 +43,7 @@ FORBIDDEN_TITLE_TERMS = [
     "别再给Agent起名字",
 ]
 VISIBLE_FIELDS = [
-    "我的选题标题", "可发布标题", "标题备选", "主编筛选", "主编自由稿", "标题工作坊", "标题自审", "点击钩子", "观众为什么会点", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
+    "我的选题标题", "可发布标题", "标题备选", "title_permission", "主编筛选", "主编自由稿", "标题工作坊", "标题自审", "点击钩子", "观众为什么会点", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
     "推荐理由", "我的蹭热点角度",
     "选题标题", "内部切入角度",
 ]
@@ -146,11 +146,12 @@ def main() -> int:
         if same_as_source(row.get("可发布标题", ""), row):
             failures.append(f"row {idx}: publishable title equals original source title")
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and not row.get("可发布标题", "").strip():
-            failures.append(f"row {idx}: {row.get('今日建议级别')} has no rewritten publishable title")
+            if row.get("title_permission") == "可发布标题":
+                failures.append(f"row {idx}: {row.get('今日建议级别')} has no rewritten publishable title despite title_permission=可发布标题")
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
-            for field in ["主编筛选", "主编自由稿", "标题工作坊", "标题自审"]:
+            for field in ["主编筛选", "主编自由稿"]:
                 if not row.get(field, "").strip():
-                    failures.append(f"row {idx}: {row.get('今日建议级别')} missing staged editorial field {field}")
+                    failures.append(f"row {idx}: {row.get('今日建议级别')} missing gate editorial field {field}")
             for field in ["点击钩子", "观众为什么会点"]:
                 if not row.get(field, "").strip():
                     failures.append(f"row {idx}: {row.get('今日建议级别')} missing click-hook field {field}")
@@ -163,6 +164,16 @@ def main() -> int:
         if row.get("推荐动作") in {"暂存观察", "不做"} or row.get("今日建议级别") in {"暂存观察", "不建议制作"}:
             if row.get("可发布标题", "").strip() or row.get("标题备选", "").strip():
                 failures.append(f"row {idx}: {row.get('今日建议级别')} still has publishable title/options")
+        if row.get("title_permission") != "可发布标题":
+            if row.get("可发布标题", "").strip() or row.get("标题备选", "").strip():
+                failures.append(f"row {idx}: title_permission={row.get('title_permission')!r} still has publishable title/options")
+        if row.get("今日建议级别") in {"暂存观察", "不建议制作"} and row.get("title_permission") == "可发布标题":
+            failures.append(f"row {idx}: {row.get('今日建议级别')} cannot have title_permission=可发布标题")
+        if row.get("今日建议级别") == "今日最值得做":
+            if row.get("证据强度") == "弱":
+                failures.append(f"row {idx}: 今日最值得做 has weak evidence")
+            if row.get("场景依据") == "仅热点观察":
+                failures.append(f"row {idx}: 今日最值得做 is only hotspot observation")
         if row.get("AI味风险") == "低" and hits:
             failures.append(f"row {idx}: AI味风险低 but template terms present")
         if row.get("今日建议级别") == "今日最值得做":

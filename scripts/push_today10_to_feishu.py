@@ -31,6 +31,7 @@ REQUIRED_FIELDS = [
     "候选状态",
     "推荐等级",
     "主编自由稿",
+    "title_permission",
     "点击钩子",
     "观众为什么会点",
     "我的真实矛盾",
@@ -260,7 +261,9 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 
 def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str, str]:
     status = ACTION_STATUS.get(row.get("推荐动作", ""), "待判断")
-    publishable_title = row.get("可发布标题", "")
+    title_permission = row.get("title_permission", "") or ("可发布标题" if row.get("可发布标题") else "不生成标题")
+    publishable_title = row.get("可发布标题", "") if title_permission == "可发布标题" else ""
+    title_options = row.get("标题备选", "") if title_permission == "可发布标题" else ""
     level = normalize_level(row.get("今日建议级别", ""))
     display_title = display_title_for(row, publishable_title)
     internal_angle = row.get("内部切入角度") or row.get("我的选题标题", "")
@@ -270,6 +273,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "候选状态": normalize_level(row.get("候选状态", "")) or level,
         "推荐等级": row.get("推荐等级", ""),
         "主编自由稿": row.get("主编自由稿", ""),
+        "title_permission": title_permission,
         "点击钩子": row.get("点击钩子", ""),
         "观众为什么会点": row.get("观众为什么会点", ""),
         "我的真实矛盾": row.get("我的真实矛盾", ""),
@@ -302,7 +306,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "内容类型": row.get("内容类型", ""),
         "平台建议": row.get("平台建议", ""),
         "标题风格": row.get("标题风格", ""),
-        "标题备选": row.get("标题备选", ""),
+        "标题备选": title_options,
         "标题是否过度内部化": row.get("标题是否过度内部化", ""),
         "标题改写原因": row.get("标题改写原因", ""),
         "真实用户问题": row.get("真实用户问题", ""),
@@ -454,7 +458,7 @@ def delete_view_if_exists(token: str, app_token: str, table_id: str, view_name: 
 def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: str) -> dict[str, Any]:
     core_visible = {
         "选题标题", "今日建议级别", "编辑判断分", "AI味风险", "内容可信度",
-        "推荐动作", "状态", "来源类型", "原始来源标题", "对应栏目",
+        "推荐动作", "状态", "title_permission", "来源类型", "原始来源标题", "对应栏目",
         "主编自由稿",
         "点击钩子", "观众为什么会点",
         "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",

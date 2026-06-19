@@ -52,6 +52,7 @@ COMPARE_FIELDS = [
     "主编自由稿",
     "点击钩子",
     "观众为什么会点",
+    "title_permission",
     "我的真实矛盾",
     "选题判断",
     "原始钩子",
@@ -82,6 +83,7 @@ VISIBLE_FIELDS = [
     "我的选题标题",
     "可发布标题",
     "标题备选",
+    "title_permission",
     "主编自由稿",
     "点击钩子",
     "观众为什么会点",
@@ -193,8 +195,15 @@ def main() -> int:
             if local_value != feishu_value:
                 failures.append(
                     f"Field mismatch for {local.get('选题标题', '')[:40]} / {field}: "
-                    f"local={local_value!r} feishu={feishu_value!r}"
+                        f"local={local_value!r} feishu={feishu_value!r}"
                 )
+        if normalize(fields.get("title_permission")) != "可发布标题":
+            for field in ["可发布标题", "标题备选"]:
+                if normalize(fields.get(field)):
+                    failures.append(
+                        f"title_permission={normalize(fields.get('title_permission'))} but stale {field}: "
+                        f"{local.get('选题标题', '')[:40]}"
+                    )
         if local.get("今日建议级别") == "暂存观察":
             for field in ["可发布标题", "标题备选"]:
                 if normalize(fields.get(field)):
