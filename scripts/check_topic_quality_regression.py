@@ -27,6 +27,16 @@ FORBIDDEN_VISIBLE_TERMS = [
     "这条视频", "这条内容", "对标视频真正", "博主", "老师", "带着它的", "玛卡巴卡",
     "用户当前", "用户自己的", "用户作为", "适合用户", "帮助用户", "用户可以", "用户会", "用户要",
 ]
+FORBIDDEN_TITLE_TERMS = [
+    "字段表",
+    "交付QA",
+    "验收记录的目录",
+    "素材风险清单",
+    "选题复核点",
+    "要证明的是",
+    "先交出",
+    "写进执行台",
+]
 VISIBLE_FIELDS = [
     "我的选题标题", "可发布标题", "标题备选", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
     "推荐理由", "我的蹭热点角度",
@@ -109,6 +119,9 @@ def main() -> int:
         hits = contains_any(visible_text, FORBIDDEN_VISIBLE_TERMS)
         if hits:
             failures.append(f"row {idx}: visible fields contain forbidden template terms: {','.join(hits)}")
+        title_hits = contains_any(row.get("可发布标题", ""), FORBIDDEN_TITLE_TERMS)
+        if title_hits:
+            failures.append(f"row {idx}: publishable title still uses internal/AI-ish terms: {','.join(title_hits)}")
         if same_as_source(row.get("可发布标题", ""), row):
             failures.append(f"row {idx}: publishable title equals original source title")
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and not row.get("可发布标题", "").strip():

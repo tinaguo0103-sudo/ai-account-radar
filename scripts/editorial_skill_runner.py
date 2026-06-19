@@ -252,6 +252,56 @@ VISIBLE_TEXT_REPLACEMENTS = {
     "最该重排": "真正要改掉",
 }
 
+TITLE_AIISH_TERMS = [
+    "字段表",
+    "交付QA",
+    "验收记录的目录",
+    "素材风险清单",
+    "选题复核点",
+    "要证明的是",
+    "先交出",
+    "先把每一步输入输出写进执行台",
+]
+
+HUMAN_TITLE_PATTERNS = [
+    (
+        ("一个内容团队如何用 AI 重做选题到 Brief 流程", "Brief不是模板", "选题台", "字段表"),
+        "我做选题台踩的第一个坑：Brief不是模板",
+    ),
+    (
+        ("小云雀", "Seedance", "短剧Agent"),
+        "别急着夸小云雀，我先看它返修时会不会翻车",
+    ),
+    (
+        ("Vercel", "Eve", "每个智能体就是一个文件目录"),
+        "别再给Agent起名字了，我只看它做完有没有留记录",
+    ),
+    (
+        ("Omnigent", "AI智能体团队元框架"),
+        "多Agent听起来很美，我最怕它把流程越做越乱",
+    ),
+    (
+        ("Claude Design", "品牌一致", "封面Skill"),
+        "Claude Design这次更新，我最想拿来改封面返工",
+    ),
+    (
+        ("MOSS-TTS", "SGLang-Omni", "48 kHz", "配音"),
+        "AI配音别只听像不像，先拖进时间线试试",
+    ),
+    (
+        ("Kickart", "广告视频", "车企素材"),
+        "AI广告视频提效前，我会先查一遍品牌素材风险",
+    ),
+    (
+        ("豆包", "Excel", "表格"),
+        "豆包做表格不稀奇，稀奇的是能不能帮我复核选题",
+    ),
+    (
+        ("baoyu-design", "动画视频导出", "交付QA"),
+        "AI动画能本地导出，才刚摸到商业交付的门",
+    ),
+]
+
 DIRECTION_ALIASES = {
     "AI汽车与品牌增长": "汽车与内容营销",
     "AI导演工作流与视频交付": "AI导演工作流",
@@ -346,6 +396,41 @@ def is_same_as_source(title: str, row: dict[str, str]) -> bool:
     return False
 
 
+def humanize_publishable_title(row: dict[str, str], title: str) -> str:
+    """Make titles sound like a person opening a short video, not an internal note."""
+    cleaned = (title or "").strip()
+    if not cleaned:
+        return cleaned
+    blob = "\n".join([
+        cleaned,
+        row.get("原始来源标题", ""),
+        row.get("来源内容", ""),
+        row.get("热点钩子", ""),
+        row.get("我的真实矛盾", ""),
+        row.get("我的切入", ""),
+    ])
+    title_needs_help = any(term in cleaned for term in TITLE_AIISH_TERMS)
+    for triggers, replacement in HUMAN_TITLE_PATTERNS:
+        main_trigger = triggers[0]
+        if main_trigger and main_trigger in blob:
+            if title_needs_help or len(cleaned) > 30 or "：" in replacement:
+                return replacement
+    replacements = {
+        "是一张能复盘取舍的字段表": "是我能不能说清为什么选它",
+        "先交出分镜返修记录": "我先看它返修时会不会翻车",
+        "是一套会留下验收记录的目录": "我只看它做完有没有留记录",
+        "先把每一步输入输出写进执行台": "我最怕它把流程越做越乱",
+        "要证明的是能少掉一次人工改版": "我最想拿来改封面返工",
+        "先过车企素材风险清单再谈提效": "我会先查一遍品牌素材风险",
+        "我要看它能不能填准选题复核点": "稀奇的是能不能帮我复核选题",
+        "才开始进入交付QA": "才刚摸到商业交付的门",
+    }
+    for old, new in replacements.items():
+        cleaned = cleaned.replace(old, new)
+    cleaned = cleaned.replace("后，短剧Agent先别讲多香，", "后，别急着夸，")
+    return cleaned
+
+
 def normalize_level(value: str) -> str:
     cleaned = (value or "").strip()
     if cleaned in ALLOWED_LEVELS:
@@ -416,6 +501,9 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
         out["降级原因"] = f"{reason}；{extra}".strip("；")
         out["不建议做的原因"] = out["降级原因"]
         return out
+
+    publishable = humanize_publishable_title(out, publishable)
+    out["可发布标题"] = publishable
 
     if level == "今日最值得做":
         out["是否建议进入制作"] = "是"
@@ -889,6 +977,10 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 - 禁止只写“我会把 X 放进 Y 流程里看”。这只是分类，不是用户现场。必须补出具体旧流程、具体改造动作和具体证据。
 - 标题不能只停在“X + 流程/系统/验收”。如果用了“我会/我想测/我更想看”，后半句必须具体到一轮返修、一次改版、一张字段表、一套验收记录、一步 Brief 压缩、一次内容资产复用。
 - 同一批标题不要批量使用 `X后，我先看/我只关心/能不能`。如果连续出现这种结构，必须改成真实矛盾型、旧流程对比型、交付边界型或项目复盘型。
+- 标题必须通过“真人开口测试”：如果用户不能直接对着镜头把这句话说出来，就重写。标题不要像内部字段、咨询报告或系统提示。
+- 标题里少用抽象内部词：`字段表/交付QA/验收记录目录/素材风险清单/选题复核点/要证明的是`。这些可以放在解释字段里，标题要换成更口语的动作，例如“我先看它会不会翻车”“我会先查一遍风险”“我想拿来改封面返工”。
+- 优先使用这些真人标题结构：`别急着夸X，我先看...`、`X不稀奇，稀奇的是...`、`我做X踩的第一个坑...`、`X再强，过不了Y也没用`、`我会先拿X去测...`。
+- 标题要像用户吸收了热点后自己的判断，不要像在模仿对标博主；不出现“某某最值得抄/最值得学”。
 - 每行必须先输出 `我的真实矛盾`、`选题判断`、`原始钩子`、`我的切入`、`我准备怎么讲`、`可展示证据`。这六个字段是飞书前台主编提案卡，必须像写给用户看的判断，不要像算法推理。
 - 前台字段必须用第一人称工作备忘口吻。不要写“用户当前/用户自己的/适合用户/用户可以”，要写“我现在/我自己的/适合我/我可以”。
 - `选题判断` 不要像助理汇报“这条最贴用户场景”，要像用户自判“这条我今天值得做，因为它刚好能讲清我现在卡住的...”。`我准备怎么讲` 必须像拍摄前给自己的备忘。
