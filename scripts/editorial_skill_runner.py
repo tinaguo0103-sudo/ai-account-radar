@@ -33,6 +33,7 @@ SKILL_REFERENCE = SKILL_DIR / "references" / "persona-and-cases.md"
 SKILL_PERSONA_BRIEF = SKILL_DIR / "references" / "persona-brief.md"
 
 EXTRA_FIELDS = [
+    "我的真实矛盾",
     "选题判断",
     "原始钩子",
     "我的切入",
@@ -65,6 +66,7 @@ EXTRA_FIELDS = [
 ]
 
 SKILL_FIELDS = [
+    "我的真实矛盾",
     "选题判断",
     "原始钩子",
     "我的切入",
@@ -225,6 +227,17 @@ LEVEL_ALIASES = {
     "不推荐": "不建议制作",
 }
 NON_PUBLISH_LEVELS = {"暂存观察", "不建议制作"}
+VISIBLE_TEXT_REPLACEMENTS = {
+    "业务动作": "具体改造点",
+    "可执行动作": "具体改造点",
+    "业务验收清单": "项目验收记录",
+    "自查表": "检查表",
+    "少做一小时": "少掉一轮人工返修",
+    "这类更新": "这次变化",
+    "先看任务怎么验收": "先看它能不能留下验收记录",
+    "该先判断": "要先判断",
+    "最该重排": "真正要改掉",
+}
 
 DIRECTION_ALIASES = {
     "AI汽车与品牌增长": "汽车与内容营销",
@@ -402,6 +415,23 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     if publishable:
         out["我的选题标题"] = publishable
         out["选题标题"] = publishable
+    return sanitize_visible_language(out)
+
+
+def sanitize_visible_language(row: dict[str, str]) -> dict[str, str]:
+    out = dict(row)
+    fields = [
+        "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
+        "推荐理由", "主编判断", "一句话Brief", "我的场景拆解", "我的思考点", "重点体现",
+        "可发布标题", "标题备选", "我的选题标题", "选题标题", "内部切入角度",
+    ]
+    for field in fields:
+        value = out.get(field, "")
+        if not value:
+            continue
+        for old, new in VISIBLE_TEXT_REPLACEMENTS.items():
+            value = value.replace(old, new)
+        out[field] = value
     return out
 
 
@@ -440,7 +470,7 @@ def normalize_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
         if normalized[idx].get("今日建议级别") == "今日最值得做":
             normalized[idx]["今日建议级别"] = "可选候选"
             normalized[idx]["候选状态"] = "可选候选"
-    return normalized
+    return [sanitize_visible_language(row) for row in normalized]
 
 
 def blob(row: dict[str, str]) -> str:
@@ -567,6 +597,32 @@ def my_take(row: dict[str, str]) -> str:
     hook = hot_hook(row)
     prefix = f"我会保留「{hook}」这个热点入口，" if hook else "我会借这个话题，"
     return f"{prefix}但落点不是资讯，而是把它放进「{scene}」里验证旧流程哪一步能被AI重写。"
+
+
+def real_tension(row: dict[str, str]) -> str:
+    """Surface the user's own business conflict before title generation."""
+    scene = matched_mother_scenes(row)[0]["name"]
+    hook = hot_hook(row)
+    direction = normalize_direction(row.get("对应栏目", ""))
+    text = blob(row)
+    lower = text.lower()
+    if any(term in text for term in ["飞书", "选题", "Brief", "AIHOT", "内容收件箱", "候选池"]):
+        return "我现在不是缺热点，而是缺一套能解释为什么选它、怎么把它推进到 Brief 的判断系统。"
+    if direction == "AI导演工作流" or any(term in text for term in ["视频", "短片", "分镜", "成片", "配音", "TTS", "剪辑"]):
+        if hook:
+            return f"{hook}再热，我真正要验证的是它能不能进入分镜、返修和成片验收，而不是只生成一个好看的片段。"
+        return "AI视频真正卡住的不是生成，而是分镜、返修和成片验收这套交付流程。"
+    if direction == "汽车与内容营销" or any(term in text for term in ["汽车", "车企", "品牌", "营销", "发布会", "车主"]):
+        return "我关心的不是又多一个营销工具，而是它能不能把车企内容从人力堆稿改成可复用的内容资产流。"
+    if any(term in text for term in ["Agent", "智能体", "Claude", "Codex", "MCP", "验收", "状态"]):
+        return "我现在缺的不是一个会聊天的 Agent，而是它做完事后能不能留下任务、状态、异常和验收记录。"
+    if any(term in text for term in ["封面", "首图", "卡片", "PPT", "排版", "设计", "品牌一致", "视觉"]):
+        return "我不想要一个会生成漂亮素材的工具，我想要它少掉内容生产里那轮人工理解、改版和 QA。"
+    if "douyin" in lower or "抖音" in text:
+        return "这条对标内容如果要借鉴，必须先转成我的生产现场，而不是复述别人怎么讲。"
+    if hook:
+        return f"{hook}对我有用的前提，不是它又更新了什么，而是它能不能改掉「{scene}」里的一个真实低效环节。"
+    return f"这条如果要做，必须先证明它能改掉「{scene}」里的一个真实卡点，而不是只当成热点复述。"
 
 
 def transformation_action(row: dict[str, str]) -> str:
@@ -708,6 +764,7 @@ def enrich(row: dict[str, str]) -> dict[str, str]:
     direction = normalize_direction(row.get("对应栏目", ""))
     scene = matched_mother_scenes(row)[0]
     out = dict(row)
+    out["我的真实矛盾"] = row.get("我的真实矛盾") or real_tension(row)
     out["选题判断"] = row.get("选题判断") or editorial_judgement(row)
     out["原始钩子"] = row.get("原始钩子") or original_hook(row)
     out["我的切入"] = row.get("我的切入") or my_entry(row)
@@ -814,10 +871,12 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 - 如果 `热点钩子候选` 存在，标题或一句话Brief里优先保留一个最有识别度的工具/模型/产品名；但后半句必须落到用户自己的业务动作。
 - 每行必须输出 `热点钩子`、`普通人会怎么讲`、`我会怎么讲`、`场景依据`、`真实/相邻案例`、`我的改造动作`、`需要补的证据`。
 - `场景依据` 只能是：真实案例、相邻推演、仅热点观察。真实案例可以更强推荐；相邻推演可以进入候选但要写清“我会拿它去测/改/验证”；仅热点观察原则上暂存。
-- 生成标题前，必须先完成“业务现场复盘”：旧流程原来怎么做、谁参与、卡在哪里；AI具体改哪一步；用户保留什么判断；最后展示什么证据。这个复盘必须写进 `我的场景拆解`、`我的思考点`、`重点体现`、`我的改造动作`。
+- 生成标题前，必须先写出 `我的真实矛盾`：用户为什么非要讲这条，它对应的真实业务冲突是什么。它不能是来源摘要、栏目分类或“我会把X放进Y流程”。
+- 生成标题前，必须先完成“业务现场复盘”：旧流程原来怎么做、谁参与、卡在哪里；AI具体改哪一步；用户保留什么判断；最后展示什么证据。这个复盘必须写进 `我的真实矛盾`、`我的场景拆解`、`我的思考点`、`重点体现`、`我的改造动作`。
 - 禁止只写“我会把 X 放进 Y 流程里看”。这只是分类，不是用户现场。必须补出具体旧流程、具体改造动作和具体证据。
 - 标题不能只停在“X + 流程/系统/验收”。如果用了“我会/我想测/我更想看”，后半句必须具体到一轮返修、一次改版、一张字段表、一套验收记录、一步 Brief 压缩、一次内容资产复用。
-- 每行必须先输出 `选题判断`、`原始钩子`、`我的切入`、`我准备怎么讲`、`可展示证据`。这五个字段是飞书前台主编提案卡，必须像写给用户看的判断，不要像算法推理。
+- 同一批标题不要批量使用 `X后，我先看/我只关心/能不能`。如果连续出现这种结构，必须改成真实矛盾型、旧流程对比型、交付边界型或项目复盘型。
+- 每行必须先输出 `我的真实矛盾`、`选题判断`、`原始钩子`、`我的切入`、`我准备怎么讲`、`可展示证据`。这六个字段是飞书前台主编提案卡，必须像写给用户看的判断，不要像算法推理。
 - `一句话Brief / 我的场景拆解 / 我的思考点 / 重点体现` 只能作为提案卡的补充，不要四个字段重复同一套模板句。
 - 输出必须严格符合 JSON Schema；不要输出 Markdown。
 

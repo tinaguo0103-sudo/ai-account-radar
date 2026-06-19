@@ -27,7 +27,7 @@ FORBIDDEN_VISIBLE_TERMS = [
     "这条视频", "这条内容", "对标视频真正", "博主", "老师", "带着它的", "玛卡巴卡",
 ]
 VISIBLE_FIELDS = [
-    "我的选题标题", "可发布标题", "标题备选", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
+    "我的选题标题", "可发布标题", "标题备选", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
     "推荐理由", "我的蹭热点角度",
     "选题标题", "内部切入角度",
 ]
@@ -113,9 +113,12 @@ def main() -> int:
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and not row.get("可发布标题", "").strip():
             failures.append(f"row {idx}: {row.get('今日建议级别')} has no rewritten publishable title")
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
-            for field in ["选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据"]:
+            for field in ["我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据"]:
                 if not row.get(field, "").strip():
                     failures.append(f"row {idx}: {row.get('今日建议级别')} missing proposal-card field {field}")
+            tension = row.get("我的真实矛盾", "")
+            if any(term in tension for term in ["来源摘要", "栏目", "我会把"]):
+                failures.append(f"row {idx}: 我的真实矛盾 still looks like classification, not lived conflict")
         if row.get("推荐动作") in {"暂存观察", "不做"} or row.get("今日建议级别") in {"暂存观察", "不建议制作"}:
             if row.get("可发布标题", "").strip() or row.get("标题备选", "").strip():
                 failures.append(f"row {idx}: {row.get('今日建议级别')} still has publishable title/options")
