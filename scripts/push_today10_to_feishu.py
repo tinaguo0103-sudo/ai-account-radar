@@ -28,6 +28,7 @@ LEGACY_LOG = OUT / "content_sampler_log.json"
 TARGET_TABLE_KEY = "topic_decision"
 REQUIRED_FIELDS = [
     "选题标题",
+    "选题命题",
     "候选状态",
     "推荐等级",
     "主编自由稿",
@@ -95,6 +96,7 @@ REQUIRED_FIELDS = [
     "推荐动作",
     "原始来源标题",
     "来源类型",
+    "来源标题",
     "来源链接",
     "对应栏目",
     "热点切入方式",
@@ -144,9 +146,28 @@ def short_text(value: str, limit: int = 38) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "..."
 
 
-def display_title_for(row: dict[str, str], publishable_title: str) -> str:
-    if publishable_title:
-        return publishable_title
+def proposition_for(row: dict[str, str]) -> str:
+    for field in [
+        "选题命题",
+        "我的真实矛盾",
+        "选题判断",
+        "一句话Brief",
+        "我的切入",
+        "内部切入角度",
+        "我的选题标题",
+    ]:
+        value = " ".join((row.get(field, "") or "").split())
+        if value:
+            return value
+    source = row.get("来源内容") or row.get("原始来源标题") or row.get("来源标题") or "未命名来源"
+    scene = row.get("业务场景") or row.get("对应栏目") or "业务现场"
+    return f"我先判断「{short_text(source, 42)}」能不能接到「{scene}」。"
+
+
+def display_title_for(row: dict[str, str]) -> str:
+    proposition = proposition_for(row)
+    if proposition:
+        return proposition
     level = normalize_level(row.get("今日建议级别", ""))
     direction = row.get("对应方向") or row.get("对应栏目") or "候选"
     source = row.get("来源内容") or row.get("原始来源标题") or row.get("我的选题标题") or "未命名来源"
@@ -265,11 +286,13 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
     publishable_title = row.get("可发布标题", "") if title_permission == "可发布标题" else ""
     title_options = row.get("标题备选", "") if title_permission == "可发布标题" else ""
     level = normalize_level(row.get("今日建议级别", ""))
-    display_title = display_title_for(row, publishable_title)
-    internal_angle = row.get("内部切入角度") or row.get("我的选题标题", "")
+    proposition = proposition_for(row)
+    display_title = display_title_for(row)
+    internal_angle = row.get("内部切入角度") or proposition
     recommendation_reason = row.get("推荐理由", "")
     return {
         "选题标题": display_title,
+        "选题命题": proposition,
         "候选状态": normalize_level(row.get("候选状态", "")) or level,
         "推荐等级": row.get("推荐等级", ""),
         "主编自由稿": row.get("主编自由稿", ""),
@@ -289,7 +312,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "真实/相邻案例": row.get("真实/相邻案例", ""),
         "我的改造动作": row.get("我的改造动作", ""),
         "需要补的证据": row.get("需要补的证据", ""),
-        "我的选题标题": row.get("我的选题标题", ""),
+        "我的选题标题": proposition,
         "内部切入角度": internal_angle,
         "可发布标题": publishable_title,
         "对应方向": row.get("对应方向", row.get("对应栏目", "")),
@@ -337,6 +360,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "推荐动作": row.get("推荐动作", ""),
         "原始来源标题": row.get("来源内容", ""),
         "来源类型": row.get("来源类型", ""),
+        "来源标题": row.get("原始来源标题") or row.get("来源内容", ""),
         "来源链接": row.get("来源链接", ""),
         "对应栏目": row.get("对应栏目", ""),
         "热点切入方式": row.get("热点切入方式", ""),
@@ -457,7 +481,7 @@ def delete_view_if_exists(token: str, app_token: str, table_id: str, view_name: 
 
 def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: str) -> dict[str, Any]:
     core_visible = {
-        "选题标题", "今日建议级别", "编辑判断分", "AI味风险", "内容可信度",
+        "选题标题", "选题命题", "今日建议级别", "编辑判断分", "AI味风险", "内容可信度",
         "推荐动作", "状态", "title_permission", "来源类型", "原始来源标题", "对应栏目",
         "主编自由稿",
         "点击钩子", "观众为什么会点",

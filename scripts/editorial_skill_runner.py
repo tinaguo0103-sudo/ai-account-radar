@@ -41,6 +41,7 @@ EXTRA_FIELDS = [
     "观众为什么会点",
     "title_permission",
     "我的真实矛盾",
+    "选题命题",
     "选题判断",
     "原始钩子",
     "我的切入",
@@ -79,6 +80,7 @@ SKILL_FIELDS = [
     "观众为什么会点",
     "title_permission",
     "我的真实矛盾",
+    "选题命题",
     "选题判断",
     "原始钩子",
     "我的切入",
@@ -121,6 +123,7 @@ SKILL_FIELDS = [
 
 CANDIDATE_CONTEXT_FIELDS = [
     "我的选题标题",
+    "选题命题",
     "可发布标题",
     "内部切入角度",
     "来源内容",
@@ -365,6 +368,26 @@ def source_title_values(row: dict[str, str]) -> list[str]:
     return values
 
 
+def proposition_for(row: dict[str, str]) -> str:
+    """Return the internal topic proposition, not the publishable title."""
+    for field in [
+        "选题命题",
+        "我的真实矛盾",
+        "选题判断",
+        "一句话Brief",
+        "我的切入",
+        "内部切入角度",
+        "我能讲出的独特角度",
+        "我的选题标题",
+    ]:
+        value = " ".join((row.get(field, "") or "").split())
+        if value:
+            return value
+    source = row.get("来源内容") or row.get("原始来源标题") or row.get("来源标题") or "这条来源"
+    scene = row.get("业务场景") or normalize_direction(row.get("对应栏目", ""))
+    return f"我先判断「{short_sentence(source, 48)}」能不能接到「{scene}」里的真实流程改造。"
+
+
 def is_same_as_source(title: str, row: dict[str, str]) -> bool:
     normalized = compact_text(title)
     if not normalized:
@@ -412,6 +435,9 @@ def normalize_level(value: str) -> str:
 
 def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     out = dict(row)
+    out["选题命题"] = proposition_for(out)
+    out["我的选题标题"] = out["选题命题"]
+    out["选题标题"] = out["选题命题"]
     level = normalize_level(out.get("今日建议级别") or out.get("候选状态"))
     out["今日建议级别"] = level
     out["候选状态"] = level
@@ -477,17 +503,21 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
 
     if not publishable:
         reason = out.get("不建议做的原因") or out.get("降级原因") or out.get("推荐动作原因")
-        extra = "Skill 没有给出可发布标题，先降级为暂存观察，避免无标题候选进入前台。"
-        out["今日建议级别"] = "暂存观察"
-        out["候选状态"] = "暂存观察"
+        extra = "Skill 没有给出可发布标题，本轮只保留选题命题，不做标题包装。"
+        title_permission = "内部测试标题"
         out["可发布标题"] = ""
         out["标题备选"] = ""
-        out["title_permission"] = "不生成标题"
+        out["title_permission"] = title_permission
         out["是否建议进入制作"] = "否"
-        out["推荐动作"] = "观察"
+        if out.get("推荐动作") not in {"补证据", "存素材", "观察"}:
+            out["推荐动作"] = "补证据"
         out["降级原因"] = f"{reason}；{extra}".strip("；")
-        out["不建议做的原因"] = out["降级原因"]
-        return out
+        if not out.get("不建议做的原因"):
+            out["不建议做的原因"] = out["降级原因"]
+        if level == "今日最值得做":
+            out["今日建议级别"] = "可选候选"
+            out["候选状态"] = "可选候选"
+        return sanitize_visible_language(out)
 
     if publishable and is_same_as_source(publishable, out):
         reason = out.get("降级原因") or out.get("推荐动作原因") or out.get("不建议做的原因")
@@ -516,15 +546,15 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     elif not out.get("是否建议进入制作"):
         out["是否建议进入制作"] = "否"
     if publishable:
-        out["我的选题标题"] = publishable
-        out["选题标题"] = publishable
+        out["我的选题标题"] = out["选题命题"]
+        out["选题标题"] = out["选题命题"]
     return sanitize_visible_language(out)
 
 
 def sanitize_visible_language(row: dict[str, str]) -> dict[str, str]:
     out = dict(row)
     fields = [
-        "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
+        "选题命题", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
         "推荐理由", "主编判断", "一句话Brief", "我的场景拆解", "我的思考点", "重点体现",
         "可发布标题", "标题备选", "我的选题标题", "选题标题", "内部切入角度",
     ]
@@ -562,7 +592,7 @@ def normalize_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
             for idx, row in enumerate(normalized)
             if row.get("推荐等级") == "S"
             and "是" in (row.get("是否建议进入制作") or "")
-            and row.get("可发布标题", "").strip()
+            and row.get("选题命题", "").strip()
         ]
         top_candidates = [idx for _score, _title_score, idx in sorted(scored, reverse=True)[:3]]
     for idx in top_candidates[:3]:
@@ -855,7 +885,7 @@ def presentation(row: dict[str, str]) -> str:
 
 
 def one_sentence_brief(row: dict[str, str]) -> str:
-    title = row.get("可发布标题") or row.get("我的选题标题") or row.get("来源内容", "")
+    title = row.get("选题命题") or row.get("我的真实矛盾") or row.get("我的选题标题") or row.get("来源内容", "")
     scene = row.get("业务场景") or normalize_direction(row.get("对应栏目", ""))
     asset = row.get("可沉淀资产", "")
     if asset:
@@ -877,6 +907,7 @@ def enrich(row: dict[str, str]) -> dict[str, str]:
     out["点击钩子"] = row.get("点击钩子") or original_hook(row)
     out["观众为什么会点"] = row.get("观众为什么会点") or "这条要让人看到自己的真实工作卡点，而不是只看到一个AI工具更新。"
     out["我的真实矛盾"] = row.get("我的真实矛盾") or real_tension(row)
+    out["选题命题"] = row.get("选题命题") or proposition_for(out)
     out["选题判断"] = row.get("选题判断") or editorial_judgement(row)
     out["原始钩子"] = row.get("原始钩子") or original_hook(row)
     out["我的切入"] = row.get("我的切入") or my_entry(row)
@@ -970,7 +1001,7 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
     candidates = [compact_candidate(row, idx) for idx, row in enumerate(rows)]
     return f"""你现在必须使用全局 Skill `ai-account-editorial-director` 做主编判断。
 
-这是一次生产管线里的批量选题筛选，不是标题润色。请把候选先过“能不能成为用户自己的内容”的门，再决定是否允许生成可发布标题。
+这是一次生产管线里的批量选题筛选，不是标题润色。请把候选先过“能不能成为用户自己的内容”的门，再写成 `选题命题卡`，最后才决定是否允许生成可发布标题。
 
 总边界：
 - 不要生成完整成稿。
@@ -986,11 +1017,13 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
    输出 `主编筛选`、`主编自由稿`、`我的真实矛盾`、`场景依据`、`证据强度`、`候选状态`、`推荐等级`、`推荐动作`、`title_permission`。
    `title_permission` 只能是：`可发布标题`、`内部测试标题`、`不生成标题`。
 
-2. `pitch / 主编提案卡`
-   只有通过门控的候选，才整理成用户能看的提案卡。输出 `选题判断`、`原始钩子`、`我的切入`、`我准备怎么讲`、`可展示证据`、`一句话Brief`、`我的场景拆解`、`我的思考点`、`重点体现`、`可调用案例`、`内容核心冲突`、`视频呈现方式`、`不建议做的原因`。
+2. `topic proposition card / 选题命题卡`
+   只有通过门控的候选，才整理成用户能看的命题卡。核心输出是 `选题命题`。
+   `选题命题` 不是发布标题，也不是来源标题。它要回答：我准备把这条外部素材改造成什么内容命题；接到我的哪个业务现场；旧流程痛点是什么；AI介入哪一步；我准备证明什么；还缺什么证据。
+   同时输出 `选题判断`、`原始钩子`、`我的切入`、`我准备怎么讲`、`可展示证据`、`一句话Brief`、`我的场景拆解`、`我的思考点`、`重点体现`、`可调用案例`、`内容核心冲突`、`视频呈现方式`、`不建议做的原因`。
    这些字段要像用户拍摄前写给自己的工作备忘，不要像助理汇报。
 
-3. `title / 标题生成`
+3. `title packaging / 标题包装`
    只有 `title_permission=可发布标题` 时，才生成 `可发布标题` 和 `标题备选`。
    如果是 `内部测试标题` 或 `不生成标题`，`可发布标题` 和 `标题备选` 必须留空。
    `标题工作坊`、`标题自审` 只是调试字段；本轮不要把它们当主流程必填，不要为了填它们而批量套标题。
@@ -998,6 +1031,7 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 门控规则：
 - `场景依据=仅热点观察` 或 `证据强度=弱`：不能是 `今日最值得做`，通常 `可选候选` 或 `暂存观察`。
 - 写不出具体旧流程痛点、AI介入点、人保留的判断、可展示结果：不能给 `title_permission=可发布标题`。
+- 写不出 `选题命题`：不能进入前台候选。
 - 只像资讯、工具教程、泛观点：`暂存观察` 或 `不建议制作`。
 - 公众号全文可以做结构和观点拆解；AIHOT 只能做热点入口；抖音浅层只能做标题/文案级选题判断。
 
@@ -1007,6 +1041,7 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 - 不要把案例句式当模板。案例只给语气和判断方式，不能批量复制骨架。
 - 禁止模板化/抬杠化词句：`不稀奇`、`别急着夸`、`我最怕`、`听起来很美`、`最该重排`、`背后哪类工具失去壁垒`、`不该只看参数`、`某某最值得学`、`保姆级教程`。
 - 如果标题只是“正确的一句话”，但没有点击理由，宁可不给可发布标题。
+- `选题标题` 和 `我的选题标题` 在本系统里是兼容字段，内容也必须写成 `选题命题`，不要写成可发布标题。
 
 请重写/覆盖这些字段：
 {json.dumps(SKILL_FIELDS, ensure_ascii=False)}

@@ -49,6 +49,9 @@ FORBIDDEN_VISIBLE_TERMS = [
     "只有在能说清具体产品层、具体用户任务或具体项目影响时才值得做",
 ]
 COMPARE_FIELDS = [
+    "选题命题",
+    "选题标题",
+    "我的选题标题",
     "主编自由稿",
     "点击钩子",
     "观众为什么会点",
@@ -80,6 +83,7 @@ COMPARE_FIELDS = [
 ]
 VISIBLE_FIELDS = [
     "选题标题",
+    "选题命题",
     "我的选题标题",
     "可发布标题",
     "标题备选",
@@ -208,6 +212,10 @@ def main() -> int:
             for field in ["可发布标题", "标题备选"]:
                 if normalize(fields.get(field)):
                     failures.append(f"Watch row has stale {field}: {local.get('选题标题', '')[:40]}")
+        if normalize(fields.get("选题标题")) != normalize(fields.get("选题命题")):
+            failures.append(f"Feishu primary title should mirror 选题命题: {normalize(fields.get('选题标题'))[:40]}")
+        if not normalize(fields.get("选题命题")):
+            failures.append(f"Feishu row missing 选题命题: {normalize(fields.get('原始来源标题'))[:40]}")
 
     level_counts = Counter(normalize(record.get("fields", {}).get("今日建议级别")) for record in run_records)
     if level_counts.get("今日最值得做", 0) > 3:

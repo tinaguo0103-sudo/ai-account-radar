@@ -43,7 +43,7 @@ FORBIDDEN_TITLE_TERMS = [
     "别再给Agent起名字",
 ]
 VISIBLE_FIELDS = [
-    "我的选题标题", "可发布标题", "标题备选", "title_permission", "主编筛选", "主编自由稿", "标题工作坊", "标题自审", "点击钩子", "观众为什么会点", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
+    "选题命题", "我的选题标题", "可发布标题", "标题备选", "title_permission", "主编筛选", "主编自由稿", "标题工作坊", "标题自审", "点击钩子", "观众为什么会点", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
     "推荐理由", "我的蹭热点角度",
     "选题标题", "内部切入角度",
 ]
@@ -149,6 +149,10 @@ def main() -> int:
             if row.get("title_permission") == "可发布标题":
                 failures.append(f"row {idx}: {row.get('今日建议级别')} has no rewritten publishable title despite title_permission=可发布标题")
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
+            if not row.get("选题命题", "").strip():
+                failures.append(f"row {idx}: {row.get('今日建议级别')} missing 选题命题")
+            if row.get("选题标题", "").strip() and row.get("选题命题", "").strip() and row.get("选题标题", "").strip() != row.get("选题命题", "").strip():
+                failures.append(f"row {idx}: 选题标题 should mirror 选题命题, not publishable title")
             for field in ["主编筛选", "主编自由稿"]:
                 if not row.get(field, "").strip():
                     failures.append(f"row {idx}: {row.get('今日建议级别')} missing gate editorial field {field}")
