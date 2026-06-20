@@ -121,6 +121,48 @@ VISIBLE_FIELDS = [
     "我的思考点",
     "重点体现",
 ]
+EXPERIMENT_ACTION_TERMS = [
+    "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
+    "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
+    "选择", "选", "记录", "导出", "输出", "标出", "检查", "统计", "回填",
+]
+WEAK_VALIDATION_PHRASES = [
+    "检查是否可用",
+    "看是否可用",
+    "判断是否可用",
+    "对比旧流程、新流程、人工修正点",
+    "能否沉淀到",
+    "验证是否成立",
+    "检查能不能",
+]
+GENERIC_ASSET_PACKS = [
+    "Workflow SOP / 字段规则 / Brief 模板 / 飞书任务检查表",
+    "Workflow SOP/字段规则/Brief 模板/飞书任务检查表",
+    "导演工作流 SOP / 分镜验收表 / 成片 QA 清单",
+    "内容资产流 SOP / 发布前后素材清单 / 复盘模板",
+    "项目验收清单 / 复盘模板 / 异常处理记录",
+]
+GENERIC_ASSET_TERMS = ["通用", "资产包", "模板包", "方法论", "闭环", "待补具体资产"]
+GENERIC_ASSET_VALUES = {
+    "主编Skill",
+    "输入字段",
+    "输出字段",
+    "飞书字段",
+    "品牌规则",
+    "视觉规则",
+    "字体规则",
+    "案例规则",
+    "失败样例",
+    "人工确认点",
+    "状态",
+    "输入一条候选内容",
+    "再跑一条候选检查",
+    "按五段任务表",
+    "检查结果能不能写回飞书任务单",
+    "跑完后写回飞书任务单",
+    "就进入封面Skill",
+}
+ASSET_NOISE_PHRASES = ["输入一条", "再跑一条", "按五段", "能不能", "是否", "如果", "若", "检查结果", "跑完后", "就进入", "不进入", "就判定"]
 
 
 def read_local(run_id: str, path: Path) -> list[dict[str, str]]:
@@ -157,6 +199,37 @@ def normalize(value: Any) -> str:
             return str(value.get("text") or "")
         return json.dumps(value, ensure_ascii=False, sort_keys=True)
     return str(value)
+
+
+def has_any(text: str, terms: list[str]) -> bool:
+    return any(term in (text or "") for term in terms)
+
+
+def validation_is_executable(text: str) -> bool:
+    value = text or ""
+    if not value:
+        return False
+    if has_any(value, WEAK_VALIDATION_PHRASES):
+        return False
+    has_marker = any(marker in value for marker in ["1", "2", "3", "一次", "一条", "一个", "分钟", "截图", "字段", "表", "记录", "输出", "导出", "通过", "失败", "少于", "大于", "小于"])
+    return has_any(value, EXPERIMENT_ACTION_TERMS) and has_marker
+
+
+def asset_is_specific(text: str) -> bool:
+    value = " ".join((text or "").split())
+    if not value:
+        return False
+    if value in GENERIC_ASSET_PACKS:
+        return False
+    if has_any(value, GENERIC_ASSET_TERMS):
+        return False
+    assets = [part.strip() for part in value.replace("、", "/").split("/") if part.strip()]
+    concrete_assets = [
+        asset for asset in assets
+        if asset not in GENERIC_ASSET_VALUES
+        and not has_any(asset, ASSET_NOISE_PHRASES)
+    ]
+    return any(any(key in asset for key in ["表", "清单", "规则", "Skill", "记录", "模板", "检查", "截图", "案例库", "流程图", "QA", "字段", "对比"]) for asset in concrete_assets)
 
 
 def local_key(row: dict[str, str]) -> tuple[str, str]:
@@ -235,6 +308,10 @@ def main() -> int:
         for field in ["我要做的实验", "热点触发点", "我的工作流痛点", "旧流程痛点", "AI介入点", "验证方式", "可沉淀资产"]:
             if not normalize(fields.get(field)):
                 failures.append(f"Feishu row missing workflow-experiment field {field}: {normalize(fields.get('选题标题'))[:40]}")
+        if normalize(fields.get("验证方式")) and not validation_is_executable(normalize(fields.get("验证方式"))):
+            failures.append(f"Feishu row 验证方式 is not executable: {normalize(fields.get('选题标题'))[:40]}")
+        if normalize(fields.get("可沉淀资产")) and not asset_is_specific(normalize(fields.get("可沉淀资产"))):
+            failures.append(f"Feishu row 可沉淀资产 too generic: {normalize(fields.get('选题标题'))[:40]}")
 
     level_counts = Counter(normalize(record.get("fields", {}).get("今日建议级别")) for record in run_records)
     if level_counts.get("今日最值得做", 0) > 3:

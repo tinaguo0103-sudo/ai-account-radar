@@ -153,6 +153,7 @@ def short_text(value: str, limit: int = 38) -> str:
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
+    "选择", "选", "记录", "导出", "输出", "标出", "检查", "统计", "回填",
 ]
 PROPOSITION_OVERLOAD_TERMS = ["旧流程", "AI介入", "验证方式", "需要补", "还缺", "我要证明", "可沉淀"]
 
@@ -182,15 +183,7 @@ def experiment_for(row: dict[str, str]) -> str:
         value = short_text(row.get(field, ""), 140)
         if value and has_experiment_action(value):
             return value
-    trigger = workflow_trigger_for(row)
-    direction = row.get("对应方向") or row.get("对应栏目") or ""
-    if "导演" in direction or "视频" in "\n".join(row.values()):
-        return f"用{short_text(trigger, 28)}测试视频交付里的分镜、返修和验收能不能被流程化"
-    if "汽车" in direction:
-        return f"用{short_text(trigger, 28)}验证车企内容发布前后的素材流能不能被 AI 压缩"
-    if "项目复盘" in direction:
-        return f"把{short_text(trigger, 28)}接进项目复盘，验证需求、异常和验收能不能留下记录"
-    return f"用{short_text(trigger, 28)}测试这次变化能不能进入我的真实工作流"
+    return "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。"
 
 
 def clean_short_proposition(value: str) -> str:
@@ -373,7 +366,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "对应方向": row.get("对应方向", row.get("对应栏目", "")),
         "一句话Brief": row.get("一句话Brief", ""),
         "我的场景拆解": row.get("我的场景拆解", ""),
-        "验证方式": row.get("验证方式", "") or row.get("可展示证据", "") or row.get("可展示结果", ""),
+        "验证方式": row.get("验证方式", ""),
         "我的思考点": row.get("我的思考点", ""),
         "重点体现": row.get("重点体现", ""),
         "可调用案例": row.get("可调用案例", ""),

@@ -101,7 +101,7 @@
     },
     {
       "name": "今日候选池编辑判断层",
-      "rule": "候选池输出前必须先做 content_sampler.py 的初筛和去重，再经过 scripts/editorial_skill_runner.py 默认调用本机 Codex CLI 与全局 Skill ai-account-editorial-director 做批量主编判断。当前采用 Gate -> Workflow Experiment Card -> Title Packaging：先做主编门控，判断这条能不能接到我的真实或相邻业务现场、证据是否足够；再生成工作流实验命题卡，写清短选题命题、我要做的实验、热点触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、我的思考点、重点体现、可展示证据、需要补的证据；最后只有 title_permission=可发布标题 时才生成并写入可发布标题和标题备选。选题标题是飞书兼容主字段，内容必须镜像短选题命题，不再写发布标题。标题工作坊和标题自审降级为调试字段，不再作为主流程必填。代码不得用固定标题模板兜底；暂存观察、不建议制作、内部测试标题和证据不足项必须清空可发布标题和标题备选，但可保留内部选题命题和我要做的实验。抖音浅层内容与其他来源一样参与评分和候选判断，但命题、标题与推荐理由只能基于已采到的标题、文案、封面和公开元数据，不得声称口播全文、评论区、镜头结构或完整视频理解。"
+      "rule": "候选池输出前必须先做 content_sampler.py 的初筛和去重，再经过 scripts/editorial_skill_runner.py 默认调用本机 Codex CLI 与全局 Skill ai-account-editorial-director 做批量主编判断。当前采用 Gate -> Workflow Experiment Card -> Title Packaging：先做主编门控，判断这条能不能接到我的真实或相邻业务现场、证据是否足够；再生成工作流实验命题卡，写清短选题命题、我要做的实验、热点触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、我的思考点、重点体现、可展示证据、需要补的证据；最后只有 title_permission=可发布标题 时才生成并写入可发布标题和标题备选。选题命题要短、自然、像工作台条目，不能批量写成“我想用 X 测试 Y 能不能 Z”；验证方式必须是1-2步最小实验动作，写清输入、动作、输出或验收标准；可沉淀资产必须具体到该选题，不能写通用 Workflow SOP / 字段规则 / Brief 模板 / QA 清单。选题标题是飞书兼容主字段，内容必须镜像短选题命题，不再写发布标题。标题工作坊和标题自审降级为调试字段，不再作为主流程必填。代码不得用固定标题模板或资产包兜底；暂存观察、不建议制作、内部测试标题和证据不足项必须清空可发布标题和标题备选，但可保留内部选题命题和我要做的实验。抖音浅层内容与其他来源一样参与评分和候选判断，但命题、标题与推荐理由只能基于已采到的标题、文案、封面和公开元数据，不得声称口播全文、评论区、镜头结构或完整视频理解。"
     },
     {
       "name": "AI味检测规则",
@@ -330,11 +330,11 @@
     {"table": "03 内容收件箱", "field": "运行批次", "purpose": "标记内容首次写入所属运行批次。", "required": "否", "producer": "daily_pipeline.py", "consumer": "今日采集视图、排查", "user_editable": "否", "ai": "否", "human_judgment": "通常不人工改。"},
     {"table": "03 内容收件箱", "field": "最近参与运行批次", "purpose": "内容已存在但本轮仍参与拆解时更新此字段，避免重复创建但保留本轮参与痕迹。", "required": "否", "producer": "content_sampler.py", "consumer": "今日采集视图、排查", "user_editable": "否", "ai": "否", "human_judgment": "通常不人工改。"},
     {"table": "03 内容收件箱", "field": "保留策略", "purpose": "控制内容账本保留方式：普通内容可按最近10-15天查看，特别优质或后续要复用的内容标记为永久保留。", "required": "否", "producer": "content_sampler.py/人工", "consumer": "用户、最近15天/永久保留视图", "user_editable": "是", "ai": "可建议", "human_judgment": "是否值得长期保留由用户判断。"},
-    {"table": "04 分析与选题", "field": "选题命题", "purpose": "04 前台核心字段，短命题，不是完整拆解，也不是可发布标题。说明外部触发点和我的业务动作/工作流实验，建议35-70字，最多不超过90字。", "required": "是", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "这是否真是我会讲的工作流实验命题。"},
+    {"table": "04 分析与选题", "field": "选题命题", "purpose": "04 前台核心字段，短命题，不是完整拆解，也不是可发布标题。说明外部触发点和我的业务动作/工作流实验，建议35-70字，最多不超过90字；不能整批套用“我想用X测试Y能不能Z”。", "required": "是", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "这是否真是我会讲的工作流实验命题。"},
     {"table": "04 分析与选题", "field": "我要做的实验", "purpose": "工作流实验命题卡核心字段，说明我准备用这个外部变化测试、改造、压缩、复用或验证哪段真实流程。", "required": "是", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "这是否是我真的可能去做的实验。"},
     {"table": "04 分析与选题", "field": "热点触发点", "purpose": "说明外部热点、公众号文章、抖音对标内容或工具更新触发了什么。", "required": "是", "producer": "editorial_skill_runner.py", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "是否准确对应来源。"},
     {"table": "04 分析与选题", "field": "我的工作流痛点", "purpose": "说明这条外部变化撞上了我的哪个内容生产、商业交付、导演、营销或系统搭建痛点。", "required": "是", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "是否贴近我的真实或相邻工作现场。"},
-    {"table": "04 分析与选题", "field": "验证方式", "purpose": "说明如何证明实验成立，例如跑一条真实素材、对比旧流程和新流程、生成Skill、写回飞书或输出验收表。", "required": "是", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "验证是否足够具体。"},
+    {"table": "04 分析与选题", "field": "验证方式", "purpose": "说明如何证明实验成立，必须是1-2步最小实验动作，写清输入材料、动作、输出物和通过/失败标准。不能只写检查是否可用或对比旧流程新流程。", "required": "是", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "验证是否足够具体。"},
     {"table": "04 分析与选题", "field": "选题标题", "purpose": "飞书主字段兼容名，实际写入选题命题，不再优先使用可发布标题。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "是否能作为命题卡第一眼判断。"},
     {"table": "04 分析与选题", "field": "内部切入角度", "purpose": "保留系统把热点转成账号定位时的内部判断句，用于解释为什么推荐、从哪个业务角度切入。", "required": "否", "producer": "content_sampler.py", "consumer": "用户审查、标题改写", "user_editable": "是", "ai": "可参与", "human_judgment": "内部角度是否站得住。"},
     {"table": "04 分析与选题", "field": "可发布标题", "purpose": "选题命题通过门控后，面向短视频/小红书/公众号的标题包装。只有 title_permission=可发布标题 时才允许写入。", "required": "否", "producer": "editorial_skill_runner.py", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "最终标题必须由用户确认。"},
@@ -356,7 +356,7 @@
     {"table": "04 分析与选题", "field": "业务场景", "purpose": "把 AI 热点或对标内容落到真实业务场景，如内容团队、AI导演、Agent、品牌增长。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "是否真能落地到业务现场。"},
     {"table": "04 分析与选题", "field": "旧流程痛点", "purpose": "说明不用 AI 时原流程卡在哪里。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "痛点是否真实，不要编造用户需求。"},
     {"table": "04 分析与选题", "field": "AI介入点", "purpose": "说明 AI 具体进入哪一步流程，而不是泛泛说提高效率。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户、Brief", "user_editable": "是", "ai": "可参与", "human_judgment": "AI是否真的适合介入这一步。"},
-    {"table": "04 分析与选题", "field": "可沉淀资产", "purpose": "判断内容能否沉淀成清单、SOP、流程图、案例库、模板或服务入口。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户、资产复盘", "user_editable": "是", "ai": "可参与", "human_judgment": "资产是否值得真的制作。"},
+    {"table": "04 分析与选题", "field": "可沉淀资产", "purpose": "判断内容能否沉淀成具体资产，必须尽量写成1-3个具体资产名，例如选题判断表、Brief入口字段、封面返工记录表、分镜返修记录表。避免通用 Workflow SOP/字段规则/Brief模板/QA清单。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户、资产复盘", "user_editable": "是", "ai": "可参与", "human_judgment": "资产是否值得真的制作。"},
     {"table": "04 分析与选题", "field": "适合平台", "purpose": "判断更适合短视频、小红书、公众号还是 X。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户、制作", "user_editable": "是", "ai": "可参与", "human_judgment": "平台判断要结合账号当前精力。"},
     {"table": "04 分析与选题", "field": "可学习点/为什么重要", "purpose": "对标内容写可学习结构，热点内容写为什么重要。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "学习结构，不复制内容。"},
     {"table": "04 分析与选题", "field": "不能照搬/风险提示", "purpose": "说明不能复制对方人设、数据、案例；AIHOT 摘要必须回原文核对。", "required": "是", "producer": "脚本/AI/人工", "consumer": "用户", "user_editable": "是", "ai": "可参与", "human_judgment": "发布前必须人工核对。"},
@@ -415,7 +415,7 @@
   "today_10_quality_rules": [
     {"name": "栏目与热点切入分离", "rule": "对应栏目只能从 AI业务定调、真实工作流改造、汽车与内容营销、AI导演工作流、AI项目复盘 中选择；热点切入方式单独记录产品生死线、工作流重排、非技术人机会、内容团队变化、AI导演流程、Agent落地、品牌风控/信任危机、商业化机会、项目复盘启发、对标结构学习。"},
     {"name": "场景校准", "rule": "Runway/Kling/Luma/Seedance/视频/分镜/镜头/成片优先 AI导演工作流；公众号首图/小红书卡片/教程步骤卡/视觉模板优先真实工作流改造；LlamaIndex/OpenRouter/Codex/Claude Code/Agent/MCP/API优先真实工作流改造，热点切入方式标记为Agent落地或非技术人机会；SHEIN/AI假人/虚假广告/带货/品牌/信任/合规/审核优先汽车与内容营销或AI业务定调。"},
-    {"name": "工作流实验卡优先", "rule": "04不是标题榜，也不是长段命题解释，而是工作流实验命题卡候选池。每条前台候选必须先有短选题命题和我要做的实验，写清外部触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、可展示证据和需要补的证据；选题标题字段只作为飞书主字段兼容，内容应镜像短选题命题。"},
+    {"name": "工作流实验卡优先", "rule": "04不是标题榜，也不是长段命题解释，而是工作流实验命题卡候选池。每条前台候选必须先有短选题命题和我要做的实验，写清外部触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、可展示证据和需要补的证据；选题标题字段只作为飞书主字段兼容，内容应镜像短选题命题。选题命题要像工作台短条目，验证方式要能照着做，可沉淀资产要具体到该选题。"},
     {"name": "标题质量", "rule": "可发布标题只是后置包装。标题必须像真实可发布选题，指向具体人群、具体问题或具体变化；避免把原始标题塞进“不是参数/哪类产品会被重做”“这类更新”“业务验收清单”“可执行动作”等系统话术。只有 title_permission=可发布标题 时才允许写入可发布标题和标题备选。"},
     {"name": "实验动作优先", "rule": "候选不能只是一句正确判断，必须有用户会真实去做的实验动作。每条候选必须先通过 Gate：写清主编筛选、主编自由稿、我的真实矛盾、场景依据、证据强度和 title_permission；再整理 Workflow Experiment Card；只有 title_permission=可发布标题 才进入 Title Packaging。如果写不出我要做的实验，不能成为今日最值得做。"},
     {"name": "内容类型配比", "rule": "今日候选池需要混合热点短评、工作流拆解、对标学习、踩坑提醒、资产沉淀、暂存观察等内容类型；同一批不应全部是工具壁垒、流程验收或品牌审核。"},

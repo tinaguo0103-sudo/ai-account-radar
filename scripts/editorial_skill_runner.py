@@ -303,11 +303,53 @@ TITLE_FORBIDDEN_TERMS = [
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
+    "选择", "选", "记录", "导出", "输出", "标出", "检查", "统计", "回填",
 ]
 
 PROPOSITION_OVERLOAD_TERMS = [
     "旧流程", "AI介入", "验证方式", "需要补", "还缺", "我要证明", "可沉淀",
     "痛点是", "介入点是", "最后能", "同时输出",
+]
+GENERIC_ASSET_PACKS = [
+    "Workflow SOP / 字段规则 / Brief 模板 / 飞书任务检查表",
+    "Workflow SOP/字段规则/Brief 模板/飞书任务检查表",
+    "导演工作流 SOP / 分镜验收表 / 成片 QA 清单",
+    "内容资产流 SOP / 发布前后素材清单 / 复盘模板",
+    "项目验收清单 / 复盘模板 / 异常处理记录",
+]
+GENERIC_ASSET_TERMS = ["通用", "资产包", "模板包", "方法论", "闭环", "待补具体资产"]
+GENERIC_ASSET_VALUES = {
+    "主编Skill",
+    "输入字段",
+    "输出字段",
+    "飞书字段",
+    "品牌规则",
+    "视觉规则",
+    "字体规则",
+    "案例规则",
+    "失败样例",
+    "人工确认点",
+    "状态",
+    "输入一条候选内容",
+    "再跑一条候选检查",
+    "按五段任务表",
+    "检查结果能不能写回飞书任务单",
+    "跑完后写回飞书任务单",
+    "就进入封面Skill",
+}
+ASSET_NOISE_PHRASES = [
+    "输入一条",
+    "再跑一条",
+    "按五段",
+    "能不能",
+    "是否",
+    "如果",
+    "若",
+    "检查结果",
+    "跑完后",
+    "就进入",
+    "不进入",
+    "就判定",
 ]
 
 DIRECTION_ALIASES = {
@@ -397,6 +439,58 @@ def has_experiment_action(value: str) -> bool:
     return any(term in (value or "") for term in EXPERIMENT_ACTION_TERMS)
 
 
+def is_generic_asset(value: str) -> bool:
+    text = " ".join((value or "").split())
+    if not text:
+        return False
+    if text in GENERIC_ASSET_PACKS:
+        return True
+    return any(term in text for term in GENERIC_ASSET_TERMS)
+
+
+def derived_asset_from_skill_text(row: dict[str, str]) -> str:
+    """Extract asset nouns from Skill-written experiment/validation text.
+
+    This is not a creative fallback. It only promotes concrete asset names that
+    the Skill already wrote elsewhere, such as "短片Agent验收表" or "封面返工记录".
+    """
+    text = "；".join(
+        row.get(field, "")
+        for field in ["我要做的实验", "验证方式", "可展示证据", "重点体现", "一句话Brief", "我的场景拆解"]
+        if row.get(field, "")
+    )
+    candidates: list[str] = []
+
+    def add_candidate(raw: str) -> None:
+        value = raw.strip("，。、；：: ").replace(" ", "")
+        for marker in ["沉淀成", "整理成", "写进", "接进", "输出", "导出", "生成"]:
+            if marker in value:
+                value = value.split(marker)[-1]
+        value = re.sub(r"^(把|并|和|或|及|与|给|将|结果|这套|一个|一张|一次|一条|3版|五段)", "", value).strip()
+        value = re.sub(r"^(通过和失败点)", "", value).strip()
+        if "和" in value and len(value) > 10:
+            for part in value.split("和"):
+                add_candidate(part)
+            return
+        if "、" in value:
+            for part in value.split("、"):
+                add_candidate(part)
+            return
+        if value in GENERIC_ASSET_VALUES:
+            return
+        if any(phrase in value for phrase in ASSET_NOISE_PHRASES):
+            return
+        if not value or is_generic_asset(value):
+            return
+        if len(value) < 3 or value in candidates:
+            return
+        candidates.append(value)
+
+    for match in re.finditer(r"([\u4e00-\u9fffA-Za-z0-9 /_-]{2,30}(?:表|清单|规则|Skill|记录|模板|检查|截图|案例库|流程图|QA|字段|对比|任务单))", text):
+        add_candidate(match.group(1))
+    return " / ".join(candidates[:3])
+
+
 def workflow_trigger_for(row: dict[str, str]) -> str:
     for field in ["热点触发点", "热点钩子", "原始钩子", "事件锚点", "原始来源标题", "来源内容", "来源标题"]:
         value = short_sentence(row.get(field, ""), 80)
@@ -419,16 +513,7 @@ def old_flow_pain_for(row: dict[str, str]) -> str:
     value = short_sentence(row.get("旧流程痛点", ""), 180)
     if value:
         return value
-    direction = normalize_direction(row.get("对应栏目", ""))
-    if direction == "AI导演工作流":
-        return "过去靠人记分镜、镜头、节奏、返修和验收标准，经验难交接，也难复盘。"
-    if direction == "汽车与内容营销":
-        return "过去发布前后靠人堆稿、开会、切素材和追反馈，内容资产很难连续复用。"
-    if direction == "AI项目复盘":
-        return "过去项目能跑就算结束，需求、异常、验收和复盘规则没有沉淀下来。"
-    if direction == "AI业务定调":
-        return "过去只把热点当资讯看，缺少把变化翻译成业务现场判断的过程。"
-    return "过去这段流程靠人工理解、搬运、改版和确认，输入输出不稳定，也缺少复用资产。"
+    return "待补旧流程痛点：写清过去谁在做、卡在哪一步、为什么难交接或难复盘。"
 
 
 def ai_intervention_for(row: dict[str, str]) -> str:
@@ -438,7 +523,7 @@ def ai_intervention_for(row: dict[str, str]) -> str:
     experiment = row.get("我要做的实验") or row.get("我的改造动作") or ""
     if experiment:
         return f"让 AI 承接实验里的可记录步骤：{short_sentence(experiment, 120)}。"
-    return "让 AI 承接原来靠人肉搬运、初筛、记录或生成初稿的步骤，但关键判断仍由人验收。"
+    return "待补AI介入点：写清AI具体接管哪一步，以及哪一步仍由我人工验收。"
 
 
 def validation_for(row: dict[str, str]) -> str:
@@ -446,22 +531,17 @@ def validation_for(row: dict[str, str]) -> str:
         value = short_sentence(row.get(field, ""), 160)
         if value:
             return value
-    scene = matched_mother_scenes(row)[0]["name"]
-    return f"拿一条真实素材跑一轮，对比旧流程、新流程、人工修正点和能否沉淀到「{scene}」。"
+    return "待补最小验证步骤：写清输入材料、1-2个动作、输出物和通过/失败标准。"
 
 
 def asset_for(row: dict[str, str]) -> str:
     value = short_sentence(row.get("可沉淀资产", ""), 160)
-    if value:
+    if value and not is_generic_asset(value):
         return value
-    direction = normalize_direction(row.get("对应栏目", ""))
-    if direction == "AI导演工作流":
-        return "导演工作流 SOP / 分镜验收表 / 成片 QA 清单"
-    if direction == "汽车与内容营销":
-        return "内容资产流 SOP / 发布前后素材清单 / 复盘模板"
-    if direction == "AI项目复盘":
-        return "项目验收清单 / 复盘模板 / 异常处理记录"
-    return "Workflow SOP / 字段规则 / Brief 模板 / 飞书任务检查表"
+    derived = derived_asset_from_skill_text(row)
+    if derived:
+        return derived
+    return "待补具体资产：命名这条选题会留下的表、清单、Skill、记录或对比物。"
 
 
 def experiment_for(row: dict[str, str]) -> str:
@@ -469,21 +549,7 @@ def experiment_for(row: dict[str, str]) -> str:
         value = short_sentence(row.get(field, ""), 130)
         if value and has_experiment_action(value):
             return value
-    hook = workflow_trigger_for(row)
-    pain = workflow_pain_for(row)
-    direction = normalize_direction(row.get("对应栏目", ""))
-    text = blob(row)
-    if any(term in text for term in ["Record", "录制", "剪辑"]):
-        return "用这次录制能力测试剪辑判断能不能被沉淀成可复用 Skill"
-    if direction == "AI导演工作流":
-        return f"用{short_sentence(hook, 28)}测试视频交付里的分镜、返修和验收能不能被流程化"
-    if direction == "汽车与内容营销":
-        return f"用{short_sentence(hook, 28)}验证车企内容发布前后的素材流能不能被 AI 压缩"
-    if direction == "AI项目复盘":
-        return f"把{short_sentence(hook, 28)}接进项目复盘，验证需求、异常和验收能不能留下记录"
-    if direction == "AI业务定调":
-        return f"用{short_sentence(hook, 28)}测试这个变化能不能翻译成真实业务现场判断"
-    return f"把{short_sentence(hook, 28)}接进{short_sentence(pain, 34)}，验证旧流程能不能少一轮人工搬运"
+    return "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。"
 
 
 def proposition_is_short_and_clean(value: str) -> bool:
@@ -1040,7 +1106,7 @@ def enrich(row: dict[str, str]) -> dict[str, str]:
     out["热点触发点"] = row.get("热点触发点") or workflow_trigger_for(out)
     out["我的工作流痛点"] = row.get("我的工作流痛点") or workflow_pain_for(out)
     out["旧流程痛点"] = row.get("旧流程痛点") or old_flow_pain_for(out)
-    out["可沉淀资产"] = row.get("可沉淀资产") or asset_for(out)
+    out["可沉淀资产"] = asset_for(out)
     out["我要做的实验"] = row.get("我要做的实验") or experiment_for(out)
     out["AI介入点"] = row.get("AI介入点") or ai_intervention_for(out)
     out["验证方式"] = row.get("验证方式") or validation_for(out)
@@ -1094,6 +1160,9 @@ def compact_candidate(row: dict[str, str], index: int) -> dict[str, str | int]:
     payload: dict[str, str | int] = {"index": index}
     for field in CANDIDATE_CONTEXT_FIELDS:
         value = row.get(field, "")
+        if field == "可沉淀资产" and is_generic_asset(value):
+            payload["旧可沉淀资产_不可沿用"] = value[:1800]
+            continue
         if value:
             payload[field] = value[:1800]
     payload["关联母场景候选"] = json.dumps(matched_mother_scenes(row), ensure_ascii=False)
@@ -1157,7 +1226,11 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 2. `workflow experiment card / 工作流实验命题卡`
    只有通过门控的候选，才整理成用户能看的工作流实验命题卡。核心输出是 `选题命题` 和 `我要做的实验`。
    `选题命题` 是短命题，不是发布标题，也不是完整拆解。建议 35-70 字，最多不超过 90 字。它只说明“外部触发点 + 我的业务动作/工作流实验”，不要把旧流程、AI介入、验证方式、缺证据全部塞进第一列。
+   `选题命题` 要像我写给自己的工作台条目，可以短、自然、具体。不要让一批候选都写成“我想用 X 测试 Y 能不能 Z / 我准备用 X 验证 Y 能不能 Z / 用 X 测试 Y 能不能进入 Z”。这些句式偶尔可以用，但不能批量出现。
    `我要做的实验` 必须包含明确动作：测试、改造、压缩、录成 Skill、接进返修流程、变成验收表、写回飞书任务单、从多步压成一步、沉淀 SOP、变成字段规则、做成模板、验证能不能交付、验证能不能复盘、验证能不能进入内容生产系统。
+   `验证方式` 必须是 1-2 个可执行的最小实验步骤，不能只写“检查是否可用 / 对比流程”。它要写清输入材料、动作、输出物和通过/失败标准。
+   `可沉淀资产` 必须具体到这条选题，写 1-3 个资产名。不要写通用资产包，例如“Workflow SOP / 字段规则 / Brief 模板 / QA 清单”。
+   如果候选里出现 `旧可沉淀资产_不可沿用`，说明那是上一轮旧模板值，只能作为反例，必须重写成具体资产名，不能原样沿用。
    同时输出 `热点触发点`、`我的工作流痛点`、`旧流程痛点`、`AI介入点`、`验证方式`、`可沉淀资产`、`选题判断`、`原始钩子`、`我的切入`、`我准备怎么讲`、`可展示证据`、`一句话Brief`、`我的场景拆解`、`我的思考点`、`重点体现`、`可调用案例`、`内容核心冲突`、`视频呈现方式`、`不建议做的原因`。
    这些字段要像用户拍摄前写给自己的工作备忘，不要像助理汇报。
 
@@ -1185,13 +1258,13 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 校准例，只用于理解“热点触发工作流实验”，不要复制成固定模板：
 - 外部热点：Codex Record / Record & Replay 新功能。
 - 普通 AI 号讲法：Codex 可以录制工作流并生成 Skill。
-- 我的选题命题：我想用 Codex Record 测一件事：剪辑经验能不能被录成可复用 Skill。
+- 我的选题命题：用 Codex Record 试一次：剪辑经验能不能沉淀成 Skill。
 - 我要做的实验：录一段真实剪辑流程，检查 Codex Record 能不能生成可读、可复跑、能保留验收规则的剪辑 Skill。
 - 我的工作流痛点：脚本、封面、素材生成相对容易结构化，但剪辑最依赖人的节奏、取舍、字幕、切屏和成片验收。
 - 旧流程痛点：剪一条视频要人工理解脚本、找录屏重点、切真人画面、加字幕、做结果闪现和 CTA，很多判断靠经验，难交接也难复盘。
 - AI介入点：用 Codex Record 录制一次标准剪辑流程，让它生成一个可复用的剪辑 Skill。
-- 验证方式：对比手动剪辑流程、生成的 Skill、复跑结果和人工修正点。
-- 可沉淀资产：剪辑 Skill、剪辑 SOP、后期交接清单、成片 QA 表。
+- 验证方式：录 3 分钟剪辑流程，导出 Record Skill 后复跑一次；记录复跑漏掉的 3 个判断点，能复跑且人工修正少于一轮才算通过。
+- 可沉淀资产：剪辑判断节点表 / Record Skill 复跑记录 / 成片返修检查表。
 
 请重写/覆盖这些字段：
 {json.dumps(SKILL_FIELDS, ensure_ascii=False)}

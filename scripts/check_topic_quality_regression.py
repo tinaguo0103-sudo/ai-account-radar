@@ -51,8 +51,46 @@ ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建�
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
+    "选择", "选", "记录", "导出", "输出", "标出", "检查", "统计", "回填",
 ]
 PROPOSITION_OVERLOAD_TERMS = ["旧流程", "AI介入", "验证方式", "需要补", "还缺", "我要证明", "可沉淀"]
+WEAK_VALIDATION_PHRASES = [
+    "检查是否可用",
+    "看是否可用",
+    "判断是否可用",
+    "对比旧流程、新流程、人工修正点",
+    "能否沉淀到",
+    "验证是否成立",
+    "检查能不能",
+]
+GENERIC_ASSET_PACKS = [
+    "Workflow SOP / 字段规则 / Brief 模板 / 飞书任务检查表",
+    "Workflow SOP/字段规则/Brief 模板/飞书任务检查表",
+    "导演工作流 SOP / 分镜验收表 / 成片 QA 清单",
+    "内容资产流 SOP / 发布前后素材清单 / 复盘模板",
+    "项目验收清单 / 复盘模板 / 异常处理记录",
+]
+GENERIC_ASSET_TERMS = ["通用", "资产包", "模板包", "方法论", "闭环", "待补具体资产"]
+GENERIC_ASSET_VALUES = {
+    "主编Skill",
+    "输入字段",
+    "输出字段",
+    "飞书字段",
+    "品牌规则",
+    "视觉规则",
+    "字体规则",
+    "案例规则",
+    "失败样例",
+    "人工确认点",
+    "状态",
+    "输入一条候选内容",
+    "再跑一条候选检查",
+    "按五段任务表",
+    "检查结果能不能写回飞书任务单",
+    "跑完后写回飞书任务单",
+    "就进入封面Skill",
+}
+ASSET_NOISE_PHRASES = ["输入一条", "再跑一条", "按五段", "能不能", "是否", "如果", "若", "检查结果", "跑完后", "就进入", "不进入", "就判定"]
 
 
 def compact_text(value: str) -> str:
@@ -81,6 +119,36 @@ def read_csv(path: Path) -> list[dict[str, str]]:
 
 def contains_any(text: str, terms: list[str]) -> list[str]:
     return [term for term in terms if term in (text or "")]
+
+
+def validation_is_executable(text: str) -> bool:
+    value = text or ""
+    if not value:
+        return False
+    if any(phrase in value for phrase in WEAK_VALIDATION_PHRASES):
+        return False
+    action_hits = contains_any(value, EXPERIMENT_ACTION_TERMS)
+    has_concrete_marker = any(marker in value for marker in ["1", "2", "3", "一次", "一条", "一个", "分钟", "截图", "字段", "表", "记录", "输出", "导出", "通过", "失败", "少于", "大于", "小于"])
+    return bool(action_hits and has_concrete_marker)
+
+
+def asset_is_specific(text: str) -> bool:
+    value = " ".join((text or "").split())
+    if not value:
+        return False
+    if value in GENERIC_ASSET_PACKS:
+        return False
+    if any(term in value for term in GENERIC_ASSET_TERMS):
+        return False
+    assets = [part.strip() for part in value.replace("、", "/").split("/") if part.strip()]
+    if not assets:
+        return False
+    concrete_assets = [
+        asset for asset in assets
+        if asset not in GENERIC_ASSET_VALUES
+        and not any(phrase in asset for phrase in ASSET_NOISE_PHRASES)
+    ]
+    return any(any(key in asset for key in ["表", "清单", "规则", "Skill", "记录", "模板", "检查", "截图", "案例库", "流程图", "QA", "字段", "对比"]) for asset in concrete_assets)
 
 
 def contains_unqualified_any(text: str, terms: list[str]) -> list[str]:
@@ -168,6 +236,10 @@ def main() -> int:
                     failures.append(f"row {idx}: {row.get('今日建议级别')} missing workflow-experiment field {field}")
             if row.get("我要做的实验") and not contains_any(row.get("我要做的实验", ""), EXPERIMENT_ACTION_TERMS):
                 failures.append(f"row {idx}: 我要做的实验 lacks a concrete experiment action")
+            if row.get("验证方式") and not validation_is_executable(row.get("验证方式", "")):
+                failures.append(f"row {idx}: 验证方式 is not an executable minimal experiment")
+            if row.get("可沉淀资产") and not asset_is_specific(row.get("可沉淀资产", "")):
+                failures.append(f"row {idx}: 可沉淀资产 is too generic")
             for field in ["主编筛选", "主编自由稿"]:
                 if not row.get(field, "").strip():
                     failures.append(f"row {idx}: {row.get('今日建议级别')} missing gate editorial field {field}")
@@ -242,9 +314,17 @@ def main() -> int:
         if prop:
             prefix = prop[:4]
             prop_prefix_counts[prefix] = prop_prefix_counts.get(prefix, 0) + 1
-    repeated_prefixes = [prefix for prefix, count in prop_prefix_counts.items() if count > 3 and prefix in {"我准备", "我想用", "用这次", "把这个"}]
+    repeated_prefixes = [prefix for prefix, count in prop_prefix_counts.items() if count > 2 and prefix in {"我准备", "我想用", "用这次", "把这个", "我会把"}]
     if repeated_prefixes:
         failures.append(f"选题命题 repeated mechanical prefix too often: {','.join(repeated_prefixes)}")
+    visible_assets = [
+        row.get("可沉淀资产", "").strip()
+        for row in rows
+        if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and row.get("可沉淀资产", "").strip()
+    ]
+    repeated_assets = sorted({asset for asset in visible_assets if visible_assets.count(asset) > 2})
+    if repeated_assets:
+        failures.append(f"可沉淀资产 repeated too often across visible candidates: {repeated_assets[:3]}")
     watch_count = sum(1 for row in rows if row.get("今日建议级别") == "暂存观察")
     selected_sources = {row.get("来源内容", "") for row in rows}
     selected_fps = {row.get("内容指纹", "") for row in rows}
