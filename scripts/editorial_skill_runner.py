@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-"""Run the global ai-account-editorial-director Skill on topic candidates.
+"""Run ai-account-editorial-director rules on topic candidates.
 
 The collection pipeline still handles source capture, normalization, dedupe, and
 rough candidate generation. This runner is the editorial layer: by default it
-loads the global Skill and its persona/case reference, asks the locally
-authenticated Codex CLI to make the batch judgement, and writes the Skill output
-contract back to the candidate CSV.
+loads the repo-backed Skill text and persona brief, asks the locally
+authenticated Codex CLI to make the batch judgement, and writes the editorial
+output contract back to the candidate CSV.
 
 `--engine deterministic` is kept only as an explicit emergency fallback for
 offline debugging. It is not the default path.
@@ -27,10 +27,25 @@ from local_env import load_local_env
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SKILL_DIR = Path.home() / ".codex" / "skills" / "ai-account-editorial-director"
+REPO_SKILL_DIR = ROOT / "skills" / "ai-account-editorial-director"
+GLOBAL_SKILL_DIR = Path.home() / ".codex" / "skills" / "ai-account-editorial-director"
+DEFAULT_SKILL_DIR = REPO_SKILL_DIR if REPO_SKILL_DIR.exists() else GLOBAL_SKILL_DIR
+SKILL_DIR = Path(os.getenv("EDITORIAL_SKILL_DIR", str(DEFAULT_SKILL_DIR))).expanduser()
 SKILL_MD = SKILL_DIR / "SKILL.md"
-SKILL_REFERENCE = SKILL_DIR / "references" / "persona-and-cases.md"
-SKILL_PERSONA_BRIEF = SKILL_DIR / "references" / "persona-brief.md"
+
+
+def skill_reference_path(name: str) -> Path:
+    primary = SKILL_DIR / "references" / name
+    if primary.exists():
+        return primary
+    fallback = GLOBAL_SKILL_DIR / "references" / name
+    if fallback.exists():
+        return fallback
+    return primary
+
+
+SKILL_REFERENCE = skill_reference_path("persona-and-cases.md")
+SKILL_PERSONA_BRIEF = skill_reference_path("persona-brief.md")
 
 EXTRA_FIELDS = [
     "主编筛选",
@@ -303,7 +318,7 @@ TITLE_FORBIDDEN_TERMS = [
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
-    "选择", "选", "记录", "导出", "输出", "标出", "检查", "统计", "回填",
+    "选择", "选", "记录", "导出", "输出", "标出", "标注", "检查", "统计", "回填",
 ]
 
 PROPOSITION_OVERLOAD_TERMS = [
@@ -544,12 +559,69 @@ def asset_for(row: dict[str, str]) -> str:
     return "待补具体资产：命名这条选题会留下的表、清单、Skill、记录或对比物。"
 
 
+def context_specific_asset(row: dict[str, str]) -> str:
+    """Name a concrete asset when the Skill repeats a mismatched asset.
+
+    This is intentionally narrow: it only chooses from assets implied by the
+    candidate text/experiment. It is not a scoring or title-generation fallback.
+    """
+    text = "\n".join(
+        row.get(field, "")
+        for field in [
+            "选题命题",
+            "我要做的实验",
+            "热点触发点",
+            "我的工作流痛点",
+            "原始来源标题",
+            "来源内容",
+            "内部切入角度",
+            "验证方式",
+        ]
+    )
+    lowered = text.lower()
+    rules = [
+        (("claude code", "团队原则", "项目验收", "异常记录"), "AI项目验收清单 / Agent异常记录表"),
+        (("baoyu", "图文", "pptx", "导出", "配图"), "图文导出验收表 / 视觉层级检查记录"),
+        (("obsidian", "知识库", "任务回填", "来源整理"), "信息雷达任务回填记录 / 来源整理目录规范"),
+        (("l3", "l4", "自动驾驶", "汽车", "国标"), "汽车内容投放前风险复核表 / 品牌证据检查清单"),
+        (("adobe", "photoshop", "premiere", "creative cloud", "返修"), "素材返修任务表 / 品牌一致性验收字段"),
+        (("豆包", "excel", "表格", "字段回填"), "候选表字段回填规则 / 错误字段标注记录"),
+        (("小云雀", "短剧", "分镜", "成片", "视频"), "短片Agent验收表 / 分镜返修记录表"),
+        (("选题", "候选", "brief", "字段", "主编"), "选题判断字段表 / Brief回填记录"),
+    ]
+    for keywords, asset in rules:
+        if any(keyword in lowered or keyword in text for keyword in keywords):
+            return asset
+    derived = derived_asset_from_skill_text(row)
+    if derived and not is_generic_asset(derived):
+        return derived
+    return ""
+
+
 def experiment_for(row: dict[str, str]) -> str:
     for field in ["我要做的实验", "我的改造动作"]:
         value = short_sentence(row.get(field, ""), 130)
         if value and has_experiment_action(value):
             return value
     return "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。"
+
+
+def tension_looks_classification(value: str) -> bool:
+    return any(term in (value or "") for term in ["来源摘要", "栏目", "我会把"])
+
+
+def lived_tension_for(row: dict[str, str]) -> str:
+    text = blob(row) + "\n" + "\n".join(row.get(field, "") for field in ["选题命题", "我要做的实验", "热点触发点"])
+    lower = text.lower()
+    if any(term in text for term in ["豆包", "表格", "Excel", "字段回填"]):
+        return "我不是不会整理表格，而是每次从来源、判断到状态回填都断成几步，复盘时追不回为什么选它。"
+    if any(term in lower for term in ["obsidian", "知识库"]) or any(term in text for term in ["任务回填", "来源整理"]):
+        return "我不是缺一个知识库，而是缺一条能把来源、判断、任务和复盘串起来的回填链路。"
+    if any(term in text for term in ["baoyu", "PPTX", "图文", "导出"]):
+        return "我不是缺一张漂亮图，而是导出、改版和交付时还要反复人工检查版式有没有丢。"
+    if any(term in text for term in ["选题", "候选", "Brief", "主编"]):
+        return "我不是缺热点，而是缺一套能解释为什么选它、怎么推进到 Brief 的判断链路。"
+    return "这个素材如果要进入我的账号，必须先变成一个我能亲自测试、改造和复盘的业务现场。"
 
 
 def proposition_is_short_and_clean(value: str) -> bool:
@@ -634,6 +706,8 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     out["选题命题"] = proposition_for(out)
     out["我的选题标题"] = out["选题命题"]
     out["选题标题"] = out["选题命题"]
+    if tension_looks_classification(out.get("我的真实矛盾", "")):
+        out["我的真实矛盾"] = lived_tension_for(out)
     level = normalize_level(out.get("今日建议级别") or out.get("候选状态"))
     out["今日建议级别"] = level
     out["候选状态"] = level
@@ -735,10 +809,6 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
 
     if level == "今日最值得做":
         out["是否建议进入制作"] = "是"
-    elif out.get("推荐等级") == "S" and "是" in (out.get("是否建议进入制作") or "") and score >= 90 and title_score >= 85:
-        out["今日建议级别"] = "今日最值得做"
-        out["候选状态"] = "今日最值得做"
-        out["是否建议进入制作"] = "是"
     elif not out.get("是否建议进入制作"):
         out["是否建议进入制作"] = "否"
     if publishable:
@@ -765,32 +835,12 @@ def sanitize_visible_language(row: dict[str, str]) -> dict[str, str]:
 
 
 def wants_top_today(row: dict[str, str]) -> bool:
-    if row.get("今日建议级别") == "今日最值得做":
-        return True
-    if row.get("推荐等级") != "S":
-        return False
-    if "是" not in (row.get("是否建议进入制作") or ""):
-        return False
-    text = "\n".join([
-        row.get("主编判断", ""),
-        row.get("推荐理由", ""),
-        row.get("一句话Brief", ""),
-    ])
-    return any(term in text for term in ["今日必须", "今日值得", "必须做", "最值得", "强人设", "主选题"])
+    return row.get("今日建议级别") == "今日最值得做"
 
 
 def normalize_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     normalized = [normalize_skill_row(row) for row in rows]
     top_candidates = [idx for idx, row in enumerate(normalized) if wants_top_today(row)]
-    if not top_candidates:
-        scored = [
-            (intish(row.get("编辑判断分")), intish(row.get("标题质量分")), idx)
-            for idx, row in enumerate(normalized)
-            if row.get("推荐等级") == "S"
-            and "是" in (row.get("是否建议进入制作") or "")
-            and row.get("选题命题", "").strip()
-        ]
-        top_candidates = [idx for _score, _title_score, idx in sorted(scored, reverse=True)[:3]]
     for idx in top_candidates[:3]:
         normalized[idx]["今日建议级别"] = "今日最值得做"
         normalized[idx]["候选状态"] = "今日最值得做"
@@ -799,6 +849,18 @@ def normalize_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
         if normalized[idx].get("今日建议级别") == "今日最值得做":
             normalized[idx]["今日建议级别"] = "可选候选"
             normalized[idx]["候选状态"] = "可选候选"
+    visible_asset_counts: dict[str, int] = {}
+    for row in normalized:
+        if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
+            asset = (row.get("可沉淀资产", "") or "").strip()
+            if asset:
+                visible_asset_counts[asset] = visible_asset_counts.get(asset, 0) + 1
+    for row in normalized:
+        asset = (row.get("可沉淀资产", "") or "").strip()
+        if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and visible_asset_counts.get(asset, 0) > 2:
+            replacement = context_specific_asset(row)
+            if replacement and replacement != asset:
+                row["可沉淀资产"] = replacement
     return [sanitize_visible_language(row) for row in normalized]
 
 
@@ -1177,6 +1239,15 @@ def load_text(path: Path) -> str:
     return path.read_text(encoding="utf-8")
 
 
+def strip_yaml_frontmatter(text: str) -> str:
+    if not text.startswith("---"):
+        return text
+    parts = text.split("---", 2)
+    if len(parts) == 3:
+        return parts[2].lstrip()
+    return text
+
+
 def codex_output_schema() -> dict[str, Any]:
     row_properties: dict[str, Any] = {"index": {"type": "integer", "minimum": 0}}
     for field in SKILL_FIELDS:
@@ -1202,10 +1273,10 @@ def codex_output_schema() -> dict[str, Any]:
 
 
 def build_codex_prompt(rows: list[dict[str, str]]) -> str:
-    skill_text = load_text(SKILL_MD)
+    skill_text = strip_yaml_frontmatter(load_text(SKILL_MD))
     persona_brief = load_text(SKILL_PERSONA_BRIEF)
     candidates = [compact_candidate(row, idx) for idx, row in enumerate(rows)]
-    return f"""你现在必须使用全局 Skill `ai-account-editorial-director` 做主编判断。
+    return f"""你现在按下面嵌入的主编规则文本做判断；不要再触发或审查外部 Skill，规则、底稿和候选已经完整提供。
 
 这是一次生产管线里的批量选题筛选，不是标题润色。请把候选先过“能不能成为用户自己的内容”的门，再写成 `工作流实验命题卡`，最后才决定是否允许生成可发布标题。
 
@@ -1214,6 +1285,7 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 - 不要重新采集，不要虚构用户没做过的项目结果。
 - 不要模仿或暴露对标博主名字；只能吸收热点、话题、结构和角度，转成用户自己的语言。
 - 不要为了凑数量强行推荐；`今日最值得做` 最多 3 条。
+- 如果没有足够强的候选，可以 0 条 `今日最值得做`；不要为了分数高就自动补强推。
 - 抖音浅层内容可以进入候选，也可以成为强候选；但只能基于标题、文案、封面、公开元数据判断，不能声称看过口播、评论、镜头结构或完整视频。
 - 前台字段必须第一人称，不要写“用户当前/用户可以/适合用户/帮助用户”。
 
@@ -1274,16 +1346,17 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 对应方向只能是：AI业务定调、真实工作流改造、AI导演工作流、汽车与内容营销、AI项目复盘。
 证据强度只能是：强、中、弱。
 今日最值得做最多 3 条。
+候选数量不需要凑满 10 条；只把真的值得用户打开看的内容标为 `今日最值得做` 或 `可选候选`。
 
-<SKILL.md>
+<editorial_rule_text>
 {skill_text}
-</SKILL.md>
+</editorial_rule_text>
 
 <persona-brief.md>
 {persona_brief}
 </persona-brief.md>
 
-完整案例库路径：{SKILL_REFERENCE}
+案例/人设参考路径：{SKILL_REFERENCE}
 本次不把完整长文全部塞入上下文；你必须优先使用上面的压缩底稿，以及每条候选里的 `关联母场景候选`。
 
 <candidate_rows_json>
@@ -1391,7 +1464,7 @@ def main() -> int:
         "--engine",
         choices=["codex", "deterministic"],
         default=os.getenv("EDITORIAL_SKILL_ENGINE", "codex"),
-        help="Default codex uses the global Skill through Codex CLI. deterministic is an explicit offline fallback.",
+        help="Default codex embeds the repo-backed editorial Skill text in Codex CLI. deterministic is an explicit offline fallback.",
     )
     parser.add_argument("--codex-model", default=os.getenv("EDITORIAL_SKILL_CODEX_MODEL", ""), help="Optional Codex model override.")
     parser.add_argument("--timeout", type=int, default=int(os.getenv("EDITORIAL_SKILL_TIMEOUT", "900")), help="Codex execution timeout in seconds.")

@@ -26,7 +26,7 @@ skills/ai-account-editorial-director/
 
 这份版本保留人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。它适合作为 Git 可追踪基线，也适合单独分享。
 
-本机全局 Skill `/Users/congcong/.codex/skills/ai-account-editorial-director` 可以继续保留更完整的私有案例版。日常生产运行优先使用本机私有版；仓库版用于备份结构、分享和迁移。
+本机全局 Skill `/Users/congcong/.codex/skills/ai-account-editorial-director` 可以继续保留更完整的私有案例版。当前生产脚本默认读取仓库内公开脱敏版，避免嵌套调用时反复触发全局 Skill 审查；如果要切到本机私有版，设置 `EDITORIAL_SKILL_DIR=/Users/congcong/.codex/skills/ai-account-editorial-director`。
 
 如需把仓库脱敏版安装到全局目录：
 
@@ -107,6 +107,8 @@ Skill 默认按业务可读字段输出，但字段不是模板。字段要像�
 - 不建议做原因
 
 `选题命题` 是 `04 分析与选题` 的核心前台字段，但它现在只承担短命题职责。它不是来源标题，也不是可发布标题，也不是完整拆解，而是“这个外部素材触发了我哪个工作流实验”。`我要做的实验` 是最关键字段，用来说明我准备用这个外部变化测试、改造、压缩、复用或验证哪段真实流程。`标题工作坊 / 标题自审` 可以作为本地调试字段保留，但不再是主流程必填字段。`title_permission` 是标题门控字段：只有 `可发布标题` 才允许写入 `可发布标题 / 标题备选`；`内部测试标题` 和 `不生成标题` 必须清空前台标题，但仍可保留内部 `选题命题` 和 `我要做的实验`。代码仍可保留更多中间字段，但飞书前台应该优先展示这些业务字段。
+
+候选进入顺序是：代码先整理更宽的 Skill 审阅池，只做采集、标准化、基础拆解、去重、同主题合并和明显噪音过滤；最终是否是 `今日最值得做`、`可选候选`、`暂存观察` 或 `不建议制作`，由 Skill 做主编判断。系统不再先用代码固定挑出 10 条，也不再因为分数高自动补满 3 条强推。
 
 最新可读性约束：
 
@@ -251,7 +253,7 @@ ContentItem -> code 初筛 -> ai-account-editorial-director -> 04 分析与选�
 
 ## 当前接入状态
 
-当前已经新增 `scripts/editorial_skill_runner.py` 作为 Skill 主编层执行脚本。它默认调用本机已登录的 Codex CLI，在只读模式下读取全局 Skill、`persona-brief.md` 和每条候选匹配到的母场景包，对 `content_sampler.py` 输出的候选重新做一轮批量主编判断，并补齐飞书前台可读字段：
+当前已经新增 `scripts/editorial_skill_runner.py` 作为 Skill 主编层执行脚本。它默认调用本机已登录的 Codex CLI，在只读模式下读取仓库内 Skill 文本、`persona-brief.md` 和每条候选匹配到的母场景包，对 `content_sampler.py` 输出的候选重新做一轮批量主编判断，并补齐飞书前台可读字段。需要使用本机私有版时，可通过 `EDITORIAL_SKILL_DIR` 指定目录。
 
 - `主编筛选`
 - `主编自由稿`

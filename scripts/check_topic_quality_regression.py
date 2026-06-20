@@ -51,7 +51,7 @@ ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建�
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
-    "选择", "选", "记录", "导出", "输出", "标出", "检查", "统计", "回填",
+    "选择", "选", "记录", "导出", "输出", "标出", "标注", "检查", "统计", "回填",
 ]
 PROPOSITION_OVERLOAD_TERMS = ["旧流程", "AI介入", "验证方式", "需要补", "还缺", "我要证明", "可沉淀"]
 WEAK_VALIDATION_PHRASES = [
@@ -155,12 +155,12 @@ def contains_unqualified_any(text: str, terms: list[str]) -> list[str]:
     """Find terms unless the sentence is explicitly saying the evidence is missing."""
     value = text or ""
     hits: list[str] = []
-    negations = ["不能声称", "不能直接声称", "不能说", "不能证明", "不能假装", "不能展示", "不能当成", "没有", "未拿到", "没拿到", "缺少", "不含", "不是"]
+    negations = ["不能声称", "不能直接声称", "不能说", "不说", "不能证明", "不能假装", "不能展示", "不能当成", "没有", "未拿到", "没拿到", "缺少", "不含", "不是"]
     for term in terms:
         start = value.find(term)
         if start < 0:
             continue
-        window = value[max(0, start - 32): start + len(term)]
+        window = value[max(0, start - 80): start + len(term)]
         if any(neg in window for neg in negations):
             continue
         hits.append(term)

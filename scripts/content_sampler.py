@@ -79,6 +79,7 @@ TOP10_COLUMN_LIMITS = {
     "AI导演工作流": (2, 3),
     "AI项目复盘": (0, 1),
 }
+MAX_SKILL_REVIEW_CANDIDATES = int(os.getenv("MAX_SKILL_REVIEW_CANDIDATES", "36"))
 CONTENT_INBOX_FIELDS = [
     "标题",
     "来源类型",
@@ -2830,14 +2831,40 @@ def include_in_candidate_pool(row: dict[str, Any]) -> bool:
     return True
 
 
-def select_today_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    """Select the daily candidate pool after editorial judgement.
+def include_in_skill_review_pool(row: dict[str, Any]) -> bool:
+    """Keep a broad, review-worthy pool for the Skill.
 
-    Freeze the anti-template baseline:
-    - no natural angle -> keep as watch, do not force a title;
-    - insufficient support -> keep as watch, do not pretend it is production-ready;
-    - weak persona fit -> keep as watch, do not rescue it with workflow/checklist wording;
-    - 今日最值得做 is at most three items; never fill the pool by quota.
+    Code should not decide the final daily candidates. It only removes obvious
+    noise before the editorial Skill sees the batch: empty/duplicate rows,
+    unsupported fetch failures, very low-information rows, and high-AI-risk
+    rows with no scene grounding. The Skill then decides whether each surviving
+    row is 今日最值得做、可选候选、暂存观察 or 不建议制作.
+    """
+    if not row.get("内容指纹"):
+        return False
+    if row.get("是否只是资讯搬运") == "是" and int(row.get("编辑判断分", 0) or 0) < 70:
+        return False
+    if row.get("是否有足够内容支撑") == "不足":
+        return False
+    if row.get("AI味风险") == "高" and int(row.get("人设匹配分", 0) or 0) < 70:
+        return False
+    editor_score = int(row.get("编辑判断分", 0) or 0)
+    raw_score = int(row.get("推荐分", 0) or 0)
+    # URL/公众号/对标视频类素材本身就可能提供人味和结构，允许更早进入 Skill 判断。
+    if row.get("候选来源方式") == "URL投喂/复用" or row.get("来源类型") in {"公众号文章", "对标视频"}:
+        return editor_score >= 52 or raw_score >= 55
+    if row.get("来源类型") == "AIHOT热点":
+        return editor_score >= 55 or raw_score >= 62
+    return editor_score >= 55 or raw_score >= 58
+
+
+def select_skill_review_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Prepare a broad Skill review pool, not a final Top10.
+
+    This deliberately replaces the old "select today's candidates first" step.
+    The code still dedupes and prevents one source/template from flooding the
+    prompt, but it no longer forces exactly 10 rows or pre-decides the final
+    visible Feishu candidates.
     """
     for row in candidates:
         row["对应栏目"] = normalize_column(row["对应栏目"])
@@ -2853,7 +2880,7 @@ def select_today_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, 
     def add(row: dict[str, Any], allow_overflow: bool = False) -> bool:
         if row["内容指纹"] in seen_fp:
             return False
-        if not include_in_candidate_pool(row):
+        if not include_in_skill_review_pool(row):
             return False
         visible_title = (row.get("可发布标题") or row.get("来源内容") or row.get("我的选题标题", "")).strip()
         if visible_title and visible_title in seen_titles:
@@ -2880,6 +2907,8 @@ def select_today_candidates(candidates: list[dict[str, Any]]) -> list[dict[str, 
 
     for row in sorted_candidates:
         add(row)
+        if len(selected) >= MAX_SKILL_REVIEW_CANDIDATES:
+            break
 
     return selected
 
@@ -2907,10 +2936,9 @@ def main() -> int:
         if row["是否进入候选初筛"] == "是"
     ]
     candidates = apply_editorial_judgement(candidates, item_by_fp)
-    today10 = select_today_candidates(candidates)
+    today10 = select_skill_review_candidates(candidates)
     today10 = assign_action_quotas(today10)
     today10 = apply_editorial_judgement(today10, item_by_fp)
-    today10 = assign_today_priority(today10)
     write_debug_top10(today10, candidates, breakdown_by_fp, item_by_fp, output_dir)
 
     write_csv(output_dir / "content_items.csv", item_rows)

@@ -24,17 +24,19 @@
 
 更短的系统地图见 `docs/system_map.md`。
 
-## 全局选题 Skill
+## 选题 Skill
 
-项目已新增全局 Skill：`ai-account-editorial-director`，安装在 `/Users/congcong/.codex/skills/ai-account-editorial-director`。它负责把 AIHOT、公众号全文、抖音对标内容和候选池内容，转成更贴近 **AI业务系统导演** 人设的工作流实验命题卡，输出“选题命题、我要做的实验、热点触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、推荐动作”等业务字段；可发布标题只是最后一层包装。
+项目已新增 Skill：`ai-account-editorial-director`。仓库内保留公开脱敏版：`skills/ai-account-editorial-director/`；本机也可以保留更完整的全局私有版 `/Users/congcong/.codex/skills/ai-account-editorial-director`。它负责把 AIHOT、公众号全文、抖音对标内容和候选池内容，转成更贴近 **AI业务系统导演** 人设的工作流实验命题卡，输出“选题命题、我要做的实验、热点触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、推荐动作”等业务字段；可发布标题只是最后一层包装。
 
-仓库里也保留了一份可公开分享的脱敏版 Skill：`skills/ai-account-editorial-director/`。这份版本只包含人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。当前本机全局 Skill 可以继续保留更完整的私有案例版；仓库版本作为可追踪、可分享的 public-safe baseline。
+这份仓库版本只包含人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。`editorial_skill_runner.py` 默认读取仓库版本，避免嵌套调用时反复触发全局 Skill 审查；如果要用本地更私有的版本，可以设置 `EDITORIAL_SKILL_DIR=/Users/congcong/.codex/skills/ai-account-editorial-director`。
 
 Skill 运行时不再只把完整案例库整篇塞进 prompt。当前结构是：`references/persona-brief.md` 作为短底稿，`references/persona-and-cases.md` 作为完整档案；`editorial_skill_runner.py` 会先给每条候选匹配 1-3 个母场景，再要求 Skill 输出 `热点钩子 / 普通人会怎么讲 / 我会怎么讲 / 场景依据 / 真实或相邻案例 / 我的改造动作 / 需要补的证据 / 关联母场景 / 借用方式 / 不能声称的部分 / 我的真实或相邻场景`，最后才生成标题和 Brief 字段。
 
 这条 Skill 的目标不是把候选硬套进已给案例，而是把用户案例当作经验锚点：遇到 Claude Code、Claude Design、Vercel Eve、Seedance、小云雀、Runway、Kling 等热门工具或模型时，允许保留热点名做入口，再基于用户“AI业务系统导演”的人设外推到相邻业务场景。输出必须区分 `真实案例 / 相邻推演 / 仅热点观察`，避免把合理推演写成已经做过的事实。
 
 最新主编规则已收敛为 `Gate -> Workflow Experiment Card -> Title Packaging`：Skill 不能先套标题，也不能靠代码里的标题模板兜底。第一步 `Gate` 只做主编门控，判断这条能不能接到我的真实或相邻业务现场、证据是否足够；第二步 `Workflow Experiment Card` 生成短 `选题命题` 和 `我要做的实验`，写清外部触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式和可沉淀资产；第三步 `Title Packaging` 只有在 `title_permission=可发布标题` 时才生成 `可发布标题` 和 `标题备选`。`标题工作坊 / 标题自审` 已降级为调试字段，不再作为主流程必填，避免从一个模板变成多个模板。
+
+候选生成顺序现在是：代码只做采集、标准化、基础拆解、去重、同主题合并和明显噪音过滤，然后把更宽的审阅池交给 `ai-account-editorial-director` Skill。是否进入 `今日最值得做 / 可选候选 / 暂存观察 / 不建议制作` 由 Skill 做主编判断。系统不再先用代码挑出固定 10 条，也不再因为分数高自动补满 3 条 `今日最值得做`；如果当天没有足够强的内容，可以 0 条强推。
 
 `04` 的最新打磨重点不是继续优化标题，而是让工作流实验卡第一眼能用：`选题命题` 要短、自然、像工作台条目；`验证方式` 要写成 1-2 步最小实验动作，能看出输入、动作、输出或验收标准；`可沉淀资产` 要是具体资产名，不能再用 `Workflow SOP / 字段规则 / Brief 模板 / QA 清单` 这类通用包。
 
@@ -111,7 +113,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes
 - `data/manual/content_items.example.jsonl`：内容对象样例，适合放公众号正文、对标视频标题/封面/字幕/OCR/评论问题。
 - `scripts/run_radar.py`：采集与分析脚本。
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和初筛后的今日候选池。
-- `scripts/editorial_skill_runner.py`：全局 Skill 的主编层执行脚本，默认调用本机已登录的 Codex CLI，读取 `ai-account-editorial-director` 与案例库后重判候选。它要求 Skill 先完成 `Gate` 主编门控，输出 `主编筛选 / 主编自由稿 / 我的真实矛盾 / 场景依据 / 证据强度 / title_permission`；再整理 `Workflow Experiment Card` 工作流实验命题卡，核心写入 `选题命题 / 我要做的实验 / 热点触发点 / 我的工作流痛点 / 旧流程痛点 / AI介入点 / 验证方式 / 可沉淀资产 / 我的思考点 / 重点体现 / 可展示证据 / 需要补的证据`；最后只有 `title_permission=可发布标题` 才写入 `可发布标题 / 标题备选`。`--engine deterministic` 只作为显式离线应急选项。
+- `scripts/editorial_skill_runner.py`：Skill 主编层执行脚本，默认调用本机已登录的 Codex CLI，读取仓库内 `skills/ai-account-editorial-director/` 与 persona brief 后重判候选；可用 `EDITORIAL_SKILL_DIR` 指向本机私有版。它要求 Skill 先完成 `Gate` 主编门控，输出 `主编筛选 / 主编自由稿 / 我的真实矛盾 / 场景依据 / 证据强度 / title_permission`；再整理 `Workflow Experiment Card` 工作流实验命题卡，核心写入 `选题命题 / 我要做的实验 / 热点触发点 / 我的工作流痛点 / 旧流程痛点 / AI介入点 / 验证方式 / 可沉淀资产 / 我的思考点 / 重点体现 / 可展示证据 / 需要补的证据`；最后只有 `title_permission=可发布标题` 才写入 `可发布标题 / 标题备选`。`--engine deterministic` 只作为显式离线应急选项。
 - `scripts/sync_editorial_skill.py`：把仓库中的公开脱敏版 `skills/ai-account-editorial-director/` 安装到全局 Codex Skills。默认 dry-run；只有显式 `--install-public --yes` 才会替换全局 Skill，并会先备份原目录。
 - `scripts/daily_pipeline.py`：日常总入口；日常使用加 `--write-feishu` 写入飞书，默认本地模式只用于开发验证。抖音主页采集默认同一天只跑一次，后续运行复用当天缓存。
 - `scripts/url_content_resolver.py`：正式 URL 内容采样 adapter，把公众号文章、抖音单条视频、RSS/Atom、普通网页解析成标准 ContentItem；默认只输出本地文件，显式 `--write-feishu` 才写入 `03 内容收件箱`。
@@ -295,7 +297,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 
 `--write-feishu` 会把解析出的新 URL 内容写入 `03 内容收件箱`，同时把本轮参与分析的 AIHOT 等 ContentItem 也同步进 `03`，再把今日候选池写入 `04 分析与选题`，并回写 `02 URL投喂入口` 的处理状态、失败原因和解析结果摘要。`02 URL投喂入口` 只作为临时链接入口，解析完成后可手动删除记录，不需要长期保留。
 
-今日候选池不再强制凑满 10 条。AIHOT 可以是主来源，但默认最多占 8 条；如果本轮有 URL 投喂或开启已解析 URL 复用，并且 URL 内容解析成功、分数过线，系统会优先保留进入候选池。主对标抖音主页标题/文案也和其他来源一样参与评分、进入候选、生成标题；只是不能编造未采到的口播全文、评论区、镜头结构或完整视频理解。调试文件会写入本轮批次目录，例如 `output/dry_runs/run_*/debug_today10_generation.csv` 或 `output/runs/run_*/debug_today10_generation.csv`，并同步到 `output/latest_dry_run/` 或 `output/latest_write/`，用于查看每条候选是否来自已解析 URL 复用、是否进入候选池、标题结构模板、事件锚点、业务变化判断、内部切入角度和可发布标题。
+今日候选池不再强制凑满 10 条。AIHOT 可以是主来源，但代码只负责限制明显刷屏和重复，最终是否进入前台候选由 Skill 判断；如果本轮有 URL 投喂或开启已解析 URL 复用，并且 URL 内容解析成功，会和 AIHOT、公众号、抖音主页采样一起进入更宽的 Skill 审阅池。主对标抖音主页标题/文案也和其他来源一样参与评分、进入候选判断、生成命题卡；只是不能编造未采到的口播全文、评论区、镜头结构或完整视频理解。调试文件会写入本轮批次目录，例如 `output/dry_runs/run_*/debug_today10_generation.csv` 或 `output/runs/run_*/debug_today10_generation.csv`，并同步到 `output/latest_dry_run/` 或 `output/latest_write/`，用于查看每条候选是否来自已解析 URL 复用、是否进入 Skill 审阅池、标题结构模板、事件锚点、业务变化判断、内部切入角度和可发布标题。
 
 如果当天没有新 URL，只想跑一次日常热点/对标更新并写入飞书：
 
@@ -334,9 +336,9 @@ python3 scripts/editorial_skill_runner.py \
   --report output/latest_write/editorial_skill_report.json
 ```
 
-这一步会调用本机已登录的 Codex CLI 和全局 `ai-account-editorial-director` Skill。它会覆盖候选的主编判断字段，但不会拉取 AIHOT、不会打开抖音、不会写飞书。
+这一步会调用本机已登录的 Codex CLI，并把仓库内 `ai-account-editorial-director` Skill 规则文本嵌入 prompt。它会覆盖候选的主编判断字段，但不会拉取 AIHOT、不会打开抖音、不会写飞书。需要使用本机私有版时，设置 `EDITORIAL_SKILL_DIR` 即可。
 
-在 Codex 对话里手动调用这个脚本时，偶尔会看到权限审查，不是因为全局 Skill 不能被项目使用，而是因为脚本会启动本机 `codex exec` 子进程并写入 `~/.codex` 的运行状态。命令前缀已尽量收敛到 `python3 scripts/editorial_skill_runner.py`；日常在本机终端运行项目脚本时，不会把这个审批流程暴露成业务步骤。
+在 Codex 对话里手动调用这个脚本时，偶尔会看到权限审查，不是因为 Skill 不能被项目使用，而是因为脚本会启动本机 `codex exec` 子进程并写入 `~/.codex` 的运行状态。命令前缀已尽量收敛到 `python3 scripts/editorial_skill_runner.py`；日常在本机终端运行项目脚本时，不会把这个审批流程暴露成业务步骤。
 
 `04 分析与选题` 已收敛为今日候选池决策表：主字段 `选题标题` 目前作为飞书兼容字段使用，但内容必须写成短 `选题命题`，不是发布标题，也不是完整拆解。飞书默认视图优先展示工作流实验卡字段，例如 `选题命题`、`我要做的实验`、`热点触发点`、`我的工作流痛点`、`旧流程痛点`、`AI介入点`、`验证方式`、`可沉淀资产`、`今日建议级别`、`编辑判断分`、`AI味风险`、`内容可信度`、`推荐动作`、`title_permission`、`主编自由稿`、`我的思考点`、`重点体现`、`可展示证据`、`需要补的证据`、`推荐理由` 和 `不建议做的原因`。`可发布标题 / 标题备选` 是后置包装字段，只在 `title_permission=可发布标题` 时出现。写入前会先经过 `content_sampler.py` 的初筛和 `editorial_skill_runner.py` 的真实 Skill 主编判断，让你能区分“今日最值得做”“可选候选”“暂存观察”和“不建议制作”。没有足够人设角度或内容支撑的内容不会为了凑数进入候选池；`title_permission` 不是 `可发布标题` 时，写入层会清空 `可发布标题 / 标题备选`，但仍可保留内部 `选题命题` 和 `我要做的实验`。
 
