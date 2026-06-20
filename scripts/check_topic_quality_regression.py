@@ -43,11 +43,16 @@ FORBIDDEN_TITLE_TERMS = [
     "别再给Agent起名字",
 ]
 VISIBLE_FIELDS = [
-    "选题命题", "我的选题标题", "可发布标题", "标题备选", "title_permission", "主编筛选", "主编自由稿", "标题工作坊", "标题自审", "点击钩子", "观众为什么会点", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
+    "选题命题", "我要做的实验", "热点触发点", "我的工作流痛点", "我的选题标题", "可发布标题", "标题备选", "title_permission", "主编筛选", "主编自由稿", "标题工作坊", "标题自审", "点击钩子", "观众为什么会点", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
     "推荐理由", "我的蹭热点角度",
-    "选题标题", "内部切入角度",
+    "选题标题", "内部切入角度", "旧流程痛点", "AI介入点", "验证方式", "可沉淀资产",
 ]
 ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
+EXPERIMENT_ACTION_TERMS = [
+    "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
+    "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
+]
+PROPOSITION_OVERLOAD_TERMS = ["旧流程", "AI介入", "验证方式", "需要补", "还缺", "我要证明", "可沉淀"]
 
 
 def compact_text(value: str) -> str:
@@ -151,8 +156,18 @@ def main() -> int:
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
             if not row.get("选题命题", "").strip():
                 failures.append(f"row {idx}: {row.get('今日建议级别')} missing 选题命题")
+            if len(row.get("选题命题", "").strip()) > 90:
+                failures.append(f"row {idx}: 选题命题 too long (>90 chars)")
+            overload = contains_any(row.get("选题命题", ""), PROPOSITION_OVERLOAD_TERMS)
+            if overload:
+                failures.append(f"row {idx}: 选题命题 contains full-card/decomposition terms: {','.join(overload)}")
             if row.get("选题标题", "").strip() and row.get("选题命题", "").strip() and row.get("选题标题", "").strip() != row.get("选题命题", "").strip():
                 failures.append(f"row {idx}: 选题标题 should mirror 选题命题, not publishable title")
+            for field in ["我要做的实验", "热点触发点", "我的工作流痛点", "旧流程痛点", "AI介入点", "验证方式", "可沉淀资产"]:
+                if not row.get(field, "").strip():
+                    failures.append(f"row {idx}: {row.get('今日建议级别')} missing workflow-experiment field {field}")
+            if row.get("我要做的实验") and not contains_any(row.get("我要做的实验", ""), EXPERIMENT_ACTION_TERMS):
+                failures.append(f"row {idx}: 我要做的实验 lacks a concrete experiment action")
             for field in ["主编筛选", "主编自由稿"]:
                 if not row.get(field, "").strip():
                     failures.append(f"row {idx}: {row.get('今日建议级别')} missing gate editorial field {field}")
@@ -221,6 +236,15 @@ def main() -> int:
     top_count = sum(1 for row in rows if row.get("今日建议级别") == "今日最值得做")
     if top_count > 3:
         failures.append(f"今日最值得做 count > 3: {top_count}")
+    prop_prefix_counts: dict[str, int] = {}
+    for row in rows:
+        prop = row.get("选题命题", "").strip()
+        if prop:
+            prefix = prop[:4]
+            prop_prefix_counts[prefix] = prop_prefix_counts.get(prefix, 0) + 1
+    repeated_prefixes = [prefix for prefix, count in prop_prefix_counts.items() if count > 3 and prefix in {"我准备", "我想用", "用这次", "把这个"}]
+    if repeated_prefixes:
+        failures.append(f"选题命题 repeated mechanical prefix too often: {','.join(repeated_prefixes)}")
     watch_count = sum(1 for row in rows if row.get("今日建议级别") == "暂存观察")
     selected_sources = {row.get("来源内容", "") for row in rows}
     selected_fps = {row.get("内容指纹", "") for row in rows}

@@ -52,6 +52,9 @@ COMPARE_FIELDS = [
     "选题命题",
     "选题标题",
     "我的选题标题",
+    "我要做的实验",
+    "热点触发点",
+    "我的工作流痛点",
     "主编自由稿",
     "点击钩子",
     "观众为什么会点",
@@ -76,6 +79,10 @@ COMPARE_FIELDS = [
     "运行批次",
     "一句话Brief",
     "我的场景拆解",
+    "旧流程痛点",
+    "AI介入点",
+    "验证方式",
+    "可沉淀资产",
     "我的思考点",
     "重点体现",
     "可调用案例",
@@ -84,6 +91,9 @@ COMPARE_FIELDS = [
 VISIBLE_FIELDS = [
     "选题标题",
     "选题命题",
+    "我要做的实验",
+    "热点触发点",
+    "我的工作流痛点",
     "我的选题标题",
     "可发布标题",
     "标题备选",
@@ -104,6 +114,10 @@ VISIBLE_FIELDS = [
     "降级原因",
     "一句话Brief",
     "我的场景拆解",
+    "旧流程痛点",
+    "AI介入点",
+    "验证方式",
+    "可沉淀资产",
     "我的思考点",
     "重点体现",
 ]
@@ -216,6 +230,11 @@ def main() -> int:
             failures.append(f"Feishu primary title should mirror 选题命题: {normalize(fields.get('选题标题'))[:40]}")
         if not normalize(fields.get("选题命题")):
             failures.append(f"Feishu row missing 选题命题: {normalize(fields.get('原始来源标题'))[:40]}")
+        if len(normalize(fields.get("选题命题"))) > 90:
+            failures.append(f"Feishu row 选题命题 too long: {normalize(fields.get('选题命题'))[:60]}")
+        for field in ["我要做的实验", "热点触发点", "我的工作流痛点", "旧流程痛点", "AI介入点", "验证方式", "可沉淀资产"]:
+            if not normalize(fields.get(field)):
+                failures.append(f"Feishu row missing workflow-experiment field {field}: {normalize(fields.get('选题标题'))[:40]}")
 
     level_counts = Counter(normalize(record.get("fields", {}).get("今日建议级别")) for record in run_records)
     if level_counts.get("今日最值得做", 0) > 3:

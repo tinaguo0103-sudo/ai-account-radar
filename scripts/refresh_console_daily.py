@@ -678,6 +678,9 @@ def load_today_10() -> dict[str, Any]:
         or top_row.get("来源内容")
         or "尚未生成"
     ) if rows else "尚未生成"
+    top = " ".join(str(top).split())
+    if len(top) > 70:
+        top = top[:70].rstrip() + "..."
     return {"count": len(rows), "top": top, "report": str(report)}
 
 

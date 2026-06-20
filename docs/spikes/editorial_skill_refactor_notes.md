@@ -28,3 +28,5 @@ Skill 仍然必须读取 `persona-brief.md` 和案例库，但案例库是经验
 ## 后续语义重构
 
 2026-06-20 进一步把 `04 分析与选题` 从“标题候选池”改为“选题命题卡候选池”。`选题标题` 在飞书里只作为兼容主字段，实际写入 `选题命题`；`可发布标题 / 标题备选` 变成后置包装字段，只有 `title_permission=可发布标题` 才写。完整说明见 `docs/spikes/editorial_topic_proposition_refactor.md`。
+
+2026-06-20 再次升级为“工作流实验命题卡”：`选题命题` 只保留短命题，新增 `我要做的实验 / 热点触发点 / 我的工作流痛点 / 验证方式 / 可沉淀资产`，用来判断外部热点触发了用户哪个真实工作流实验。完整说明见 `docs/spikes/editorial_workflow_experiment_refactor.md`。

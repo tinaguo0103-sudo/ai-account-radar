@@ -18,7 +18,7 @@ flowchart LR
 - `01 来源与采样`：来源池和采样权重，默认看 `当前主对标池`；另有 `历史参考池`、`系统/官方源`、`手动入口` 三个视图。
 - `02 URL投喂入口`：临时粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接，交给 `url_content_resolver.py` 解析。
 - `03 内容收件箱`：后台内容账本，保存本轮参与拆解的 URL 投喂、AIHOT 和其他 ContentItem；可看 `今日采集` 视图排查来源、是否全文解析、正文长度、payload 路径、解析说明和运行批次。
-- `04 分析与选题`：今日候选池和选题决策区；默认先看 `选题命题`，再用 `今日建议级别 / 编辑判断分 / AI味风险 / 内容可信度 / 推荐理由 / 不建议做的原因` 判断真正值得推进的 1-3 条。`可发布标题` 只是后置包装，不是候选主字段。
+- `04 分析与选题`：今日候选池和选题决策区；默认先看短 `选题命题` 和 `我要做的实验`，再用 `今日建议级别 / 编辑判断分 / AI味风险 / 内容可信度 / 推荐理由 / 不建议做的原因` 判断真正值得推进的 1-3 条。`可发布标题` 只是后置包装，不是候选主字段。
 - `05 Brief与制作`：把选题拆成平台内容和 Brief，补 Hook、案例、结构和 CTA。
 - `06 内容任务主表`：今天真正执行的写稿、拍摄、剪辑、封面、发布、直播和复盘任务。
 - `07 资产与复盘`：发布后看数据、复刻价值、改角度再发和资产化机会。
@@ -60,7 +60,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 对标视频进入候选池后，只借鉴话题、结构、专业证明和商业入口。用户可见标题要转成自己的 AI导演/业务流程语言，不出现其他博主名字，也不写“这条视频/这条内容”。
 
-选题编辑判断已抽成全局 Skill：`ai-account-editorial-director`，路径是 `/Users/congcong/.codex/skills/ai-account-editorial-director`。代码负责采集、标准化、去重和初筛；`scripts/editorial_skill_runner.py` 默认直接调用本机 Codex CLI，让这个全局 Skill 按 `Gate -> Topic Proposition Card -> Title Packaging` 做判断：先判断是否能接到我的真实/相邻业务现场和证据是否足够，再生成 `选题命题` 和命题卡字段，最后只有 `title_permission=可发布标题` 时才写入可发布标题和标题备选。详细说明见 `docs/ai_account_editorial_director_skill.md`。
+选题编辑判断已抽成全局 Skill：`ai-account-editorial-director`，路径是 `/Users/congcong/.codex/skills/ai-account-editorial-director`。代码负责采集、标准化、去重和初筛；`scripts/editorial_skill_runner.py` 默认直接调用本机 Codex CLI，让这个全局 Skill 按 `Gate -> Workflow Experiment Card -> Title Packaging` 做判断：先判断是否能接到我的真实/相邻业务现场和证据是否足够，再生成短 `选题命题`、`我要做的实验`、工作流痛点、旧流程痛点、AI介入点、验证方式和可沉淀资产，最后只有 `title_permission=可发布标题` 时才写入可发布标题和标题备选。详细说明见 `docs/ai_account_editorial_director_skill.md`。
 
 当前主链路是：
 

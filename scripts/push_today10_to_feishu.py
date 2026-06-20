@@ -36,6 +36,9 @@ REQUIRED_FIELDS = [
     "点击钩子",
     "观众为什么会点",
     "我的真实矛盾",
+    "我要做的实验",
+    "热点触发点",
+    "我的工作流痛点",
     "选题判断",
     "原始钩子",
     "我的切入",
@@ -54,6 +57,7 @@ REQUIRED_FIELDS = [
     "对应方向",
     "一句话Brief",
     "我的场景拆解",
+    "验证方式",
     "我的思考点",
     "重点体现",
     "可调用案例",
@@ -146,22 +150,67 @@ def short_text(value: str, limit: int = 38) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "..."
 
 
-def proposition_for(row: dict[str, str]) -> str:
-    for field in [
-        "选题命题",
-        "我的真实矛盾",
-        "选题判断",
-        "一句话Brief",
-        "我的切入",
-        "内部切入角度",
-        "我的选题标题",
-    ]:
-        value = " ".join((row.get(field, "") or "").split())
+EXPERIMENT_ACTION_TERMS = [
+    "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
+    "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
+]
+PROPOSITION_OVERLOAD_TERMS = ["旧流程", "AI介入", "验证方式", "需要补", "还缺", "我要证明", "可沉淀"]
+
+
+def has_experiment_action(value: str) -> bool:
+    return any(term in (value or "") for term in EXPERIMENT_ACTION_TERMS)
+
+
+def workflow_trigger_for(row: dict[str, str]) -> str:
+    for field in ["热点触发点", "热点钩子", "原始钩子", "事件锚点", "原始来源标题", "来源内容", "来源标题"]:
+        value = short_text(row.get(field, ""), 80)
         if value:
             return value
-    source = row.get("来源内容") or row.get("原始来源标题") or row.get("来源标题") or "未命名来源"
-    scene = row.get("业务场景") or row.get("对应栏目") or "业务现场"
-    return f"我先判断「{short_text(source, 42)}」能不能接到「{scene}」。"
+    return "这条外部素材"
+
+
+def workflow_pain_for(row: dict[str, str]) -> str:
+    for field in ["我的工作流痛点", "我的真实矛盾", "业务场景", "旧流程痛点", "内容核心冲突"]:
+        value = short_text(row.get(field, ""), 140)
+        if value:
+            return value
+    return "我的内容生产或业务交付里还缺一段可记录、可复跑、可验收的流程。"
+
+
+def experiment_for(row: dict[str, str]) -> str:
+    for field in ["我要做的实验", "我的改造动作"]:
+        value = short_text(row.get(field, ""), 140)
+        if value and has_experiment_action(value):
+            return value
+    trigger = workflow_trigger_for(row)
+    direction = row.get("对应方向") or row.get("对应栏目") or ""
+    if "导演" in direction or "视频" in "\n".join(row.values()):
+        return f"用{short_text(trigger, 28)}测试视频交付里的分镜、返修和验收能不能被流程化"
+    if "汽车" in direction:
+        return f"用{short_text(trigger, 28)}验证车企内容发布前后的素材流能不能被 AI 压缩"
+    if "项目复盘" in direction:
+        return f"把{short_text(trigger, 28)}接进项目复盘，验证需求、异常和验收能不能留下记录"
+    return f"用{short_text(trigger, 28)}测试这次变化能不能进入我的真实工作流"
+
+
+def clean_short_proposition(value: str) -> str:
+    text = " ".join((value or "").split())
+    if text and len(text) <= 90 and not any(term in text for term in PROPOSITION_OVERLOAD_TERMS):
+        return text
+    return ""
+
+
+def proposition_for(row: dict[str, str]) -> str:
+    for field in ["选题命题", "我要做的实验"]:
+        value = clean_short_proposition(row.get(field, ""))
+        if value:
+            return value
+    experiment = experiment_for(row)
+    value = clean_short_proposition(experiment)
+    if value:
+        return value
+    trigger = workflow_trigger_for(row)
+    return short_text(f"{short_text(trigger, 24)}触发的实验：{short_text(experiment, 56)}", 90)
 
 
 def display_title_for(row: dict[str, str]) -> str:
@@ -287,6 +336,9 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
     title_options = row.get("标题备选", "") if title_permission == "可发布标题" else ""
     level = normalize_level(row.get("今日建议级别", ""))
     proposition = proposition_for(row)
+    experiment = experiment_for(row)
+    trigger = workflow_trigger_for(row)
+    pain = workflow_pain_for(row)
     display_title = display_title_for(row)
     internal_angle = row.get("内部切入角度") or proposition
     recommendation_reason = row.get("推荐理由", "")
@@ -300,6 +352,9 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "点击钩子": row.get("点击钩子", ""),
         "观众为什么会点": row.get("观众为什么会点", ""),
         "我的真实矛盾": row.get("我的真实矛盾", ""),
+        "我要做的实验": experiment,
+        "热点触发点": trigger,
+        "我的工作流痛点": pain,
         "选题判断": row.get("选题判断", ""),
         "原始钩子": row.get("原始钩子", ""),
         "我的切入": row.get("我的切入", ""),
@@ -318,6 +373,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "对应方向": row.get("对应方向", row.get("对应栏目", "")),
         "一句话Brief": row.get("一句话Brief", ""),
         "我的场景拆解": row.get("我的场景拆解", ""),
+        "验证方式": row.get("验证方式", "") or row.get("可展示证据", "") or row.get("可展示结果", ""),
         "我的思考点": row.get("我的思考点", ""),
         "重点体现": row.get("重点体现", ""),
         "可调用案例": row.get("可调用案例", ""),
@@ -481,12 +537,13 @@ def delete_view_if_exists(token: str, app_token: str, table_id: str, view_name: 
 
 def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: str) -> dict[str, Any]:
     core_visible = {
-        "选题标题", "选题命题", "今日建议级别", "编辑判断分", "AI味风险", "内容可信度",
+        "选题标题", "选题命题", "我要做的实验", "热点触发点", "我的工作流痛点",
+        "今日建议级别", "编辑判断分", "AI味风险", "内容可信度",
         "推荐动作", "状态", "title_permission", "来源类型", "原始来源标题", "对应栏目",
         "主编自由稿",
         "点击钩子", "观众为什么会点",
         "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
-        "推荐理由", "不建议做的原因", "可沉淀资产",
+        "推荐理由", "不建议做的原因", "旧流程痛点", "AI介入点", "验证方式", "可沉淀资产",
     }
     detail_visible = core_visible | {
         "内部切入角度", "可发布标题", "标题备选", "标题质量分", "人设匹配分",
