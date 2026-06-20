@@ -3,9 +3,9 @@
 
 The collection pipeline still handles source capture, normalization, dedupe, and
 rough candidate generation. This runner is the editorial layer: by default it
-loads the repo-backed Skill text and persona brief, asks the locally
-authenticated Codex CLI to make the batch judgement, and writes the editorial
-output contract back to the candidate CSV.
+loads the local private Skill text when available, falls back to the repo-backed
+public-safe Skill, asks the locally authenticated Codex CLI to make the batch
+judgement, and writes the editorial output contract back to the candidate CSV.
 
 `--engine deterministic` is kept only as an explicit emergency fallback for
 offline debugging. It is not the default path.
@@ -29,19 +29,25 @@ from local_env import load_local_env
 ROOT = Path(__file__).resolve().parents[1]
 REPO_SKILL_DIR = ROOT / "skills" / "ai-account-editorial-director"
 GLOBAL_SKILL_DIR = Path.home() / ".codex" / "skills" / "ai-account-editorial-director"
-DEFAULT_SKILL_DIR = REPO_SKILL_DIR if REPO_SKILL_DIR.exists() else GLOBAL_SKILL_DIR
+DEFAULT_SKILL_DIR = GLOBAL_SKILL_DIR if (GLOBAL_SKILL_DIR / "SKILL.md").exists() else REPO_SKILL_DIR
 SKILL_DIR = Path(os.getenv("EDITORIAL_SKILL_DIR", str(DEFAULT_SKILL_DIR))).expanduser()
 SKILL_MD = SKILL_DIR / "SKILL.md"
 
 
+def skill_reference_dirs() -> list[Path]:
+    dirs: list[Path] = []
+    for directory in [SKILL_DIR, GLOBAL_SKILL_DIR, REPO_SKILL_DIR]:
+        if directory not in dirs:
+            dirs.append(directory)
+    return dirs
+
+
 def skill_reference_path(name: str) -> Path:
-    primary = SKILL_DIR / "references" / name
-    if primary.exists():
-        return primary
-    fallback = GLOBAL_SKILL_DIR / "references" / name
-    if fallback.exists():
-        return fallback
-    return primary
+    for directory in skill_reference_dirs():
+        candidate = directory / "references" / name
+        if candidate.exists():
+            return candidate
+    return SKILL_DIR / "references" / name
 
 
 SKILL_REFERENCE = skill_reference_path("persona-and-cases.md")
@@ -1464,7 +1470,7 @@ def main() -> int:
         "--engine",
         choices=["codex", "deterministic"],
         default=os.getenv("EDITORIAL_SKILL_ENGINE", "codex"),
-        help="Default codex embeds the repo-backed editorial Skill text in Codex CLI. deterministic is an explicit offline fallback.",
+        help="Default codex embeds local private Skill text when available, with repo Skill fallback. deterministic is an explicit offline fallback.",
     )
     parser.add_argument("--codex-model", default=os.getenv("EDITORIAL_SKILL_CODEX_MODEL", ""), help="Optional Codex model override.")
     parser.add_argument("--timeout", type=int, default=int(os.getenv("EDITORIAL_SKILL_TIMEOUT", "900")), help="Codex execution timeout in seconds.")

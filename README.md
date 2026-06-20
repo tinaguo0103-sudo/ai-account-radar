@@ -28,7 +28,7 @@
 
 项目已新增 Skill：`ai-account-editorial-director`。仓库内保留公开脱敏版：`skills/ai-account-editorial-director/`；本机也可以保留更完整的全局私有版 `/Users/congcong/.codex/skills/ai-account-editorial-director`。它负责把 AIHOT、公众号全文、抖音对标内容和候选池内容，转成更贴近 **AI业务系统导演** 人设的工作流实验命题卡，输出“选题命题、我要做的实验、热点触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、推荐动作”等业务字段；可发布标题只是最后一层包装。
 
-这份仓库版本只包含人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。`editorial_skill_runner.py` 默认读取仓库版本，避免嵌套调用时反复触发全局 Skill 审查；如果要用本地更私有的版本，可以设置 `EDITORIAL_SKILL_DIR=/Users/congcong/.codex/skills/ai-account-editorial-director`。
+这份仓库版本只包含人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。`editorial_skill_runner.py` 默认优先读取本机全局私有版的文本；如果本机私有版不存在，才 fallback 到仓库脱敏版。它只是读取 Skill 文本并嵌入 prompt，不触发外部 Skill 调用机制，因此不会因为“使用全局 Skill”反复审查。也可以用 `EDITORIAL_SKILL_DIR` 显式指定任意 Skill 目录。
 
 Skill 运行时不再只把完整案例库整篇塞进 prompt。当前结构是：`references/persona-brief.md` 作为短底稿，`references/persona-and-cases.md` 作为完整档案；`editorial_skill_runner.py` 会先给每条候选匹配 1-3 个母场景，再要求 Skill 输出 `热点钩子 / 普通人会怎么讲 / 我会怎么讲 / 场景依据 / 真实或相邻案例 / 我的改造动作 / 需要补的证据 / 关联母场景 / 借用方式 / 不能声称的部分 / 我的真实或相邻场景`，最后才生成标题和 Brief 字段。
 
@@ -113,7 +113,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes
 - `data/manual/content_items.example.jsonl`：内容对象样例，适合放公众号正文、对标视频标题/封面/字幕/OCR/评论问题。
 - `scripts/run_radar.py`：采集与分析脚本。
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和初筛后的今日候选池。
-- `scripts/editorial_skill_runner.py`：Skill 主编层执行脚本，默认调用本机已登录的 Codex CLI，读取仓库内 `skills/ai-account-editorial-director/` 与 persona brief 后重判候选；可用 `EDITORIAL_SKILL_DIR` 指向本机私有版。它要求 Skill 先完成 `Gate` 主编门控，输出 `主编筛选 / 主编自由稿 / 我的真实矛盾 / 场景依据 / 证据强度 / title_permission`；再整理 `Workflow Experiment Card` 工作流实验命题卡，核心写入 `选题命题 / 我要做的实验 / 热点触发点 / 我的工作流痛点 / 旧流程痛点 / AI介入点 / 验证方式 / 可沉淀资产 / 我的思考点 / 重点体现 / 可展示证据 / 需要补的证据`；最后只有 `title_permission=可发布标题` 才写入 `可发布标题 / 标题备选`。`--engine deterministic` 只作为显式离线应急选项。
+- `scripts/editorial_skill_runner.py`：Skill 主编层执行脚本，默认调用本机已登录的 Codex CLI，优先读取本机全局私有版 `ai-account-editorial-director`，不存在时读取仓库内公开脱敏版；也可用 `EDITORIAL_SKILL_DIR` 显式指定目录。它要求 Skill 先完成 `Gate` 主编门控，输出 `主编筛选 / 主编自由稿 / 我的真实矛盾 / 场景依据 / 证据强度 / title_permission`；再整理 `Workflow Experiment Card` 工作流实验命题卡，核心写入 `选题命题 / 我要做的实验 / 热点触发点 / 我的工作流痛点 / 旧流程痛点 / AI介入点 / 验证方式 / 可沉淀资产 / 我的思考点 / 重点体现 / 可展示证据 / 需要补的证据`；最后只有 `title_permission=可发布标题` 才写入 `可发布标题 / 标题备选`。`--engine deterministic` 只作为显式离线应急选项。
 - `scripts/sync_editorial_skill.py`：把仓库中的公开脱敏版 `skills/ai-account-editorial-director/` 安装到全局 Codex Skills。默认 dry-run；只有显式 `--install-public --yes` 才会替换全局 Skill，并会先备份原目录。
 - `scripts/daily_pipeline.py`：日常总入口；日常使用加 `--write-feishu` 写入飞书，默认本地模式只用于开发验证。抖音主页采集默认同一天只跑一次，后续运行复用当天缓存。
 - `scripts/url_content_resolver.py`：正式 URL 内容采样 adapter，把公众号文章、抖音单条视频、RSS/Atom、普通网页解析成标准 ContentItem；默认只输出本地文件，显式 `--write-feishu` 才写入 `03 内容收件箱`。
@@ -336,7 +336,7 @@ python3 scripts/editorial_skill_runner.py \
   --report output/latest_write/editorial_skill_report.json
 ```
 
-这一步会调用本机已登录的 Codex CLI，并把仓库内 `ai-account-editorial-director` Skill 规则文本嵌入 prompt。它会覆盖候选的主编判断字段，但不会拉取 AIHOT、不会打开抖音、不会写飞书。需要使用本机私有版时，设置 `EDITORIAL_SKILL_DIR` 即可。
+这一步会调用本机已登录的 Codex CLI，并把 `ai-account-editorial-director` Skill 规则文本嵌入 prompt。默认优先读本机全局私有版，仓库脱敏版只做兜底。它会覆盖候选的主编判断字段，但不会拉取 AIHOT、不会打开抖音、不会写飞书。需要临时切换版本时，设置 `EDITORIAL_SKILL_DIR` 即可。
 
 在 Codex 对话里手动调用这个脚本时，偶尔会看到权限审查，不是因为 Skill 不能被项目使用，而是因为脚本会启动本机 `codex exec` 子进程并写入 `~/.codex` 的运行状态。命令前缀已尽量收敛到 `python3 scripts/editorial_skill_runner.py`；日常在本机终端运行项目脚本时，不会把这个审批流程暴露成业务步骤。
 

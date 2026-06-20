@@ -26,7 +26,7 @@ skills/ai-account-editorial-director/
 
 这份版本保留人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。它适合作为 Git 可追踪基线，也适合单独分享。
 
-本机全局 Skill `/Users/congcong/.codex/skills/ai-account-editorial-director` 可以继续保留更完整的私有案例版。当前生产脚本默认读取仓库内公开脱敏版，避免嵌套调用时反复触发全局 Skill 审查；如果要切到本机私有版，设置 `EDITORIAL_SKILL_DIR=/Users/congcong/.codex/skills/ai-account-editorial-director`。
+本机全局 Skill `/Users/congcong/.codex/skills/ai-account-editorial-director` 可以继续保留更完整的私有案例版。当前生产脚本默认优先读取本机私有版的文本；如果本机私有版不存在，才 fallback 到仓库公开脱敏版。脚本只是读取 Skill 文本并嵌入 prompt，不触发外部 Skill 调用机制，因此可以兼顾个性化效果和执行稳定性。需要强制切换版本时，设置 `EDITORIAL_SKILL_DIR`。
 
 如需把仓库脱敏版安装到全局目录：
 
@@ -253,7 +253,7 @@ ContentItem -> code 初筛 -> ai-account-editorial-director -> 04 分析与选�
 
 ## 当前接入状态
 
-当前已经新增 `scripts/editorial_skill_runner.py` 作为 Skill 主编层执行脚本。它默认调用本机已登录的 Codex CLI，在只读模式下读取仓库内 Skill 文本、`persona-brief.md` 和每条候选匹配到的母场景包，对 `content_sampler.py` 输出的候选重新做一轮批量主编判断，并补齐飞书前台可读字段。需要使用本机私有版时，可通过 `EDITORIAL_SKILL_DIR` 指定目录。
+当前已经新增 `scripts/editorial_skill_runner.py` 作为 Skill 主编层执行脚本。它默认调用本机已登录的 Codex CLI，在只读模式下优先读取本机私有 Skill 文本、`persona-brief.md` 和每条候选匹配到的母场景包；如果本机私有版不存在，再读取仓库公开脱敏版。它会对 `content_sampler.py` 输出的候选重新做一轮批量主编判断，并补齐飞书前台可读字段。需要使用指定版本时，可通过 `EDITORIAL_SKILL_DIR` 指定目录。
 
 - `主编筛选`
 - `主编自由稿`
