@@ -381,6 +381,34 @@ def trim_end_punctuation(value: Any, fallback: str = "待补") -> str:
     return short_text(value, fallback).rstrip("。.!！?？；;，, ")
 
 
+def readable_evidence_item(value: str) -> str:
+    text = trim_end_punctuation(value, "")
+    replacements = [
+        ("需要实际跑10条候选，补回填截图", "10条候选的回填截图"),
+        ("需要跑一次固定样张，补导出对比截图", "固定样张的导出对比截图"),
+    ]
+    for old, new in replacements:
+        text = text.replace(old, new)
+    for prefix in ["需要先补", "需要补", "先补", "待制作", "待补", "补", "需要"]:
+        if text.startswith(prefix):
+            text = text[len(prefix):].lstrip("：:，,、 ")
+            break
+    return text or value
+
+
+def evidence_phrase(topic: dict[str, Any], validation: ValidationResult) -> str:
+    evidence = [
+        readable_evidence_item(item)
+        for item in key_evidence_items(topic, validation)
+        if not str(item).strip().startswith("不能")
+    ]
+    if not evidence:
+        return "一组能看见输入、输出和人工验收的画面"
+    if len(evidence) == 1:
+        return evidence[0]
+    return "、".join(evidence[:2])
+
+
 def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     title = short_text(topic.get("topic_title"), "这条选题")
     core = trim_end_punctuation(topic.get("core_thesis"), title)
@@ -388,29 +416,30 @@ def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     ai_action = trim_end_punctuation(topic.get("ai_intervention"), "用AI介入一个可验证的小环节")
     judgment = trim_end_punctuation(topic.get("unique_judgment"), "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
     asset = trim_end_punctuation(topic.get("takeaway_asset"), "一个可复用的流程、清单或模板")
-    evidence = key_evidence_items(topic, validation)
-    evidence_text = "、".join(evidence[:2]) if evidence else "至少一个可展示证据"
+    evidence_text = evidence_phrase(topic, validation)
     return (
-        f"这条视频的钩子不是单纯讲「{title}」，而是用它追问：{core}。"
-        f"我的判断是：{judgment}。论据要落在两个地方：一是旧流程里的真实痛点「{pain}」，"
-        f"二是这次可验证的AI介入动作「{ai_action}」。画面上要用{evidence_text}来证明它不是泛讲观点，"
-        f"最后收束成「{asset}」。"
+        f"这条不要拍成「{title}」的资料复述。我想拿它测一个具体问题：{core}。\n\n"
+        f"我现在的判断是：{judgment}。这个判断得落在真实流程里看：旧流程的问题是「{pain}」，"
+        f"这次我准备让AI介入「{ai_action}」。\n\n"
+        f"这条能不能继续往下做，主要看画面里有没有{evidence_text}。如果有，"
+        f"最后就不只是一个观点，而是可以收成「{asset}」。"
     )
 
 
-def outline_segments(topic: dict[str, Any]) -> list[str]:
+def outline_segments(topic: dict[str, Any], validation: ValidationResult | None = None) -> list[str]:
     core = trim_end_punctuation(topic.get("core_thesis"), "这条实验要验证的核心判断")
     pain = trim_end_punctuation(topic.get("old_workflow") or topic.get("pain_point"), "旧流程里的真实痛点")
     judgment = trim_end_punctuation(topic.get("unique_judgment"), "我的判断和边界")
     ai_action = trim_end_punctuation(topic.get("ai_intervention"), "AI介入动作")
     asset = trim_end_punctuation(topic.get("takeaway_asset"), "可沉淀资产")
+    evidence_text = evidence_phrase(topic, validation) if validation else "关键截图、录屏或前后对比"
     return [
-        f"00:00-00:15｜开场钩子：先抛出这条视频要验证的冲突或结果：「{core}」。不要先铺背景，先让观众知道这不是资讯复述。",
-        f"00:15-00:45｜真实现场：交代旧流程为什么有问题：「{pain}」。这一段要让观众相信这是一个真实工作流问题，不是为了追热点硬讲。",
-        f"00:45-01:15｜观点定调：给出你的判断：「{judgment}」。这里负责建立边界，说明AI能帮哪一步，不能替人决定什么。",
-        f"01:15-02:45｜实验主线：围绕一个动作展开「{ai_action}」。结构按“输入是什么 -> AI处理什么 -> 人如何验收/修正”走，不扩成教程。",
-        "02:45-03:25｜证据与反例：展示能证明这条实验成立的截图、字段、样张、对比或失败样例；如果有缺口，就直接承认缺口。",
-        f"03:25-04:00｜资产收束：把这次实验收成「{asset}」，并自然引到06继续生成完整脚本、录屏清单和后期方案。",
+        f"00:00-00:15｜先给结果：这条我想验证「{core}」。画面直接闪最终表格、输出物或失败点，不从背景讲起。",
+        f"00:15-00:40｜把旧流程摆出来：「{pain}」。用一个真实任务说明哪里慢、哪里乱、哪里只能靠人盯。",
+        f"00:40-01:10｜切回我的判断：「{judgment}」。这一段只讲取舍，不讲工具功能大全。",
+        f"01:10-02:40｜录屏跑实验：「{ai_action}」。按输入、AI处理、人工验收三步走；等待过程快进，关键字段放大。",
+        f"02:40-03:20｜放证据和不完美：重点看{evidence_text}。有失败样例就放失败样例，没有就明确标成待补。",
+        f"03:20-04:00｜收成资产：「{asset}」。结尾说清它下次怎么复用，不做空口号。",
     ]
 
 
@@ -433,9 +462,9 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
     lines = [
         f"- 推荐模板：{template}",
         f"- 模板理由：{template_reason}",
-        "- 06的任务：把05大纲扩成完整脚本Brief、分段执行脚本、提词器、录屏清单、后期交接、发布包和QA。",
-        f"- 必须展开的实操主线：{short_text(topic.get('ai_intervention'))}",
-        f"- 必须用到的证据：{md_list(evidence, '待补：至少明确一个可展示证据')}",
+        "- 06要继续生成：完整脚本Brief、分段执行脚本、提词器、录屏清单、后期交接、发布包和QA。",
+        f"- 实操主线：{short_text(topic.get('ai_intervention'))}",
+        f"- 关键证据：{md_list(evidence, '待补：至少明确一个可展示证据')}",
         f"- 进入06前优先补：{md_list(p0_todos, '无P0素材缺口，直接人工确认大纲')}",
         f"- 事实核验边界：{md_list(fact_checks, '无额外事实核验点')}",
         f"- 私有表达边界：{md_list(boundaries, '无额外私有边界提醒')}",
@@ -584,7 +613,7 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
     validation = validate_topic(topic)
     summary = outline_summary(topic, template, validation)
     viewpoint = core_viewpoint(topic, validation)
-    outline = outline_segments(topic)
+    outline = outline_segments(topic, validation)
     generation_input = generation_input_for_06(topic, template, template_reason, validation, private_cases)
     folder = output_root / run_date / f"{slugify(str(topic.get('topic_id', 'topic')))}_{slugify(topic.get('topic_title', 'topic'))}"
     folder.mkdir(parents=True, exist_ok=True)
