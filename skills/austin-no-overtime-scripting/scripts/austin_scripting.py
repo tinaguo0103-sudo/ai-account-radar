@@ -414,6 +414,121 @@ def clip_text(value: Any, limit: int = 56, fallback: str = "待补") -> str:
     return text[: max(1, limit - 1)].rstrip("，,；;、 ") + "…"
 
 
+def topic_blob(topic: dict[str, Any]) -> str:
+    keys = ["topic_title", "content_pillar", "core_thesis", "pain_point", "old_workflow", "ai_intervention", "takeaway_asset"]
+    return " ".join(str(topic.get(key, "")) for key in keys).lower()
+
+
+def workflow_object(topic: dict[str, Any]) -> str:
+    text = topic_blob(topic)
+    if any(term in text for term in ["汽车", "智能驾驶", "辅助驾驶", "l3", "l4", "国标"]):
+        return "汽车AI内容"
+    if any(term in text for term in ["候选池", "excel", "批量补字段", "飞书候选"]):
+        return "候选池"
+    if any(term in text for term in ["选题", "brief", "主编", "门控"]):
+        return "选题台"
+    if any(term in text for term in ["ppt", "pptx", "导出", "样式", "视觉", "baoyu", "设计"]):
+        return "视觉交付"
+    if any(term in text for term in ["封面"]):
+        return "封面流程"
+    if any(term in text for term in ["agent", "claude", "codex", "自动执行", "任务拆解"]):
+        return "Agent任务"
+    return "AI流程"
+
+
+def hook_problem(topic: dict[str, Any]) -> str:
+    obj = workflow_object(topic)
+    mapping = {
+        "汽车AI内容": "汽车内容最怕的不是慢，是一句卖点把边界说过头",
+        "候选池": "表格AI最怕的不是填得少，是填满以后没人知道对不对",
+        "选题台": "选题台最怕的不是没灵感，是每条看起来都能做",
+        "视觉交付": "AI视觉最怕的不是不好看，是导出那一刻全变形",
+        "封面流程": "封面自动化最怕的不是不出图，是每张都像另一个账号",
+        "Agent任务": "AI任务最怕的不是没跑完，是跑完以后没人知道错在哪",
+        "AI流程": "AI流程最怕的不是慢，是快到没人知道哪里该验收",
+    }
+    return mapping.get(obj, mapping["AI流程"])
+
+
+def key_judgment_extras(topic: dict[str, Any]) -> list[str]:
+    obj = workflow_object(topic)
+    asset = clip_text(topic.get("takeaway_asset"), 34, "验收物")
+    mapping = {
+        "汽车AI内容": [
+            "汽车内容里的AI提效，必须先过功能边界和证据线。",
+            "热点只能给入口，能不能上线要看风险复核。",
+        ],
+        "候选池": [
+            "候选池自动化的价值，不是填满表格，是把判断成本降下来。",
+            "AI补字段能不能用，关键看人改错的地方能不能回写成规则。",
+        ],
+        "选题台": [
+            "选题台不是灵感池，是把能做和不该做分开的判断系统。",
+            "AI可以帮我初筛，但升级或放弃必须留下理由。",
+        ],
+        "视觉交付": [
+            "视觉AI能不能进交付，不看截图好不好看，看导出后还剩多少人工修正。",
+            "最后一公里不稳定，前面的生成效率都不算数。",
+        ],
+        "封面流程": [
+            "封面自动化不是让AI随机出图，是把账号视觉和标题规则锁住。",
+            "如果每张封面都要重新解释风格，自动化就没有成立。",
+        ],
+        "Agent任务": [
+            f"Agent任务能不能进流程，不看跑没跑完，看有没有「{asset}」能验收。",
+            "真正的AI改造，是把人的判断、异常和回滚留在现场。",
+        ],
+        "AI流程": [
+            f"{obj}能不能进流程，不看生成多快，看有没有「{asset}」能复用。",
+            "AI改造的价值，是把判断留在流程里，而不是把步骤藏进黑箱。",
+        ],
+    }
+    return mapping.get(obj, mapping["AI流程"])
+
+
+def golden_line_pool(topic: dict[str, Any]) -> list[str]:
+    obj = workflow_object(topic)
+    asset = clip_text(topic.get("takeaway_asset"), 28, "验收物")
+    mapping = {
+        "汽车AI内容": [
+            "汽车内容先守边界，再谈效率。",
+            "卖点可以被AI放大，责任不能。",
+            "能过风险线的内容，才配上线。",
+        ],
+        "候选池": [
+            "填满表格不叫自动化，改少判断才叫自动化。",
+            "能回写规则的错误，才值得让AI继续犯。",
+            "候选池不是越满越好，是越清楚越好。",
+        ],
+        "选题台": [
+            "选题不是灵感池，是判断系统。",
+            "能说清为什么不做，才算真的会选题。",
+            "好的选题台，先挡住泛资讯。",
+        ],
+        "视觉交付": [
+            "好看的截图不等于可交付文件。",
+            "导不出来的设计，不算交付。",
+            "AI视觉真正的终点，是验收通过。",
+        ],
+        "封面流程": [
+            "封面不是出图，是账号识别。",
+            "随机好看，不如稳定像我。",
+            "能复用的风格，才是封面系统。",
+        ],
+        "Agent任务": [
+            f"没有「{asset}」的Agent，只是跑得更快的黑箱。",
+            "能追责的AI，才配进流程。",
+            "自动化不是省人，是把人的判断固定下来。",
+        ],
+        "AI流程": [
+            f"没有「{asset}」的AI，只是一次演示。",
+            "能复用的才叫流程，不能复用的只是表演。",
+            "AI越快，验收越要慢半拍。",
+        ],
+    }
+    return mapping.get(obj, mapping["AI流程"])
+
+
 def readable_evidence_item(value: str) -> str:
     text = trim_end_punctuation(value, "")
     replacements = [
@@ -455,31 +570,23 @@ def old_new_contrast(topic: dict[str, Any]) -> str:
 
 
 def opening_hook_options(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
+    obj = workflow_object(topic)
     asset = clip_text(topic.get("takeaway_asset"), 30, "一张可复用的验收表")
     evidence_text = clip_text(evidence_phrase(topic, validation), 38, "输入、输出和人工验收画面")
     return unique_items([
-        f"今天只验一件事：「{asset}」能不能跑出来。",
-        "我不先看AI结果，我看它有没有留下过程证据。",
-        f"拿不出{evidence_text}，先不拍。",
+        f"{hook_problem(topic)}。",
+        f"我今天不看{obj}做得多快，只看它能不能留下「{asset}」。",
+        f"拿不出{evidence_text}，这条就不是实战。",
     ])
 
 
 def key_judgment_lines(topic: dict[str, Any]) -> list[str]:
     judgment = clip_text(topic.get("unique_judgment"), 54, "AI不能只看生成结果，必须回到业务验收")
-    return unique_items([
-        judgment,
-        "AI任务不是交给模型，是交给验收表。",
-        "结果要能看见，过程也要能追。",
-    ])
+    return unique_items([judgment] + key_judgment_extras(topic))
 
 
 def golden_lines(topic: dict[str, Any]) -> list[str]:
-    asset = clip_text(topic.get("takeaway_asset"), 28, "验收表")
-    return unique_items([
-        "先留证据，再谈效率。",
-        "跑完只是开始，验收才算交付。",
-        f"不能复用成「{asset}」，就只是一次演示。",
-    ])
+    return unique_items(golden_line_pool(topic))
 
 
 def shootability_snapshot(topic: dict[str, Any], validation: ValidationResult) -> str:
@@ -506,11 +613,12 @@ def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     judgment = clip_text(topic.get("unique_judgment"), 72, "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
     asset = clip_text(topic.get("takeaway_asset"), 42, "一个可复用的流程、清单或模板")
     evidence_text = clip_text(evidence_phrase(topic, validation), 60, "输入、输出和人工验收画面")
+    hook = opening_hook_options(topic, validation)[0]
     return (
         f"我的判断：{judgment}。\n\n"
         f"论据：旧流程卡在「{pain}」，过程和异常很容易丢。\n\n"
         f"这条从「{title}」切入，只测「{core}」。录屏只看「{ai_action}」。\n\n"
-        f"钩子：开头先给{evidence_text}。能拿出证据，就进入06；拿不出，先补素材。最后收成「{asset}」。"
+        f"钩子：{hook}。开头直接给{evidence_text}。能拿出证据，就进入06；拿不出，先补素材。最后收成「{asset}」。"
     )
 
 
