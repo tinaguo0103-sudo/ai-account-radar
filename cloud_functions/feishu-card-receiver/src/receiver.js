@@ -71,6 +71,12 @@ async function submissionFingerprint(actionName, runId, candidateIds, formValue)
   return sha256(JSON.stringify(payload));
 }
 
+async function messageUuid(prefix, parts) {
+  const seed = parts.map((part) => normalize(part)).filter(Boolean).join("|");
+  const hash = (await sha256(seed || prefix)).slice(0, 16);
+  return `${prefix}-${hash}`.slice(0, 50);
+}
+
 function apiBaseUrl(env) {
   const host = String(env.FEISHU_API_BASE_URL || DEFAULT_API_HOST).replace(/\/+$/, "");
   return host.endsWith("/open-apis") ? host : `${host}/open-apis`;
@@ -275,7 +281,11 @@ async function sendInteractiveCard(env, token, card, uuidBase, options) {
           receive_id: target.receive_id,
           msg_type: "interactive",
           content: JSON.stringify(card),
-          uuid: `${uuidBase}-${target.receive_id_type}-${target.receive_id}`.slice(0, 120),
+          uuid: await messageUuid("production-direction-card", [
+            uuidBase,
+            target.receive_id_type,
+            target.receive_id,
+          ]),
         },
       },
     );

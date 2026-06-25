@@ -70,6 +70,12 @@ function submissionFingerprint(actionName, runId, candidateIds, formValue) {
   return sha256(JSON.stringify(payload));
 }
 
+function messageUuid(prefix, parts) {
+  const seed = parts.map((part) => normalize(part)).filter(Boolean).join("|");
+  const hash = sha256(seed || prefix).slice(0, 16);
+  return `${prefix}-${hash}`.slice(0, 50);
+}
+
 function envValue(key) {
   return process.env[key] || "";
 }
@@ -274,7 +280,11 @@ async function sendInteractiveCard(token, card, uuidBase) {
           receive_id: target.receive_id,
           msg_type: "interactive",
           content: JSON.stringify(card),
-          uuid: `${uuidBase}-${target.receive_id_type}-${target.receive_id}`.slice(0, 120),
+          uuid: messageUuid("production-direction-card", [
+            uuidBase,
+            target.receive_id_type,
+            target.receive_id,
+          ]),
         },
       },
     );

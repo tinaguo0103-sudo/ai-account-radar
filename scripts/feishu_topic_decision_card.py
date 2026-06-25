@@ -345,6 +345,8 @@ def write_card_preview(card: dict[str, Any], run_id: str) -> Path:
 def send_card(token: str, card: dict[str, Any], run_id: str, receive_id: str, receive_id_type: str) -> dict[str, Any]:
     if not receive_id:
         raise SystemExit("Missing receive_id. Set FEISHU_CARD_RECEIVE_ID or pass --receive-id.")
+    seed = "|".join([run_id or datetime.now().strftime("%Y%m%d%H%M"), receive_id_type, receive_id])
+    uuid = f"topic-decision-card-{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:16]}"
     payload = feishu.request_json(
         "POST",
         f"/im/v1/messages?receive_id_type={receive_id_type}",
@@ -353,7 +355,7 @@ def send_card(token: str, card: dict[str, Any], run_id: str, receive_id: str, re
             "receive_id": receive_id,
             "msg_type": "interactive",
             "content": json.dumps(card, ensure_ascii=False),
-            "uuid": f"topic-decision-card-{run_id or datetime.now().strftime('%Y%m%d%H%M')}",
+            "uuid": uuid,
         },
     )
     return payload
