@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Health-check the Feishu topic-card cloud receiver without writing records."""
+"""Health-check the Tencent SCF Feishu topic-card receiver without writing records."""
 from __future__ import annotations
 
 import argparse
@@ -17,12 +17,12 @@ from local_env import load_local_env
 
 
 DEFAULT_TABLE_KEY = "topic_decision"
-RECEIVER_URL_ENV_KEYS = ("FEISHU_CARD_RECEIVER_URL", "FEISHU_CARD_CALLBACK_URL")
+RECEIVER_URL_ENV_KEYS = ("FEISHU_TENCENT_SCF_URL",)
 
 
 def parse_args() -> argparse.Namespace:
-    parser = argparse.ArgumentParser(description="Check Feishu card receiver URL and 04 table read access.")
-    parser.add_argument("--url", default="", help="Cloud receiver URL. Defaults to FEISHU_CARD_RECEIVER_URL.")
+    parser = argparse.ArgumentParser(description="Check Tencent SCF receiver URL and 04 table read access.")
+    parser.add_argument("--url", default="", help="Tencent SCF Function URL. Defaults to FEISHU_TENCENT_SCF_URL.")
     parser.add_argument("--table-key", default=DEFAULT_TABLE_KEY, choices=sorted(TABLES), help="Table key to read.")
     parser.add_argument("--skip-receiver", action="store_true", help="Skip receiver challenge check.")
     parser.add_argument("--skip-feishu-read", action="store_true", help="Skip Feishu table read check.")
@@ -115,7 +115,7 @@ def main() -> int:
         if not receiver_url:
             checks["receiver_challenge"] = {
                 "ok": False,
-                "error": "Set FEISHU_CARD_RECEIVER_URL or pass --url.",
+                "error": "Set FEISHU_TENCENT_SCF_URL or pass --url.",
             }
         else:
             checks["receiver_challenge"] = run_check(check_receiver, receiver_url)

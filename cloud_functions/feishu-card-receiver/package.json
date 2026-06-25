@@ -3,7 +3,7 @@
   "version": "0.1.0",
   "private": true,
   "type": "module",
-  "description": "Serverless receiver for Feishu topic decision interactive cards.",
+  "description": "Tencent SCF receiver for Feishu topic decision interactive cards.",
   "scripts": {
     "start": "node scripts/local-server.mjs",
     "test": "node --test",

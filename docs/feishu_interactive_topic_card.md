@@ -26,7 +26,7 @@
 - `serve-long-connection`：启动飞书官方 SDK 长连接，接收 `card.action.trigger` 并复用 `apply` 的回写逻辑。只作为开发调试兜底，不作为日常生产路径。
 - `serve-callback`：最小 HTTP 回调接收服务，作为本地 HTTP Webhook 调试入口。
 
-日常生产路径是：本机或自动化只负责 `send` 第一张选题卡。用户点击后的 `card.action.trigger` 由云函数 receiver 接收并回写 `04`；如果有选中记录，receiver 会继续发送第二张制作方向卡。第二张卡提交后，receiver 把每条补充写回 `04 / 我的制作补充`。云函数代码在 `cloud_functions/feishu-card-receiver/`。
+日常生产路径是：本机或自动化只负责 `send` 第一张选题卡。用户点击后的 `card.action.trigger` 由腾讯云 SCF receiver 接收并回写 `04`；如果有选中记录，receiver 会继续发送第二张制作方向卡。第二张卡提交后，receiver 把每条补充写回 `04 / 我的制作补充`。腾讯云 SCF 代码在 `cloud_functions/feishu-card-receiver/`。
 
 ## 卡片内的用户操作
 
@@ -56,7 +56,7 @@
 
 规则：用户选中的记录写为 `进入Brief`；同一张卡片中未选中的记录写为 `不做`。这样用户只需要做“选中值得推进的内容”这一个动作，不需要分别判断暂存和不做。
 
-如果第一张卡片选中了至少一条记录，云函数会继续发第二张卡片。第二张卡片只做一件事：给每个已选题补一句制作方向，例如“用 AI账号信息雷达案例讲，重点讲选题判断，不要讲成工具教程”。提交后写回：
+如果第一张卡片选中了至少一条记录，腾讯云 SCF receiver 会继续发第二张卡片。第二张卡片只做一件事：给每个已选题补一句制作方向，例如“用 AI账号信息雷达案例讲，重点讲选题判断，不要讲成工具教程”。提交后写回：
 
 - `我的制作补充`
 
@@ -128,30 +128,30 @@ python3 scripts/feishu_topic_decision_card.py send --limit 7
 .venv/bin/python scripts/run_topic_decision_card_session.py --limit 7
 ```
 
-它只发送卡片，不启动本机 receiver，也不等待点击。用户在飞书里提交选择后，云函数 receiver 会自动回写 `04`。
+它只发送卡片，不启动本机 receiver，也不等待点击。用户在飞书里提交选择后，腾讯云 SCF receiver 会自动回写 `04`。
 
 ## 接收卡片提交
 
-推荐使用云函数 receiver，而不是本机长连接。当前生产路径需要飞书开放平台把 `card.action.trigger` HTTP 回调地址配置到云函数 URL。
+推荐使用腾讯云 SCF receiver，而不是本机长连接。当前生产路径需要飞书开放平台把 `card.action.trigger` HTTP 回调地址配置到腾讯云 SCF 函数 URL。
 
-用户在第一张卡片里点击“提交选择”或“本批都不选”后，云函数 receiver 会把这些字段写回 `04 分析与选题`：
+用户在第一张卡片里点击“提交选择”或“本批都不选”后，腾讯云 SCF receiver 会把这些字段写回 `04 分析与选题`：
 
 - `状态`
 - `选择原因标签`
 - `学习状态 = 待学习`
 - `人工一句话判断`
 
-用户在第二张制作方向卡里点击“保存制作方向”后，云函数 receiver 会写回：
+用户在第二张制作方向卡里点击“保存制作方向”后，腾讯云 SCF receiver 会写回：
 
 - `我的制作补充`
 
-健康检查不写表，只验证两件事：云函数能响应飞书 URL 校验，当前本地飞书凭证能读到 `04`。
+健康检查不写表，只验证两件事：腾讯云 SCF 函数能响应飞书 URL 校验，当前本地飞书凭证能读到 `04`。
 
 ```bash
-.venv/bin/python scripts/check_feishu_card_cloud_receiver.py --url <云函数URL>
+.venv/bin/python scripts/check_feishu_card_cloud_receiver.py --url <腾讯云SCF函数URL>
 ```
 
-如果把云函数 URL 写入本地 `.env.local` 的 `FEISHU_CARD_RECEIVER_URL`，可直接运行：
+如果把腾讯云 SCF 函数 URL 写入本地 `.env.local` 的 `FEISHU_TENCENT_SCF_URL`，可直接运行：
 
 ```bash
 .venv/bin/python scripts/check_feishu_card_cloud_receiver.py
@@ -169,10 +169,10 @@ python3 scripts/feishu_topic_decision_card.py send --limit 7
 
 - 开启机器人能力。
 - 开通 `获取与发送单聊、群组消息 / im:message`。
-- 在 `事件与回调 / 回调配置` 中把订阅方式设为 HTTP 回调，并填写云函数 HTTPS URL。
+- 在 `事件与回调 / 回调配置` 中把订阅方式设为 HTTP 回调，并填写腾讯云 SCF 函数 URL。
 - 订阅新版卡片回调 `card.action.trigger`，不需要订阅旧版 `card.action.trigger_v1`。
-- 不启用事件加密，除非云函数已补 Encrypt Key 解密逻辑。
+- 不启用事件加密，除非腾讯云 SCF receiver 已补 Encrypt Key 解密逻辑。
 - 创建并发布应用版本。
 - 让接收用户在机器人可用范围内，或把机器人加入目标群。
 
-这部分不是 `04/05` 表格结构问题，而是飞书应用机器人能力问题。云函数 receiver 配好后，飞书卡片才能把一次勾选的多条结果回写到 `04`。
+这部分不是 `04/05` 表格结构问题，而是飞书应用机器人能力问题。腾讯云 SCF receiver 配好后，飞书卡片才能把一次勾选的多条结果回写到 `04`。

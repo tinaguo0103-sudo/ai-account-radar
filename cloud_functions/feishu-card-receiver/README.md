@@ -1,4 +1,4 @@
-# Feishu Card Receiver 云函数
+# Feishu Card Receiver 腾讯云 SCF
 
 这个目录是 `04 分析与选题` 交互式卡片的云端 receiver。
 
@@ -48,7 +48,7 @@ DRY_RUN=true
 说明：
 
 - 如果不填 `FEISHU_TOPIC_TABLE_ID`，receiver 会自动在 Base 里找 `04 分析与选题`，兼容旧名 `03 分析与选题`。
-- 如果飞书开放平台配置了 Verification Token，云函数也要填同一个 `FEISHU_VERIFICATION_TOKEN`；如果平台未配置，则可以不填。
+- 如果飞书开放平台配置了 Verification Token，腾讯云 SCF 环境变量也要填同一个 `FEISHU_VERIFICATION_TOKEN`；如果平台未配置，则可以不填。
 - `FEISHU_CARD_RECEIVE_TARGETS` 是第一张选题卡和第二张制作方向卡的默认接收目标。
 - `FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS` 可选；如果设置，第二张卡只发到这里。
 - `SEND_PRODUCTION_DIRECTION_CARD=false` 可临时关闭第二张卡。
@@ -83,15 +83,15 @@ curl -sS http://127.0.0.1:8787 \
 {"challenge":"hello"}
 ```
 
-## 部署方式
+## 生产部署边界
 
-这个包的核心文件是 `src/receiver.js`，导出了标准的 `fetch(request, env)`，适合部署到 Cloudflare Workers、Vercel Edge Function 或其他支持 Web Fetch API 的云函数平台。
+生产只走腾讯云 SCF「事件函数 + 函数 URL」。仓库不再保留其他云平台入口，避免部署路径分叉。
 
-如果选择腾讯云函数、阿里云函数、火山引擎函数等 Node HTTP 运行时，需要做一层薄适配：把平台的 request/body 转成标准 `Request`，再调用 `handleRequest(request, env)`。
+这个包的核心文件是 `src/receiver.js`，腾讯云专用入口是 `tencent-scf/index.js`。本地 `npm start` 只用于开发调试，不作为生产 receiver。
 
 ## 腾讯云 SCF 部署
 
-当前推荐生产路径是腾讯云 SCF「事件函数 + 函数 URL」。不要新建 API 网关触发器。
+当前生产路径是腾讯云 SCF「事件函数 + 函数 URL」。不要新建 API 网关触发器。
 
 本目录已提供腾讯云专用入口：
 
@@ -129,7 +129,7 @@ node -e "const h=require('/tmp/tencent-scf-index.js'); h.main_handler({httpMetho
 - 提交方法：本地上传 zip 包。
 - 执行方法：`index.main_handler`。
 - 公网访问：创建后启用「函数 URL」。
-- 鉴权：飞书开放平台 URL 校验阶段需要能直接访问，先使用免鉴权 URL；如需回调 token 校验，在飞书开放平台和云函数环境变量里同时配置 `FEISHU_VERIFICATION_TOKEN`。
+- 鉴权：飞书开放平台 URL 校验阶段需要能直接访问，先使用免鉴权 URL；如需回调 token 校验，在飞书开放平台和腾讯云 SCF 环境变量里同时配置 `FEISHU_VERIFICATION_TOKEN`。
 
 环境变量同上，生产至少填写：
 
@@ -147,93 +147,28 @@ FEISHU_VERIFICATION_TOKEN=xxx
 
 说明：`dist/` 是本地部署包输出目录，已被 `.gitignore` 忽略。
 
-## Vercel 部署
-
-当前目录已经包含 Vercel 入口：
-
-```text
-api/feishu-card-receiver.js
-vercel.json
-```
-
-部署根目录请选择：
-
-```text
-ai_account_radar/cloud_functions/feishu-card-receiver
-```
-
-推荐用 Vercel CLI：
-
-```bash
-cd ai_account_radar/cloud_functions/feishu-card-receiver
-npx vercel login
-npx vercel
-```
-
-首次部署时按提示选择：
-
-- Set up and deploy? `Y`
-- Which scope? 选择你的账号或团队
-- Link to existing project? 通常选 `N`
-- Project name? 可用 `feishu-card-receiver`
-- Directory? 直接回车，使用当前目录
-
-部署成功后，在 Vercel 项目里添加环境变量：
-
-```bash
-npx vercel env add FEISHU_APP_ID production
-npx vercel env add FEISHU_APP_SECRET production
-npx vercel env add FEISHU_BASE_APP_TOKEN production
-```
-
-可选：
-
-```bash
-npx vercel env add FEISHU_TOPIC_TABLE_ID production
-npx vercel env add FEISHU_API_BASE_URL production
-npx vercel env add FEISHU_VERIFICATION_TOKEN production
-```
-
-环境变量加完后重新部署生产环境：
-
-```bash
-npx vercel --prod
-```
-
-最终回调地址使用：
-
-```text
-https://你的项目域名.vercel.app/api/feishu-card-receiver
-```
-
-如果使用根路径也可以，因为 `vercel.json` 已经把 `/` rewrite 到 API：
-
-```text
-https://你的项目域名.vercel.app/
-```
-
 ## 飞书开放平台配置
 
 1. 打开当前应用的飞书开放平台后台。
 2. 进入「事件与回调」。
 3. 事件订阅方式选择 HTTP 回调。
-4. 回调地址填写云函数 HTTPS URL。
+4. 回调地址填写腾讯云 SCF 函数 URL。
 5. 订阅新版卡片事件 `card.action.trigger`。
 6. 不要启用事件加密，除非已经补了 Encrypt Key 解密逻辑。
 7. 发布应用版本。
 
 ## 日常健康检查
 
-本地健康检查不会写表，只验证云函数 URL 校验和飞书 `04` 表读取权限：
+本地健康检查不会写表，只验证腾讯云 SCF 函数 URL 校验和飞书 `04` 表读取权限：
 
 ```bash
-.venv/bin/python scripts/check_feishu_card_cloud_receiver.py --url <云函数URL>
+.venv/bin/python scripts/check_feishu_card_cloud_receiver.py --url <腾讯云SCF函数URL>
 ```
 
 如果在本地 `.env.local` 写入：
 
 ```bash
-FEISHU_CARD_RECEIVER_URL=https://你的云函数域名
+FEISHU_TENCENT_SCF_URL=https://你的腾讯云SCF函数URL
 ```
 
 可直接运行：
@@ -245,7 +180,7 @@ FEISHU_CARD_RECEIVER_URL=https://你的云函数域名
 ## 和本机 receiver 的关系
 
 - 本机 `serve-long-connection --write` 只作为开发调试兜底。
-- 生产点击回写走云函数。
+- 生产点击回写走腾讯云 SCF。
 - 每日定时发卡片可以继续由本地脚本、Codex 自动化、服务器 cron 或云平台定时任务触发。
 
 ## 后续可增强

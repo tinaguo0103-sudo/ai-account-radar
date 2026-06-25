@@ -119,9 +119,9 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `scripts/url_content_resolver.py`：正式 URL 内容采样 adapter，把公众号文章、抖音单条视频、RSS/Atom、普通网页解析成标准 ContentItem；默认只输出本地文件，显式 `--write-feishu` 才写入 `03 内容收件箱`。
 - `scripts/push_today10_to_feishu.py`：把今日候选池写入飞书 `04 分析与选题`，不写被淘汰的调试候选。
 - `scripts/setup_topic_selection_workspace.py`：把 `04 分析与选题` 配成飞书原生挑选台，创建/修正卡片视图、看板视图、学习样本视图，以及 `选择原因标签 / 人工一句话判断 / 学习状态` 反馈字段。
-- `scripts/feishu_topic_decision_card.py`：从 `04` 最新批次生成“一张飞书交互式选题速选卡”，卡片里只需要勾选要 `进入Brief` 的候选、选择推进原因并可补一句手工原因；提交后由飞书开放平台配置的云函数 receiver 回写，选中项进入 Brief，未选项标记为不做。`serve-long-connection --write` 只作为开发兜底，不是日常路径。
-- `scripts/run_topic_decision_card_session.py`：一键发送选题速选卡，发送后即可结束；用户点击后的回写由云函数 receiver 承接，适合作为日常挑选入口。
-- `scripts/check_feishu_card_cloud_receiver.py`：不写表的健康检查脚本，用 `challenge` 校验云函数 URL，并读一次 `04 分析与选题` 确认飞书凭证和表权限正常。
+- `scripts/feishu_topic_decision_card.py`：从 `04` 最新批次生成“一张飞书交互式选题速选卡”，卡片里只需要勾选要 `进入Brief` 的候选、选择推进原因并可补一句手工原因；提交后由飞书开放平台配置的腾讯云 SCF receiver 回写，选中项进入 Brief，未选项标记为不做。`serve-long-connection --write` 只作为开发兜底，不是日常路径。
+- `scripts/run_topic_decision_card_session.py`：一键发送选题速选卡，发送后即可结束；用户点击后的回写由腾讯云 SCF receiver 承接，适合作为日常挑选入口。
+- `scripts/check_feishu_card_cloud_receiver.py`：不写表的健康检查脚本，用 `challenge` 校验腾讯云 SCF 函数 URL，并读一次 `04 分析与选题` 确认飞书凭证和表权限正常。
 - `scripts/learn_from_topic_selection.py`：读取 `04` 中用户已经改过的状态和原因标签，生成待确认的选题偏好学习摘要；默认只学习最近一次正式运行批次。建议日常使用 `--mark-pending-confirm`，先把样本标为 `待确认学习`。只有用户确认后运行 `--approve-latest`，`editorial_skill_runner.py` 才会读取已确认摘要并带入下一轮主编判断。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并创建 `06 内容任务主表`。
 - `scripts/content_ops_pipeline.py`：从 `04 分析与选题` 读取工作流实验命题卡，调用 Austin不加班脚本Skill v0.2 生成单一 `script_outline_brief.md` 脚本大纲确认稿，并只写入 `05 Brief与制作` 的核心观点、视频大纲和给06的生成输入；默认 dry-run 不落本地文件，v0.2 不自动创建 `06 内容任务主表`。
@@ -360,7 +360,7 @@ python3 scripts/editorial_skill_runner.py \
 
 在 Codex 对话里手动调用这个脚本时，偶尔会看到权限审查，不是因为 Skill 不能被项目使用，而是因为脚本会启动本机 `codex exec` 子进程并写入 `~/.codex` 的运行状态。命令前缀已尽量收敛到 `python3 scripts/editorial_skill_runner.py`；日常在本机终端运行项目脚本时，不会把这个审批流程暴露成业务步骤。
 
-`04 分析与选题` 已收敛为飞书原生选题挑选台：主字段 `选题标题` 直接承担短选题命题职责，不再额外保留一列 `选题命题`。飞书只保留你实际判断要不要推进所需的短决策卡字段：状态、建议级别、AI味风险、对应方向、来源、Brief、推荐/不推荐理由、工作流实验、痛点、AI介入、验证方式、可沉淀资产、思考点和证据。`卡片速读` 是专门给画册卡片看的自动汇总字段，会把 Brief、实验、痛点、验证、证据缺口和操作提示压成一段正文，让你不必逐个打开记录。交互式选题卡提交后，如果你勾选了题，云函数会再发一张“制作方向补充卡”，把你逐条写的案例、角度和不要讲的内容回填到 `我的制作补充`。标题门控、分数、可信度、内容指纹、版本路径等后台字段保留在本地 CSV/MD 或 05，不再塞进 04。写入前会先经过 `content_sampler.py` 的初筛和 `editorial_skill_runner.py` 的真实 Skill 主编判断，让你能区分“今日最值得做”“可选候选”“暂存观察”和“不建议制作”。
+`04 分析与选题` 已收敛为飞书原生选题挑选台：主字段 `选题标题` 直接承担短选题命题职责，不再额外保留一列 `选题命题`。飞书只保留你实际判断要不要推进所需的短决策卡字段：状态、建议级别、AI味风险、对应方向、来源、Brief、推荐/不推荐理由、工作流实验、痛点、AI介入、验证方式、可沉淀资产、思考点和证据。`卡片速读` 是专门给画册卡片看的自动汇总字段，会把 Brief、实验、痛点、验证、证据缺口和操作提示压成一段正文，让你不必逐个打开记录。交互式选题卡提交后，如果你勾选了题，腾讯云 SCF receiver 会再发一张“制作方向补充卡”，把你逐条写的案例、角度和不要讲的内容回填到 `我的制作补充`。标题门控、分数、可信度、内容指纹、版本路径等后台字段保留在本地 CSV/MD 或 05，不再塞进 04。写入前会先经过 `content_sampler.py` 的初筛和 `editorial_skill_runner.py` 的真实 Skill 主编判断，让你能区分“今日最值得做”“可选候选”“暂存观察”和“不建议制作”。
 
 日常挑选不再要求你在长表格里逐格点开看。`04` 现在保留这些飞书原生视图：
 
@@ -545,7 +545,7 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 1. 打开 `00 主控台 / 今日工作台`。
 2. 先看 `04 / 今日挑选卡片`、`今日必须完成`、`明日预警`、`本周内容进度`。
 3. 再看 `待复盘内容`、`可复刻内容`、`来源异常/采集失败`。
-4. 快速挑选优先用交互式选题速选卡：运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，它只负责把卡片发到飞书；后续点击由云函数 receiver 自动回写。在飞书卡片里只勾选值得 `进入Brief` 的候选，补原因标签或一句手工原因后提交。未选中的候选会标记为 `不做`。飞书 `04 / 今日挑选卡片` 保留为兜底编辑入口。
+4. 快速挑选优先用交互式选题速选卡：运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，它只负责把卡片发到飞书；后续点击由腾讯云 SCF receiver 自动回写。在飞书卡片里只勾选值得 `进入Brief` 的候选，补原因标签或一句手工原因后提交。未选中的候选会标记为 `不做`。飞书 `04 / 今日挑选卡片` 保留为兜底编辑入口。
 5. 运行 `python3 scripts/learn_from_topic_selection.py --mark-pending-confirm`，把本轮选择沉淀成本地待确认学习摘要；确认摘要正确后再运行 `python3 scripts/learn_from_topic_selection.py --approve-latest --mark-learned`。
 6. 如需把 `04` 的选题转成脚本大纲确认稿，运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，它会把状态为 `进入Brief` 或 `本周做` 且未生成脚本稿的选题承接到 `05 Brief与制作`，并生成本地 `script_outline_brief.md`。
 7. 进入 `05 Brief与制作`，只看脚本状态、推荐模板、核心观点、视频大纲、给06的生成输入和本地文档路径；确认大纲方向后，再由 `06` 生成完整脚本与执行方案。
@@ -577,7 +577,7 @@ python3 scripts/refresh_console_daily.py
 ## 每天怎么用
 
 1. 打开 `00 主控台 / 今日工作台`。
-2. 运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，把一张选题速选卡发到飞书里一次勾选；本机不用常驻监听。开发预览时可先用 `python3 scripts/feishu_topic_decision_card.py build --limit 7`，排查云函数时可运行 `.venv/bin/python scripts/check_feishu_card_cloud_receiver.py --url <云函数URL>`。
+2. 运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，把一张选题速选卡发到飞书里一次勾选；本机不用常驻监听。开发预览时可先用 `python3 scripts/feishu_topic_decision_card.py build --limit 7`，排查腾讯云 SCF receiver 时可运行 `.venv/bin/python scripts/check_feishu_card_cloud_receiver.py --url <腾讯云SCF函数URL>`。
 3. 如果不用交互卡片，再进入 `04 分析与选题 / 今日挑选卡片`，手动决定 `进入Brief`、`本周做`、`暂存`、`归档` 或 `不做`，并尽量补 `选择原因标签`。
 4. 需要沉淀选择偏好时，运行 `python3 scripts/learn_from_topic_selection.py`。
 5. 对已确认的选题运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，进入 `05 Brief与制作` 看核心观点、视频大纲、给06的生成输入和本地脚本大纲确认稿路径。
