@@ -1,0 +1,12 @@
+{
+  "name": "feishu-card-receiver",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Serverless receiver for Feishu topic decision interactive cards.",
+  "scripts": {
+    "start": "node scripts/local-server.mjs",
+    "test": "node --test",
+    "package:tencent-scf": "mkdir -p dist && zip -j dist/tencent-scf-feishu-card-receiver.zip tencent-scf/index.js"
+  }
+}
