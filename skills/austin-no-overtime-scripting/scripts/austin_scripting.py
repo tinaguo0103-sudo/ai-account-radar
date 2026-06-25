@@ -148,7 +148,7 @@ def matched_private_cases(topic: dict[str, Any], runtime: dict[str, Any], limit:
 
 
 def private_case_names(private_cases: list[dict[str, Any]]) -> str:
-    return md_list([str(case.get("name", "")) for case in private_cases], "未自动匹配私有案例锚点，需人工判断可借用场景。")
+    return md_list([str(case.get("name", "")) for case in private_cases], "未自动匹配可选案例参考，06再人工选择是否借用。")
 
 
 def private_style_summary(runtime: dict[str, Any]) -> str:
@@ -211,8 +211,8 @@ def classify_template(topic: dict[str, Any]) -> tuple[str, str]:
     if any(term.lower() in text for term in ["更新", "上新", "发布", "模型", "插件"]):
         return "热点业务转译型", "内容从外部热点进入，需要转译成业务场景和边界。"
     if any(term.lower() in text for term in ["skill", "自动化", "公开", "模板", "一键生成", "工作流"]):
-        return "Skill公开型", "内容重点是把高频流程沉淀成可复用资产。"
-    return "真实工作流改造型", "默认按真实业务场景、旧流程、新流程和资产沉淀来拍。"
+        return "Skill公开型", "内容重点是把高频流程讲清，并保留可复用方向。"
+    return "真实工作流改造型", "默认按真实业务场景、旧流程、新流程和证据判断来拍。"
 
 
 def validate_topic(topic: dict[str, Any]) -> ValidationResult:
@@ -253,11 +253,11 @@ def validate_topic(topic: dict[str, Any]) -> ValidationResult:
 def director_summary(topic: dict[str, Any], template: str, private_cases: list[dict[str, Any]] | None = None) -> str:
     summary = (
         f"这条视频按「{template}」处理：先把「{topic['topic_title']}」收成几句话的核心观点，"
-        f"再按时间线展开真实现场、观点定调、实验主线、证据/反例和资产收束，"
+        f"再按时间线展开真实现场、观点定调、实验主线和证据/反例，"
         f"最后把关键证据与边界交给06生成完整脚本包。"
     )
     if private_cases:
-        summary += f" 优先借用私有案例锚点：{private_case_names(private_cases)}。"
+        summary += f" 可选案例参考：{private_case_names(private_cases)}。"
     return summary
 
 
@@ -388,7 +388,7 @@ def next_action_items(topic: dict[str, Any], validation: ValidationResult) -> li
 def done_criteria(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
     criteria = [
         "大纲读完后，能马上判断这条视频的方向是否值得继续。",
-        "核心观点不是一句口号，而是有论点、论据、钩子和资产收束。",
+        "核心观点不是一句口号，而是有论点、论据、钩子和是否进入06的判断。",
         "视频大纲按时间线展开，不是散点重点清单。",
     ]
     if production_todo_items(validation):
@@ -436,31 +436,6 @@ def workflow_object(topic: dict[str, Any]) -> str:
     return "AI流程"
 
 
-def display_asset(topic: dict[str, Any]) -> str:
-    text = topic_blob(topic)
-    title = normalized_text(topic.get("topic_title"))
-    raw_asset = clip_text(topic.get("takeaway_asset"), 34, "可复用资产")
-    if "验收表" in title or "项目验收表" in text:
-        if "claude" in text:
-            return "AI项目验收表"
-        return "项目验收表"
-    if "风险复核" in title or "风险字段" in text:
-        return "汽车内容风险复核线"
-    if "导出" in text and ("ppt" in text or "pptx" in text):
-        return "PPTX导出验收表"
-    if "候选池" in text and "补字段" in text:
-        return "候选池字段验收表"
-    if "选题台" in text and ("门控" in text or "字段" in text):
-        return "选题台门控字段表"
-    if "非技术Agent任务拆解模板" in raw_asset:
-        if any(term in text for term in ["openrouter", "portkey", "llm网关", "多模型", "模型路由"]):
-            return "多模型调用核验表"
-        if any(term in text for term in ["输入输出", "失败回滚", "异常", "验收", "任务样本"]):
-            return "Agent任务验收记录"
-        return "待确认的Agent任务资产"
-    return raw_asset
-
-
 def hook_problem(topic: dict[str, Any]) -> str:
     obj = workflow_object(topic)
     mapping = {
@@ -477,7 +452,6 @@ def hook_problem(topic: dict[str, Any]) -> str:
 
 def key_judgment_extras(topic: dict[str, Any]) -> list[str]:
     obj = workflow_object(topic)
-    asset = display_asset(topic)
     mapping = {
         "汽车AI内容": [
             "汽车内容里的AI提效，必须先过功能边界和证据线。",
@@ -500,11 +474,11 @@ def key_judgment_extras(topic: dict[str, Any]) -> list[str]:
             "如果每张封面都要重新解释风格，自动化就没有成立。",
         ],
         "Agent任务": [
-            f"Agent任务能不能进流程，不看跑没跑完，看有没有「{asset}」能验收。",
+            "Agent任务能不能进流程，不看跑没跑完，看输入、输出、异常和人工判断能不能对上。",
             "真正的AI改造，是把人的判断、异常和回滚留在现场。",
         ],
         "AI流程": [
-            f"{obj}能不能进流程，不看生成多快，看有没有「{asset}」能复用。",
+            f"{obj}能不能进流程，不看生成多快，看关键证据能不能支撑判断。",
             "AI改造的价值，是把判断留在流程里，而不是把步骤藏进黑箱。",
         ],
     }
@@ -513,7 +487,6 @@ def key_judgment_extras(topic: dict[str, Any]) -> list[str]:
 
 def golden_line_pool(topic: dict[str, Any]) -> list[str]:
     obj = workflow_object(topic)
-    asset = display_asset(topic)
     mapping = {
         "汽车AI内容": [
             "汽车内容先守边界，再谈效率。",
@@ -541,12 +514,12 @@ def golden_line_pool(topic: dict[str, Any]) -> list[str]:
             "能复用的风格，才是封面系统。",
         ],
         "Agent任务": [
-            f"没有「{asset}」的Agent，只是跑得更快的黑箱。",
+            "没有验收记录的Agent，只是跑得更快的黑箱。",
             "能追责的AI，才配进流程。",
             "自动化不是省人，是把人的判断固定下来。",
         ],
         "AI流程": [
-            f"没有「{asset}」的AI，只是一次演示。",
+            "没有证据链的AI，只是一次演示。",
             "能复用的才叫流程，不能复用的只是表演。",
             "AI越快，验收越要慢半拍。",
         ],
@@ -583,9 +556,8 @@ def evidence_phrase(topic: dict[str, Any], validation: ValidationResult) -> str:
 
 
 def headline_result(topic: dict[str, Any], validation: ValidationResult) -> str:
-    asset = display_asset(topic)
     evidence_text = evidence_phrase(topic, validation)
-    return f"最后要让画面落到「{asset}」，中间至少看到{evidence_text}"
+    return f"先判断画面能不能支撑观点，至少看到{evidence_text}"
 
 
 def old_new_contrast(topic: dict[str, Any]) -> str:
@@ -596,11 +568,10 @@ def old_new_contrast(topic: dict[str, Any]) -> str:
 
 def opening_hook_options(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
     obj = workflow_object(topic)
-    asset = display_asset(topic)
     evidence_text = clip_text(evidence_phrase(topic, validation), 38, "输入、输出和人工验收画面")
     return unique_items([
         f"{hook_problem(topic)}。",
-        f"我今天不看{obj}做得多快，只看它能不能留下「{asset}」。",
+        f"我今天不看{obj}做得多快，只看证据能不能对上我的判断。",
         f"拿不出{evidence_text}，这条就不是实战。",
     ])
 
@@ -636,14 +607,13 @@ def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 72, "旧流程里有一个真实低效或高风险环节")
     ai_action = clip_text(topic.get("ai_intervention"), 72, "用AI介入一个可验证的小环节")
     judgment = clip_text(topic.get("unique_judgment"), 72, "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
-    asset = display_asset(topic)
     evidence_text = clip_text(evidence_phrase(topic, validation), 60, "输入、输出和人工验收画面")
     hook = opening_hook_options(topic, validation)[0]
     return (
         f"我的判断：{judgment}。\n\n"
         f"论据：旧流程卡在「{pain}」，过程和异常很容易丢。\n\n"
         f"这条从「{title}」切入，只测「{core}」。录屏只看「{ai_action}」。\n\n"
-        f"钩子：{hook}。开头直接给{evidence_text}。能拿出证据，就进入06；拿不出，先补素材。最后收成「{asset}」。"
+        f"钩子：{hook}。开头直接给{evidence_text}。05只判断这条能不能拍，具体案例和素材选择由06根据真实材料再定。"
     )
 
 
@@ -651,16 +621,15 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 58, "旧流程里的真实痛点")
     judgment = clip_text(topic.get("unique_judgment"), 58, "我的判断和边界")
     ai_action = clip_text(topic.get("ai_intervention"), 58, "AI介入动作")
-    asset = display_asset(topic)
     evidence_text = clip_text(evidence_phrase(topic, validation), 48, "关键截图、录屏或前后对比") if validation else "关键截图、录屏或前后对比"
-    hook = opening_hook_options(topic, validation)[0] if validation else f"今天先看能不能跑出「{asset}」。"
+    hook = opening_hook_options(topic, validation)[0] if validation else "今天先看证据能不能支撑判断。"
     return [
-        f"00:00-00:08｜开场给证据：展示「{asset}」或失败截图。说：{hook}",
+        f"00:00-00:08｜开场给证据：先闪现{evidence_text}或失败截图。说：{hook}",
         f"00:08-00:30｜旧流程：打开旧任务/旧表格。指出：{pain}。",
         f"00:30-00:50｜真人判断：{judgment}。",
         f"00:50-02:10｜录屏实验：{ai_action}。按输入 -> 执行 -> 验收拍。",
         f"02:10-03:00｜证据段：放{evidence_text}。失败样例也放。",
-        f"03:00-03:30｜收尾：回到「{asset}」。下一次先按它跑。",
+        "03:00-03:30｜收尾：回到真人判断。只决定是否进入06，不在05锁死案例或资产。",
     ]
 
 
@@ -685,11 +654,11 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
         f"- 开头：{opening_hook_options(topic, validation)[0]}",
         f"- 判断：{inline_items(key_judgment_lines(topic), item_limit=46)}",
         f"- 金句：{inline_items(golden_lines(topic), item_limit=36)}",
-        f"- 必拍：{inline_items(evidence, '待补：至少明确一个可展示证据', limit=4, item_limit=34)}",
-        f"- 先补：{inline_items(p0_todos, '无P0素材缺口，直接人工确认大纲', limit=2, item_limit=36)}",
+        f"- 证据建议：{inline_items(evidence, '待补：至少明确一个可展示证据', limit=4, item_limit=34)}",
+        f"- 待补素材：{inline_items(p0_todos, '无P0素材缺口，直接人工确认大纲', limit=2, item_limit=36)}",
         f"- 核验：{inline_items(fact_checks, '无额外事实核验点', limit=2, item_limit=44)}",
         f"- 边界：{inline_items(boundaries, '无额外私有边界提醒', limit=2, item_limit=38)}",
-        f"- 案例锚点：{private_case_names(private_cases)}",
+        f"- 可选案例参考：{private_case_names(private_cases)}（仅供06选择，不强制使用）",
         "- 06再生成：完整脚本、提词器、录屏清单、剪辑交接、发布包、QA。",
     ]
     return "\n".join(lines)
@@ -714,7 +683,7 @@ def render_private_case_section(private_cases: list[dict[str, Any]]) -> str:
     lines: list[str] = []
     for case in private_cases[:2]:
         evidence = next((str(item) for item in case.get("shootable_evidence", []) if str(item).strip()), "待人工选择")
-        lines.append(f"- {case.get('name', '私有案例')}：优先借用「{evidence}」")
+        lines.append(f"- {case.get('name', '私有案例')}：可参考「{evidence}」，是否使用由06结合真实素材决定")
     return "\n".join(lines)
 
 
@@ -775,12 +744,12 @@ def execution_rows(topic: dict[str, Any], template: str) -> list[dict[str, str]]
         {
             "#": "06",
             "时间段": "04:00-05:00",
-            "段落目的": "资产收束",
-            "口播轨": f"最后把这次实验沉淀成：{display_asset(topic)}",
-            "画面/录屏轨": "展示模板、清单、Skill、SOP或表格资产。",
-            "字幕重点": display_asset(topic),
+            "段落目的": "收尾判断",
+            "口播轨": "最后只判断这条是否值得进入06，案例和最终呈现形式等真实素材确定后再定。",
+            "画面/录屏轨": "展示最终证据、待补素材或人工判断结论。",
+            "字幕重点": "是否进入06",
             "后期提示": "真人收尾加成果页，不做硬广口吻。",
-            "人工QA点": "是否有明确可带走资产。",
+            "人工QA点": "是否没有强行指定案例或资产。",
         },
     ]
 

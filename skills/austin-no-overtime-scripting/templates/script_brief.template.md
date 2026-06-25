@@ -8,7 +8,7 @@
 - 旧流程：{{old_workflow}}
 - AI介入点：{{ai_intervention}}
 - 独有判断：{{unique_judgment}}
-- 可带走资产：{{takeaway_asset}}
+- 可选沉淀方向：{{takeaway_asset}}（仅供参考，不强制使用）
 - 需事实核验：{{fact_check_points}}
 
 ## 导演摘要
