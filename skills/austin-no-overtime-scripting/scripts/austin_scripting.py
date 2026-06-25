@@ -436,6 +436,31 @@ def workflow_object(topic: dict[str, Any]) -> str:
     return "AI流程"
 
 
+def display_asset(topic: dict[str, Any]) -> str:
+    text = topic_blob(topic)
+    title = normalized_text(topic.get("topic_title"))
+    raw_asset = clip_text(topic.get("takeaway_asset"), 34, "可复用资产")
+    if "验收表" in title or "项目验收表" in text:
+        if "claude" in text:
+            return "AI项目验收表"
+        return "项目验收表"
+    if "风险复核" in title or "风险字段" in text:
+        return "汽车内容风险复核线"
+    if "导出" in text and ("ppt" in text or "pptx" in text):
+        return "PPTX导出验收表"
+    if "候选池" in text and "补字段" in text:
+        return "候选池字段验收表"
+    if "选题台" in text and ("门控" in text or "字段" in text):
+        return "选题台门控字段表"
+    if "非技术Agent任务拆解模板" in raw_asset:
+        if any(term in text for term in ["openrouter", "portkey", "llm网关", "多模型", "模型路由"]):
+            return "多模型调用核验表"
+        if any(term in text for term in ["输入输出", "失败回滚", "异常", "验收", "任务样本"]):
+            return "Agent任务验收记录"
+        return "待确认的Agent任务资产"
+    return raw_asset
+
+
 def hook_problem(topic: dict[str, Any]) -> str:
     obj = workflow_object(topic)
     mapping = {
@@ -452,7 +477,7 @@ def hook_problem(topic: dict[str, Any]) -> str:
 
 def key_judgment_extras(topic: dict[str, Any]) -> list[str]:
     obj = workflow_object(topic)
-    asset = clip_text(topic.get("takeaway_asset"), 34, "验收物")
+    asset = display_asset(topic)
     mapping = {
         "汽车AI内容": [
             "汽车内容里的AI提效，必须先过功能边界和证据线。",
@@ -488,7 +513,7 @@ def key_judgment_extras(topic: dict[str, Any]) -> list[str]:
 
 def golden_line_pool(topic: dict[str, Any]) -> list[str]:
     obj = workflow_object(topic)
-    asset = clip_text(topic.get("takeaway_asset"), 28, "验收物")
+    asset = display_asset(topic)
     mapping = {
         "汽车AI内容": [
             "汽车内容先守边界，再谈效率。",
@@ -558,7 +583,7 @@ def evidence_phrase(topic: dict[str, Any], validation: ValidationResult) -> str:
 
 
 def headline_result(topic: dict[str, Any], validation: ValidationResult) -> str:
-    asset = trim_end_punctuation(topic.get("takeaway_asset"), "一张可复用的验收表或流程清单")
+    asset = display_asset(topic)
     evidence_text = evidence_phrase(topic, validation)
     return f"最后要让画面落到「{asset}」，中间至少看到{evidence_text}"
 
@@ -571,7 +596,7 @@ def old_new_contrast(topic: dict[str, Any]) -> str:
 
 def opening_hook_options(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
     obj = workflow_object(topic)
-    asset = clip_text(topic.get("takeaway_asset"), 30, "一张可复用的验收表")
+    asset = display_asset(topic)
     evidence_text = clip_text(evidence_phrase(topic, validation), 38, "输入、输出和人工验收画面")
     return unique_items([
         f"{hook_problem(topic)}。",
@@ -611,7 +636,7 @@ def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 72, "旧流程里有一个真实低效或高风险环节")
     ai_action = clip_text(topic.get("ai_intervention"), 72, "用AI介入一个可验证的小环节")
     judgment = clip_text(topic.get("unique_judgment"), 72, "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
-    asset = clip_text(topic.get("takeaway_asset"), 42, "一个可复用的流程、清单或模板")
+    asset = display_asset(topic)
     evidence_text = clip_text(evidence_phrase(topic, validation), 60, "输入、输出和人工验收画面")
     hook = opening_hook_options(topic, validation)[0]
     return (
@@ -626,7 +651,7 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 58, "旧流程里的真实痛点")
     judgment = clip_text(topic.get("unique_judgment"), 58, "我的判断和边界")
     ai_action = clip_text(topic.get("ai_intervention"), 58, "AI介入动作")
-    asset = clip_text(topic.get("takeaway_asset"), 34, "可沉淀资产")
+    asset = display_asset(topic)
     evidence_text = clip_text(evidence_phrase(topic, validation), 48, "关键截图、录屏或前后对比") if validation else "关键截图、录屏或前后对比"
     hook = opening_hook_options(topic, validation)[0] if validation else f"今天先看能不能跑出「{asset}」。"
     return [
@@ -751,9 +776,9 @@ def execution_rows(topic: dict[str, Any], template: str) -> list[dict[str, str]]
             "#": "06",
             "时间段": "04:00-05:00",
             "段落目的": "资产收束",
-            "口播轨": f"最后把这次实验沉淀成：{topic.get('takeaway_asset')}",
+            "口播轨": f"最后把这次实验沉淀成：{display_asset(topic)}",
             "画面/录屏轨": "展示模板、清单、Skill、SOP或表格资产。",
-            "字幕重点": topic.get("takeaway_asset", ""),
+            "字幕重点": display_asset(topic),
             "后期提示": "真人收尾加成果页，不做硬广口吻。",
             "人工QA点": "是否有明确可带走资产。",
         },
