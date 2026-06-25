@@ -45,15 +45,35 @@ class ValidationResult:
     notes: list[str]
 
 
-def first_non_empty(fields: dict[str, Any], names: list[str], default: str = "") -> str:
+EMPTYISH_VALUES = {"", "无", "暂无", "无额外", "none", "null", "nan", "n/a", "NA"}
+REQUIRED_PLACEHOLDER_PREFIXES = ("待补", "待确认", "待填写", "待定")
+
+
+def normalized_text(value: Any) -> str:
+    return str(value or "").strip().strip("。.!！?？；;，,、 ")
+
+
+def is_emptyish_value(value: Any) -> bool:
+    text = normalized_text(value)
+    return not text or text.lower() in EMPTYISH_VALUES or text in EMPTYISH_VALUES
+
+
+def is_required_placeholder(value: Any) -> bool:
+    text = normalized_text(value)
+    return is_emptyish_value(text) or "待补" in text or any(text.startswith(prefix) for prefix in REQUIRED_PLACEHOLDER_PREFIXES)
+
+
+def first_non_empty(fields: dict[str, Any], names: list[str], default: str = "", skip_placeholders: bool = True) -> str:
     for name in names:
         value = fields.get(name)
         if isinstance(value, list):
-            joined = "、".join(str(item).strip() for item in value if str(item).strip())
-            if joined:
+            joined = "、".join(normalized_text(item) for item in value if not is_emptyish_value(item))
+            if joined and not (skip_placeholders and is_required_placeholder(joined)):
                 return joined
-        elif value is not None and str(value).strip():
-            return str(value).strip()
+        elif value is not None and not is_emptyish_value(value):
+            text = normalized_text(value)
+            if not (skip_placeholders and is_required_placeholder(text)):
+                return text
     return default
 
 
@@ -61,12 +81,12 @@ def split_items(value: Any) -> list[str]:
     if value is None:
         return []
     if isinstance(value, list):
-        return [str(item).strip() for item in value if str(item).strip()]
-    text = str(value).strip()
-    if not text:
+        return [normalized_text(item) for item in value if not is_emptyish_value(item)]
+    text = normalized_text(value)
+    if is_emptyish_value(text):
         return []
     parts = re.split(r"[；;\n、]+|(?<=。)", text)
-    return [part.strip(" 。;；\n\t") for part in parts if part.strip(" 。;；\n\t")]
+    return [normalized_text(part) for part in parts if not is_emptyish_value(part)]
 
 
 def slugify(text: str, fallback: str = "topic") -> str:
@@ -158,7 +178,7 @@ def normalize_topic(fields: dict[str, Any], record_id: str = "") -> dict[str, An
 
     return {
         "topic_id": topic_id,
-        "status": first_non_empty(fields, ["status", "状态", "推荐动作", "脚本状态"]),
+        "status": first_non_empty(fields, ["status", "状态", "推荐动作", "脚本状态"], skip_placeholders=False),
         "topic_title": topic_title,
         "content_pillar": first_non_empty(fields, ["content_pillar", "对应方向", "对应栏目", "业务场景"], "真实工作流改造"),
         "core_thesis": first_non_empty(fields, ["core_thesis", "一句话Brief", "重点体现", "选题命题", "我的切入", "选题标题", "可发布标题"]),
@@ -246,6 +266,12 @@ def md_list(items: list[str], fallback: str = "待补") -> str:
     return "；".join(clean) if clean else fallback
 
 
+def inline_items(items: list[str], fallback: str = "待补", limit: int = 3, item_limit: int = 42) -> str:
+    clean = [clip_text(item, item_limit, "") for item in items if str(item).strip()]
+    clean = [item for item in clean if item]
+    return " / ".join(clean[:limit]) if clean else fallback
+
+
 def md_bullets(items: list[str], fallback: str = "待补") -> str:
     clean = [item for item in items if item]
     if not clean:
@@ -315,7 +341,7 @@ def unique_items(items: list[str]) -> list[str]:
     seen: set[str] = set()
     result: list[str] = []
     for item in items:
-        text = item.strip()
+        text = normalized_text(item)
         if text and text not in seen:
             seen.add(text)
             result.append(text)
@@ -381,6 +407,13 @@ def trim_end_punctuation(value: Any, fallback: str = "待补") -> str:
     return short_text(value, fallback).rstrip("。.!！?？；;，, ")
 
 
+def clip_text(value: Any, limit: int = 56, fallback: str = "待补") -> str:
+    text = trim_end_punctuation(value, fallback)
+    if len(text) <= limit:
+        return text
+    return text[: max(1, limit - 1)].rstrip("，,；;、 ") + "…"
+
+
 def readable_evidence_item(value: str) -> str:
     text = trim_end_punctuation(value, "")
     replacements = [
@@ -422,32 +455,30 @@ def old_new_contrast(topic: dict[str, Any]) -> str:
 
 
 def opening_hook_options(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
-    title = trim_end_punctuation(topic.get("topic_title"), "这条选题")
-    asset = trim_end_punctuation(topic.get("takeaway_asset"), "一张可复用的验收表")
-    evidence_text = evidence_phrase(topic, validation)
-    return [
-        f"这条我不讲「{title}」，我只看它最后能不能变成「{asset}」。",
-        "AI项目不是跑完就结束，关键是过程、异常和验收有没有留下来。",
-        f"如果画面里拿不出{evidence_text}，这条我宁愿先不拍。",
-    ]
+    asset = clip_text(topic.get("takeaway_asset"), 30, "一张可复用的验收表")
+    evidence_text = clip_text(evidence_phrase(topic, validation), 38, "输入、输出和人工验收画面")
+    return unique_items([
+        f"今天只验一件事：「{asset}」能不能跑出来。",
+        "我不先看AI结果，我看它有没有留下过程证据。",
+        f"拿不出{evidence_text}，先不拍。",
+    ])
 
 
 def key_judgment_lines(topic: dict[str, Any]) -> list[str]:
-    judgment = trim_end_punctuation(topic.get("unique_judgment"), "AI不能只看生成结果，必须回到业务验收")
-    asset = trim_end_punctuation(topic.get("takeaway_asset"), "验收表")
+    judgment = clip_text(topic.get("unique_judgment"), 54, "AI不能只看生成结果，必须回到业务验收")
     return unique_items([
         judgment,
-        "这条的重点不是模型会不会做，而是做完以后能不能验。",
-        f"没有「{asset}」，AI输出越快，后面越难复盘。",
+        "AI任务不是交给模型，是交给验收表。",
+        "结果要能看见，过程也要能追。",
     ])
 
 
 def golden_lines(topic: dict[str, Any]) -> list[str]:
-    asset = trim_end_punctuation(topic.get("takeaway_asset"), "验收表")
+    asset = clip_text(topic.get("takeaway_asset"), 28, "验收表")
     return unique_items([
-        "跑完不算完成，验过才算能进流程。",
-        "AI越会生成，越需要一张能追责的验收表。",
-        f"能沉淀成「{asset}」的，才不是一次性工具演示。",
+        "先留证据，再谈效率。",
+        "跑完只是开始，验收才算交付。",
+        f"不能复用成「{asset}」，就只是一次演示。",
     ])
 
 
@@ -468,39 +499,35 @@ def shootability_snapshot(topic: dict[str, Any], validation: ValidationResult) -
 
 
 def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
-    title = short_text(topic.get("topic_title"), "这条选题")
-    core = trim_end_punctuation(topic.get("core_thesis"), title)
-    pain = trim_end_punctuation(topic.get("old_workflow") or topic.get("pain_point"), "旧流程里有一个真实低效或高风险环节")
-    ai_action = trim_end_punctuation(topic.get("ai_intervention"), "用AI介入一个可验证的小环节")
-    judgment = trim_end_punctuation(topic.get("unique_judgment"), "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
-    asset = trim_end_punctuation(topic.get("takeaway_asset"), "一个可复用的流程、清单或模板")
-    evidence_text = evidence_phrase(topic, validation)
+    title = clip_text(topic.get("topic_title"), 42, "这条选题")
+    core = clip_text(topic.get("core_thesis"), 72, title)
+    pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 72, "旧流程里有一个真实低效或高风险环节")
+    ai_action = clip_text(topic.get("ai_intervention"), 72, "用AI介入一个可验证的小环节")
+    judgment = clip_text(topic.get("unique_judgment"), 72, "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
+    asset = clip_text(topic.get("takeaway_asset"), 42, "一个可复用的流程、清单或模板")
+    evidence_text = clip_text(evidence_phrase(topic, validation), 60, "输入、输出和人工验收画面")
     return (
-        f"这条不要拍成「{title}」的资料复述。我想拿它测一个具体问题：{core}。\n\n"
-        f"我现在的判断是：{judgment}。这个判断得落在真实流程里看：旧流程的问题是「{pain}」，"
-        f"这次我准备让AI介入「{ai_action}」。\n\n"
-        f"这条的看点应该是一个前后变化：以前只看最终结果，现在要看过程、异常和验收能不能被留下来。"
-        f"所以画面里必须有{evidence_text}。如果这个证据成立，最后就不只是一个观点，"
-        f"而是可以收成「{asset}」。"
+        f"我的判断：{judgment}。\n\n"
+        f"论据：旧流程卡在「{pain}」，过程和异常很容易丢。\n\n"
+        f"这条从「{title}」切入，只测「{core}」。录屏只看「{ai_action}」。\n\n"
+        f"钩子：开头先给{evidence_text}。能拿出证据，就进入06；拿不出，先补素材。最后收成「{asset}」。"
     )
 
 
 def outline_segments(topic: dict[str, Any], validation: ValidationResult | None = None) -> list[str]:
-    core = trim_end_punctuation(topic.get("core_thesis"), "这条实验要验证的核心判断")
-    pain = trim_end_punctuation(topic.get("old_workflow") or topic.get("pain_point"), "旧流程里的真实痛点")
-    judgment = trim_end_punctuation(topic.get("unique_judgment"), "我的判断和边界")
-    ai_action = trim_end_punctuation(topic.get("ai_intervention"), "AI介入动作")
-    asset = trim_end_punctuation(topic.get("takeaway_asset"), "可沉淀资产")
-    evidence_text = evidence_phrase(topic, validation) if validation else "关键截图、录屏或前后对比"
-    result = headline_result(topic, validation) if validation else f"最后要落到「{asset}」"
-    contrast = old_new_contrast(topic)
+    pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 58, "旧流程里的真实痛点")
+    judgment = clip_text(topic.get("unique_judgment"), 58, "我的判断和边界")
+    ai_action = clip_text(topic.get("ai_intervention"), 58, "AI介入动作")
+    asset = clip_text(topic.get("takeaway_asset"), 34, "可沉淀资产")
+    evidence_text = clip_text(evidence_phrase(topic, validation), 48, "关键截图、录屏或前后对比") if validation else "关键截图、录屏或前后对比"
+    hook = opening_hook_options(topic, validation)[0] if validation else f"今天先看能不能跑出「{asset}」。"
     return [
-        f"00:00-00:15｜先给一个结果感：这条不是讲原则，而是看「{core}」。开场画面直接给最终表格、输出物或失败点，字幕压一句：{result}。",
-        f"00:15-00:45｜把问题说狠一点：{contrast}。这里不要泛讲效率，要拿一个真实任务说明：如果只看最终结果，哪些中间错误会被漏掉。",
-        f"00:45-01:20｜给出你的判断：「{judgment}」。这一段的重点是把内容从工具新闻拉回业务现场：我关心的不是模型会不会做，而是做完以后能不能验。",
-        f"01:20-02:40｜录屏跑最小实验：「{ai_action}」。画面按输入、AI处理、人工验收三步走，但每一步都要回答一个问题：我给了什么约束、AI留下了什么记录、我怎么判断它能不能用。",
-        f"02:40-03:25｜放证据，也放不完美：重点看{evidence_text}。如果有失败样例，这里就是转折点：不是AI没用，而是没有验收表就不知道它错在哪里。",
-        f"03:25-04:00｜收成资产：「{asset}」。结尾不要喊口号，要说清它下次怎么用：以后类似任务先填这张表，再让Agent跑，再按异常和验收记录决定要不要进入制作。",
+        f"00:00-00:08｜开场给证据：展示「{asset}」或失败截图。说：{hook}",
+        f"00:08-00:30｜旧流程：打开旧任务/旧表格。指出：{pain}。",
+        f"00:30-00:50｜真人判断：{judgment}。",
+        f"00:50-02:10｜录屏实验：{ai_action}。按输入 -> 执行 -> 验收拍。",
+        f"02:10-03:00｜证据段：放{evidence_text}。失败样例也放。",
+        f"03:00-03:30｜收尾：回到「{asset}」。下一次先按它跑。",
     ]
 
 
@@ -509,10 +536,8 @@ def key_evidence_items(topic: dict[str, Any], validation: ValidationResult) -> l
 
 
 def outline_summary(topic: dict[str, Any], template: str, validation: ValidationResult) -> str:
-    return (
-        f"按「{template}」处理。核心观点是：{topic.get('core_thesis')} "
-        f"05只确认核心观点、视频大纲和给06的生成输入；06再生成完整脚本、提词器、录屏清单、后期交接和发布包。"
-    )
+    core = clip_text(topic.get("core_thesis"), 64, "待确认核心观点")
+    return f"{template}｜{core}｜05只确认大纲，06再展开脚本和执行包。"
 
 
 def generation_input_for_06(topic: dict[str, Any], template: str, template_reason: str, validation: ValidationResult, private_cases: list[dict[str, Any]]) -> str:
@@ -520,21 +545,19 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
     p0_todos = production_todo_items(validation)
     fact_checks = validation.fact_check_points
     boundaries = private_boundaries(private_cases)[:3]
+    ai_action = clip_text(topic.get("ai_intervention"), 82, "待确认实操主线")
     lines = [
-        f"- 推荐模板：{template}",
-        f"- 模板理由：{template_reason}",
-        "- 06要继续生成：完整脚本Brief、分段执行脚本、提词器、录屏清单、后期交接、发布包和QA。",
-        f"- 这条的核心冲突：{old_new_contrast(topic)}。",
-        f"- 开头结果感：{headline_result(topic, validation)}。",
-        f"- 开头钩子候选：{md_list(opening_hook_options(topic, validation))}",
-        f"- 中段关键判断：{md_list(key_judgment_lines(topic))}",
-        f"- 可用金句：{md_list(golden_lines(topic))}",
-        f"- 实操主线：{short_text(topic.get('ai_intervention'))}",
-        f"- 关键证据：{md_list(evidence, '待补：至少明确一个可展示证据')}",
-        f"- 进入06前优先补：{md_list(p0_todos, '无P0素材缺口，直接人工确认大纲')}",
-        f"- 事实核验边界：{md_list(fact_checks, '无额外事实核验点')}",
-        f"- 私有表达边界：{md_list(boundaries, '无额外私有边界提醒')}",
-        f"- 可借用案例锚点：{private_case_names(private_cases)}",
+        f"- 模板：{template}（{clip_text(template_reason, 54, '按题材和实验类型判断')}）",
+        f"- 主线：{ai_action}",
+        f"- 开头：{opening_hook_options(topic, validation)[0]}",
+        f"- 判断：{inline_items(key_judgment_lines(topic), item_limit=46)}",
+        f"- 金句：{inline_items(golden_lines(topic), item_limit=36)}",
+        f"- 必拍：{inline_items(evidence, '待补：至少明确一个可展示证据', limit=4, item_limit=34)}",
+        f"- 先补：{inline_items(p0_todos, '无P0素材缺口，直接人工确认大纲', limit=2, item_limit=36)}",
+        f"- 核验：{inline_items(fact_checks, '无额外事实核验点', limit=2, item_limit=44)}",
+        f"- 边界：{inline_items(boundaries, '无额外私有边界提醒', limit=2, item_limit=38)}",
+        f"- 案例锚点：{private_case_names(private_cases)}",
+        "- 06再生成：完整脚本、提词器、录屏清单、剪辑交接、发布包、QA。",
     ]
     return "\n".join(lines)
 
