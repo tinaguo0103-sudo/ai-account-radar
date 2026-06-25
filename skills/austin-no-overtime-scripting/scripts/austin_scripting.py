@@ -421,6 +421,52 @@ def old_new_contrast(topic: dict[str, Any]) -> str:
     return f"旧流程是「{pain}」，新动作是「{ai_action}」"
 
 
+def opening_hook_options(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
+    title = trim_end_punctuation(topic.get("topic_title"), "这条选题")
+    asset = trim_end_punctuation(topic.get("takeaway_asset"), "一张可复用的验收表")
+    evidence_text = evidence_phrase(topic, validation)
+    return [
+        f"这条我不讲「{title}」，我只看它最后能不能变成「{asset}」。",
+        "AI项目不是跑完就结束，关键是过程、异常和验收有没有留下来。",
+        f"如果画面里拿不出{evidence_text}，这条我宁愿先不拍。",
+    ]
+
+
+def key_judgment_lines(topic: dict[str, Any]) -> list[str]:
+    judgment = trim_end_punctuation(topic.get("unique_judgment"), "AI不能只看生成结果，必须回到业务验收")
+    asset = trim_end_punctuation(topic.get("takeaway_asset"), "验收表")
+    return unique_items([
+        judgment,
+        "这条的重点不是模型会不会做，而是做完以后能不能验。",
+        f"没有「{asset}」，AI输出越快，后面越难复盘。",
+    ])
+
+
+def golden_lines(topic: dict[str, Any]) -> list[str]:
+    asset = trim_end_punctuation(topic.get("takeaway_asset"), "验收表")
+    return unique_items([
+        "跑完不算完成，验过才算能进流程。",
+        "AI越会生成，越需要一张能追责的验收表。",
+        f"能沉淀成「{asset}」的，才不是一次性工具演示。",
+    ])
+
+
+def shootability_snapshot(topic: dict[str, Any], validation: ValidationResult) -> str:
+    hooks = opening_hook_options(topic, validation)
+    judgments = key_judgment_lines(topic)
+    lines = [
+        "**开头钩子候选**",
+        md_numbered(hooks),
+        "",
+        "**中段关键判断**",
+        md_bullets(judgments),
+        "",
+        "**可用金句**",
+        md_bullets(golden_lines(topic)),
+    ]
+    return "\n".join(lines)
+
+
 def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     title = short_text(topic.get("topic_title"), "这条选题")
     core = trim_end_punctuation(topic.get("core_thesis"), title)
@@ -480,6 +526,9 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
         "- 06要继续生成：完整脚本Brief、分段执行脚本、提词器、录屏清单、后期交接、发布包和QA。",
         f"- 这条的核心冲突：{old_new_contrast(topic)}。",
         f"- 开头结果感：{headline_result(topic, validation)}。",
+        f"- 开头钩子候选：{md_list(opening_hook_options(topic, validation))}",
+        f"- 中段关键判断：{md_list(key_judgment_lines(topic))}",
+        f"- 可用金句：{md_list(golden_lines(topic))}",
         f"- 实操主线：{short_text(topic.get('ai_intervention'))}",
         f"- 关键证据：{md_list(evidence, '待补：至少明确一个可展示证据')}",
         f"- 进入06前优先补：{md_list(p0_todos, '无P0素材缺口，直接人工确认大纲')}",
@@ -630,6 +679,7 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
     validation = validate_topic(topic)
     summary = outline_summary(topic, template, validation)
     viewpoint = core_viewpoint(topic, validation)
+    snapshot = shootability_snapshot(topic, validation)
     outline = outline_segments(topic, validation)
     generation_input = generation_input_for_06(topic, template, template_reason, validation, private_cases)
     folder = output_root / run_date / f"{slugify(str(topic.get('topic_id', 'topic')))}_{slugify(topic.get('topic_title', 'topic'))}"
@@ -639,6 +689,10 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
     write_text(document_path, f"""# {topic.get('topic_title')}
 
 ## 05 脚本大纲确认
+
+### 先看能不能拍
+
+{snapshot}
 
 ### 核心观点
 
@@ -662,6 +716,9 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
         "template_reason": template_reason,
         "director_summary": summary,
         "core_thesis": topic.get("core_thesis"),
+        "opening_hooks": opening_hook_options(topic, validation),
+        "key_judgments": key_judgment_lines(topic),
+        "golden_lines": golden_lines(topic),
         "core_viewpoint": viewpoint,
         "outline_segments": outline,
         "generation_input_06": generation_input,
