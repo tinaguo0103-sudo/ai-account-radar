@@ -419,6 +419,10 @@ def topic_blob(topic: dict[str, Any]) -> str:
     return " ".join(str(topic.get(key, "")) for key in keys).lower()
 
 
+def has_any(text: str, terms: list[str]) -> bool:
+    return any(term.lower() in text for term in terms)
+
+
 def workflow_object(topic: dict[str, Any]) -> str:
     text = topic_blob(topic)
     if any(term in text for term in ["汽车", "智能驾驶", "辅助驾驶", "l3", "l4", "国标"]):
@@ -427,6 +431,8 @@ def workflow_object(topic: dict[str, Any]) -> str:
         return "候选池"
     if any(term in text for term in ["选题", "brief", "主编", "门控"]):
         return "选题台"
+    if any(term in text for term in ["adobe", "返修", "剪辑和设计工具", "创意agent"]):
+        return "创意返修"
     if any(term in text for term in ["ppt", "pptx", "导出", "样式", "视觉", "baoyu", "设计"]):
         return "视觉交付"
     if any(term in text for term in ["封面"]):
@@ -442,11 +448,54 @@ def hook_problem(topic: dict[str, Any]) -> str:
         "汽车AI内容": "汽车内容最怕的不是慢，是一句卖点把边界说过头",
         "候选池": "表格AI最怕的不是填得少，是填满以后没人知道对不对",
         "选题台": "选题台最怕的不是没灵感，是每条看起来都能做",
+        "创意返修": "创意Agent最怕的不是入口多，是返修意见没有真的被命中",
         "视觉交付": "AI视觉最怕的不是不好看，是导出那一刻全变形",
         "封面流程": "封面自动化最怕的不是不出图，是每张都像另一个账号",
         "Agent任务": "AI任务最怕的不是没跑完，是跑完以后没人知道错在哪",
         "AI流程": "AI流程最怕的不是慢，是快到没人知道哪里该验收",
     }
+    return mapping.get(obj, mapping["AI流程"])
+
+
+def lead_hook(topic: dict[str, Any], validation: ValidationResult) -> str:
+    text = topic_blob(topic)
+    evidence_text = clip_text(evidence_phrase(topic, validation), 32, "关键证据")
+    if validation.status == "blocked":
+        gap = clip_text((validation.evidence_gaps or validation.missing_required or ["真实任务样本"])[0], 34, "真实任务样本")
+        return f"这条先别急着拍，缺的不是标题，是{gap}"
+    if has_any(text, ["claude", "团队原则"]):
+        return "我不是想学Claude Code的原则，我想看AI任务交出去以后谁来验"
+    if has_any(text, ["obsidian", "知识库"]):
+        return "知识库如果不能把信息推回任务系统，就只是换个地方收藏"
+    if has_any(text, ["excel", "批量补字段", "候选池"]):
+        return "表格自动化别先看填了多少，先看错了哪里能不能改回来"
+    if has_any(text, ["adobe", "返修"]):
+        return "创意Agent别先看功能入口，先看它能不能少掉一轮返修"
+    if has_any(text, ["baoyu", "pptx", "导出"]):
+        return "AI设计截图好看不算数，导出以后不变形才算数"
+    if has_any(text, ["l3", "l4", "国标", "智能驾驶"]):
+        return "汽车内容省一分钟可以，但一句卖点越界就不值得"
+    if has_any(text, ["openrouter", "portkey", "网关"]):
+        return "没有自己的调用场景，网关选型就只是技术热闹"
+    if evidence_text:
+        return f"先把{evidence_text}摆出来，再决定这条值不值得拍"
+    return hook_problem(topic)
+
+
+def second_hook(topic: dict[str, Any], validation: ValidationResult) -> str:
+    obj = workflow_object(topic)
+    mapping = {
+        "汽车AI内容": "这条不比谁更会写卖点，只比谁能守住证据和功能边界",
+        "候选池": "我不缺更多候选，我缺的是每条为什么升降级都能看见",
+        "选题台": "选题台不是帮我多想几个标题，是帮我挡掉不该做的题",
+        "创意返修": "先把一条返修意见跑完，再谈它有没有进流程",
+        "视觉交付": "演示效果再顺，导出后还要重修就不能进交付",
+        "封面流程": "封面不是随机好看，是每次都还能像这个账号",
+        "Agent任务": "Agent能不能用，不看它跑没跑完，看人还能不能追责",
+        "AI流程": "AI流程能不能用，不看步骤多快，看证据能不能支撑判断",
+    }
+    if validation.status == "blocked":
+        return "没有真实任务和证据，这条先停在观察，不要硬进06"
     return mapping.get(obj, mapping["AI流程"])
 
 
@@ -464,6 +513,10 @@ def key_judgment_extras(topic: dict[str, Any]) -> list[str]:
         "选题台": [
             "选题台不是灵感池，是把能做和不该做分开的判断系统。",
             "AI可以帮我初筛，但升级或放弃必须留下理由。",
+        ],
+        "创意返修": [
+            "创意Agent有没有价值，要看它能不能承接返修，不是看功能入口多不多。",
+            "返修自动化不能只改画面，要能对上人的修改意见。",
         ],
         "视觉交付": [
             "视觉AI能不能进交付，不看截图好不好看，看导出后还剩多少人工修正。",
@@ -487,6 +540,21 @@ def key_judgment_extras(topic: dict[str, Any]) -> list[str]:
 
 def golden_line_pool(topic: dict[str, Any]) -> list[str]:
     obj = workflow_object(topic)
+    text = topic_blob(topic)
+    specific: list[str] = []
+    if has_any(text, ["claude", "团队原则"]):
+        specific = ["原则不能收藏，要变成验收动作。", "AI任务不是交出去就结束，是验得回来才算数。"]
+    elif has_any(text, ["obsidian", "知识库"]):
+        specific = ["知识库不是仓库，是回到任务的路由。", "收藏不进入执行台，就只是换了一个地方躺着。"]
+    elif has_any(text, ["excel", "批量补字段"]):
+        specific = ["表格填满不是自动化，少改才是自动化。", "错得能回写，AI才值得继续用。"]
+    elif has_any(text, ["adobe", "返修"]):
+        specific = ["Agent的价值不在入口多，在返修少。", "能少改一轮，才算进了创意流程。"]
+    elif has_any(text, ["baoyu", "pptx", "导出"]):
+        specific = ["导出没过，设计就还没交付。", "好看的截图，不等于能交付的文件。"]
+    elif has_any(text, ["openrouter", "portkey", "网关"]):
+        specific = ["没有自己的调用场景，就别急着讲网关选型。", "工具比较没有任务约束，很快就会变成泛资讯。"]
+
     mapping = {
         "汽车AI内容": [
             "汽车内容先守边界，再谈效率。",
@@ -494,8 +562,8 @@ def golden_line_pool(topic: dict[str, Any]) -> list[str]:
             "能过风险线的内容，才配上线。",
         ],
         "候选池": [
-            "填满表格不叫自动化，改少判断才叫自动化。",
-            "能回写规则的错误，才值得让AI继续犯。",
+            "先看到错在哪里，再谈批量。",
+            "字段不是越多越好，是越能解释判断越好。",
             "候选池不是越满越好，是越清楚越好。",
         ],
         "选题台": [
@@ -503,10 +571,15 @@ def golden_line_pool(topic: dict[str, Any]) -> list[str]:
             "能说清为什么不做，才算真的会选题。",
             "好的选题台，先挡住泛资讯。",
         ],
+        "创意返修": [
+            "返修意见要逐条对账。",
+            "没命中的修改，生成再多也没用。",
+            "能对上修改意见，比多生成十版更有用。",
+        ],
         "视觉交付": [
-            "好看的截图不等于可交付文件。",
             "导不出来的设计，不算交付。",
             "AI视觉真正的终点，是验收通过。",
+            "导出稳定，才算真正进交付。",
         ],
         "封面流程": [
             "封面不是出图，是账号识别。",
@@ -524,7 +597,7 @@ def golden_line_pool(topic: dict[str, Any]) -> list[str]:
             "AI越快，验收越要慢半拍。",
         ],
     }
-    return mapping.get(obj, mapping["AI流程"])
+    return unique_items(specific + mapping.get(obj, mapping["AI流程"]))
 
 
 def readable_evidence_item(value: str) -> str:
@@ -567,11 +640,10 @@ def old_new_contrast(topic: dict[str, Any]) -> str:
 
 
 def opening_hook_options(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
-    obj = workflow_object(topic)
     evidence_text = clip_text(evidence_phrase(topic, validation), 38, "输入、输出和人工验收画面")
     return unique_items([
-        f"{hook_problem(topic)}。",
-        f"我今天不看{obj}做得多快，只看证据能不能对上我的判断。",
+        f"{lead_hook(topic, validation)}。",
+        f"{second_hook(topic, validation)}。",
         f"拿不出{evidence_text}，这条就不是实战。",
     ])
 
@@ -582,7 +654,7 @@ def key_judgment_lines(topic: dict[str, Any]) -> list[str]:
 
 
 def golden_lines(topic: dict[str, Any]) -> list[str]:
-    return unique_items(golden_line_pool(topic))
+    return unique_items(golden_line_pool(topic))[:3]
 
 
 def shootability_snapshot(topic: dict[str, Any], validation: ValidationResult) -> str:
@@ -609,27 +681,107 @@ def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     judgment = clip_text(topic.get("unique_judgment"), 72, "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
     evidence_text = clip_text(evidence_phrase(topic, validation), 60, "输入、输出和人工验收画面")
     hook = opening_hook_options(topic, validation)[0]
+    if validation.status == "blocked":
+        gap = inline_items(validation.evidence_gaps or validation.missing_required, "真实任务样本", limit=2, item_limit=34)
+        return (
+            f"这条现在先不拍。\n\n"
+            f"原因不是话题弱，而是它还没有贴到我的真实现场：{gap}。\n\n"
+            f"如果要救它，06之前必须先补一个真实任务、一次输入输出和一个能判断成败的证据。补不上，就继续观察，不要把技术热点硬讲成我的工作流。"
+        )
+    if workflow_object(topic) == "汽车AI内容":
+        return (
+            f"这条不是讲政策解读，而是借「{title}」补一条内容上线前的风险判断。\n\n"
+            f"我的立场是：{judgment}。旧流程的问题在于：{pain}。\n\n"
+            f"画面先给{evidence_text}，再录{ai_action}。05只判断方向是否成立，具体案例和素材选择由06根据真实材料再定。"
+        )
+    if workflow_object(topic) == "视觉交付":
+        return (
+            f"这条要拍成交付检查，不拍工具更新。\n\n"
+            f"我的判断是：{judgment}。旧流程卡在：{pain}。\n\n"
+            f"开头直接给{evidence_text}，中段只录{ai_action}。如果看不到导出、错位、人工修正这些画面，就先别进06。"
+        )
+    if workflow_object(topic) == "创意返修":
+        return (
+            f"这条要拍成一次返修命中测试，不拍工具功能更新。\n\n"
+            f"我的判断是：{judgment}。旧流程卡在：{pain}。\n\n"
+            f"开头先给{evidence_text}，中段只录{ai_action}。我不看它能生成多少版本，只看它能不能把人的修改意见对准、少掉一轮人工返修。"
+        )
     return (
-        f"我的判断：{judgment}。\n\n"
-        f"论据：旧流程卡在「{pain}」，过程和异常很容易丢。\n\n"
-        f"这条从「{title}」切入，只测「{core}」。录屏只看「{ai_action}」。\n\n"
-        f"钩子：{hook}。开头直接给{evidence_text}。05只判断这条能不能拍，具体案例和素材选择由06根据真实材料再定。"
+        f"我想把这条拍成一个小实验：{core}。\n\n"
+        f"它真正要证明的是：{judgment}。旧流程里的卡点是：{pain}。\n\n"
+        f"开头用「{hook}」切进去，画面先给{evidence_text}，中段再录{ai_action}。05只判断方向，具体案例和素材选择由06根据真实材料再定。"
     )
 
 
 def outline_segments(topic: dict[str, Any], validation: ValidationResult | None = None) -> list[str]:
+    validation = validation or ValidationResult("revise", [], [], [], [])
+    obj = workflow_object(topic)
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 58, "旧流程里的真实痛点")
     judgment = clip_text(topic.get("unique_judgment"), 58, "我的判断和边界")
     ai_action = clip_text(topic.get("ai_intervention"), 58, "AI介入动作")
-    evidence_text = clip_text(evidence_phrase(topic, validation), 48, "关键截图、录屏或前后对比") if validation else "关键截图、录屏或前后对比"
-    hook = opening_hook_options(topic, validation)[0] if validation else "今天先看证据能不能支撑判断。"
+    evidence_text = clip_text(evidence_phrase(topic, validation), 48, "关键截图、录屏或前后对比")
+    hook = opening_hook_options(topic, validation)[0]
+    if validation.status == "blocked":
+        gap = inline_items(validation.evidence_gaps or validation.missing_required, "真实任务样本", limit=2, item_limit=32)
+        return [
+            f"00:00-00:10｜先判停：直接说「{hook}」",
+            f"00:10-00:40｜缺口上屏：列出现在缺的东西：{gap}",
+            f"00:40-01:20｜最低补救：只设计一个小验证，不展开完整脚本；先补{evidence_text}",
+            f"01:20-01:50｜边界：说明不能给选型、能力或业务结论，只能留作观察",
+            "01:50-02:00｜收尾：不进入06，等真实任务样本出现再重新生成",
+        ]
+    if obj == "汽车AI内容":
+        return [
+            f"00:00-00:08｜先给风险句：闪现{evidence_text}，让观众看到边界问题",
+            f"00:08-00:35｜旧审核现场：说明{pain}",
+            f"00:35-00:55｜真人定调：{judgment}",
+            f"00:55-02:00｜录屏复核：{ai_action}，重点拍风险词、证据缺口和人工判断",
+            "02:00-02:40｜反例：放一条容易说过头的卖点，说明为什么不能直接上线",
+            "02:40-03:10｜收尾：只判断这条是否值得进入06，不做法规结论",
+        ]
+    if obj == "视觉交付":
+        return [
+            f"00:00-00:08｜先给结果：展示导出前后或错位画面，说「{hook}」",
+            f"00:08-00:30｜旧交付现场：指出{pain}",
+            f"00:30-00:50｜真人判断：{judgment}",
+            f"00:50-01:50｜录屏回归：{ai_action}，只拍导出、对比、修正",
+            f"01:50-02:40｜验收段：放{evidence_text}，统计还剩几处人工修",
+            "02:40-03:10｜收尾：这条能不能进06，取决于导出稳定性而不是截图好看",
+        ]
+    if obj == "创意返修":
+        return [
+            f"00:00-00:08｜先给对比：展示返修前后画面，说「{hook}」",
+            f"00:08-00:30｜旧返修现场：指出{pain}",
+            f"00:30-00:55｜真人判断：{judgment}",
+            f"00:55-01:55｜跑一轮修改：{ai_action}，重点拍修改意见、Agent动作和人手接管点",
+            f"01:55-02:40｜命中检查：放{evidence_text}，逐条看哪些意见命中、哪些还要人改",
+            "02:40-03:10｜收尾：如果能少掉一轮返修，再进入06；如果只是多生成几版，就不拍成教程",
+        ]
+    if obj in {"候选池", "选题台"}:
+        return [
+            f"00:00-00:08｜先给对比：旧候选/新候选并排，抛出「{hook}」",
+            f"00:08-00:30｜旧流程卡点：说明{pain}",
+            f"00:30-00:50｜真人判断：{judgment}",
+            f"00:50-02:00｜小批量实验：{ai_action}，只跑几条，不演完整流水账",
+            f"02:00-02:45｜错误回看：放{evidence_text}，重点看哪些字段还要人改",
+            "02:45-03:10｜收尾：如果错误能回写规则，再进入06；否则先改字段",
+        ]
+    if obj == "Agent任务":
+        return [
+            f"00:00-00:08｜先给异常：展示任务跑完但无法判断的画面，说「{hook}」",
+            f"00:08-00:30｜交代旧交付：说明{pain}",
+            f"00:30-00:55｜真人判断：{judgment}",
+            f"00:55-02:10｜跑一个任务：{ai_action}，重点拍输入、输出、异常、人工复核",
+            f"02:10-02:50｜失败也放：展示{evidence_text}，说明哪里必须人接手",
+            "02:50-03:15｜收尾：能追责就进06，不能追责就不拍成教程",
+        ]
     return [
-        f"00:00-00:08｜开场给证据：先闪现{evidence_text}或失败截图。说：{hook}",
-        f"00:08-00:30｜旧流程：打开旧任务/旧表格。指出：{pain}。",
-        f"00:30-00:50｜真人判断：{judgment}。",
-        f"00:50-02:10｜录屏实验：{ai_action}。按输入 -> 执行 -> 验收拍。",
-        f"02:10-03:00｜证据段：放{evidence_text}。失败样例也放。",
-        "03:00-03:30｜收尾：回到真人判断。只决定是否进入06，不在05锁死案例或资产。",
+        f"00:00-00:08｜开场：先闪现{evidence_text}，说「{hook}」",
+        f"00:08-00:30｜旧流程：指出{pain}",
+        f"00:30-00:50｜真人判断：{judgment}",
+        f"00:50-02:10｜实操：{ai_action}，只拍关键动作",
+        f"02:10-03:00｜证据：放{evidence_text}，补一个反例或人工修正",
+        "03:00-03:20｜收尾：只判断是否进入06",
     ]
 
 
@@ -798,6 +950,7 @@ def write_text(path: Path, content: str) -> None:
 
 def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str | None = None) -> dict[str, Any]:
     run_date = run_date or datetime.now().strftime("%Y-%m-%d")
+    display_title = topic.get("topic_title") or "未命名选题"
     private_runtime = load_private_runtime()
     private_cases = matched_private_cases(topic, private_runtime)
     template, template_reason = classify_template(topic)
@@ -807,11 +960,11 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
     snapshot = shootability_snapshot(topic, validation)
     outline = outline_segments(topic, validation)
     generation_input = generation_input_for_06(topic, template, template_reason, validation, private_cases)
-    folder = output_root / run_date / f"{slugify(str(topic.get('topic_id', 'topic')))}_{slugify(topic.get('topic_title', 'topic'))}"
+    folder = output_root / run_date / f"{slugify(str(topic.get('topic_id', 'topic')))}_{slugify(display_title)}"
     folder.mkdir(parents=True, exist_ok=True)
     status = script_status_from_validation(validation)
     document_path = folder / OUTPUT_FILES[0]
-    write_text(document_path, f"""# {topic.get('topic_title')}
+    write_text(document_path, f"""# {display_title}
 
 ## 05 脚本大纲确认
 
