@@ -42,3 +42,15 @@ data/manual/feishu_url_intake.txt
 *.tar.gz
 *.tgz
 *.dmg
+.cache/
+.external/
+.venv-douyin/
+.vercel/
+dist/
+cloud_functions/**/.vercel/
+cloud_functions/**/dist/
+output/script_packages/
+skills/*/references/private/
+skills/*/examples/private/
+skills/*/assets/private/
+skills/*/materials/private/

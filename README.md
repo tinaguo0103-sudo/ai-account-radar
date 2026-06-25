@@ -14,9 +14,9 @@
 
 ## 最快理解方式
 
-`00 主控台` 是唯一入口。每天先从这里看系统地图、今日候选池、待办任务和异常提示。
+`00 主控台` 是唯一入口。每天先从这里看系统地图、`04 / 今日挑选卡片`、待办任务和异常提示。
 
-- `04 分析与选题` 决定今天做什么：从今日候选池里选 1 条进入 Brief、本周做、暂存或不做。
+- `04 分析与选题` 决定今天做什么：在 `今日挑选卡片` 里快速扫选题，把候选改成进入 Brief、本周做、暂存或不做，并留下选择原因标签。
 - `05 Brief与制作` 决定怎么做成内容：补 Hook、案例、平台结构、封面、CTA 和人工判断，不生成完整成稿。
 - `06 内容任务主表` 决定今天做哪些任务：写稿、拍摄、剪辑、封面、发布、直播和复盘提醒都在这里执行。
 - `07 资产与复盘` 决定发完后是否复刻和资产化：看 24小时、72小时、7天反馈，判断是否改角度再发、沉淀清单/SOP/案例库。
@@ -26,9 +26,9 @@
 
 ## 选题 Skill
 
-项目已新增 Skill：`ai-account-editorial-director`。仓库内保留公开脱敏版：`skills/ai-account-editorial-director/`；本机也可以保留更完整的全局私有版 `/Users/congcong/.codex/skills/ai-account-editorial-director`。它负责把 AIHOT、公众号全文、抖音对标内容和候选池内容，转成更贴近 **AI业务系统导演** 人设的工作流实验命题卡，输出“选题命题、我要做的实验、热点触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、推荐动作”等业务字段；可发布标题只是最后一层包装。
+项目已新增 Skill：`ai-account-editorial-director`。生产运行只使用全局私有版 `/Users/congcong/.codex/skills/ai-account-editorial-director`；仓库内保留公开脱敏镜像 `skills/ai-account-editorial-director/`，只用于 Git、迁移、同步和显式测试。它负责把 AIHOT、公众号全文、抖音对标内容和候选池内容，转成更贴近 **AI业务系统导演** 人设的工作流实验命题卡，输出“选题命题、我要做的实验、热点触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、推荐动作”等业务字段；可发布标题只是最后一层包装。
 
-这份仓库版本只包含人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。`editorial_skill_runner.py` 默认优先读取本机全局私有版的文本；如果本机私有版不存在，才 fallback 到仓库脱敏版。它只是读取 Skill 文本并嵌入 prompt，不触发外部 Skill 调用机制，因此不会因为“使用全局 Skill”反复审查。也可以用 `EDITORIAL_SKILL_DIR` 显式指定任意 Skill 目录。
+这份仓库版本只包含人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。`editorial_skill_runner.py` 默认只读取本机全局私有版；如果全局私有版不存在会直接失败，不会自动回退仓库脱敏版。它只是读取 Skill 文本并嵌入 prompt，不触发外部 Skill 调用机制，因此不会因为“使用全局 Skill”反复审查。需要临时测试脱敏版时，必须显式设置 `EDITORIAL_SKILL_DIR=skills/ai-account-editorial-director`。
 
 Skill 运行时不再只把完整案例库整篇塞进 prompt。当前结构是：`references/persona-brief.md` 作为短底稿，`references/persona-and-cases.md` 作为完整档案；`editorial_skill_runner.py` 会先给每条候选匹配 1-3 个母场景，再要求 Skill 输出 `热点钩子 / 普通人会怎么讲 / 我会怎么讲 / 场景依据 / 真实或相邻案例 / 我的改造动作 / 需要补的证据 / 关联母场景 / 借用方式 / 不能声称的部分 / 我的真实或相邻场景`，最后才生成标题和 Brief 字段。
 
@@ -50,13 +50,13 @@ Skill 运行时不再只把完整案例库整篇塞进 prompt。当前结构是�
 python3 scripts/sync_editorial_skill.py
 ```
 
-确认要用公开版覆盖本机全局 Skill 时再运行：
+只有在初始化新机器或明确要用公开镜像重建全局 Skill 时才运行：
 
 ```bash
-python3 scripts/sync_editorial_skill.py --install-public --yes
+python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite-existing
 ```
 
-脚本会先备份当前全局 Skill。注意：这会把更完整的私有版替换为公开脱敏版，日常生产环境通常不需要执行。
+同步脚本默认拒绝覆盖已有全局 Skill；加 `--force-overwrite-existing` 才会先备份再替换。注意：这会把更完整的私有版替换为公开脱敏版，日常生产环境通常不需要执行。
 
 ## 已理解的账号定位
 
@@ -113,21 +113,41 @@ python3 scripts/sync_editorial_skill.py --install-public --yes
 - `data/manual/content_items.example.jsonl`：内容对象样例，适合放公众号正文、对标视频标题/封面/字幕/OCR/评论问题。
 - `scripts/run_radar.py`：采集与分析脚本。
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和初筛后的今日候选池。
-- `scripts/editorial_skill_runner.py`：Skill 主编层执行脚本，默认调用本机已登录的 Codex CLI，优先读取本机全局私有版 `ai-account-editorial-director`，不存在时读取仓库内公开脱敏版；也可用 `EDITORIAL_SKILL_DIR` 显式指定目录。它要求 Skill 先完成 `Gate` 主编门控，输出 `主编筛选 / 主编自由稿 / 我的真实矛盾 / 场景依据 / 证据强度 / title_permission`；再整理 `Workflow Experiment Card` 工作流实验命题卡，核心写入 `选题命题 / 我要做的实验 / 热点触发点 / 我的工作流痛点 / 旧流程痛点 / AI介入点 / 验证方式 / 可沉淀资产 / 我的思考点 / 重点体现 / 可展示证据 / 需要补的证据`；最后只有 `title_permission=可发布标题` 才写入 `可发布标题 / 标题备选`。`--engine deterministic` 只作为显式离线应急选项。
-- `scripts/sync_editorial_skill.py`：把仓库中的公开脱敏版 `skills/ai-account-editorial-director/` 安装到全局 Codex Skills。默认 dry-run；只有显式 `--install-public --yes` 才会替换全局 Skill，并会先备份原目录。
+- `scripts/editorial_skill_runner.py`：Skill 主编层执行脚本，默认调用本机已登录的 Codex CLI，只读取本机全局私有版 `ai-account-editorial-director`；全局版缺失时直接失败，不自动使用仓库脱敏版。需要临时测试脱敏镜像时，必须用 `EDITORIAL_SKILL_DIR` 显式指定目录。它要求 Skill 先完成 `Gate` 主编门控，输出 `主编筛选 / 主编自由稿 / 我的真实矛盾 / 场景依据 / 证据强度 / title_permission`；再整理 `Workflow Experiment Card` 工作流实验命题卡，核心写入 `选题命题 / 我要做的实验 / 热点触发点 / 我的工作流痛点 / 旧流程痛点 / AI介入点 / 验证方式 / 可沉淀资产 / 我的思考点 / 重点体现 / 可展示证据 / 需要补的证据`；最后只有 `title_permission=可发布标题` 才写入 `可发布标题 / 标题备选`。`--engine deterministic` 只作为显式离线应急选项。
+- `scripts/sync_editorial_skill.py`：把仓库中的公开脱敏版 `skills/ai-account-editorial-director/` 安装到全局 Codex Skills。默认 dry-run；已有全局 Skill 时会拒绝覆盖，只有显式 `--install-public --yes --force-overwrite-existing` 才会先备份再替换。
 - `scripts/daily_pipeline.py`：日常总入口；日常使用加 `--write-feishu` 写入飞书，默认本地模式只用于开发验证。抖音主页采集默认同一天只跑一次，后续运行复用当天缓存。
 - `scripts/url_content_resolver.py`：正式 URL 内容采样 adapter，把公众号文章、抖音单条视频、RSS/Atom、普通网页解析成标准 ContentItem；默认只输出本地文件，显式 `--write-feishu` 才写入 `03 内容收件箱`。
 - `scripts/push_today10_to_feishu.py`：把今日候选池写入飞书 `04 分析与选题`，不写被淘汰的调试候选。
+- `scripts/setup_topic_selection_workspace.py`：把 `04 分析与选题` 配成飞书原生挑选台，创建/修正卡片视图、看板视图、学习样本视图，以及 `选择原因标签 / 人工一句话判断 / 学习状态` 反馈字段。
+- `scripts/feishu_topic_decision_card.py`：从 `04` 最新批次生成“一张飞书交互式选题速选卡”，卡片里只需要勾选要 `进入Brief` 的候选、选择推进原因并可补一句手工原因；提交后由飞书开放平台配置的云函数 receiver 回写，选中项进入 Brief，未选项标记为不做。`serve-long-connection --write` 只作为开发兜底，不是日常路径。
+- `scripts/run_topic_decision_card_session.py`：一键发送选题速选卡，发送后即可结束；用户点击后的回写由云函数 receiver 承接，适合作为日常挑选入口。
+- `scripts/check_feishu_card_cloud_receiver.py`：不写表的健康检查脚本，用 `challenge` 校验云函数 URL，并读一次 `04 分析与选题` 确认飞书凭证和表权限正常。
+- `scripts/learn_from_topic_selection.py`：读取 `04` 中用户已经改过的状态和原因标签，生成待确认的选题偏好学习摘要；默认只学习最近一次正式运行批次。建议日常使用 `--mark-pending-confirm`，先把样本标为 `待确认学习`。只有用户确认后运行 `--approve-latest`，`editorial_skill_runner.py` 才会读取已确认摘要并带入下一轮主编判断。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并创建 `06 内容任务主表`。
-- `scripts/content_ops_pipeline.py`：从 `04 分析与选题` 拆出 `05 Brief与制作` 平台内容和 `06 内容任务主表` 执行任务；默认 dry-run。
-- `scripts/simplify_feishu_workspace.py`：按 v0.2 白名单清理飞书视图和 `03/04` 字段，保持每张表一个主视图。
+- `scripts/content_ops_pipeline.py`：从 `04 分析与选题` 读取工作流实验命题卡，调用 Austin不加班脚本Skill v0.2 生成单一 `script_outline_brief.md` 脚本大纲确认稿，并只写入 `05 Brief与制作` 的核心观点、视频大纲和给06的生成输入；默认 dry-run 不落本地文件，v0.2 不自动创建 `06 内容任务主表`。
+- `scripts/sync_austin_scripting_skill.py`：把仓库公开脱敏版 `skills/austin-no-overtime-scripting/` 单向安装到全局 Codex Skills。只支持“仓库脱敏版 -> 全局安装”，不提供全局私有版回写仓库；已有全局 Skill 时默认拒绝覆盖，避免敏感素材误提交。
+- `scripts/simplify_feishu_workspace.py`：按当前白名单清理飞书 `03/04` 字段；`04` 会保留挑选卡片、决策看板、证据和学习相关视图。
 - `output/`：运行后生成 CSV 和 Excel。
 - `docs/schedule_local.md`：macOS 本机定时运行说明；当前只记录，不启用定时任务。
+- `docs/feishu_topic_selection_v0_3.md`：`04 分析与选题` 的飞书原生挑选台说明，包含卡片/看板/学习字段和自动化边界。
+- `docs/feishu_interactive_topic_card.md`：飞书交互式选题速选卡说明；用于解决卡片视图字段截断、逐条点开太慢的问题。
 - `prompt_templates.md`：对标分析、热点分析、转选题、生成 Brief 的 Prompt。
 - `feishu_setup.md`：飞书字段类型、视图、公式和提醒建议。
 - `config/system_rules.yaml`：机器可读的系统规则源文件，说明表逻辑、字段字典、状态流转、评分规则和 AI 边界。
 - `scripts/sync_rules_dictionary.py`：导出/同步 `99 规则与字典`，并在 `00 主控台` 写入规则入口卡片。
 - `scripts/refresh_console_daily.py`：刷新 `00 主控台` 伪仪表盘卡片，并生成每日 `AI账号雷达日报`。
+
+## Austin不加班脚本Skill v0.2
+
+`Austin不加班脚本Skill` 在 v0.2 里是 `04 分析与选题` 到 `05 Brief与制作` 的轻量确认层：它不重新选题，也不直接写完整脚本包，而是把工作流实验命题卡转成一份给人看的脚本大纲确认稿，只保留核心观点、视频大纲和给06的生成输入。飞书 `05` 只保留索引、状态、核心信息和本地文档路径；完整脚本、提词器、录屏清单、后期交接和发布包放到 `06` 再生成。
+
+运行时规则：
+
+1. 生产默认读取全局私有版：`/Users/congcong/.codex/skills/austin-no-overtime-scripting`。
+2. 如果全局版不存在，脚本直接失败，不自动回退仓库脱敏版。
+3. 只有显式设置 `AUSTIN_SCRIPT_SKILL_DIR=skills/austin-no-overtime-scripting` 时，才会读取仓库脱敏镜像用于测试或迁移。
+
+仓库内 Skill 是公开安全镜像，只放脱敏模板、脚本和示例；全局私有版可以补充真实项目、内部表达偏好、敏感案例和私有素材。同步只允许通过 `scripts/sync_austin_scripting_skill.py --install-public --yes` 从仓库脱敏版安装到全局目录；如果全局目录已存在，需额外加 `--force-overwrite-existing` 才会覆盖。不提供全局私有版自动回写仓库。
 
 ## 一键运行
 
@@ -221,7 +241,7 @@ python3 scripts/daily_pipeline.py --url-file data/manual/urls.example.txt
 https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml
 ```
 
-本地验证公共 feed 只用于排查发现源，不参与 `04 今日候选池`：
+本地验证公共 feed 只用于排查发现源，不参与 `04 分析与选题`：
 
 ```bash
 python3 scripts/wechat_feed_intake.py --config config/wechat_feed_candidates.yaml --limit 5 --dry-run
@@ -336,15 +356,25 @@ python3 scripts/editorial_skill_runner.py \
   --report output/latest_write/editorial_skill_report.json
 ```
 
-这一步会调用本机已登录的 Codex CLI，并把 `ai-account-editorial-director` Skill 规则文本嵌入 prompt。默认优先读本机全局私有版，仓库脱敏版只做兜底。它会覆盖候选的主编判断字段，但不会拉取 AIHOT、不会打开抖音、不会写飞书。需要临时切换版本时，设置 `EDITORIAL_SKILL_DIR` 即可。
+这一步会调用本机已登录的 Codex CLI，并把 `ai-account-editorial-director` Skill 规则文本嵌入 prompt。默认只读本机全局私有版；仓库脱敏版不会作为隐式兜底。它会覆盖候选的主编判断字段，但不会拉取 AIHOT、不会打开抖音、不会写飞书。需要临时测试脱敏版时，显式设置 `EDITORIAL_SKILL_DIR=skills/ai-account-editorial-director`。
 
 在 Codex 对话里手动调用这个脚本时，偶尔会看到权限审查，不是因为 Skill 不能被项目使用，而是因为脚本会启动本机 `codex exec` 子进程并写入 `~/.codex` 的运行状态。命令前缀已尽量收敛到 `python3 scripts/editorial_skill_runner.py`；日常在本机终端运行项目脚本时，不会把这个审批流程暴露成业务步骤。
 
-`04 分析与选题` 已收敛为今日候选池决策表：主字段 `选题标题` 目前作为飞书兼容字段使用，但内容必须写成短 `选题命题`，不是发布标题，也不是完整拆解。飞书默认视图优先展示工作流实验卡字段，例如 `选题命题`、`我要做的实验`、`热点触发点`、`我的工作流痛点`、`旧流程痛点`、`AI介入点`、`验证方式`、`可沉淀资产`、`今日建议级别`、`编辑判断分`、`AI味风险`、`内容可信度`、`推荐动作`、`title_permission`、`主编自由稿`、`我的思考点`、`重点体现`、`可展示证据`、`需要补的证据`、`推荐理由` 和 `不建议做的原因`。`可发布标题 / 标题备选` 是后置包装字段，只在 `title_permission=可发布标题` 时出现。写入前会先经过 `content_sampler.py` 的初筛和 `editorial_skill_runner.py` 的真实 Skill 主编判断，让你能区分“今日最值得做”“可选候选”“暂存观察”和“不建议制作”。没有足够人设角度或内容支撑的内容不会为了凑数进入候选池；`title_permission` 不是 `可发布标题` 时，写入层会清空 `可发布标题 / 标题备选`，但仍可保留内部 `选题命题` 和 `我要做的实验`。
+`04 分析与选题` 已收敛为飞书原生选题挑选台：主字段 `选题标题` 直接承担短选题命题职责，不再额外保留一列 `选题命题`。飞书只保留你实际判断要不要推进所需的短决策卡字段：状态、建议级别、AI味风险、对应方向、来源、Brief、推荐/不推荐理由、工作流实验、痛点、AI介入、验证方式、可沉淀资产、思考点和证据。`卡片速读` 是专门给画册卡片看的自动汇总字段，会把 Brief、实验、痛点、验证、证据缺口和操作提示压成一段正文，让你不必逐个打开记录。标题门控、分数、可信度、内容指纹、版本路径等后台字段保留在本地 CSV/MD 或 05，不再塞进 04。写入前会先经过 `content_sampler.py` 的初筛和 `editorial_skill_runner.py` 的真实 Skill 主编判断，让你能区分“今日最值得做”“可选候选”“暂存观察”和“不建议制作”。
+
+日常挑选不再要求你在长表格里逐格点开看。`04` 现在保留这些飞书原生视图：
+
+- `今日挑选卡片`：主入口，快速扫标题和 `卡片速读`，直接改状态和原因标签。
+- `今日决策看板`：按 `状态` 看候选从 `待判断` 到 `进入Brief / 本周做 / 暂存 / 不做` 的推进。
+- `证据不足`：专门看 `可展示证据` 和 `需要补的证据`，判断是不是先补素材。
+- `待学习样本`：看已经做过选择、等待被学习脚本汇总的样本。
+- `今日候选池`：保留表格视图，主要用于排查和批量查看。
+
+你只需要在卡片里读 `卡片速读`，改 `状态`，必要时点一个 `选择原因标签`，可选写一句 `人工一句话判断`。后续 `scripts/learn_from_topic_selection.py --mark-pending-confirm` 会从这些选择里沉淀偏好，并把样本标为 `待确认学习`：哪些方向更容易被你推进，哪些标签代表放弃原因，下一轮应该少生成什么、多强化什么。默认生成的是待确认摘要；只有你确认后运行 `scripts/learn_from_topic_selection.py --approve-latest`，已确认学习摘要才会进入 `editorial_skill_runner.py` 的主编 prompt。
 
 `暂存观察` 和 `不建议制作` 只保留在本地全量输出与调试文件里，默认不写入飞书 `04` 前台候选池。飞书里的 `04` 应代表“值得用户打开看的候选”，不是所有被系统扫到的素材。
 
-飞书字段显示原则：代码和本地 CSV 可以保留完整调试字段，但飞书默认视图只露出业务判断需要的字段。`03 内容收件箱 / 今日采集` 默认看标题、来源、链接、摘要、正文长度、是否全文解析、解析说明、采集/处理状态和最近采样时间；内容指纹、payload 路径、运行批次等排障字段默认隐藏。`04 分析与选题 / 今日候选池` 默认先看短 `选题命题` 和 `我要做的实验`，再看热点触发点、工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、建议级别、编辑判断分、AI味风险、可信度、推荐动作、来源、栏目、`主编自由稿`、`我的思考点`、`重点体现`、`可展示证据`、`需要补的证据`、推荐理由和不建议做的原因；`可发布标题 / 标题备选` 只作为后置包装字段，不再承担候选主语义。
+飞书字段显示原则：代码和本地 CSV 可以保留完整调试字段，但飞书默认视图只露出业务判断需要的字段。`03 内容收件箱 / 今日采集` 默认看标题、来源、链接、摘要、正文长度、是否全文解析、解析说明、采集/处理状态和最近采样时间；内容指纹、payload 路径、运行批次等排障字段默认隐藏。`04 分析与选题 / 今日挑选卡片` 默认先看 `选题标题` 和 `卡片速读`，直接改 `状态` 和 `选择原因标签`；分散字段保留给排查和下游脚本，不要求日常逐个点开读。
 
 同步来源池和栏目权重到飞书 `01 来源与采样`：
 
@@ -476,8 +506,8 @@ python3 scripts/sync_rules_dictionary.py --sync-feishu
 
 1. 每天默认打开 `00 主控台 / 今日工作台`，只看当天动作、预警、进度和临时入口。
 2. 如果想理解系统关系，再切到 `00 主控台 / 系统导航`，或看 `docs/system_map.md`。
-3. 优先看 `今日候选池`，而不是看原始内容、粉丝数、点赞数或竞品报表。
-4. 进入 `04 分析与选题` 做选题决策：状态只使用 `待判断`、`进入Brief`、`本周做`、`暂存`、`归档`、`不做`。
+3. 优先看 `04 分析与选题 / 今日挑选卡片`，而不是看原始内容、粉丝数、点赞数或竞品报表。
+4. 进入 `04 分析与选题` 做选题决策：状态只使用 `待判断`、`进入Brief`、`本周做`、`暂存`、`归档`、`不做`；尽量补一个 `选择原因标签`，方便后续学习你的判断逻辑。
 5. 进入 `05 Brief与制作` 补案例和制作：状态只使用 `待补案例`、`可制作`、`已制作待发布`、`已发布待复盘`、`复盘完成`。
 6. 进入 `06 内容任务主表` 看今天要完成的写稿、拍摄、封面、发布、直播和复盘任务。
 7. 必要时打开 `02 URL投喂入口`，手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接；小红书、视频号、评论区和抖音主页批量抓取暂不支持。
@@ -496,27 +526,32 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 - `02 URL投喂入口 / URL投喂入口`
 - `03 内容收件箱 / 内容收件箱`
 - `03 内容收件箱 / 今日采集`
+- `04 分析与选题 / 今日挑选卡片`
+- `04 分析与选题 / 今日决策看板`
+- `04 分析与选题 / 证据不足`
+- `04 分析与选题 / 待学习样本`
 - `04 分析与选题 / 今日候选池`
 - `05 Brief与制作 / Brief制作后台`
 - `06 内容任务主表 / 今日待办`
 - `07 资产与复盘 / 资产复盘后台`
 - `99 规则与字典 / 规则与字典`
 
-其中 `01 来源与采样 / 当前主对标池` 默认只看主对标、辅助对标和 AI项目复盘占位；旧字段 `来源名称`、`获取方式`、`关注重点/原始内容`、`是否主对标`、`是否重点跟踪` 不进入默认视图。`02 URL投喂入口` 是输入层，不是任务表；`03 内容收件箱` 是所有参与拆解的内容账本，包括 URL 投喂和 AIHOT；`04 分析与选题 / 今日候选池` 是选题决策区；`06 内容任务主表` 才是写稿、拍摄、剪辑、封面、发布、直播、复盘、私信跟进和资产化任务的执行表。
+其中 `01 来源与采样 / 当前主对标池` 默认只看主对标、辅助对标和 AI项目复盘占位；旧字段 `来源名称`、`获取方式`、`关注重点/原始内容`、`是否主对标`、`是否重点跟踪` 不进入默认视图。`02 URL投喂入口` 是输入层，不是任务表；`03 内容收件箱` 是所有参与拆解的内容账本，包括 URL 投喂和 AIHOT；`04 分析与选题 / 今日挑选卡片` 是选题决策主入口，`今日决策看板` 用来拖状态，`待学习样本` 用来沉淀选择偏好；`06 内容任务主表` 才是写稿、拍摄、剪辑、封面、发布、直播、复盘、私信跟进和资产化任务的执行表。
 
 ## 每天打开什么
 
 每天：
 
 1. 打开 `00 主控台 / 今日工作台`。
-2. 先看 `今日候选池`、`今日必须完成`、`明日预警`、`本周内容进度`。
+2. 先看 `04 / 今日挑选卡片`、`今日必须完成`、`明日预警`、`本周内容进度`。
 3. 再看 `待复盘内容`、`可复刻内容`、`来源异常/采集失败`。
-4. 进入 `04 分析与选题`，把值得做的选题改为 `进入Brief` 或 `本周做`。
-5. 如需把 `04` 的选题拆成 Brief 和任务，运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，它会把状态为 `进入Brief` 或 `本周做` 且未拆分的选题承接到 `05 Brief与制作` 和 `06 内容任务主表`。
-6. 进入 `05 Brief与制作`，补真实案例、个人判断、视觉建议和 CTA。
-7. 进入 `06 内容任务主表`，只看今天必须完成和本周任务。
-8. 必要时进入 `02 URL投喂入口`，粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
-9. 只有看不懂表关系时，才切到 `00 主控台 / 系统导航` 或打开 `docs/system_map.md`。
+4. 快速挑选优先用交互式选题速选卡：运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，它只负责把卡片发到飞书；后续点击由云函数 receiver 自动回写。在飞书卡片里只勾选值得 `进入Brief` 的候选，补原因标签或一句手工原因后提交。未选中的候选会标记为 `不做`。飞书 `04 / 今日挑选卡片` 保留为兜底编辑入口。
+5. 运行 `python3 scripts/learn_from_topic_selection.py --mark-pending-confirm`，把本轮选择沉淀成本地待确认学习摘要；确认摘要正确后再运行 `python3 scripts/learn_from_topic_selection.py --approve-latest --mark-learned`。
+6. 如需把 `04` 的选题转成脚本大纲确认稿，运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，它会把状态为 `进入Brief` 或 `本周做` 且未生成脚本稿的选题承接到 `05 Brief与制作`，并生成本地 `script_outline_brief.md`。
+7. 进入 `05 Brief与制作`，只看脚本状态、推荐模板、核心观点、视频大纲、给06的生成输入和本地文档路径；确认大纲方向后，再由 `06` 生成完整脚本与执行方案。
+8. 进入 `06 内容任务主表`，只看已经人工确认后的今天必须完成和本周任务。
+9. 必要时进入 `02 URL投喂入口`，粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
+10. 只有看不懂表关系时，才切到 `00 主控台 / 系统导航` 或打开 `docs/system_map.md`。
 
 每周：
 
@@ -542,10 +577,12 @@ python3 scripts/refresh_console_daily.py
 ## 每天怎么用
 
 1. 打开 `00 主控台 / 今日工作台`。
-2. 进入 `04 分析与选题`，优先看高分和推荐等级 A/B 的候选，决定 `进入Brief`、`本周做`、`暂存`、`归档` 或 `不做`。
-3. 进入 `05 Brief与制作`，补真实案例、个人判断、素材、截图和边界。
-4. 必要时用 `02 URL投喂入口` 手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
-5. 如果需要排查来源、重复内容或采集状态，再打开 `03 内容收件箱`。
+2. 运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，把一张选题速选卡发到飞书里一次勾选；本机不用常驻监听。开发预览时可先用 `python3 scripts/feishu_topic_decision_card.py build --limit 7`，排查云函数时可运行 `.venv/bin/python scripts/check_feishu_card_cloud_receiver.py --url <云函数URL>`。
+3. 如果不用交互卡片，再进入 `04 分析与选题 / 今日挑选卡片`，手动决定 `进入Brief`、`本周做`、`暂存`、`归档` 或 `不做`，并尽量补 `选择原因标签`。
+4. 需要沉淀选择偏好时，运行 `python3 scripts/learn_from_topic_selection.py`。
+5. 对已确认的选题运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，进入 `05 Brief与制作` 看核心观点、视频大纲、给06的生成输入和本地脚本大纲确认稿路径。
+6. 必要时用 `02 URL投喂入口` 手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
+7. 如果需要排查来源、重复内容或采集状态，再打开 `03 内容收件箱`。
 
 ## 每周怎么复盘
 

@@ -1,0 +1,28 @@
+[
+  {
+    "topic_id": "T20260621-001",
+    "status": "confirmed_for_script",
+    "topic_title": "封面Skill——我是如何做自己视频封面自动化Skill的",
+    "content_pillar": "真实工作流改造",
+    "core_thesis": "视频封面不是每条重新做，而应该把账号视觉、标题规则和版式固化成可复用Skill。",
+    "target_audience": "知识型自媒体创作者、AI账号主理人、内容团队",
+    "pain_point": "每条视频封面都要重新想标题、版式、人物状态和风格，导致效率低、风格不统一。",
+    "old_workflow": "人工提炼标题、找参考、做封面、调版式、反复修改。",
+    "ai_intervention": "用Skill把标题提炼、视觉规范、人物动作、封面布局和QA规则固定下来。",
+    "demo_materials": [
+      "封面Skill输入字段截图",
+      "Skill生成的封面结构输出",
+      "最终封面对比图"
+    ],
+    "missing_evidence": [
+      "补一张人工修正前后图"
+    ],
+    "unique_judgment": "封面自动化不是让AI随机出图，而是把账号视觉规范、内容钩子和版式合同锁死。",
+    "takeaway_asset": "封面自动化Skill拆解清单",
+    "preferred_duration_min": 4,
+    "publish_platforms": ["douyin", "shipinhao", "xiaohongshu"],
+    "fact_check_points": [
+      "如果提到具体工具能力，需要核验当前版本是否支持。"
+    ]
+  }
+]

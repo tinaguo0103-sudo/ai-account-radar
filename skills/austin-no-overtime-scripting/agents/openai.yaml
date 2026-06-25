@@ -1,0 +1,7 @@
+interface:
+  display_name: "Austin不加班脚本Skill"
+  short_description: "生成AI账号05脚本大纲确认稿"
+  brand_color: "#0F766E"
+  default_prompt: "使用 $austin-no-overtime-scripting，把这条已确认选题或04工作流实验命题卡转成v0.2脚本大纲确认稿；只输出核心观点、视频大纲和给06的生成输入，完整脚本包留到06。"
+policy:
+  allow_implicit_invocation: true

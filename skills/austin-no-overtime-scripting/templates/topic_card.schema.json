@@ -1,0 +1,46 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Austin Script Topic Card v0.2",
+  "type": "object",
+  "required": [
+    "topic_title",
+    "core_thesis",
+    "pain_point",
+    "target_audience",
+    "old_workflow",
+    "ai_intervention",
+    "takeaway_asset"
+  ],
+  "properties": {
+    "topic_id": { "type": "string" },
+    "status": { "type": "string" },
+    "topic_title": { "type": "string" },
+    "content_pillar": { "type": "string" },
+    "core_thesis": { "type": "string" },
+    "target_audience": { "type": "string" },
+    "pain_point": { "type": "string" },
+    "old_workflow": { "type": "string" },
+    "ai_intervention": { "type": "string" },
+    "demo_materials": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "missing_evidence": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "unique_judgment": { "type": "string" },
+    "takeaway_asset": { "type": "string" },
+    "preferred_duration_min": { "type": "number" },
+    "publish_platforms": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "fact_check_points": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "source_fields": { "type": "object" }
+  },
+  "additionalProperties": true
+}
