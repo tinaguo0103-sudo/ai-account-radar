@@ -409,6 +409,18 @@ def evidence_phrase(topic: dict[str, Any], validation: ValidationResult) -> str:
     return "、".join(evidence[:2])
 
 
+def headline_result(topic: dict[str, Any], validation: ValidationResult) -> str:
+    asset = trim_end_punctuation(topic.get("takeaway_asset"), "一张可复用的验收表或流程清单")
+    evidence_text = evidence_phrase(topic, validation)
+    return f"最后要让画面落到「{asset}」，中间至少看到{evidence_text}"
+
+
+def old_new_contrast(topic: dict[str, Any]) -> str:
+    pain = trim_end_punctuation(topic.get("old_workflow") or topic.get("pain_point"), "旧流程靠经验和人工盯结果")
+    ai_action = trim_end_punctuation(topic.get("ai_intervention"), "AI介入一个可验证的小环节")
+    return f"旧流程是「{pain}」，新动作是「{ai_action}」"
+
+
 def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     title = short_text(topic.get("topic_title"), "这条选题")
     core = trim_end_punctuation(topic.get("core_thesis"), title)
@@ -421,8 +433,9 @@ def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
         f"这条不要拍成「{title}」的资料复述。我想拿它测一个具体问题：{core}。\n\n"
         f"我现在的判断是：{judgment}。这个判断得落在真实流程里看：旧流程的问题是「{pain}」，"
         f"这次我准备让AI介入「{ai_action}」。\n\n"
-        f"这条能不能继续往下做，主要看画面里有没有{evidence_text}。如果有，"
-        f"最后就不只是一个观点，而是可以收成「{asset}」。"
+        f"这条的看点应该是一个前后变化：以前只看最终结果，现在要看过程、异常和验收能不能被留下来。"
+        f"所以画面里必须有{evidence_text}。如果这个证据成立，最后就不只是一个观点，"
+        f"而是可以收成「{asset}」。"
     )
 
 
@@ -433,13 +446,15 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
     ai_action = trim_end_punctuation(topic.get("ai_intervention"), "AI介入动作")
     asset = trim_end_punctuation(topic.get("takeaway_asset"), "可沉淀资产")
     evidence_text = evidence_phrase(topic, validation) if validation else "关键截图、录屏或前后对比"
+    result = headline_result(topic, validation) if validation else f"最后要落到「{asset}」"
+    contrast = old_new_contrast(topic)
     return [
-        f"00:00-00:15｜先给结果：这条我想验证「{core}」。画面直接闪最终表格、输出物或失败点，不从背景讲起。",
-        f"00:15-00:40｜把旧流程摆出来：「{pain}」。用一个真实任务说明哪里慢、哪里乱、哪里只能靠人盯。",
-        f"00:40-01:10｜切回我的判断：「{judgment}」。这一段只讲取舍，不讲工具功能大全。",
-        f"01:10-02:40｜录屏跑实验：「{ai_action}」。按输入、AI处理、人工验收三步走；等待过程快进，关键字段放大。",
-        f"02:40-03:20｜放证据和不完美：重点看{evidence_text}。有失败样例就放失败样例，没有就明确标成待补。",
-        f"03:20-04:00｜收成资产：「{asset}」。结尾说清它下次怎么复用，不做空口号。",
+        f"00:00-00:15｜先给一个结果感：这条不是讲原则，而是看「{core}」。开场画面直接给最终表格、输出物或失败点，字幕压一句：{result}。",
+        f"00:15-00:45｜把问题说狠一点：{contrast}。这里不要泛讲效率，要拿一个真实任务说明：如果只看最终结果，哪些中间错误会被漏掉。",
+        f"00:45-01:20｜给出你的判断：「{judgment}」。这一段的重点是把内容从工具新闻拉回业务现场：我关心的不是模型会不会做，而是做完以后能不能验。",
+        f"01:20-02:40｜录屏跑最小实验：「{ai_action}」。画面按输入、AI处理、人工验收三步走，但每一步都要回答一个问题：我给了什么约束、AI留下了什么记录、我怎么判断它能不能用。",
+        f"02:40-03:25｜放证据，也放不完美：重点看{evidence_text}。如果有失败样例，这里就是转折点：不是AI没用，而是没有验收表就不知道它错在哪里。",
+        f"03:25-04:00｜收成资产：「{asset}」。结尾不要喊口号，要说清它下次怎么用：以后类似任务先填这张表，再让Agent跑，再按异常和验收记录决定要不要进入制作。",
     ]
 
 
@@ -463,6 +478,8 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
         f"- 推荐模板：{template}",
         f"- 模板理由：{template_reason}",
         "- 06要继续生成：完整脚本Brief、分段执行脚本、提词器、录屏清单、后期交接、发布包和QA。",
+        f"- 这条的核心冲突：{old_new_contrast(topic)}。",
+        f"- 开头结果感：{headline_result(topic, validation)}。",
         f"- 实操主线：{short_text(topic.get('ai_intervention'))}",
         f"- 关键证据：{md_list(evidence, '待补：至少明确一个可展示证据')}",
         f"- 进入06前优先补：{md_list(p0_todos, '无P0素材缺口，直接人工确认大纲')}",
