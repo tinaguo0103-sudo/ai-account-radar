@@ -18,6 +18,13 @@ from typing import Any
 
 import push_to_feishu as feishu
 from feishu_table_registry import TABLES, resolve_table_id, table_name
+from topic_decision_fields import (
+    CORE_VISIBLE_FIELDS,
+    DAILY_WRITE_FIELDS,
+    DETAIL_VISIBLE_FIELDS,
+    card_summary_from_fields,
+    field_create_body,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -27,91 +34,7 @@ LATEST_WRITE_TODAY10 = OUT / "latest_write" / "today_10_topics.csv"
 LEGACY_LOG = OUT / "content_sampler_log.json"
 TARGET_TABLE_KEY = "topic_decision"
 REQUIRED_FIELDS = [
-    "选题标题",
-    "选题命题",
-    "候选状态",
-    "推荐等级",
-    "主编自由稿",
-    "title_permission",
-    "点击钩子",
-    "观众为什么会点",
-    "我的真实矛盾",
-    "我要做的实验",
-    "热点触发点",
-    "我的工作流痛点",
-    "选题判断",
-    "原始钩子",
-    "我的切入",
-    "我准备怎么讲",
-    "可展示证据",
-    "热点钩子",
-    "普通人会怎么讲",
-    "我会怎么讲",
-    "场景依据",
-    "真实/相邻案例",
-    "我的改造动作",
-    "需要补的证据",
-    "我的选题标题",
-    "内部切入角度",
-    "可发布标题",
-    "对应方向",
-    "一句话Brief",
-    "我的场景拆解",
-    "验证方式",
-    "我的思考点",
-    "重点体现",
-    "可调用案例",
-    "内容核心冲突",
-    "视频呈现方式",
-    "证据强度",
-    "Skill编辑层",
-    "Skill参考文件",
-    "内容类型",
-    "平台建议",
-    "标题风格",
-    "标题备选",
-    "标题是否过度内部化",
-    "标题改写原因",
-    "真实用户问题",
-    "为什么今天值得做",
-    "我能讲出的独特角度",
-    "我的账号为什么能讲",
-    "是否只是资讯搬运",
-    "是否有足够内容支撑",
-    "编辑判断分",
-    "标题质量分",
-    "人设匹配分",
-    "内容可信度",
-    "AI味风险",
-    "是否建议进入制作",
-    "今日建议级别",
-    "主编判断",
-    "模板词命中情况",
-    "不建议做的原因",
-    "推荐动作原因",
-    "降级原因",
-    "推荐日期",
-    "运行日期",
-    "运行批次",
-    "是否本次新增",
-    "最近参与运行批次",
-    "今日排名",
-    "状态",
-    "推荐动作",
-    "原始来源标题",
-    "来源类型",
-    "来源标题",
-    "来源链接",
-    "对应栏目",
-    "热点切入方式",
-    "业务场景",
-    "旧流程痛点",
-    "AI介入点",
-    "可展示结果",
-    "可沉淀资产",
-    "推荐理由",
-    "相关来源",
-    "内容指纹",
+    *DAILY_WRITE_FIELDS,
 ]
 ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
 FEISHU_VISIBLE_LEVELS = {"今日最值得做", "可选候选"}
@@ -302,7 +225,7 @@ def ensure_fields(token: str, app_token: str, table_id: str) -> list[str]:
             "POST",
             f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
             token=token,
-            body={"field_name": field_name, "type": 1},
+            body=field_create_body(field_name),
         )
         created.append(field_name)
         time.sleep(0.1)
@@ -324,104 +247,40 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 
 def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str, str]:
     status = ACTION_STATUS.get(row.get("推荐动作", ""), "待判断")
-    title_permission = row.get("title_permission", "") or ("可发布标题" if row.get("可发布标题") else "不生成标题")
-    publishable_title = row.get("可发布标题", "") if title_permission == "可发布标题" else ""
-    title_options = row.get("标题备选", "") if title_permission == "可发布标题" else ""
     level = normalize_level(row.get("今日建议级别", ""))
     proposition = proposition_for(row)
     experiment = experiment_for(row)
     trigger = workflow_trigger_for(row)
     pain = workflow_pain_for(row)
     display_title = display_title_for(row)
-    internal_angle = row.get("内部切入角度") or proposition
     recommendation_reason = row.get("推荐理由", "")
-    return {
+    mapped = {
         "选题标题": display_title,
-        "选题命题": proposition,
-        "候选状态": normalize_level(row.get("候选状态", "")) or level,
-        "推荐等级": row.get("推荐等级", ""),
-        "主编自由稿": row.get("主编自由稿", ""),
-        "title_permission": title_permission,
-        "点击钩子": row.get("点击钩子", ""),
-        "观众为什么会点": row.get("观众为什么会点", ""),
-        "我的真实矛盾": row.get("我的真实矛盾", ""),
+        "状态": status,
+        "今日建议级别": level,
+        "AI味风险": row.get("AI味风险", ""),
+        "推荐日期": date,
+        "今日排名": str(rank),
+        "对应方向": row.get("对应方向", row.get("对应栏目", "")),
+        "原始来源标题": row.get("来源内容") or row.get("原始来源标题", ""),
+        "来源链接": row.get("来源链接", ""),
+        "一句话Brief": row.get("一句话Brief", ""),
+        "推荐理由": recommendation_reason,
+        "不建议做的原因": row.get("不建议做的原因", ""),
         "我要做的实验": experiment,
         "热点触发点": trigger,
         "我的工作流痛点": pain,
-        "选题判断": row.get("选题判断", ""),
-        "原始钩子": row.get("原始钩子", ""),
-        "我的切入": row.get("我的切入", ""),
-        "我准备怎么讲": row.get("我准备怎么讲", ""),
-        "可展示证据": row.get("可展示证据", ""),
-        "热点钩子": row.get("热点钩子", ""),
-        "普通人会怎么讲": row.get("普通人会怎么讲", ""),
-        "我会怎么讲": row.get("我会怎么讲", ""),
-        "场景依据": row.get("场景依据", ""),
-        "真实/相邻案例": row.get("真实/相邻案例", ""),
-        "我的改造动作": row.get("我的改造动作", ""),
-        "需要补的证据": row.get("需要补的证据", ""),
-        "我的选题标题": proposition,
-        "内部切入角度": internal_angle,
-        "可发布标题": publishable_title,
-        "对应方向": row.get("对应方向", row.get("对应栏目", "")),
-        "一句话Brief": row.get("一句话Brief", ""),
-        "我的场景拆解": row.get("我的场景拆解", ""),
-        "验证方式": row.get("验证方式", ""),
-        "我的思考点": row.get("我的思考点", ""),
-        "重点体现": row.get("重点体现", ""),
-        "可调用案例": row.get("可调用案例", ""),
-        "内容核心冲突": row.get("内容核心冲突", ""),
-        "视频呈现方式": row.get("视频呈现方式", ""),
-        "证据强度": row.get("证据强度", ""),
-        "Skill编辑层": row.get("Skill编辑层", ""),
-        "Skill参考文件": row.get("Skill参考文件", ""),
-        "内容类型": row.get("内容类型", ""),
-        "平台建议": row.get("平台建议", ""),
-        "标题风格": row.get("标题风格", ""),
-        "标题备选": title_options,
-        "标题是否过度内部化": row.get("标题是否过度内部化", ""),
-        "标题改写原因": row.get("标题改写原因", ""),
-        "真实用户问题": row.get("真实用户问题", ""),
-        "为什么今天值得做": row.get("为什么今天值得做", ""),
-        "我能讲出的独特角度": row.get("我能讲出的独特角度", ""),
-        "我的账号为什么能讲": row.get("我的账号为什么能讲", ""),
-        "是否只是资讯搬运": row.get("是否只是资讯搬运", ""),
-        "是否有足够内容支撑": row.get("是否有足够内容支撑", ""),
-        "编辑判断分": row.get("编辑判断分", ""),
-        "标题质量分": row.get("标题质量分", ""),
-        "人设匹配分": row.get("人设匹配分", ""),
-        "内容可信度": row.get("内容可信度", ""),
-        "AI味风险": row.get("AI味风险", ""),
-        "是否建议进入制作": row.get("是否建议进入制作", ""),
-        "今日建议级别": level,
-        "主编判断": row.get("主编判断", ""),
-        "模板词命中情况": row.get("模板词命中情况", ""),
-        "不建议做的原因": row.get("不建议做的原因", ""),
-        "推荐动作原因": row.get("推荐动作原因", ""),
-        "降级原因": row.get("降级原因", ""),
-        "推荐日期": date,
-        "运行日期": date,
-        "运行批次": run_id,
-        "是否本次新增": "是",
-        "最近参与运行批次": run_id,
-        "今日排名": str(rank),
-        "状态": status,
-        "推荐动作": row.get("推荐动作", ""),
-        "原始来源标题": row.get("来源内容", ""),
-        "来源类型": row.get("来源类型", ""),
-        "来源标题": row.get("原始来源标题") or row.get("来源内容", ""),
-        "来源链接": row.get("来源链接", ""),
-        "对应栏目": row.get("对应栏目", ""),
-        "热点切入方式": row.get("热点切入方式", ""),
-        "业务场景": row.get("业务场景", ""),
         "旧流程痛点": row.get("旧流程痛点", ""),
         "AI介入点": row.get("AI介入点", ""),
-        "可展示结果": row.get("可展示结果", ""),
+        "验证方式": row.get("验证方式", ""),
         "可沉淀资产": row.get("可沉淀资产", ""),
-        "推荐理由": recommendation_reason,
-        "相关来源": row.get("相关来源", ""),
-        "内容指纹": row.get("内容指纹", ""),
+        "我的思考点": row.get("我的思考点", ""),
+        "可展示证据": row.get("可展示证据") or row.get("可展示结果", ""),
+        "需要补的证据": row.get("需要补的证据", ""),
+        "运行批次": run_id,
     }
+    mapped["卡片速读"] = card_summary_from_fields(mapped)
+    return mapped
 
 
 def dry_run_print(rows: list[dict[str, str]]) -> None:
@@ -429,15 +288,13 @@ def dry_run_print(rows: list[dict[str, str]]) -> None:
     for row in rows:
         print(
             f"{row['今日排名']}. {row['选题标题']} | "
-            f"{row['内容类型']} / {row['标题风格']} | "
-            f"{row['对应栏目']} / {row['热点切入方式']} | "
-            f"{row['业务场景']} | {row['推荐动作']} -> {row['状态']} | "
-            f"{row.get('今日建议级别', '')} / 编辑分{row.get('编辑判断分', '')} / AI味{row.get('AI味风险', '')}"
+            f"{row['对应方向']} | {row['状态']} | "
+            f"{row.get('今日建议级别', '')} / AI味{row.get('AI味风险', '')}"
         )
-        if row.get("内部切入角度") and row["内部切入角度"] != row["选题标题"]:
-            print(f"   内部角度: {row['内部切入角度'][:120]}")
-        if row.get("相关来源"):
-            print(f"   相关来源: {row['相关来源'][:120]}")
+        if row.get("我要做的实验"):
+            print(f"   实验: {row['我要做的实验'][:120]}")
+        if row.get("需要补的证据"):
+            print(f"   需补证据: {row['需要补的证据'][:120]}")
 
 
 def batch_create(token: str, app_token: str, table_id: str, rows: list[dict[str, str]]) -> int:
@@ -459,7 +316,6 @@ def update_existing_top10(token: str, app_token: str, table_id: str, record: dic
     # Fully overwrite all fields controlled by this script. This intentionally
     # keeps empty strings so stale Feishu values are cleared instead of retained.
     fields = {key: row.get(key, "") for key in REQUIRED_FIELDS}
-    fields["是否本次新增"] = "否"
     feishu.request_json(
         "PUT",
         f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record['record_id']}",
@@ -483,7 +339,7 @@ def patch_candidate_view(token: str, app_token: str, table_id: str, view_name: s
         time.sleep(0.1)
     fields = list_fields(token, app_token, table_id)
     view = views.get(view_name, {})
-    run_field = fields.get("最近参与运行批次") or fields.get("运行批次")
+    run_field = fields.get("运行批次")
     if not view.get("view_id") or not run_field:
         return {"created": created, "configured": "missing_view_or_run_field"}
     hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
@@ -529,21 +385,8 @@ def delete_view_if_exists(token: str, app_token: str, table_id: str, view_name: 
 
 
 def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: str) -> dict[str, Any]:
-    core_visible = {
-        "选题标题", "选题命题", "我要做的实验", "热点触发点", "我的工作流痛点",
-        "今日建议级别", "编辑判断分", "AI味风险", "内容可信度",
-        "推荐动作", "状态", "title_permission", "来源类型", "原始来源标题", "对应栏目",
-        "主编自由稿",
-        "点击钩子", "观众为什么会点",
-        "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
-        "推荐理由", "不建议做的原因", "旧流程痛点", "AI介入点", "验证方式", "可沉淀资产",
-    }
-    detail_visible = core_visible | {
-        "内部切入角度", "可发布标题", "标题备选", "标题质量分", "人设匹配分",
-        "主编判断", "是否建议进入制作", "热点切入方式", "来源链接", "内容指纹",
-        "内容核心冲突", "视频呈现方式", "Skill编辑层",
-        "一句话Brief", "我的场景拆解", "我的思考点", "重点体现", "可调用案例", "证据强度",
-    }
+    core_visible = set(CORE_VISIBLE_FIELDS)
+    detail_visible = set(DETAIL_VISIBLE_FIELDS)
     return {
         "今日候选池": patch_candidate_view(token, app_token, table_id, "今日候选池", run_id, core_visible),
         "今日最值得做": patch_candidate_view(
@@ -605,11 +448,6 @@ def main() -> int:
     created_fields = ensure_fields(token, app_token, table_id)
 
     existing = all_records(token, app_token, table_id)
-    existing_by_fp = {
-        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("内容指纹", ""))): record
-        for record in existing
-        if record.get("fields", {}).get("内容指纹")
-    }
     existing_by_source = {
         (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("原始来源标题", ""))): record
         for record in existing
@@ -625,8 +463,7 @@ def main() -> int:
     created_titles: list[str] = []
     for row in mapped:
         record = (
-            existing_by_fp.get((row["推荐日期"], row.get("内容指纹", "")))
-            or existing_by_source.get((row["推荐日期"], row.get("原始来源标题", "")))
+            existing_by_source.get((row["推荐日期"], row.get("原始来源标题", "")))
             or existing_by_title.get((row["推荐日期"], row["选题标题"]))
         )
         if record:

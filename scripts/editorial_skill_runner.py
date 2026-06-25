@@ -3,9 +3,10 @@
 
 The collection pipeline still handles source capture, normalization, dedupe, and
 rough candidate generation. This runner is the editorial layer: by default it
-loads the local private Skill text when available, falls back to the repo-backed
-public-safe Skill, asks the locally authenticated Codex CLI to make the batch
-judgement, and writes the editorial output contract back to the candidate CSV.
+loads the global private Skill text, asks the locally authenticated Codex CLI to
+make the batch judgement, and writes the editorial output contract back to the
+candidate CSV. The repository Skill is a sanitized mirror for
+sync/bootstrap/testing and is never used as an implicit fallback.
 
 `--engine deterministic` is kept only as an explicit emergency fallback for
 offline debugging. It is not the default path.
@@ -29,17 +30,12 @@ from local_env import load_local_env
 ROOT = Path(__file__).resolve().parents[1]
 REPO_SKILL_DIR = ROOT / "skills" / "ai-account-editorial-director"
 GLOBAL_SKILL_DIR = Path.home() / ".codex" / "skills" / "ai-account-editorial-director"
-DEFAULT_SKILL_DIR = GLOBAL_SKILL_DIR if (GLOBAL_SKILL_DIR / "SKILL.md").exists() else REPO_SKILL_DIR
-SKILL_DIR = Path(os.getenv("EDITORIAL_SKILL_DIR", str(DEFAULT_SKILL_DIR))).expanduser()
+SKILL_DIR = Path(os.getenv("EDITORIAL_SKILL_DIR", str(GLOBAL_SKILL_DIR))).expanduser()
 SKILL_MD = SKILL_DIR / "SKILL.md"
 
 
 def skill_reference_dirs() -> list[Path]:
-    dirs: list[Path] = []
-    for directory in [SKILL_DIR, GLOBAL_SKILL_DIR, REPO_SKILL_DIR]:
-        if directory not in dirs:
-            dirs.append(directory)
-    return dirs
+    return [SKILL_DIR]
 
 
 def skill_reference_path(name: str) -> Path:
@@ -52,6 +48,7 @@ def skill_reference_path(name: str) -> Path:
 
 SKILL_REFERENCE = skill_reference_path("persona-and-cases.md")
 SKILL_PERSONA_BRIEF = skill_reference_path("persona-brief.md")
+APPROVED_SELECTION_LEARNING_MD = ROOT / "output" / "selection_learning" / "approved_selection_learning.md"
 
 EXTRA_FIELDS = [
     "主编筛选",
@@ -424,6 +421,18 @@ def write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str]) -> 
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def load_selection_learning_context(limit: int = 2400) -> str:
+    """Load user-approved topic-selection learning notes for the editor."""
+    if not APPROVED_SELECTION_LEARNING_MD.exists():
+        return "暂无已确认选择学习摘要。"
+    text = APPROVED_SELECTION_LEARNING_MD.read_text(encoding="utf-8").strip()
+    if not text:
+        return "暂无已确认选择学习摘要。"
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "\n\n...（已截断，完整摘要见本地 selection_learning 输出）"
 
 
 def atomic_write_csv(path: Path, rows: list[dict[str, str]], fieldnames: list[str]) -> None:
@@ -1281,6 +1290,7 @@ def codex_output_schema() -> dict[str, Any]:
 def build_codex_prompt(rows: list[dict[str, str]]) -> str:
     skill_text = strip_yaml_frontmatter(load_text(SKILL_MD))
     persona_brief = load_text(SKILL_PERSONA_BRIEF)
+    selection_learning = load_selection_learning_context()
     candidates = [compact_candidate(row, idx) for idx, row in enumerate(rows)]
     return f"""你现在按下面嵌入的主编规则文本做判断；不要再触发或审查外部 Skill，规则、底稿和候选已经完整提供。
 
@@ -1365,6 +1375,17 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 案例/人设参考路径：{SKILL_REFERENCE}
 本次不把完整长文全部塞入上下文；你必须优先使用上面的压缩底稿，以及每条候选里的 `关联母场景候选`。
 
+<approved_selection_learning_context>
+{selection_learning}
+</approved_selection_learning_context>
+
+使用已确认选择学习摘要的方式：
+- 只有经过用户确认的学习摘要才会出现在这里；如果没有，不要猜测用户偏好。
+- 它只代表近期偏好，不是硬规则；不要机械排除某个方向。
+- 正向样本说明用户愿意推进的场景、证据和原因。
+- 负向样本说明本轮不想做的原因，尤其是证据浅、像工具教程、缺个人经验的候选。
+- 如果候选和正向偏好相似，优先补强 `场景依据 / 可展示证据 / 推荐理由`；如果和负向样本相似，优先降级或要求补证据。
+
 <candidate_rows_json>
 {json.dumps(candidates, ensure_ascii=False, indent=2)}
 </candidate_rows_json>
@@ -1430,6 +1451,7 @@ def run_codex_skill(rows: list[dict[str, str]], model: str, timeout: int) -> tup
         "codex_rows": len(by_index),
         "batch_notes": payload.get("batch_notes", ""),
         "model": model or "codex-default",
+        "approved_selection_learning": str(APPROVED_SELECTION_LEARNING_MD) if APPROVED_SELECTION_LEARNING_MD.exists() else "",
     }
 
 
@@ -1470,7 +1492,7 @@ def main() -> int:
         "--engine",
         choices=["codex", "deterministic"],
         default=os.getenv("EDITORIAL_SKILL_ENGINE", "codex"),
-        help="Default codex embeds local private Skill text when available, with repo Skill fallback. deterministic is an explicit offline fallback.",
+        help="Default codex embeds the global private Skill text. deterministic is an explicit offline emergency fallback.",
     )
     parser.add_argument("--codex-model", default=os.getenv("EDITORIAL_SKILL_CODEX_MODEL", ""), help="Optional Codex model override.")
     parser.add_argument("--timeout", type=int, default=int(os.getenv("EDITORIAL_SKILL_TIMEOUT", "900")), help="Codex execution timeout in seconds.")
@@ -1492,13 +1514,19 @@ def main() -> int:
             enriched, engine_meta = run_codex_skill(rows, args.codex_model, args.timeout)
         else:
             enriched = normalize_batch([enrich(row) for row in rows])
-            engine_meta = {"mode": "explicit_deterministic"}
+            engine_meta = {
+                "mode": "explicit_deterministic",
+                "approved_selection_learning": str(APPROVED_SELECTION_LEARNING_MD) if APPROVED_SELECTION_LEARNING_MD.exists() else "",
+            }
     except Exception as exc:
         if not args.allow_deterministic_fallback:
             raise
         engine = "deterministic"
         enriched = normalize_batch([enrich(row) for row in rows])
-        engine_meta = {"fallback_after_error": str(exc)}
+        engine_meta = {
+            "fallback_after_error": str(exc),
+            "approved_selection_learning": str(APPROVED_SELECTION_LEARNING_MD) if APPROVED_SELECTION_LEARNING_MD.exists() else "",
+        }
     fields = fieldnames_for(enriched, original_fields)
     if input_path.resolve() == output_path.resolve():
         atomic_write_csv(output_path, enriched, fields)

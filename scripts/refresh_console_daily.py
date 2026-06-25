@@ -427,8 +427,8 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "优先级": "高",
             "工作区": "分析与选题",
             "状态": "今日工作台",
-            "数量/摘要": f"{stats['topic_to_brief_count']} 条选题已标记进入Brief/本周做，等待拆到 05/06。",
-            "说明": "daily_pipeline 只写入 04，不自动生成 Brief；Brief 和任务由 content_ops_pipeline 承接。",
+            "数量/摘要": f"{stats['topic_to_brief_count']} 条选题已标记进入Brief/本周做，等待生成 05 脚本包。",
+            "说明": "daily_pipeline 只写入 04，不自动生成 Brief；v0.2 由 content_ops_pipeline 承接到 05，不自动拆 06。",
             "下一步": "确认 04 状态后运行 content_ops_pipeline.py --write-feishu。",
             "入口表": "04 分析与选题",
             "入口视图": "今日候选池",
@@ -604,8 +604,8 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
         fields = record.get("fields", {})
         return (
             f"- {fields.get('选题标题', '未命名选题')} | "
-            f"{fields.get('业务场景', '待判断场景')} | "
-            f"{fields.get('为什么推荐', '待补推荐理由')}"
+            f"{fields.get('对应方向', '待判断方向')} | "
+            f"{fields.get('推荐理由', '待补推荐理由')}"
         )
 
     def brief_line(record: dict[str, Any]) -> str:
@@ -618,7 +618,7 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
 
     actions = [
         "先在 04 分析与选题 中处理高分待判断选题，至少选 1 条改为 进入Brief 或 本周做。",
-        "在 05 Brief与制作 中补 1-3 条真实案例、个人判断、视觉建议和 CTA。",
+        "在 05 Brief与制作 中确认核心观点、视频大纲和给06的生成输入。",
         "从本周可沉淀资产里选 1 个轻量资产，先做精简版，不追求完整大包。",
     ]
     if stats["source_errors"] != ["暂无异常"]:

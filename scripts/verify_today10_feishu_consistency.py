@@ -14,6 +14,7 @@ from typing import Any
 import push_to_feishu as feishu
 from feishu_table_registry import TABLES, resolve_table_id
 from push_today10_to_feishu import default_today10_path, map_row, today_slug
+from topic_decision_fields import DAILY_WRITE_FIELDS, DETAIL_VISIBLE_FIELDS
 
 
 TARGET_TABLE_KEY = "topic_decision"
@@ -48,79 +49,8 @@ FORBIDDEN_VISIBLE_TERMS = [
     "非技术人看 X，不该只看工具名",
     "只有在能说清具体产品层、具体用户任务或具体项目影响时才值得做",
 ]
-COMPARE_FIELDS = [
-    "选题命题",
-    "选题标题",
-    "我的选题标题",
-    "我要做的实验",
-    "热点触发点",
-    "我的工作流痛点",
-    "主编自由稿",
-    "点击钩子",
-    "观众为什么会点",
-    "title_permission",
-    "我的真实矛盾",
-    "选题判断",
-    "原始钩子",
-    "我的切入",
-    "我准备怎么讲",
-    "可展示证据",
-    "今日建议级别",
-    "推荐动作",
-    "是否建议进入制作",
-    "编辑判断分",
-    "标题质量分",
-    "AI味风险",
-    "可发布标题",
-    "标题备选",
-    "不建议做的原因",
-    "主编判断",
-    "推荐理由",
-    "运行批次",
-    "一句话Brief",
-    "我的场景拆解",
-    "旧流程痛点",
-    "AI介入点",
-    "验证方式",
-    "可沉淀资产",
-    "我的思考点",
-    "重点体现",
-    "可调用案例",
-    "证据强度",
-]
-VISIBLE_FIELDS = [
-    "选题标题",
-    "选题命题",
-    "我要做的实验",
-    "热点触发点",
-    "我的工作流痛点",
-    "我的选题标题",
-    "可发布标题",
-    "标题备选",
-    "title_permission",
-    "主编自由稿",
-    "点击钩子",
-    "观众为什么会点",
-    "我的真实矛盾",
-    "选题判断",
-    "原始钩子",
-    "我的切入",
-    "我准备怎么讲",
-    "可展示证据",
-    "推荐理由",
-    "不建议做的原因",
-    "主编判断",
-    "推荐动作原因",
-    "降级原因",
-    "一句话Brief",
-    "我的场景拆解",
-    "旧流程痛点",
-    "AI介入点",
-    "验证方式",
-    "可沉淀资产",
-    "我的思考点",
-    "重点体现",
-]
+COMPARE_FIELDS = DAILY_WRITE_FIELDS
+VISIBLE_FIELDS = DETAIL_VISIBLE_FIELDS
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
@@ -233,11 +163,11 @@ def asset_is_specific(text: str) -> bool:
 
 
 def local_key(row: dict[str, str]) -> tuple[str, str]:
-    return (row.get("内容指纹", ""), row.get("原始来源标题", "") or row.get("选题标题", ""))
+    return (row.get("原始来源标题", ""), row.get("选题标题", ""))
 
 
 def feishu_key(fields: dict[str, Any]) -> tuple[str, str]:
-    return (normalize(fields.get("内容指纹")), normalize(fields.get("原始来源标题")) or normalize(fields.get("选题标题")))
+    return (normalize(fields.get("原始来源标题")), normalize(fields.get("选题标题")))
 
 
 def main() -> int:
@@ -288,23 +218,10 @@ def main() -> int:
                     f"Field mismatch for {local.get('选题标题', '')[:40]} / {field}: "
                         f"local={local_value!r} feishu={feishu_value!r}"
                 )
-        if normalize(fields.get("title_permission")) != "可发布标题":
-            for field in ["可发布标题", "标题备选"]:
-                if normalize(fields.get(field)):
-                    failures.append(
-                        f"title_permission={normalize(fields.get('title_permission'))} but stale {field}: "
-                        f"{local.get('选题标题', '')[:40]}"
-                    )
-        if local.get("今日建议级别") == "暂存观察":
-            for field in ["可发布标题", "标题备选"]:
-                if normalize(fields.get(field)):
-                    failures.append(f"Watch row has stale {field}: {local.get('选题标题', '')[:40]}")
-        if normalize(fields.get("选题标题")) != normalize(fields.get("选题命题")):
-            failures.append(f"Feishu primary title should mirror 选题命题: {normalize(fields.get('选题标题'))[:40]}")
-        if not normalize(fields.get("选题命题")):
-            failures.append(f"Feishu row missing 选题命题: {normalize(fields.get('原始来源标题'))[:40]}")
-        if len(normalize(fields.get("选题命题"))) > 90:
-            failures.append(f"Feishu row 选题命题 too long: {normalize(fields.get('选题命题'))[:60]}")
+        if not normalize(fields.get("选题标题")):
+            failures.append(f"Feishu row missing 选题标题: {normalize(fields.get('原始来源标题'))[:40]}")
+        if len(normalize(fields.get("选题标题"))) > 90:
+            failures.append(f"Feishu row 选题标题 too long: {normalize(fields.get('选题标题'))[:60]}")
         for field in ["我要做的实验", "热点触发点", "我的工作流痛点", "旧流程痛点", "AI介入点", "验证方式", "可沉淀资产"]:
             if not normalize(fields.get(field)):
                 failures.append(f"Feishu row missing workflow-experiment field {field}: {normalize(fields.get('选题标题'))[:40]}")

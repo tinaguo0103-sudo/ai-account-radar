@@ -12,29 +12,12 @@ from typing import Any
 
 import push_to_feishu as feishu
 from feishu_table_registry import TABLES, resolve_table_id
+from topic_decision_fields import FEISHU_KEEP_FIELDS, field_create_body
 
 
 TABLE_KEY = "topic_decision"
 TABLE_NAME = TABLES[TABLE_KEY]
-KEEP_FIELDS = [
-    "选题标题",
-    "推荐日期",
-    "今日排名",
-    "状态",
-    "推荐动作",
-    "来源类型",
-    "原始来源标题",
-    "来源链接",
-    "对应栏目",
-    "热点切入方式",
-    "业务场景",
-    "推荐理由",
-    "相关来源",
-    "旧流程痛点",
-    "AI介入点",
-    "可展示结果",
-    "可沉淀资产",
-]
+KEEP_FIELDS = FEISHU_KEEP_FIELDS
 
 
 def app_token() -> str:
@@ -87,14 +70,14 @@ def fields(token: str, app: str, table_id: str) -> list[dict[str, Any]]:
     return payload.get("data", {}).get("items", [])
 
 
-def ensure_text_field(token: str, app: str, table_id: str, field_name: str) -> bool:
+def ensure_field(token: str, app: str, table_id: str, field_name: str) -> bool:
     if field_name in {field["field_name"] for field in fields(token, app, table_id)}:
         return False
     feishu.request_json(
         "POST",
         f"/bitable/v1/apps/{app}/tables/{table_id}/fields",
         token=token,
-        body={"field_name": field_name, "type": 1},
+        body=field_create_body(field_name),
     )
     time.sleep(0.1)
     return True
@@ -124,7 +107,7 @@ def trim_fields(token: str, app: str, table_id: str) -> dict[str, Any]:
     for name in KEEP_FIELDS:
         if name == "选题标题":
             continue
-        if ensure_text_field(token, app, table_id, name):
+        if ensure_field(token, app, table_id, name):
             created.append(name)
     return {"created": created, "deleted": deleted, "failed": failed}
 

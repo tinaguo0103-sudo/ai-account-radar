@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
-"""Simplify Feishu Base views and front-stage fields for v0.2.
+"""Simplify Feishu Base views and front-stage fields.
 
-This script keeps one view per table and trims 03/04 to the fields needed by
-the current "content inbox -> 今日Top10" workflow. It does not create business
-tables and never deletes 99 规则与字典.
+This trims 03/04 fields and keeps the configured canonical views. 04 now has a
+small selection workspace with multiple views, so this script must not collapse
+it back to one grid.
 """
 from __future__ import annotations
 
@@ -15,9 +15,10 @@ from typing import Any
 
 import push_to_feishu as feishu
 from feishu_table_registry import TABLES, VIEW_NAMES, resolve_table_id, table_name
+from topic_decision_fields import FEISHU_KEEP_FIELDS, field_create_body
 
 
-TABLE_VIEW_PLAN = {table_name(key): views[0] for key, views in VIEW_NAMES.items()}
+TABLE_VIEW_PLAN = {table_name(key): views for key, views in VIEW_NAMES.items()}
 
 FIELD_KEEP = {
     table_name("content_inbox"): [
@@ -36,25 +37,7 @@ FIELD_KEEP = {
         "是否重复",
         "处理状态",
     ],
-    table_name("topic_decision"): [
-        "选题标题",
-        "推荐日期",
-        "今日排名",
-        "状态",
-        "推荐动作",
-        "原始来源标题",
-        "来源类型",
-        "来源链接",
-        "对应栏目",
-        "热点切入方式",
-        "业务场景",
-        "旧流程痛点",
-        "AI介入点",
-        "可展示结果",
-        "可沉淀资产",
-        "推荐理由",
-        "相关来源",
-    ],
+    table_name("topic_decision"): FEISHU_KEEP_FIELDS,
 }
 
 
@@ -75,26 +58,28 @@ def list_fields(token: str, app_token: str, table_id: str) -> list[dict[str, Any
     return payload.get("data", {}).get("items", [])
 
 
-def ensure_single_view(token: str, app_token: str, table_id: str, keep_name: str) -> dict[str, Any]:
+def ensure_views(token: str, app_token: str, table_id: str, keep_names: list[str]) -> dict[str, Any]:
     views = list_views(token, app_token, table_id)
-    existing = next((view for view in views if view.get("view_name") == keep_name), None)
-    created = False
-    if not existing:
+    existing_by_name = {view.get("view_name"): view for view in views}
+    created: list[str] = []
+    for keep_name in keep_names:
+        if keep_name in existing_by_name:
+            continue
         payload = feishu.request_json(
             "POST",
             f"/bitable/v1/apps/{app_token}/tables/{table_id}/views",
             token=token,
             body={"view_name": keep_name, "view_type": "grid"},
         )
-        existing = payload.get("data", {}).get("view", payload.get("data", {}))
-        created = True
+        existing_by_name[keep_name] = payload.get("data", {}).get("view", payload.get("data", {}))
+        created.append(keep_name)
         time.sleep(0.1)
 
-    keep_id = existing.get("view_id")
+    keep_ids = {view.get("view_id") for name, view in existing_by_name.items() if name in keep_names}
     deleted: list[str] = []
     failed: list[dict[str, str]] = []
     for view in list_views(token, app_token, table_id):
-        if view.get("view_id") == keep_id:
+        if view.get("view_id") in keep_ids:
             continue
         try:
             feishu.request_json(
@@ -106,10 +91,10 @@ def ensure_single_view(token: str, app_token: str, table_id: str, keep_name: str
             time.sleep(0.1)
         except Exception as exc:  # Feishu may refuse deleting the last/default view.
             failed.append({"view": view.get("view_name", view["view_id"]), "error": str(exc)})
-    return {"kept": keep_name, "created": created, "deleted": deleted, "failed": failed}
+    return {"kept": keep_names, "created": created, "deleted": deleted, "failed": failed}
 
 
-def ensure_text_field(token: str, app_token: str, table_id: str, field_name: str) -> bool:
+def ensure_field(token: str, app_token: str, table_id: str, field_name: str) -> bool:
     existing = {field["field_name"] for field in list_fields(token, app_token, table_id)}
     if field_name in existing:
         return False
@@ -117,7 +102,7 @@ def ensure_text_field(token: str, app_token: str, table_id: str, field_name: str
         "POST",
         f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
         token=token,
-        body={"field_name": field_name, "type": 1},
+        body=field_create_body(field_name),
     )
     time.sleep(0.1)
     return True
@@ -128,7 +113,7 @@ def trim_fields(token: str, app_token: str, table_id: str, table_name: str) -> d
     if not keep:
         return {"created": [], "deleted": [], "failed": [], "skipped": "no field trim plan"}
 
-    created = [name for name in keep if ensure_text_field(token, app_token, table_id, name)]
+    created = [name for name in keep if ensure_field(token, app_token, table_id, name)]
     deleted: list[str] = []
     failed: list[dict[str, str]] = []
     for field in list_fields(token, app_token, table_id):
@@ -158,9 +143,9 @@ def main() -> int:
         raise SystemExit(f"Missing required tables: {missing}")
 
     summary: dict[str, Any] = {"ok": True, "tables": []}
-    for table_name, keep_view in TABLE_VIEW_PLAN.items():
+    for table_name, keep_views in TABLE_VIEW_PLAN.items():
         table_id = tables[table_name]
-        view_result = ensure_single_view(token, app_token, table_id, keep_view)
+        view_result = ensure_views(token, app_token, table_id, keep_views)
         field_result = trim_fields(token, app_token, table_id, table_name)
         summary["tables"].append({
             "name": table_name,

@@ -4,6 +4,7 @@
 The production workflow can use a richer private global Skill in ~/.codex.
 This script exists for portability: it copies the sanitized repo version into
 the global Codex skills folder when explicitly requested.
+It refuses to overwrite an existing global Skill unless explicitly forced.
 """
 from __future__ import annotations
 
@@ -30,6 +31,7 @@ def main() -> int:
     parser.add_argument("--install-public", action="store_true", help="Copy the sanitized repo Skill into ~/.codex/skills.")
     parser.add_argument("--yes", action="store_true", help="Confirm replacing the global Skill copy.")
     parser.add_argument("--no-backup", action="store_true", help="Do not back up the current global Skill before replacement.")
+    parser.add_argument("--force-overwrite-existing", action="store_true", help="Explicitly allow replacing an existing global private Skill.")
     args = parser.parse_args()
 
     if not REPO_SKILL_DIR.exists():
@@ -39,13 +41,20 @@ def main() -> int:
         print(f"repo_skill={REPO_SKILL_DIR}")
         print(f"global_skill={GLOBAL_SKILL_DIR}")
         print("dry_run=true")
-        print("Use --install-public --yes to install the public-safe copy globally.")
+        print("Use --install-public --yes only for first-time bootstrap.")
+        print("If a global Skill already exists, add --force-overwrite-existing only when you intentionally want to replace it.")
         return 0
 
     if not args.yes:
         raise SystemExit(
             "Refusing to replace the global Skill without --yes. "
             "This installs the public-safe repo copy and may overwrite a richer private local Skill."
+        )
+    if GLOBAL_SKILL_DIR.exists() and not args.force_overwrite_existing:
+        raise SystemExit(
+            f"Refusing to overwrite existing global Skill: {GLOBAL_SKILL_DIR}. "
+            "Production uses the global private Skill. The repo copy is only for sync/bootstrap/testing. "
+            "Pass --force-overwrite-existing only when you intentionally want to replace the global copy."
         )
 
     if GLOBAL_SKILL_DIR.exists() and not args.no_backup:
