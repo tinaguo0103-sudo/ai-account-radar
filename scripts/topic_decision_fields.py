@@ -43,6 +43,7 @@ SCRIPT_MARK_FIELDS = [
 FEEDBACK_FIELDS = [
     "选择原因标签",
     "人工一句话判断",
+    "我的制作补充",
     "学习状态",
 ]
 
@@ -78,6 +79,7 @@ DETAIL_VISIBLE_FIELDS = CORE_VISIBLE_FIELDS + [
     "今日排名",
     "运行批次",
     "人工一句话判断",
+    "我的制作补充",
     "学习状态",
     *SCRIPT_MARK_FIELDS,
 ]

@@ -222,7 +222,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
-            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成脚本大纲的编号；提交后，已选记录进入 `Brief`，未选记录标记为 `不做`。\n\n运行批次：`{run_id or '未指定'}`",
+            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成口播稿和制作包的编号；提交后，已选记录进入 `脚本与制作`，未选记录标记为 `不做`。如果有选中记录，系统会再发一张卡片让你逐条补制作方向。\n\n运行批次：`{run_id or '未指定'}`",
         }
     ]
     for index, record in enumerate(records, start=1):
@@ -231,7 +231,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
             elements.append({"tag": "hr"})
 
     form_elements: list[dict[str, Any]] = [
-        select_component(ENTER_BRIEF_FORM_KEY, "进入Brief：只选值得继续生成脚本大纲的编号", options),
+        select_component(ENTER_BRIEF_FORM_KEY, "进入脚本与制作：只选值得继续写口播稿的编号", options),
         select_component("positive_reason_tags", "推进原因标签", tag_options(POSITIVE_REASON_OPTIONS)),
         text_input_component("manual_reason", "手工原因：标签不够用时，写一句真实判断"),
         {

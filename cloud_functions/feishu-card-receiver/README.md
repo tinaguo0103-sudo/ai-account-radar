@@ -2,21 +2,23 @@
 
 这个目录是 `04 分析与选题` 交互式卡片的云端 receiver。
 
-它接收飞书开放平台的 `card.action.trigger` 事件，把用户在卡片里勾选的选题回写到 `04 分析与选题`，替代本机常驻 `serve-long-connection`。
+它接收飞书开放平台的 `card.action.trigger` 事件，把用户在卡片里勾选的选题回写到 `04 分析与选题`，并在有选中记录时继续发送“制作方向补充卡”，替代本机常驻 `serve-long-connection`。
 
 ## 做什么
 
 - 响应飞书事件订阅 URL 校验 `challenge`。
 - 如果配置了 `FEISHU_VERIFICATION_TOKEN`，则校验飞书回调 token。
 - 解析卡片里的 `event.action.form_value`。
-- 支持两个动作：
+- 支持三个动作：
   - `submit_topic_decisions`：选中的记录写为 `进入Brief`，未选中写为 `不做`。
   - `submit_no_selection`：本批全部写为 `不做`。
+  - `submit_production_directions`：把第二张卡片里的逐条制作方向写回 `我的制作补充`。
 - 回写字段：
   - `状态`
   - `学习状态 = 待学习`
   - `选择原因标签`
   - `人工一句话判断`
+  - `我的制作补充`
 - 通过“读当前字段再比较”的方式避免重复提交重复写入。
 
 ## 环境变量
@@ -37,6 +39,9 @@ FEISHU_BASE_APP_TOKEN=xxx
 FEISHU_TOPIC_TABLE_ID=tbl_xxx
 FEISHU_API_BASE_URL=https://open.feishu.cn
 FEISHU_VERIFICATION_TOKEN=xxx
+FEISHU_CARD_RECEIVE_TARGETS=open_id:ou_xxx,chat_id:oc_xxx
+FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS=chat_id:oc_xxx
+SEND_PRODUCTION_DIRECTION_CARD=true
 DRY_RUN=true
 ```
 
@@ -44,6 +49,9 @@ DRY_RUN=true
 
 - 如果不填 `FEISHU_TOPIC_TABLE_ID`，receiver 会自动在 Base 里找 `04 分析与选题`，兼容旧名 `03 分析与选题`。
 - 如果飞书开放平台配置了 Verification Token，云函数也要填同一个 `FEISHU_VERIFICATION_TOKEN`；如果平台未配置，则可以不填。
+- `FEISHU_CARD_RECEIVE_TARGETS` 是第一张选题卡和第二张制作方向卡的默认接收目标。
+- `FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS` 可选；如果设置，第二张卡只发到这里。
+- `SEND_PRODUCTION_DIRECTION_CARD=false` 可临时关闭第二张卡。
 - 本地测试可以设置 `DRY_RUN=true`，云端生产不要设置。
 - 当前版本不支持加密回调。如果飞书开放平台事件订阅启用了 Encrypt Key，需要先关闭事件加密，或后续补解密逻辑。
 

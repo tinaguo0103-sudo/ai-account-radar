@@ -188,6 +188,7 @@ def normalize_topic(fields: dict[str, Any], record_id: str = "") -> dict[str, An
         "ai_intervention": first_non_empty(fields, ["ai_intervention", "AI介入点", "我要做的实验", "验证方式"]),
         "demo_materials": demo_materials,
         "missing_evidence": missing_evidence,
+        "production_direction": first_non_empty(fields, ["production_direction", "我的制作补充", "制作方向", "使用案例", "人工制作补充"], skip_placeholders=False),
         "unique_judgment": first_non_empty(fields, ["unique_judgment", "我的思考点", "主编判断", "选题判断", "我的切入"]),
         "takeaway_asset": first_non_empty(fields, ["takeaway_asset", "可沉淀资产", "资料包承接方式", "重点体现"]),
         "preferred_duration_min": parse_duration(first_non_empty(fields, ["preferred_duration_min", "目标时长"], "4")),
@@ -415,7 +416,7 @@ def clip_text(value: Any, limit: int = 56, fallback: str = "待补") -> str:
 
 
 def topic_blob(topic: dict[str, Any]) -> str:
-    keys = ["topic_title", "content_pillar", "core_thesis", "pain_point", "old_workflow", "ai_intervention", "takeaway_asset"]
+    keys = ["topic_title", "content_pillar", "core_thesis", "pain_point", "old_workflow", "ai_intervention", "production_direction", "takeaway_asset"]
     return " ".join(str(topic.get(key, "")) for key in keys).lower()
 
 
@@ -800,8 +801,10 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
     fact_checks = validation.fact_check_points
     boundaries = private_boundaries(private_cases)[:3]
     ai_action = clip_text(topic.get("ai_intervention"), 82, "待确认实操主线")
+    production_direction = clip_text(topic.get("production_direction"), 110, "")
     lines = [
         f"- 模板：{template}（{clip_text(template_reason, 54, '按题材和实验类型判断')}）",
+        *([f"- 人工制作补充：{production_direction}"] if production_direction else []),
         f"- 主线：{ai_action}",
         f"- 开头：{opening_hook_options(topic, validation)[0]}",
         f"- 判断：{inline_items(key_judgment_lines(topic), item_limit=46)}",
