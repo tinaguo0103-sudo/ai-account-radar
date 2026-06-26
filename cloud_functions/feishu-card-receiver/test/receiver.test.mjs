@@ -111,7 +111,12 @@ test("sends production direction card after selected topics are written", async 
         },
       },
     },
-    { ...env, SEND_PRODUCTION_DIRECTION_CARD: "true", FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow" },
+    {
+      ...env,
+      SEND_PRODUCTION_DIRECTION_CARD: "true",
+      DEFER_PRODUCTION_DIRECTION_CARD: "false",
+      FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow",
+    },
     { fetchImpl: makeMockFetch(records, calls) },
   );
   assert.deepEqual(await response.json(), { toast: { type: "success", content: "已回写 2 条选择，并发送制作方向卡" } });
@@ -122,6 +127,84 @@ test("sends production direction card after selected topics are written", async 
   assert.match(cardText, /补充制作方向/);
   assert.match(cardText, /production_direction__rec_a/);
   assert.doesNotMatch(cardText, /production_direction__rec_b/);
+});
+
+test("uses candidate snapshots to skip full-table reads on selection submit", async () => {
+  const records = [];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: {
+            action: "submit_topic_decisions",
+            run_id: "run_1",
+            candidate_ids: ["rec_a", "rec_b"],
+            candidate_snapshots: {
+              rec_a: { title: "A", brief: "A brief", experiment: "A experiment", run_id: "run_1" },
+              rec_b: { title: "B", run_id: "run_1" },
+            },
+          },
+          form_value: {
+            enter_brief_records: ["rec_a"],
+            positive_reason_tags: ["证据够"],
+            manual_reason: "",
+          },
+        },
+      },
+    },
+    {
+      ...env,
+      SEND_PRODUCTION_DIRECTION_CARD: "true",
+      DEFER_PRODUCTION_DIRECTION_CARD: "false",
+      FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow",
+    },
+    { fetchImpl: makeMockFetch(records, calls) },
+  );
+  assert.deepEqual(await response.json(), { toast: { type: "success", content: "已回写 2 条选择，并发送制作方向卡" } });
+  assert.equal(calls.filter((call) => call.path.includes("/records?")).length, 0);
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 2);
+  const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
+  assert.equal(sends.length, 1);
+  assert.match(JSON.stringify(JSON.parse(sends[0].body.content)), /A experiment/);
+});
+
+test("defers production direction card by default", async () => {
+  const records = [];
+  const calls = [];
+  const deferredTasks = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: {
+            action: "submit_topic_decisions",
+            run_id: "run_1",
+            candidate_ids: ["rec_a", "rec_b"],
+            candidate_snapshots: {
+              rec_a: { title: "A", brief: "A brief", experiment: "A experiment", run_id: "run_1" },
+              rec_b: { title: "B", run_id: "run_1" },
+            },
+          },
+          form_value: {
+            enter_brief_records: ["rec_a"],
+            positive_reason_tags: ["证据够"],
+            manual_reason: "",
+          },
+        },
+      },
+    },
+    { ...env, SEND_PRODUCTION_DIRECTION_CARD: "true", FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow" },
+    { fetchImpl: makeMockFetch(records, calls), deferredTasks },
+  );
+  assert.deepEqual(await response.json(), { toast: { type: "success", content: "已回写 2 条选择，制作方向卡稍后发送" } });
+  assert.equal(deferredTasks.length, 1);
+  await Promise.all(deferredTasks);
+  assert.equal(calls.filter((call) => call.path.includes("/records?")).length, 0);
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 2);
+  assert.equal(calls.filter((call) => call.path.includes("/im/v1/messages")).length, 1);
 });
 
 test("writes per-topic production directions", async () => {

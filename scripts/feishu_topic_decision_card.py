@@ -219,6 +219,16 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         for index, record in enumerate(records, start=1)
         if record.get("record_id")
     ]
+    candidate_snapshots = {
+        str(record.get("record_id") or ""): {
+            "title": compact(record.get("fields", {}).get("选题标题"), 72),
+            "brief": compact(record.get("fields", {}).get("一句话Brief"), 120),
+            "experiment": compact(record.get("fields", {}).get("我要做的实验"), 120),
+            "run_id": normalize(record.get("fields", {}).get("运行批次")),
+        }
+        for record in records
+        if record.get("record_id")
+    }
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
@@ -255,6 +265,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
                                         "action": SUBMIT_SELECTION_ACTION,
                                         "run_id": run_id,
                                         "candidate_ids": [option["value"] for option in options],
+                                        "candidate_snapshots": candidate_snapshots,
                                         "unselected_status": "不做",
                                     },
                                 }
@@ -280,6 +291,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
                                         "action": SUBMIT_NO_SELECTION_ACTION,
                                         "run_id": run_id,
                                         "candidate_ids": [option["value"] for option in options],
+                                        "candidate_snapshots": candidate_snapshots,
                                         "unselected_status": "不做",
                                     },
                                 }

@@ -11,6 +11,10 @@ const SUPPORTED_SUBMIT_ACTIONS = new Set([
   SUBMIT_NO_SELECTION_ACTION,
   SUBMIT_PRODUCTION_DIRECTIONS_ACTION,
 ]);
+const TOKEN_CACHE_SAFETY_SECONDS = 300;
+
+let cachedTenantToken = { value: "", expiresAt: 0 };
+let cachedTopicTableId = "";
 
 function jsonResponse(body, status = 200) {
   return new Response(JSON.stringify(body), {
@@ -110,6 +114,9 @@ async function tenantToken(env, options) {
   if (!env.FEISHU_APP_ID || !env.FEISHU_APP_SECRET) {
     throw new Error("Missing FEISHU_APP_ID or FEISHU_APP_SECRET");
   }
+  if (!options?.fetchImpl && cachedTenantToken.value && cachedTenantToken.expiresAt > Date.now()) {
+    return cachedTenantToken.value;
+  }
   const payload = await requestJson(env, "POST", "/auth/v3/tenant_access_token/internal", {
     ...options,
     body: {
@@ -119,6 +126,10 @@ async function tenantToken(env, options) {
   });
   const token = payload.tenant_access_token;
   if (!token) throw new Error("Feishu did not return tenant_access_token");
+  if (!options?.fetchImpl) {
+    const ttlSeconds = Math.max(60, Number(payload.expire || 7200) - TOKEN_CACHE_SAFETY_SECONDS);
+    cachedTenantToken = { value: token, expiresAt: Date.now() + ttlSeconds * 1000 };
+  }
   return token;
 }
 
@@ -132,10 +143,46 @@ async function listTables(env, token, options) {
 
 async function topicTableId(env, token, options) {
   if (env.FEISHU_TOPIC_TABLE_ID) return env.FEISHU_TOPIC_TABLE_ID;
+  if (!options?.fetchImpl && cachedTopicTableId) return cachedTopicTableId;
   const tables = await listTables(env, token, options);
   const found = tables.find((table) => TOPIC_TABLE_NAMES.includes(table.name));
   if (!found?.table_id) throw new Error(`Missing topic table. Expected one of: ${TOPIC_TABLE_NAMES.join(", ")}`);
+  if (!options?.fetchImpl) cachedTopicTableId = found.table_id;
   return found.table_id;
+}
+
+function shouldSendProductionDirectionCard(env, actionName, summary) {
+  return (
+    actionName === SUBMIT_SELECTION_ACTION &&
+    summary.updated_count > 0 &&
+    summary.selected_records?.length &&
+    String(env.SEND_PRODUCTION_DIRECTION_CARD || "true").toLowerCase() !== "false"
+  );
+}
+
+function shouldDeferProductionDirectionCard(env) {
+  return String(env.DEFER_PRODUCTION_DIRECTION_CARD || "true").toLowerCase() !== "false";
+}
+
+async function sendProductionDirectionCard(env, token, runId, selectedRecords, options) {
+  const card = buildProductionDirectionCard(selectedRecords, runId);
+  return sendInteractiveCard(
+    env,
+    token,
+    card,
+    `production-direction-card-${runId || "latest"}-${await sha256(selectedRecords.map((record) => record.record_id).join(","))}`,
+    options,
+  );
+}
+
+function startDeferredTask(promise, options) {
+  if (Array.isArray(options?.deferredTasks)) {
+    options.deferredTasks.push(promise);
+    return;
+  }
+  promise.catch((error) => {
+    console.error("Deferred production direction card failed:", error);
+  });
 }
 
 function parseReceiveTargets(env) {
@@ -158,6 +205,24 @@ function parseReceiveTargets(env) {
 
 function productionDirectionKey(recordId) {
   return `${PRODUCTION_DIRECTION_FORM_PREFIX}${recordId}`;
+}
+
+function candidateSnapshotsFromValue(value) {
+  const raw = value?.candidate_snapshots;
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
+  return raw;
+}
+
+function snapshotRecord(recordId, snapshot = {}) {
+  return {
+    record_id: recordId,
+    fields: {
+      "选题标题": normalize(snapshot.title),
+      "一句话Brief": normalize(snapshot.brief),
+      "我要做的实验": normalize(snapshot.experiment),
+      "运行批次": normalize(snapshot.run_id),
+    },
+  };
 }
 
 function shortField(fields, name, limit = 80) {
@@ -313,6 +378,15 @@ async function allRecords(env, token, tableId, options) {
   }
 }
 
+async function updateRecordFields(env, token, tableId, recordId, fields, options) {
+  return requestJson(
+    env,
+    "PUT",
+    `/bitable/v1/apps/${env.FEISHU_BASE_APP_TOKEN}/tables/${tableId}/records/${recordId}`,
+    { ...options, token, body: { fields } },
+  );
+}
+
 async function fieldsByName(env, token, tableId, options) {
   const payload = await requestJson(
     env,
@@ -408,14 +482,7 @@ async function applyFormValue(env, token, tableId, formValue, { candidateIds, ru
   }
 
   if (!dryRun) {
-    for (const update of updates) {
-      await requestJson(
-        env,
-        "PUT",
-        `/bitable/v1/apps/${env.FEISHU_BASE_APP_TOKEN}/tables/${tableId}/records/${update.record_id}`,
-        { ...options, token, body: { fields: update.fields } },
-      );
-    }
+    await Promise.all(updates.map((update) => updateRecordFields(env, token, tableId, update.record_id, update.fields, options)));
   }
 
   return {
@@ -432,47 +499,71 @@ async function applyFormValue(env, token, tableId, formValue, { candidateIds, ru
   };
 }
 
-async function applyProductionDirections(env, token, tableId, formValue, { candidateIds, runId, options }) {
+async function applyFormValueFast(env, token, tableId, formValue, { candidateIds, runId, forceNoSelection, options, snapshots }) {
+  const decisions = decisionsFromForm(formValue, candidateIds, forceNoSelection);
   const dryRun = String(env.DRY_RUN || "").toLowerCase() === "true";
-  if (!dryRun) {
-    await ensureTextFields(env, token, tableId, [PRODUCTION_DIRECTION_FIELD], options);
-  }
-  const records = Object.fromEntries((await allRecords(env, token, tableId, options)).map((record) => [record.record_id, record]));
   const updates = [];
   const skipped = [];
 
-  for (const recordId of candidateIds || []) {
-    const record = records[recordId];
-    if (!record) {
-      skipped.push({ record_id: recordId, reason: "record_not_found" });
-      continue;
-    }
-    const fields = record.fields || {};
-    if (runId && normalize(fields["运行批次"]) !== runId) {
-      skipped.push({ record_id: recordId, title: normalize(fields["选题标题"]), reason: "run_id_mismatch" });
-      continue;
-    }
-    const direction = compact(formValue[productionDirectionKey(recordId)], 1000);
-    if (!direction) {
-      skipped.push({ record_id: recordId, title: normalize(fields["选题标题"]), reason: "empty_direction" });
+  for (const [recordId, decision] of Object.entries(decisions)) {
+    const snapshot = snapshots[recordId] || {};
+    if (runId && snapshot.run_id && normalize(snapshot.run_id) !== runId) {
+      skipped.push({ record_id: recordId, title: normalize(snapshot.title), reason: "run_id_mismatch" });
       continue;
     }
     updates.push({
       record_id: recordId,
-      title: normalize(fields["选题标题"]),
+      title: normalize(snapshot.title),
+      fields: {
+        "状态": decision.status,
+        "学习状态": "待学习",
+        "选择原因标签": decision.tags,
+        "人工一句话判断": decision.manual_reason || "",
+      },
+    });
+  }
+
+  if (!dryRun) {
+    await Promise.all(updates.map((update) => updateRecordFields(env, token, tableId, update.record_id, update.fields, options)));
+  }
+
+  return {
+    ok: true,
+    mode: dryRun ? "dry-run" : "write",
+    fast_path: true,
+    run_id: runId,
+    updated_count: dryRun ? 0 : updates.length,
+    candidate_update_count: updates.length,
+    updates,
+    skipped,
+    selected_records: (candidateIds || [])
+      .filter((recordId) => decisions[recordId]?.status === "进入Brief")
+      .map((recordId) => snapshotRecord(recordId, snapshots[recordId] || {})),
+  };
+}
+
+async function applyProductionDirections(env, token, tableId, formValue, { candidateIds, runId, options }) {
+  const dryRun = String(env.DRY_RUN || "").toLowerCase() === "true";
+  if (!dryRun && String(env.ENSURE_PRODUCTION_DIRECTION_FIELD || "").toLowerCase() === "true") {
+    await ensureTextFields(env, token, tableId, [PRODUCTION_DIRECTION_FIELD], options);
+  }
+  const updates = [];
+  const skipped = [];
+
+  for (const recordId of candidateIds || []) {
+    const direction = compact(formValue[productionDirectionKey(recordId)], 1000);
+    if (!direction) {
+      skipped.push({ record_id: recordId, reason: "empty_direction" });
+      continue;
+    }
+    updates.push({
+      record_id: recordId,
       fields: { [PRODUCTION_DIRECTION_FIELD]: direction },
     });
   }
 
   if (!dryRun) {
-    for (const update of updates) {
-      await requestJson(
-        env,
-        "PUT",
-        `/bitable/v1/apps/${env.FEISHU_BASE_APP_TOKEN}/tables/${tableId}/records/${update.record_id}`,
-        { ...options, token, body: { fields: update.fields } },
-      );
-    }
+    await Promise.all(updates.map((update) => updateRecordFields(env, token, tableId, update.record_id, update.fields, options)));
   }
 
   return {
@@ -495,6 +586,7 @@ export async function processCardSubmission(env, value, formValue, options = {})
 
   const candidateIds = coerceList(value.candidate_ids);
   const runId = String(value.run_id || "");
+  const candidateSnapshots = candidateSnapshotsFromValue(value);
   const effectiveFormValue = { ...formValue };
   if (actionName === SUBMIT_NO_SELECTION_ACTION) {
     effectiveFormValue[ENTER_BRIEF_FORM_KEY] = [];
@@ -514,26 +606,29 @@ export async function processCardSubmission(env, value, formValue, options = {})
     return directionSummary;
   }
 
-  const summary = await applyFormValue(env, token, tableId, effectiveFormValue, {
-    candidateIds,
-    runId,
-    forceNoSelection: actionName === SUBMIT_NO_SELECTION_ACTION,
-    options,
-  });
-  if (
-    actionName === SUBMIT_SELECTION_ACTION &&
-    summary.updated_count > 0 &&
-    summary.selected_records?.length &&
-    String(env.SEND_PRODUCTION_DIRECTION_CARD || "true").toLowerCase() !== "false"
-  ) {
-    const card = buildProductionDirectionCard(summary.selected_records, runId);
-    summary.production_direction_card = await sendInteractiveCard(
-      env,
-      token,
-      card,
-      `production-direction-card-${runId || "latest"}-${await sha256(summary.selected_records.map((record) => record.record_id).join(","))}`,
-      options,
-    );
+  const hasSnapshots = Object.keys(candidateSnapshots).length > 0;
+  const summary = hasSnapshots
+    ? await applyFormValueFast(env, token, tableId, effectiveFormValue, {
+        candidateIds,
+        runId,
+        forceNoSelection: actionName === SUBMIT_NO_SELECTION_ACTION,
+        options,
+        snapshots: candidateSnapshots,
+      })
+    : await applyFormValue(env, token, tableId, effectiveFormValue, {
+        candidateIds,
+        runId,
+        forceNoSelection: actionName === SUBMIT_NO_SELECTION_ACTION,
+        options,
+      });
+  if (shouldSendProductionDirectionCard(env, actionName, summary)) {
+    const sendTask = sendProductionDirectionCard(env, token, runId, summary.selected_records, options);
+    if (shouldDeferProductionDirectionCard(env)) {
+      summary.production_direction_card = { deferred: true };
+      startDeferredTask(sendTask, options);
+    } else {
+      summary.production_direction_card = await sendTask;
+    }
   }
   summary.action = actionName;
   summary.receipt_key = await submissionFingerprint(actionName, runId, candidateIds, effectiveFormValue);
@@ -572,6 +667,9 @@ export async function handlePayload(payload, env, options = {}) {
       return toast("warning", "这次提交已经处理过");
     }
     const directionCard = summary.production_direction_card;
+    if (directionCard?.deferred) {
+      return toast("success", `已回写 ${count} 条选择，制作方向卡稍后发送`);
+    }
     if (directionCard?.sent_count) {
       return toast("success", `已回写 ${count} 条选择，并发送制作方向卡`);
     }

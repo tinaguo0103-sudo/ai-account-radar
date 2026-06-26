@@ -42,6 +42,7 @@ FEISHU_VERIFICATION_TOKEN=xxx
 FEISHU_CARD_RECEIVE_TARGETS=open_id:ou_xxx,chat_id:oc_xxx
 FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS=chat_id:oc_xxx
 SEND_PRODUCTION_DIRECTION_CARD=true
+DEFER_PRODUCTION_DIRECTION_CARD=true
 DRY_RUN=true
 ```
 
@@ -52,8 +53,23 @@ DRY_RUN=true
 - `FEISHU_CARD_RECEIVE_TARGETS` 是第一张选题卡和第二张制作方向卡的默认接收目标。
 - `FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS` 可选；如果设置，第二张卡只发到这里。
 - `SEND_PRODUCTION_DIRECTION_CARD=false` 可临时关闭第二张卡。
+- `DEFER_PRODUCTION_DIRECTION_CARD=true` 会把第二张卡发送任务从主逻辑中拆出；但腾讯云 SCF Node.js 运行时仍可能等待未完成的异步 HTTP 任务，因此它不是严格的异步队列。
 - 本地测试可以设置 `DRY_RUN=true`，云端生产不要设置。
 - 当前版本不支持加密回调。如果飞书开放平台事件订阅启用了 Encrypt Key，需要先关闭事件加密，或后续补解密逻辑。
+
+## 回调耗时结论
+
+2026-06-26 实测：飞书前端出现“提交错误”但 receiver 已收到，主要不是写表失败，而是卡片回调链路耗时过长。
+
+- 新版选题卡会把候选快照写入按钮 value，receiver 可跳过读取整张 `04` 表。
+- receiver 会缓存 `tenant_access_token` 和 `04` 表 table_id；云端建议配置 `FEISHU_TOPIC_TABLE_ID`。
+- 纯回写路径约 2.5 秒，warm 状态约 1.9 秒。
+- “回写后继续发送第二张制作方向卡”路径约 4 秒以上；腾讯云 SCF 会等待后台发卡 HTTP 任务，因此 `DEFER_PRODUCTION_DIRECTION_CARD` 不能完全消除这段等待。
+
+如果后续仍看到飞书前端报“提交错误”，优先改产品路径，而不是继续在同一个回调里压榨耗时：
+
+- 方案 A：把“制作方向”输入合并进第一张选题卡，每条候选下提供可选输入框，用户只给选中的题填写。
+- 方案 B：第一张卡只负责选择和回写，第二张制作方向卡由真正的异步队列、独立云函数或定时扫描任务发送。
 
 ## 本地测试
 
