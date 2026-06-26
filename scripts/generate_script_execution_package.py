@@ -127,13 +127,13 @@ def package_to_brief_row(package: dict[str, Any]) -> dict[str, str]:
     qa_status = str(package.get("qa_status") or "revise")
     if qa_status == "pass":
         script_status = "已生成完整脚本包"
-        can_enter = "是：可制作，可按需拆06任务"
+        can_enter = "是：可制作；按提醒补素材/核验，可按需拆06任务"
     elif qa_status == "blocked":
         script_status = "完整脚本包-阻塞"
         can_enter = "否：先补字段"
     else:
-        script_status = "完整脚本包-待补素材"
-        can_enter = "待补素材后可制作，可按需拆06任务"
+        script_status = "完整脚本包-待修订"
+        can_enter = "否：先补关键判断或证据"
     outline = package.get("outline_segments") or []
     issues = package.get("qa_issues") or []
     return {

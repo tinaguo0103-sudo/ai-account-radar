@@ -184,12 +184,14 @@ def update_topics_mark(token: str, app_token: str, table_id: str, records: list[
 def brief_from_validation(validation: Any) -> str:
     if getattr(validation, "missing_required", []):
         return "缺字段"
-    if getattr(validation, "evidence_gaps", []):
-        return "完整执行包-待补素材"
-    if getattr(validation, "fact_check_points", []):
-        return "完整执行包-待核验确认"
     if getattr(validation, "notes", []):
         return "完整执行包-待补判断"
+    generic_gaps = [
+        item for item in getattr(validation, "evidence_gaps", [])
+        if "缺少可展示证据" in str(item) or "至少补一组截图" in str(item)
+    ]
+    if generic_gaps:
+        return "完整执行包-待补关键证据"
     return "已生成完整执行包"
 
 
@@ -197,16 +199,14 @@ def brief_from_package(package: dict[str, Any]) -> dict[str, str]:
     qa_status = str(package.get("qa_status", "revise"))
     if qa_status == "blocked":
         script_status = "缺字段"
-    elif package.get("p0_todos") or package.get("evidence_gaps"):
-        script_status = "完整执行包-待补素材"
-    elif package.get("fact_check_points"):
-        script_status = "完整执行包-待核验确认"
-    elif package.get("notes"):
-        script_status = "完整执行包-待补判断"
+        can_enter_06 = "否：先补字段"
+    elif qa_status == "revise":
+        script_status = "完整执行包-待修订"
+        can_enter_06 = "否：先补关键判断或证据"
     else:
         script_status = "已生成完整执行包"
+        can_enter_06 = "是：可制作；按提醒补素材/核验，可按需拆06任务"
     outline = package.get("outline_segments", [])
-    p0_todos = package.get("p0_todos", [])
     return {
         "关联选题": str(package.get("topic_title", "")),
         "脚本状态": script_status,
@@ -216,7 +216,7 @@ def brief_from_package(package: dict[str, Any]) -> dict[str, str]:
         "给06的生成输入": str(package.get("generation_input_06") or ""),
         "一句话说明": str(package.get("reader_summary") or package.get("director_summary", ""))[:500],
         "本地文档": str(package.get("document_path") or package.get("output_dir", "")),
-        "是否可进入06": "已生成执行包，按待补素材和QA结果决定是否拆06任务",
+        "是否可进入06": can_enter_06,
         "版本": str(package.get("version", SCRIPT_VERSION)),
     }
 
@@ -289,7 +289,11 @@ def preview_packages(topic_cards: list[dict[str, Any]], austin: Any) -> list[dic
             else ""
         )
         key_evidence = austin.key_evidence_items(topic, validation) if hasattr(austin, "key_evidence_items") else list(topic.get("demo_materials", []))
-        p0_todos = austin.production_todo_items(validation) if hasattr(austin, "production_todo_items") else list(validation.evidence_gaps)
+        p0_todos = (
+            austin.shooting_reminder_items(validation)
+            if hasattr(austin, "shooting_reminder_items")
+            else list(validation.evidence_gaps)
+        )
         packages.append({
             "topic_id": topic.get("topic_id"),
             "topic_title": topic.get("topic_title"),

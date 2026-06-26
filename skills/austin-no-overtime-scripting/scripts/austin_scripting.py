@@ -250,7 +250,7 @@ def validate_topic(topic: dict[str, Any]) -> ValidationResult:
 
     if missing_required:
         status = "blocked"
-    elif evidence_gaps or fact_check_points or notes:
+    elif notes or any("缺少可展示证据" in item or "至少补一组截图" in item for item in evidence_gaps):
         status = "revise"
     else:
         status = "pass"
@@ -295,34 +295,28 @@ def md_numbered(items: list[str], fallback: str = "待补") -> str:
 def script_status_from_validation(validation: ValidationResult) -> str:
     if validation.missing_required:
         return "缺字段"
-    if production_todo_items(validation):
-        return "待补素材"
     if validation.notes:
         return "待补判断"
-    if validation.fact_check_points:
-        return "待核验确认"
+    if blocking_quality_issues(validation):
+        return "待补关键证据"
     return "已生成完整执行包"
 
 
 def can_enter_06_reason(validation: ValidationResult) -> str:
     if validation.missing_required:
         return "否：必填字段不完整。"
-    if production_todo_items(validation):
-        return "待补素材后可制作。"
-    if validation.fact_check_points:
-        return "待核验后可制作。"
+    if blocking_quality_issues(validation):
+        return "否：先补关键判断或证据。"
     return "是：可进入拍摄准备。"
 
 
 def decision_summary(topic: dict[str, Any], validation: ValidationResult, status: str) -> str:
     if validation.missing_required:
         return f"{status}：这条还不能生成完整执行包，先补齐必填字段：{md_list(validation.missing_required)}。"
-    if production_todo_items(validation):
-        return f"{status}：已生成脚本与执行包，但拍摄前要先把P0素材补成可展示画面。"
     if validation.notes:
         return f"{status}：已生成脚本与执行包，但还要补足奥斯汀自己的判断、取舍或人工修正点。"
-    if validation.fact_check_points:
-        return f"{status}：已生成脚本与执行包，发布前必须确认事实边界，避免把推演或公开信息说过头。"
+    if blocking_quality_issues(validation):
+        return f"{status}：已生成脚本与执行包，但还缺少能支撑内容成立的关键证据。"
     return f"{status}：这条已生成完整口播稿和执行方案，可以进入拍摄准备。"
 
 
@@ -380,12 +374,13 @@ def next_action_items(topic: dict[str, Any], validation: ValidationResult) -> li
     if validation.missing_required:
         return [f"补齐字段：{field}" for field in validation.missing_required[:4]]
 
-    actions = [f"补成可展示画面：{item}" for item in production_todo_items(validation)]
+    actions = [f"补成可展示画面：{item}" for item in shooting_reminder_items(validation)]
     if actions:
         return actions[:3]
 
-    if validation.fact_check_points:
-        return [f"核验：{item}" for item in validation.fact_check_points[:3]]
+    release_items = release_reminder_items(validation)
+    if release_items:
+        return [f"核验：{item}" for item in release_items[:3]]
     if validation.notes:
         return [f"补人工判断：{item}" for item in validation.notes[:3]]
     return ["打开本地完整执行包，确认口播全文、录屏素材、剪辑交接和发布包是否可用。"]
@@ -397,8 +392,8 @@ def done_criteria(topic: dict[str, Any], validation: ValidationResult) -> list[s
         "口播全文先由 austin-voice-scriptwriter 生成，再由本 Skill 编排录屏、剪辑、发布和 QA。",
         "执行方案按时间线展开，不是散点重点清单。",
     ]
-    if production_todo_items(validation):
-        criteria.append("P0素材、事实边界和私有表达边界已进入执行包待办。")
+    if shooting_reminder_items(validation) or release_reminder_items(validation):
+        criteria.append("素材提醒、事实边界和私有表达边界已进入执行包待办。")
     else:
         criteria.append("人工确认执行包通过后，可以进入拍摄准备或拆 06 任务。")
     return criteria
@@ -792,7 +787,7 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
 
 
 def key_evidence_items(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
-    return unique_items(production_todo_items(validation) + list(topic.get("demo_materials", [])[:3]) + public_evidence_items(topic, validation))
+    return unique_items(shooting_reminder_items(validation) + list(topic.get("demo_materials", [])[:3]) + public_evidence_items(topic, validation))
 
 
 def outline_summary(topic: dict[str, Any], template: str, validation: ValidationResult) -> str:
@@ -802,8 +797,8 @@ def outline_summary(topic: dict[str, Any], template: str, validation: Validation
 
 def generation_input_for_06(topic: dict[str, Any], template: str, template_reason: str, validation: ValidationResult, private_cases: list[dict[str, Any]]) -> str:
     evidence = key_evidence_items(topic, validation)
-    p0_todos = production_todo_items(validation)
-    fact_checks = validation.fact_check_points
+    p0_todos = shooting_reminder_items(validation)
+    fact_checks = release_reminder_items(validation)
     boundaries = private_boundaries(private_cases)[:3]
     ai_action = clip_text(topic.get("ai_intervention"), 82, "待确认实操主线")
     production_direction = clip_text(topic.get("production_direction"), 110, "")
@@ -922,12 +917,17 @@ def render_table_rows(rows: list[dict[str, str]], headers: list[str]) -> str:
 
 
 def qa_rows(validation: ValidationResult) -> list[dict[str, str]]:
+    blocking_issues = blocking_quality_issues(validation)
+    generic_evidence_gaps = [
+        item for item in validation.evidence_gaps
+        if "缺少可展示证据" in item or "至少补一组截图" in item
+    ]
     return [
         {"检查项": "必填字段", "结果": "blocked" if validation.missing_required else "pass", "说明": md_list(validation.missing_required, "完整")},
-        {"检查项": "实操证据", "结果": "revise" if validation.evidence_gaps else "pass", "说明": md_list(validation.evidence_gaps, "已有证据")},
+        {"检查项": "实操证据", "结果": "revise" if generic_evidence_gaps else "pass", "说明": md_list(validation.evidence_gaps, "已有证据")},
         {"检查项": "真人判断", "结果": "revise" if validation.notes else "pass", "说明": md_list(validation.notes, "已有人工判断")},
-        {"检查项": "事实核验", "结果": "revise" if validation.fact_check_points else "pass", "说明": md_list(validation.fact_check_points, "无额外核验点")},
-        {"检查项": "是否继续制作", "结果": "revise" if validation.evidence_gaps else "pass", "说明": "已生成完整执行包；是否拆任务仍需人工确认。"},
+        {"检查项": "事实核验", "结果": "reminder" if validation.fact_check_points else "pass", "说明": md_list(validation.fact_check_points, "无额外核验点")},
+        {"检查项": "是否继续制作", "结果": "blocked" if validation.missing_required else ("revise" if blocking_issues else "pass"), "说明": "已生成完整执行包；具体拍摄和事实核验按提醒执行，是否拆任务仍需人工确认。"},
     ]
 
 
@@ -936,6 +936,16 @@ def demo_rows(topic: dict[str, Any], private_cases: list[dict[str, Any]] | None 
     for item in topic.get("demo_materials", []):
         rows.append({"素材类型": "已有/计划证据", "需要内容": item, "用途": "证明流程可复现或结果可用", "优先级": "高", "状态": "待确认"})
     for item in topic.get("missing_evidence", []):
+        readable_item = readable_evidence_item(item)
+        if is_release_reminder_item(readable_item):
+            rows.append({
+                "素材类型": "发布前核验",
+                "需要内容": readable_item,
+                "用途": "避免事实错误、误读原文或扩大声称",
+                "优先级": "高",
+                "状态": "发布前处理",
+            })
+            continue
         rows.append({"素材类型": "待补证据", "需要内容": item, "用途": "补足可信度和可拍摄性", "优先级": "高", "状态": "待补"})
     for case in private_cases or []:
         for item in case.get("shootable_evidence", [])[:3]:
@@ -1014,7 +1024,7 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
         "outline_segments": outline,
         "generation_input_06": generation_input,
         "key_evidence": key_evidence_items(topic, validation),
-        "p0_todos": production_todo_items(validation),
+        "p0_todos": shooting_reminder_items(validation),
         "reader_summary": f"{status}｜{template}｜{topic.get('core_thesis')}",
         "qa_status": validation.status,
         "missing_required": validation.missing_required,
@@ -1030,10 +1040,8 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
 def production_recommendation(validation: ValidationResult) -> str:
     if validation.missing_required:
         return "先不拍：核心字段缺失，容易写成泛讲观点。"
-    if production_todo_items(validation):
-        return "可以先写稿，但拍摄前必须补素材。"
-    if validation.fact_check_points:
-        return "可以先写稿，但发布前必须核验事实边界。"
+    if blocking_quality_issues(validation):
+        return "先补关键判断或证据，否则容易写成泛讲观点。"
     return "可以进入拍摄准备。"
 
 
@@ -1081,8 +1089,8 @@ def voice_skill_context(topic: dict[str, Any], validation: ValidationResult) -> 
     return {
         "opening": full_script_opening(topic, validation),
         "evidence_text": inline_items(script_evidence_items(topic, validation), "输入、输出、错误点和人工修改记录", limit=3, item_limit=42),
-        "todo_text": inline_items(readable_todo_items(validation), "一段真实录屏和一个失败样例", limit=2, item_limit=42),
-        "fact_text": inline_items(validation.fact_check_points, "", limit=2, item_limit=48),
+        "todo_text": inline_items(shooting_reminder_items(validation), "一段真实录屏和一个失败样例", limit=2, item_limit=42),
+        "fact_text": inline_items(release_reminder_items(validation), "", limit=2, item_limit=48),
         "voice_skill_version": VOICE_SKILL_VERSION,
     }
 
@@ -1120,7 +1128,7 @@ def teleprompter_sections(topic: dict[str, Any], validation: ValidationResult) -
     judgment = trim_end_punctuation(topic.get("unique_judgment"), "AI 真正要进入业务流程，必须留下可验收的证据")
     asset = trim_end_punctuation(topic.get("takeaway_asset"), "一份可复用的流程清单")
     evidence = inline_items(script_evidence_items(topic, validation), "输入、输出、异常和人工验收画面", limit=3, item_limit=44)
-    todos = inline_items(readable_todo_items(validation), "拍摄前不额外补P0素材", limit=2, item_limit=42)
+    todos = inline_items(shooting_reminder_items(validation), "拍摄前不额外补P0素材", limit=2, item_limit=42)
     direction = trim_end_punctuation(topic.get("production_direction"), "")
 
     middle_direction = f"\n\n你如果已经在第二张卡里补了制作方向，我会按这个方向收住：{direction}。" if direction else ""
@@ -1169,7 +1177,7 @@ def full_package_outline(topic: dict[str, Any], validation: ValidationResult) ->
     judgment = clip_text(topic.get("unique_judgment"), 70, "AI任务必须留下状态、异常和验收记录")
     ai_action = clip_text(topic.get("ai_intervention"), 76, "按验收表跑一次真实任务")
     evidence = inline_items(script_evidence_items(topic, validation), "任务跑表、输入输出、失败样例", limit=3, item_limit=34)
-    todos = inline_items(readable_todo_items(validation), "无P0素材缺口", limit=2, item_limit=34)
+    todos = inline_items(shooting_reminder_items(validation), "无P0素材缺口", limit=2, item_limit=34)
     return [
         f"00:00-00:10｜开场钩子：{full_script_opening(topic, validation)}",
         f"00:10-00:40｜真实痛点：交代{pain}，画面给旧任务或缺失验收字段的现场。",
@@ -1206,11 +1214,11 @@ def capture_hint_for_segment(topic: dict[str, Any], validation: ValidationResult
     if "实操" in purpose or "三个动作" in purpose:
         return clip_text(topic.get("ai_intervention"), 84, "录屏展示输入、AI处理和验收字段")
     if "失败" in purpose:
-        return inline_items(production_todo_items(validation), "错误结果、人工修正、验收打叉", limit=2, item_limit=38)
+        return inline_items(shooting_reminder_items(validation), "错误结果、人工修正、验收打叉", limit=2, item_limit=38)
     if "对比" in purpose:
         return inline_items(evidence, "前后对比、验收字段、人工修改痕迹", limit=2, item_limit=38)
     if "边界" in purpose or "收尾" in purpose:
-        return inline_items(production_todo_items(validation), "待补素材和人工边界提醒", limit=2, item_limit=38)
+        return inline_items(shooting_reminder_items(validation), "待补素材和人工边界提醒", limit=2, item_limit=38)
     return inline_items(evidence, "真实录屏、字段表或人工修正画面", limit=2, item_limit=38)
 
 
@@ -1268,21 +1276,70 @@ def publish_package_lines(topic: dict[str, Any]) -> list[str]:
     ]
 
 
-def full_package_qa(validation: ValidationResult) -> tuple[str, list[str]]:
+def blocking_quality_issues(validation: ValidationResult) -> list[str]:
     issues: list[str] = []
-    if validation.missing_required:
-        issues.append(f"缺字段：{md_list(validation.missing_required)}")
-    if production_todo_items(validation):
-        issues.append(f"拍摄前补素材：{md_list(readable_todo_items(validation))}")
-    if validation.fact_check_points:
-        issues.append(f"发布前核验：{md_list(validation.fact_check_points)}")
+    generic_evidence_gaps = [
+        item for item in validation.evidence_gaps
+        if "缺少可展示证据" in item or "至少补一组截图" in item
+    ]
+    if generic_evidence_gaps:
+        issues.append(f"缺关键证据：{md_list(generic_evidence_gaps)}")
     if validation.notes:
         issues.append(f"补人工判断：{md_list(validation.notes)}")
+    return issues
+
+
+RELEASE_REMINDER_TERMS = ["发布前", "核验", "原文", "避免说错", "事实", "不能声称"]
+
+
+def concrete_todo_items(validation: ValidationResult) -> list[str]:
+    return [
+        item for item in readable_todo_items(validation)
+        if "缺少可展示证据" not in item and "至少补一组截图" not in item
+    ]
+
+
+def is_release_reminder_item(item: str) -> bool:
+    return any(term in item for term in RELEASE_REMINDER_TERMS)
+
+
+def shooting_reminder_items(validation: ValidationResult) -> list[str]:
+    return [item for item in concrete_todo_items(validation) if not is_release_reminder_item(item)]
+
+
+def release_reminder_items(validation: ValidationResult) -> list[str]:
+    return unique_items([
+        *[item for item in concrete_todo_items(validation) if is_release_reminder_item(item)],
+        *[
+            readable_evidence_item(item) for item in validation.evidence_gaps
+            if is_release_reminder_item(readable_evidence_item(item))
+        ],
+        *validation.fact_check_points,
+    ])
+
+
+def production_reminders(validation: ValidationResult) -> list[str]:
+    reminders: list[str] = []
+    shoot_todos = shooting_reminder_items(validation)
+    if shoot_todos:
+        reminders.append(f"拍摄提醒：{md_list(shoot_todos)}")
+    release_reminders = release_reminder_items(validation)
+    if release_reminders:
+        reminders.append(f"发布前提醒：{md_list(release_reminders)}")
+    return reminders
+
+
+def full_package_qa(validation: ValidationResult) -> tuple[str, list[str]]:
+    blocking_issues: list[str] = []
     if validation.missing_required:
-        return "blocked", issues
-    if issues:
-        return "revise", issues
-    return "pass", ["可进入拍摄准备"]
+        blocking_issues.append(f"缺字段：{md_list(validation.missing_required)}")
+    blocking_issues.extend(blocking_quality_issues(validation))
+    reminders = production_reminders(validation)
+    if validation.missing_required:
+        return "blocked", blocking_issues + reminders
+    if blocking_issues:
+        return "revise", blocking_issues + reminders
+    return "pass", ["可进入拍摄准备", *reminders]
 
 
 def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_date: str | None = None) -> dict[str, Any]:
@@ -1311,8 +1368,8 @@ def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_
 - 推荐模板：{template}
 - 核心观点：{trim_end_punctuation(topic.get('core_thesis'), '待确认核心观点')}。
 - 开头钩子：{full_script_opening(topic, validation)}
-- 拍摄前待办：{inline_items(readable_todo_items(validation), '无P0素材缺口', limit=3, item_limit=44)}
-- 发布前核验：{inline_items(validation.fact_check_points, '无额外事实核验点', limit=2, item_limit=48)}
+- 拍摄前待办：{inline_items(shooting_reminder_items(validation), '无P0素材缺口', limit=3, item_limit=44)}
+- 发布前核验：{inline_items(release_reminder_items(validation), '无额外事实核验点', limit=3, item_limit=48)}
 - 本条边界：{inline_items(private_boundaries(private_cases), '不夸大AI能力，不把实验说成已验证结论', limit=2, item_limit=44)}
 
 ### 视频结构
@@ -1368,7 +1425,7 @@ def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_
         "reader_summary": f"{qa_status}｜{template}｜{full_script_opening(topic, validation)}",
         "qa_status": qa_status,
         "qa_issues": qa_issues,
-        "p0_todos": production_todo_items(validation),
+        "p0_todos": shooting_reminder_items(validation),
         "evidence_gaps": validation.evidence_gaps,
         "fact_check_points": validation.fact_check_points,
         "notes": validation.notes,

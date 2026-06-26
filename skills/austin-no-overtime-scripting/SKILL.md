@@ -40,7 +40,10 @@ full_script_execution_package.md
 ## 工作流
 
 1. 将输入映射成 Topic Card。
-2. 校验必填字段和证据状态，得到 `pass/revise/blocked`。
+2. 校验完整执行包是否可用，得到 `pass/revise/blocked`。
+   - `blocked`：必填字段缺失，不能可靠生成。
+   - `revise`：缺独有判断、缺任何可展示证据，或脚本/执行包本身不成立。
+   - `pass`：脚本和执行包已可进入拍摄准备；具体补拍素材、录屏、发布前事实核验只作为提醒，不因为这些提醒降级成 `revise`。
 3. 判断制作模板：`Skill公开型`、`热点业务转译型`、`认知定调型`、`真实工作流改造型`、`Agent实战型`、`项目复盘型`。
 4. 读取全局私有 `austin-voice-scriptwriter`，生成口播全文；需要测试仓库脱敏镜像时必须显式设置 `AUSTIN_VOICE_SCRIPT_SKILL_DIR`。
 5. 生成 `full_script_execution_package.md`。
@@ -58,7 +61,7 @@ full_script_execution_package.md
 5. `录屏与素材清单`：已有证据、待补素材、用途、优先级、状态。
 6. `剪辑交接`：结果闪现、前后对比、字幕重点、真人切回、节奏停顿。
 7. `发布包草稿`：标题、封面大字、置顶评论。
-8. `QA`：`pass/revise/blocked` 和原因。
+8. `QA`：`pass/revise/blocked`、原因和拍摄/发布前提醒。
 
 不要恢复 00-08 多文件散包，也不要把完整内容塞进飞书长文本。
 
