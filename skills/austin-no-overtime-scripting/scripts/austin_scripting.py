@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Deterministic v0.2 renderer for Austin no-overtime scripting packages."""
+"""Deterministic renderer for Austin no-overtime scripting packages."""
 from __future__ import annotations
 
 import csv
@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any
 
 
-SKILL_VERSION = "austin-script-skill-v0.2"
+SKILL_VERSION = "austin-script-skill-v0.3"
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 
 REQUIRED_FIELDS = [
@@ -25,6 +25,7 @@ REQUIRED_FIELDS = [
 ]
 
 OUTPUT_FILES = ["script_outline_brief.md"]
+FULL_PACKAGE_FILE = "full_script_execution_package.md"
 
 TEMPLATE_TYPES = [
     "Skill公开型",
@@ -922,7 +923,7 @@ def qa_rows(validation: ValidationResult) -> list[dict[str, str]]:
         {"检查项": "实操证据", "结果": "revise" if validation.evidence_gaps else "pass", "说明": md_list(validation.evidence_gaps, "已有证据")},
         {"检查项": "真人判断", "结果": "revise" if validation.notes else "pass", "说明": md_list(validation.notes, "已有人工判断")},
         {"检查项": "事实核验", "结果": "revise" if validation.fact_check_points else "pass", "说明": md_list(validation.fact_check_points, "无额外核验点")},
-        {"检查项": "是否进入06", "结果": "blocked", "说明": "v0.2不自动拆06，需人工确认已确认可制作。"},
+        {"检查项": "是否进入06", "结果": "blocked", "说明": "05大纲不自动拆06任务；需要人工确认后再进入完整执行。"},
     ]
 
 
@@ -1013,6 +1014,290 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
         "notes": validation.notes,
         "private_case_anchors": [case.get("name", "") for case in private_cases],
         "generated_files": OUTPUT_FILES,
+        "version": SKILL_VERSION,
+    }
+
+
+def production_recommendation(validation: ValidationResult) -> str:
+    if validation.missing_required:
+        return "先不拍：核心字段缺失，容易写成泛讲观点。"
+    if production_todo_items(validation):
+        return "可以先写稿，但拍摄前必须补素材。"
+    if validation.fact_check_points:
+        return "可以先写稿，但发布前必须核验事实边界。"
+    return "可以进入拍摄准备。"
+
+
+def full_script_opening(topic: dict[str, Any], validation: ValidationResult) -> str:
+    text = topic_blob(topic)
+    if "claude" in text and ("agent" in text or "验收" in text):
+        return "我这条不想讲 Claude Code 多强。我只拿它团队原则做一件事：把我的 AI 项目，从“交给 Agent 试试”，改成“交给 Agent 后能验收”。"
+    if workflow_object(topic) == "汽车AI内容":
+        return "我这条不做政策解读。我只拿它补一条上线前的风险线：AI生成的汽车卖点，哪些能说，哪些必须停下来复核。"
+    if workflow_object(topic) == "视觉交付":
+        return "我不想再看一张好看的截图。我只看它能不能导出、能不能复用、能不能进入真实交付。"
+    if workflow_object(topic) == "封面流程":
+        return "封面自动化最难的不是出图，是每次都像我，而且每次都能过标题和排版验收。"
+    hook = opening_hook_options(topic, validation)[0]
+    return hook.rstrip("。") + "。"
+
+
+def teleprompter_sections(topic: dict[str, Any], validation: ValidationResult) -> list[tuple[str, str]]:
+    opening = full_script_opening(topic, validation)
+    title = trim_end_punctuation(topic.get("topic_title"), "这条选题")
+    core = trim_end_punctuation(topic.get("core_thesis"), title)
+    pain = trim_end_punctuation(topic.get("pain_point") or topic.get("old_workflow"), "旧流程里有一个真实卡点")
+    old = trim_end_punctuation(topic.get("old_workflow"), pain)
+    ai_action = trim_end_punctuation(topic.get("ai_intervention"), "让 AI 介入一个可以验收的小环节")
+    judgment = trim_end_punctuation(topic.get("unique_judgment"), "AI 真正要进入业务流程，必须留下可验收的证据")
+    asset = trim_end_punctuation(topic.get("takeaway_asset"), "一份可复用的流程清单")
+    evidence = inline_items(script_evidence_items(topic, validation), "输入、输出、异常和人工验收画面", limit=3, item_limit=44)
+    todos = inline_items(readable_todo_items(validation), "拍摄前不额外补P0素材", limit=2, item_limit=42)
+    direction = trim_end_punctuation(topic.get("production_direction"), "")
+
+    middle_direction = f"\n\n你如果已经在第二张卡里补了制作方向，我会按这个方向收住：{direction}。" if direction else ""
+    return [
+        ("00:00-00:10｜开场钩子", opening),
+        (
+            "00:10-00:40｜真实痛点",
+            f"我现在做 AI 项目，最怕的不是它不会执行，而是它执行完以后，我不知道怎么验收。\n\n{pain}。{old}。所以最后经常会变成：Agent 跑了一堆东西，我还是要靠感觉判断能不能用。{middle_direction}",
+        ),
+        (
+            "00:40-01:15｜核心判断",
+            f"所以这条的重点不是复述「{title}」。我真正想测的是：{core}。\n\n我的判断很简单：{judgment}。\n\n一个 AI 工作流如果只有结果，没有状态、异常和验收记录，它只是看起来自动化了。真的进入业务，必须能追责、能回滚、能复盘。",
+        ),
+        (
+            "01:15-02:30｜实操主线",
+            f"我会拿一条真实小任务来跑，不做大而全。\n\n第一步，先把任务输入说清楚：我要处理什么资料，最后交付什么结果。\n\n第二步，把 AI 的动作限制住：{ai_action}。\n\n第三步，看验收表，而不是只看最终答案。这里至少要留下三类画面：{evidence}。",
+        ),
+        (
+            "02:30-03:20｜失败和人工修正",
+            f"这一段一定要放失败样例。因为我不想把它讲成“AI 一跑就对”。\n\n如果中间缺了输入、输出、异常原因，或者验收结论写不清楚，我会直接判失败。然后我再补一轮人工修正，看这张表到底能不能减少我的返工。\n\n拍摄前还要补：{todos}。",
+        ),
+        (
+            "03:20-04:00｜收尾判断",
+            f"最后我不会说这套东西已经完美解决 AI 项目管理。\n\n我只想证明一件事：AI 任务不是交出去就结束，而是从一开始就要设计它怎么被验收。\n\n如果这次能跑通，它后面可以沉淀成{asset}；如果跑不通，也很好，至少我知道问题不是模型不够强，而是我的任务拆解和验收字段还不够清楚。",
+        ),
+    ]
+
+
+def render_teleprompter(topic: dict[str, Any], validation: ValidationResult) -> str:
+    sections = []
+    for heading, body in teleprompter_sections(topic, validation):
+        sections.append(f"### {heading}\n\n{body}")
+    return "\n\n".join(sections)
+
+
+def script_evidence_items(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
+    return [readable_evidence_item(item) for item in key_evidence_items(topic, validation)]
+
+
+def readable_todo_items(validation: ValidationResult) -> list[str]:
+    return [readable_evidence_item(item) for item in production_todo_items(validation)]
+
+
+def full_package_outline(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
+    pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 70, "旧流程缺少验收字段")
+    judgment = clip_text(topic.get("unique_judgment"), 70, "AI任务必须留下状态、异常和验收记录")
+    ai_action = clip_text(topic.get("ai_intervention"), 76, "按验收表跑一次真实任务")
+    evidence = inline_items(script_evidence_items(topic, validation), "任务跑表、输入输出、失败样例", limit=3, item_limit=34)
+    todos = inline_items(readable_todo_items(validation), "无P0素材缺口", limit=2, item_limit=34)
+    return [
+        f"00:00-00:10｜开场钩子：{full_script_opening(topic, validation)}",
+        f"00:10-00:40｜真实痛点：交代{pain}，画面给旧任务或缺失验收字段的现场。",
+        f"00:40-01:15｜核心判断：切真人，说清{judgment}。",
+        f"01:15-02:30｜实操主线：只跑一个小任务，展示{ai_action}。",
+        f"02:30-03:20｜失败和修正：放出{evidence}，说明哪里必须人工接手。",
+        f"03:20-04:00｜收尾判断：回到是否值得继续拍；拍摄前补齐{todos}。",
+    ]
+
+
+def execution_package_rows(topic: dict[str, Any], validation: ValidationResult) -> list[dict[str, str]]:
+    rows = []
+    for heading, body in teleprompter_sections(topic, validation):
+        time_range, purpose = heading.split("｜", 1)
+        rows.append({
+            "时间": time_range,
+            "段落": purpose,
+            "真人口播": clip_text(body, 86, ""),
+            "画面/录屏": capture_hint_for_segment(topic, validation, purpose),
+            "剪辑重点": editing_hint_for_segment(purpose),
+            "QA": qa_hint_for_segment(purpose),
+        })
+    return rows
+
+
+def capture_hint_for_segment(topic: dict[str, Any], validation: ValidationResult, purpose: str) -> str:
+    evidence = script_evidence_items(topic, validation)
+    if "开场" in purpose:
+        return clip_text(evidence[0] if evidence else topic.get("topic_title"), 72, "先闪现结果或冲突画面")
+    if "痛点" in purpose:
+        return clip_text(topic.get("old_workflow") or topic.get("pain_point"), 72, "旧流程截图或任务卡住的画面")
+    if "判断" in purpose:
+        return "切真人大画面，旁边给方法卡或验收字段草稿"
+    if "实操" in purpose:
+        return clip_text(topic.get("ai_intervention"), 84, "录屏展示输入、AI处理和验收字段")
+    if "失败" in purpose:
+        return inline_items(production_todo_items(validation), "错误结果、人工修正、验收打叉", limit=2, item_limit=38)
+    return clip_text(topic.get("takeaway_asset"), 72, "最终验收表或待补清单")
+
+
+def editing_hint_for_segment(purpose: str) -> str:
+    if "开场" in purpose:
+        return "0-3秒给结果，不铺背景；字幕只放一句冲突。"
+    if "实操" in purpose:
+        return "等待过程快进，只放输入、输出、验收三个关键节点。"
+    if "失败" in purpose:
+        return "错误点放大，前后对比，保留人工修改痕迹。"
+    if "收尾" in purpose:
+        return "切回真人，结尾停半拍，不做课程总结口吻。"
+    return "真人和录屏交替，字幕强调判断句。"
+
+
+def qa_hint_for_segment(purpose: str) -> str:
+    if "开场" in purpose:
+        return "8秒内是否有冲突、结果或反常识。"
+    if "痛点" in purpose:
+        return "痛点是否来自自己的工作流，不是泛泛说效率。"
+    if "实操" in purpose:
+        return "是否只保留三步；是否能看见真实输入和输出。"
+    if "失败" in purpose:
+        return "是否承认AI边界和人工修正点。"
+    return "是否回到业务判断，不夸大结果。"
+
+
+def capture_rows_for_full_package(topic: dict[str, Any], validation: ValidationResult, private_cases: list[dict[str, Any]]) -> list[dict[str, str]]:
+    rows = demo_rows(topic, private_cases[:1])
+    for row in rows:
+        if row.get("状态") == "待确认":
+            row["状态"] = "拍摄前确认"
+        if row.get("素材类型") == "待补证据":
+            row["需要内容"] = readable_evidence_item(row.get("需要内容", ""))
+    return rows
+
+
+def publish_package_lines(topic: dict[str, Any]) -> list[str]:
+    title = trim_end_punctuation(topic.get("topic_title"), "AI工作流实战")
+    obj = workflow_object(topic)
+    if obj == "Agent任务":
+        return [
+            "标题1：我不再让 Agent 只交结果，我要它交验收记录",
+            "标题2：Claude Code 团队原则，我只拆这一件事",
+            "标题3：AI 项目最容易漏掉的不是执行，是验收",
+            "封面大字：Agent 任务怎么验收？",
+            "置顶评论：你现在用 Agent 时，会要求它留下失败和验收记录吗？",
+        ]
+    return [
+        f"标题1：{title}",
+        f"标题2：这条我不讲工具，只讲怎么进业务流程",
+        f"标题3：AI提效之前，先把验收线画清楚",
+        f"封面大字：这条能不能进流程？",
+        "置顶评论：你想先看完整流程，还是先看失败样例？",
+    ]
+
+
+def full_package_qa(validation: ValidationResult) -> tuple[str, list[str]]:
+    issues: list[str] = []
+    if validation.missing_required:
+        issues.append(f"缺字段：{md_list(validation.missing_required)}")
+    if production_todo_items(validation):
+        issues.append(f"拍摄前补素材：{md_list(readable_todo_items(validation))}")
+    if validation.fact_check_points:
+        issues.append(f"发布前核验：{md_list(validation.fact_check_points)}")
+    if validation.notes:
+        issues.append(f"补人工判断：{md_list(validation.notes)}")
+    if validation.missing_required:
+        return "blocked", issues
+    if issues:
+        return "revise", issues
+    return "pass", ["可进入拍摄准备"]
+
+
+def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_date: str | None = None) -> dict[str, Any]:
+    run_date = run_date or datetime.now().strftime("%Y-%m-%d")
+    display_title = topic.get("topic_title") or "未命名选题"
+    private_runtime = load_private_runtime()
+    private_cases = matched_private_cases(topic, private_runtime)
+    template, template_reason = classify_template(topic)
+    validation = validate_topic(topic)
+    folder = output_root / run_date / f"{slugify(str(topic.get('topic_id', 'topic')))}_{slugify(display_title)}"
+    folder.mkdir(parents=True, exist_ok=True)
+    document_path = folder / FULL_PACKAGE_FILE
+    qa_status, qa_issues = full_package_qa(validation)
+    outline = full_package_outline(topic, validation)
+    rows = execution_package_rows(topic, validation)
+    capture_rows = capture_rows_for_full_package(topic, validation, private_cases)
+    headers = ["时间", "段落", "真人口播", "画面/录屏", "剪辑重点", "QA"]
+    capture_headers = ["素材类型", "需要内容", "用途", "优先级", "状态"]
+    write_text(document_path, f"""# {display_title}
+
+## 06 完整口播稿与执行包
+
+### 一屏结论
+
+- 生产判断：{production_recommendation(validation)}
+- 推荐模板：{template}
+- 核心观点：{trim_end_punctuation(topic.get('core_thesis'), '待确认核心观点')}。
+- 开头钩子：{full_script_opening(topic, validation)}
+- 拍摄前待办：{inline_items(readable_todo_items(validation), '无P0素材缺口', limit=3, item_limit=44)}
+- 发布前核验：{inline_items(validation.fact_check_points, '无额外事实核验点', limit=2, item_limit=48)}
+- 本条边界：{inline_items(private_boundaries(private_cases), '不夸大AI能力，不把实验说成已验证结论', limit=2, item_limit=44)}
+
+### 视频结构
+
+{md_numbered(outline)}
+
+### 口播全文
+
+{render_teleprompter(topic, validation)}
+
+### 分段执行方案
+
+| 时间 | 段落 | 真人口播 | 画面/录屏 | 剪辑重点 | QA |
+|---|---|---|---|---|---|
+{render_table_rows(rows, headers)}
+
+### 录屏与素材清单
+
+| 素材类型 | 需要内容 | 用途 | 优先级 | 状态 |
+|---|---|---|---|---|
+{render_table_rows(capture_rows, capture_headers)}
+
+### 剪辑交接
+
+- 开场直接给结果或冲突，不讲背景。
+- 实操段只保留输入、AI动作、输出、验收四个画面。
+- 失败样例和人工修正必须放出来，不要剪成全程顺利。
+- 字幕突出判断句、验收线和边界提醒。
+- 收尾回到真人判断，不强行卖课或卖工具。
+
+### 发布包草稿
+
+{md_bullets(publish_package_lines(topic))}
+
+### QA
+
+- 结果：{qa_status}
+{md_bullets(qa_issues)}
+""")
+    return {
+        "topic_id": topic.get("topic_id"),
+        "topic_title": topic.get("topic_title"),
+        "output_dir": str(folder),
+        "document_path": str(document_path),
+        "recommended_template": template,
+        "template_reason": template_reason,
+        "core_thesis": topic.get("core_thesis"),
+        "core_viewpoint": core_viewpoint(topic, validation),
+        "outline_segments": outline,
+        "generation_input_06": generation_input_for_06(topic, template, template_reason, validation, private_cases),
+        "opening_hook": full_script_opening(topic, validation),
+        "qa_status": qa_status,
+        "qa_issues": qa_issues,
+        "p0_todos": production_todo_items(validation),
+        "fact_check_points": validation.fact_check_points,
+        "private_case_anchors": [case.get("name", "") for case in private_cases],
+        "generated_files": [FULL_PACKAGE_FILE],
         "version": SKILL_VERSION,
     }
 
