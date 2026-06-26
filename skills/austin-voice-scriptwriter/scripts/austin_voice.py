@@ -34,6 +34,7 @@ def blob(topic: dict[str, Any]) -> str:
         "old_workflow",
         "ai_intervention",
         "production_direction",
+        "unique_judgment",
         "takeaway_asset",
     ]
     return " ".join(str(topic.get(key, "")) for key in keys).lower()
@@ -45,12 +46,12 @@ def workflow_object(topic: dict[str, Any]) -> str:
         return "汽车内容"
     if any(term in content for term in ["封面"]):
         return "封面"
+    if any(term in content for term in ["agent", "claude", "codex", "自动执行", "任务拆解", "验收"]):
+        return "Agent项目"
     if any(term in content for term in ["选题", "brief", "主编", "候选池", "飞书"]):
         return "选题"
     if any(term in content for term in ["ppt", "pptx", "导出", "样式", "视觉", "设计"]):
         return "视觉交付"
-    if any(term in content for term in ["agent", "claude", "codex", "自动执行", "任务拆解", "验收"]):
-        return "Agent项目"
     return "AI工作流"
 
 
@@ -104,6 +105,7 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
     activity = audience_activity(obj)
     title = text(topic.get("topic_title"), "这条选题")
     core = text(topic.get("core_thesis"), title)
+    judgment = text(topic.get("unique_judgment"), core)
     pain = text(topic.get("pain_point") or topic.get("old_workflow"), core_pain(obj))
     old = text(topic.get("old_workflow"), pain)
     ai_action = text(topic.get("ai_intervention"), "让 AI 介入一个能被检查的小环节")
@@ -114,7 +116,12 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
     act1, act2, act3 = action_names(obj)
     questions = concrete_questions(obj)
 
-    direction_line = f"\n\n如果这条你已经补了制作方向，我会按这个方向收住：{direction}。" if direction else ""
+    if direction and obj == "Agent项目":
+        direction_line = "\n\n所以这条我会收在自己的真实项目里，不复述工具原则，也不讲成教程。"
+    elif direction:
+        direction_line = "\n\n所以这条我会按真实案例来讲，不把它讲成工具功能介绍。"
+    else:
+        direction_line = ""
     fact_line = f"\n\n涉及事实或平台能力的地方，发布前我还会再核一遍：{fact_text}。" if fact_text else ""
 
     return [
@@ -145,7 +152,7 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
             "\n\n".join(
                 [
                     f"所以这条我不想把「{title}」讲成工具教程。",
-                    f"我真正想做的是：{core}。",
+                    f"我真正想做的是：{judgment}。",
                     "说白了，我不是想让 AI 多生成几段话。",
                     "我是想让它每次交付的时候，都把“我做了什么、哪里没把握、你该看哪里”一起交出来。",
                 ]
@@ -197,4 +204,3 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
 
 def render_voice_text(topic: dict[str, Any], context: dict[str, Any] | None = None) -> str:
     return "\n\n".join(f"### {heading}\n\n{body}" for heading, body in render_voice_sections(topic, context))
-

@@ -195,7 +195,7 @@ def normalize_topic(fields: dict[str, Any], record_id: str = "") -> dict[str, An
         "demo_materials": demo_materials,
         "missing_evidence": missing_evidence,
         "production_direction": first_non_empty(fields, ["production_direction", "我的制作补充", "制作方向", "使用案例", "人工制作补充"], skip_placeholders=False),
-        "unique_judgment": first_non_empty(fields, ["unique_judgment", "我的思考点", "主编判断", "选题判断", "我的切入"]),
+        "unique_judgment": first_non_empty(fields, ["unique_judgment", "人工一句话判断", "我的思考点", "主编判断", "选题判断", "我的切入"]),
         "takeaway_asset": first_non_empty(fields, ["takeaway_asset", "可沉淀资产", "资料包承接方式", "重点体现"]),
         "preferred_duration_min": parse_duration(first_non_empty(fields, ["preferred_duration_min", "目标时长"], "4")),
         "publish_platforms": publish_platforms,
@@ -792,7 +792,7 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
 
 
 def key_evidence_items(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
-    return unique_items(public_evidence_items(topic, validation) + production_todo_items(validation) + list(topic.get("demo_materials", [])[:3]))
+    return unique_items(production_todo_items(validation) + list(topic.get("demo_materials", [])[:3]) + public_evidence_items(topic, validation))
 
 
 def outline_summary(topic: dict[str, Any], template: str, validation: ValidationResult) -> str:
