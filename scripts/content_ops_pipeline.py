@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
-"""Create Austin v0.2 script-outline briefs from approved topics.
+"""Create Austin v0.5 production packages from approved topics.
 
 Default mode is dry-run. With --write-feishu, reads 04 分析与选题 records whose
-status is 进入Brief or 本周做, renders a single Austin script-outline brief,
-creates a light 05 Brief与制作 confirmation record, then marks the topic as 已生成脚本稿.
+status is 进入Brief or 本周做, renders a single Austin full execution package,
+creates a light 05 Brief与制作 index record, then marks the topic as 已生成脚本稿.
 
-v0.2 intentionally does not create 06 内容任务主表 tasks. 06 should generate the
-full script package only after a human confirms the 05 outline.
+v0.5 intentionally skips the old 05 outline step. The user-facing artifact is
+full_script_execution_package.md; Feishu 05 remains a light index.
 
 Production runtime reads the global private Austin Skill only. The repository
 Skill is a sanitized mirror for sync/bootstrap/testing and is never used as an
@@ -33,10 +33,10 @@ ROOT = Path(__file__).resolve().parents[1]
 LEGACY_TODAY10 = ROOT / "output" / "today_10_topics.csv"
 LATEST_WRITE_TODAY10 = ROOT / "output" / "latest_write" / "today_10_topics.csv"
 LEGACY_LOG = ROOT / "output" / "content_sampler_log.json"
-SCRIPT_VERSION = "austin-script-skill-v0.2"
+SCRIPT_VERSION = "austin-production-packager-v0.5"
 GLOBAL_AUSTIN_SKILL_DIR = Path.home() / ".codex" / "skills" / "austin-no-overtime-scripting"
 REPO_AUSTIN_SKILL_DIR = ROOT / "skills" / "austin-no-overtime-scripting"
-SCRIPT_OUTPUT_ROOT = ROOT / "output" / "script_packages"
+SCRIPT_OUTPUT_ROOT = ROOT / "output" / "script_execution_packages"
 
 
 def legacy_today10_is_official() -> bool:
@@ -185,12 +185,12 @@ def brief_from_validation(validation: Any) -> str:
     if getattr(validation, "missing_required", []):
         return "缺字段"
     if getattr(validation, "evidence_gaps", []):
-        return "待补素材"
+        return "完整执行包-待补素材"
     if getattr(validation, "fact_check_points", []):
-        return "待核验确认"
+        return "完整执行包-待核验确认"
     if getattr(validation, "notes", []):
-        return "待补判断"
-    return "待确认大纲"
+        return "完整执行包-待补判断"
+    return "已生成完整执行包"
 
 
 def brief_from_package(package: dict[str, Any]) -> dict[str, str]:
@@ -198,13 +198,13 @@ def brief_from_package(package: dict[str, Any]) -> dict[str, str]:
     if qa_status == "blocked":
         script_status = "缺字段"
     elif package.get("p0_todos") or package.get("evidence_gaps"):
-        script_status = "待补素材"
+        script_status = "完整执行包-待补素材"
     elif package.get("fact_check_points"):
-        script_status = "待核验确认"
+        script_status = "完整执行包-待核验确认"
     elif package.get("notes"):
-        script_status = "待补判断"
+        script_status = "完整执行包-待补判断"
     else:
-        script_status = "待确认大纲"
+        script_status = "已生成完整执行包"
     outline = package.get("outline_segments", [])
     p0_todos = package.get("p0_todos", [])
     return {
@@ -216,7 +216,7 @@ def brief_from_package(package: dict[str, Any]) -> dict[str, str]:
         "给06的生成输入": str(package.get("generation_input_06") or ""),
         "一句话说明": str(package.get("reader_summary") or package.get("director_summary", ""))[:500],
         "本地文档": str(package.get("document_path") or package.get("output_dir", "")),
-        "是否可进入06": "待确认大纲",
+        "是否可进入06": "已生成执行包，按待补素材和QA结果决定是否拆06任务",
         "版本": str(package.get("version", SCRIPT_VERSION)),
     }
 
@@ -274,7 +274,6 @@ def normalize_topics(topics: list[dict[str, Any]], austin: Any) -> list[dict[str
 
 def preview_packages(topic_cards: list[dict[str, Any]], austin: Any) -> list[dict[str, Any]]:
     runtime = austin.load_private_runtime() if hasattr(austin, "load_private_runtime") else {}
-    output_files = getattr(austin, "OUTPUT_FILES", [])
     packages: list[dict[str, Any]] = []
     for topic in topic_cards:
         private_cases = austin.matched_private_cases(topic, runtime) if hasattr(austin, "matched_private_cases") else []
@@ -312,7 +311,7 @@ def preview_packages(topic_cards: list[dict[str, Any]], austin: Any) -> list[dic
             "fact_check_points": validation.fact_check_points,
             "notes": validation.notes,
             "private_case_anchors": [case.get("name", "") for case in private_cases],
-            "generated_files": output_files,
+            "generated_files": [getattr(austin, "FULL_PACKAGE_FILE", "full_script_execution_package.md")],
             "version": SCRIPT_VERSION,
         })
     return packages
@@ -320,7 +319,7 @@ def preview_packages(topic_cards: list[dict[str, Any]], austin: Any) -> list[dic
 
 def render_packages(topic_cards: list[dict[str, Any]], austin: Any) -> list[dict[str, Any]]:
     packages = [
-        austin.render_topic_package(topic, output_root=SCRIPT_OUTPUT_ROOT, run_date=today_slug())
+        austin.render_full_execution_package(topic, output_root=SCRIPT_OUTPUT_ROOT, run_date=today_slug())
         for topic in topic_cards
     ]
     return packages
@@ -328,8 +327,8 @@ def render_packages(topic_cards: list[dict[str, Any]], austin: Any) -> list[dict
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--write-feishu", action="store_true", help="Create 05 records in Feishu. Default dry-run.")
-    parser.add_argument("--render-local", action="store_true", help="In dry-run mode, also write local script package files. Default dry-run is read-only.")
+    parser.add_argument("--write-feishu", action="store_true", help="Create 05 index records in Feishu. Default dry-run.")
+    parser.add_argument("--render-local", action="store_true", help="In dry-run mode, also write local full execution package files. Default dry-run is read-only.")
     parser.add_argument("--record-id", default="", help="Only process the specified 04 record_id. Comma-separated ids are supported.")
     parser.add_argument("--limit", type=int, default=0, help="Cap the number of ready topics processed for safe tests.")
     args = parser.parse_args()
@@ -366,7 +365,7 @@ def main() -> int:
         "script_packages": packages,
         "brief_records": brief_rows,
         "task_records": [],
-        "note": "v0.2只生成单一脚本大纲确认稿并写入05，不自动创建06任务。05只保留核心观点、视频大纲和给06的生成输入；确认05大纲后，06再生成完整脚本与执行方案。dry-run默认不落本地文件；需要本地MD时加 --render-local。",
+        "note": "v0.5跳过中间确认稿，直接生成完整口播稿与执行包。飞书05只保留索引、摘要和本地文档路径，不自动创建06任务。dry-run默认不落本地文件；需要本地MD时加 --render-local。",
     }, ensure_ascii=False, indent=2))
 
     if not args.write_feishu:

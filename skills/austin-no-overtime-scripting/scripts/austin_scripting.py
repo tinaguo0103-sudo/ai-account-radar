@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-SKILL_VERSION = "austin-script-skill-v0.4"
+SKILL_VERSION = "austin-production-packager-v0.5"
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 VOICE_SKILL_NAME = "austin-voice-scriptwriter"
 VOICE_SKILL_VERSION = "austin-voice-scriptwriter-v0.1"
@@ -28,8 +28,9 @@ REQUIRED_FIELDS = [
     "takeaway_asset",
 ]
 
-OUTPUT_FILES = ["script_outline_brief.md"]
 FULL_PACKAGE_FILE = "full_script_execution_package.md"
+LEGACY_OUTLINE_FILE = "script_outline_brief.md"
+OUTPUT_FILES = [FULL_PACKAGE_FILE]
 
 TEMPLATE_TYPES = [
     "Skill公开型",
@@ -240,9 +241,9 @@ def validate_topic(topic: dict[str, Any]) -> ValidationResult:
         if text not in fact_check_points:
             fact_check_points.append(text)
 
-    if any(term in fact_text for term in ["OpenAI", "Codex", "Claude", "飞书", "价格", "规则", "更新", "发布"]):
+    if any(term in fact_text for term in ["OpenAI", "ChatGPT", "Codex", "Claude", "飞书", "价格", "规则", "更新", "发布"]):
         add_fact_check("涉及产品能力、平台规则或更新信息，发布前需事实核验。")
-    if any(term in fact_text for term in ["政策", "法规", "国标", "强制性", "公示", "实施", "监管", "标准"]):
+    if any(term in fact_text for term in ["政策", "法规", "国标", "强制性", "公示", "实施", "监管", "国家标准", "行业标准"]):
         add_fact_check("涉及政策、法规、国标、公示或实施时间，发布前需核验权威原文和具体日期。")
     if any(term in fact_text for term in ["L3", "L4", "自动驾驶", "智能驾驶", "辅助驾驶", "功能安全"]):
         add_fact_check("涉及智能驾驶等级、功能安全或汽车功能边界，发布前需核验官方定义，不能扩大声称。")
@@ -258,9 +259,8 @@ def validate_topic(topic: dict[str, Any]) -> ValidationResult:
 
 def director_summary(topic: dict[str, Any], template: str, private_cases: list[dict[str, Any]] | None = None) -> str:
     summary = (
-        f"这条视频按「{template}」处理：先把「{topic['topic_title']}」收成几句话的核心观点，"
-        f"再按时间线展开真实现场、观点定调、实验主线和证据/反例，"
-        f"最后把关键证据与边界交给06生成完整脚本包。"
+        f"这条视频按「{template}」处理：先用 Austin 口播风格写出完整真人稿，"
+        f"再把「{topic['topic_title']}」拆成时间线、录屏画面、素材待办、剪辑交接和发布前 QA。"
     )
     if private_cases:
         summary += f" 可选案例参考：{private_case_names(private_cases)}。"
@@ -301,29 +301,29 @@ def script_status_from_validation(validation: ValidationResult) -> str:
         return "待补判断"
     if validation.fact_check_points:
         return "待核验确认"
-    return "待确认大纲"
+    return "已生成完整执行包"
 
 
 def can_enter_06_reason(validation: ValidationResult) -> str:
     if validation.missing_required:
         return "否：必填字段不完整。"
     if production_todo_items(validation):
-        return "否：先补齐05大纲里的P0素材，再确认是否生成06完整脚本包。"
+        return "待补素材后可制作。"
     if validation.fact_check_points:
-        return "否：先确认事实边界，再生成06完整脚本包。"
-    return "待确认：05只做大纲确认，人工确认后再生成06完整脚本包。"
+        return "待核验后可制作。"
+    return "是：可进入拍摄准备。"
 
 
 def decision_summary(topic: dict[str, Any], validation: ValidationResult, status: str) -> str:
     if validation.missing_required:
-        return f"{status}：这条还不能进入脚本大纲确认，先补齐必填字段：{md_list(validation.missing_required)}。"
+        return f"{status}：这条还不能生成完整执行包，先补齐必填字段：{md_list(validation.missing_required)}。"
     if production_todo_items(validation):
-        return f"{status}：大纲方向成立，但生成06完整脚本包前，先把P0素材补成可展示画面。"
+        return f"{status}：已生成脚本与执行包，但拍摄前要先把P0素材补成可展示画面。"
     if validation.notes:
-        return f"{status}：大纲方向基本成立，但还要补足奥斯汀自己的判断、取舍或人工修正点。"
+        return f"{status}：已生成脚本与执行包，但还要补足奥斯汀自己的判断、取舍或人工修正点。"
     if validation.fact_check_points:
-        return f"{status}：大纲可以确认，但生成06前必须确认事实边界，避免把推演或公开信息说过头。"
-    return f"{status}：这条可以由你确认大纲；确认后再进入06生成完整脚本和执行方案。"
+        return f"{status}：已生成脚本与执行包，发布前必须确认事实边界，避免把推演或公开信息说过头。"
+    return f"{status}：这条已生成完整口播稿和执行方案，可以进入拍摄准备。"
 
 
 def split_production_todos(text: str) -> list[str]:
@@ -388,19 +388,19 @@ def next_action_items(topic: dict[str, Any], validation: ValidationResult) -> li
         return [f"核验：{item}" for item in validation.fact_check_points[:3]]
     if validation.notes:
         return [f"补人工判断：{item}" for item in validation.notes[:3]]
-    return ["人工确认05大纲方向是否成立；确认后进入06生成完整脚本包。"]
+    return ["打开本地完整执行包，确认口播全文、录屏素材、剪辑交接和发布包是否可用。"]
 
 
 def done_criteria(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
     criteria = [
-        "大纲读完后，能马上判断这条视频的方向是否值得继续。",
-        "核心观点不是一句口号，而是有论点、论据、钩子和是否进入06的判断。",
-        "视频大纲按时间线展开，不是散点重点清单。",
+        "本地完整执行包打开后，能马上知道这条视频怎么说、怎么拍、缺什么素材。",
+        "口播全文先由 austin-voice-scriptwriter 生成，再由本 Skill 编排录屏、剪辑、发布和 QA。",
+        "执行方案按时间线展开，不是散点重点清单。",
     ]
     if production_todo_items(validation):
-        criteria.append("P0素材、事实边界和私有表达边界已进入给06的生成输入。")
+        criteria.append("P0素材、事实边界和私有表达边界已进入执行包待办。")
     else:
-        criteria.append("人工确认大纲通过后，才进入06生成提词器、录屏清单、后期交接和发布包。")
+        criteria.append("人工确认执行包通过后，可以进入拍摄准备或拆 06 任务。")
     return criteria
 
 
@@ -698,13 +698,13 @@ def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
         return (
             f"这条不是讲政策解读，而是借「{title}」补一条内容上线前的风险判断。\n\n"
             f"我的立场是：{judgment}。旧流程的问题在于：{pain}。\n\n"
-            f"画面先给{evidence_text}，再录{ai_action}。05只判断方向是否成立，具体案例和素材选择由06根据真实材料再定。"
+            f"画面先给{evidence_text}，再录{ai_action}。具体案例和素材选择要服从真实材料，不能为了成稿硬指定。"
         )
     if workflow_object(topic) == "视觉交付":
         return (
             f"这条要拍成交付检查，不拍工具更新。\n\n"
             f"我的判断是：{judgment}。旧流程卡在：{pain}。\n\n"
-            f"开头直接给{evidence_text}，中段只录{ai_action}。如果看不到导出、错位、人工修正这些画面，就先别进06。"
+            f"开头直接给{evidence_text}，中段只录{ai_action}。如果看不到导出、错位、人工修正这些画面，就先别进入拍摄。"
         )
     if workflow_object(topic) == "创意返修":
         return (
@@ -715,7 +715,7 @@ def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     return (
         f"我想把这条拍成一个小实验：{core}。\n\n"
         f"它真正要证明的是：{judgment}。旧流程里的卡点是：{pain}。\n\n"
-        f"开头用「{hook}」切进去，画面先给{evidence_text}，中段再录{ai_action}。05只判断方向，具体案例和素材选择由06根据真实材料再定。"
+        f"开头用「{hook}」切进去，画面先给{evidence_text}，中段再录{ai_action}。具体案例和素材选择要根据真实材料来定。"
     )
 
 
@@ -734,7 +734,7 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
             f"00:10-00:40｜缺口上屏：列出现在缺的东西：{gap}",
             f"00:40-01:20｜最低补救：只设计一个小验证，不展开完整脚本；先补{evidence_text}",
             f"01:20-01:50｜边界：说明不能给选型、能力或业务结论，只能留作观察",
-            "01:50-02:00｜收尾：不进入06，等真实任务样本出现再重新生成",
+            "01:50-02:00｜收尾：不进入拍摄，等真实任务样本出现再重新生成",
         ]
     if obj == "汽车AI内容":
         return [
@@ -743,7 +743,7 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
             f"00:35-00:55｜真人定调：{judgment}",
             f"00:55-02:00｜录屏复核：{ai_action}，重点拍风险词、证据缺口和人工判断",
             "02:00-02:40｜反例：放一条容易说过头的卖点，说明为什么不能直接上线",
-            "02:40-03:10｜收尾：只判断这条是否值得进入06，不做法规结论",
+            "02:40-03:10｜收尾：只判断这条是否值得拍，不做法规结论",
         ]
     if obj == "视觉交付":
         return [
@@ -761,7 +761,7 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
             f"00:30-00:55｜真人判断：{judgment}",
             f"00:55-01:55｜跑一轮修改：{ai_action}，重点拍修改意见、Agent动作和人手接管点",
             f"01:55-02:40｜命中检查：放{evidence_text}，逐条看哪些意见命中、哪些还要人改",
-            "02:40-03:10｜收尾：如果能少掉一轮返修，再进入06；如果只是多生成几版，就不拍成教程",
+            "02:40-03:10｜收尾：如果能少掉一轮返修，再进入拍摄；如果只是多生成几版，就不拍成教程",
         ]
     if obj in {"候选池", "选题台"}:
         return [
@@ -770,7 +770,7 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
             f"00:30-00:50｜真人判断：{judgment}",
             f"00:50-02:00｜小批量实验：{ai_action}，只跑几条，不演完整流水账",
             f"02:00-02:45｜错误回看：放{evidence_text}，重点看哪些字段还要人改",
-            "02:45-03:10｜收尾：如果错误能回写规则，再进入06；否则先改字段",
+            "02:45-03:10｜收尾：如果错误能回写规则，再继续制作；否则先改字段",
         ]
     if obj == "Agent任务":
         return [
@@ -787,7 +787,7 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
         f"00:30-00:50｜真人判断：{judgment}",
         f"00:50-02:10｜实操：{ai_action}，只拍关键动作",
         f"02:10-03:00｜证据：放{evidence_text}，补一个反例或人工修正",
-        "03:00-03:20｜收尾：只判断是否进入06",
+        "03:00-03:20｜收尾：只判断是否继续制作",
     ]
 
 
@@ -797,7 +797,7 @@ def key_evidence_items(topic: dict[str, Any], validation: ValidationResult) -> l
 
 def outline_summary(topic: dict[str, Any], template: str, validation: ValidationResult) -> str:
     core = clip_text(topic.get("core_thesis"), 64, "待确认核心观点")
-    return f"{template}｜{core}｜05只确认大纲，06再展开脚本和执行包。"
+    return f"{template}｜{core}｜已按全文口播稿生成完整执行包，05只保留索引。"
 
 
 def generation_input_for_06(topic: dict[str, Any], template: str, template_reason: str, validation: ValidationResult, private_cases: list[dict[str, Any]]) -> str:
@@ -815,11 +815,11 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
         f"- 判断：{inline_items(key_judgment_lines(topic), item_limit=46)}",
         f"- 金句：{inline_items(golden_lines(topic), item_limit=36)}",
         f"- 证据建议：{inline_items(evidence, '待补：至少明确一个可展示证据', limit=4, item_limit=34)}",
-        f"- 待补素材：{inline_items(p0_todos, '无P0素材缺口，直接人工确认大纲', limit=2, item_limit=36)}",
+        f"- 待补素材：{inline_items(p0_todos, '无P0素材缺口，可人工确认执行包', limit=2, item_limit=36)}",
         f"- 核验：{inline_items(fact_checks, '无额外事实核验点', limit=2, item_limit=44)}",
         f"- 边界：{inline_items(boundaries, '无额外私有边界提醒', limit=2, item_limit=38)}",
         f"- 可选案例参考：{private_case_names(private_cases)}（仅供06选择，不强制使用）",
-        "- 06再生成：完整脚本、提词器、录屏清单、剪辑交接、发布包、QA。",
+        "- 本执行包已生成：完整口播稿、录屏清单、剪辑交接、发布包、QA；后续可按需拆任务。",
     ]
     return "\n".join(lines)
 
@@ -905,9 +905,9 @@ def execution_rows(topic: dict[str, Any], template: str) -> list[dict[str, str]]
             "#": "06",
             "时间段": "04:00-05:00",
             "段落目的": "收尾判断",
-            "口播轨": "最后只判断这条是否值得进入06，案例和最终呈现形式等真实素材确定后再定。",
+            "口播轨": "最后只判断这条是否值得继续制作，案例和最终呈现形式等真实素材确定后再定。",
             "画面/录屏轨": "展示最终证据、待补素材或人工判断结论。",
-            "字幕重点": "是否进入06",
+            "字幕重点": "是否继续制作",
             "后期提示": "真人收尾加成果页，不做硬广口吻。",
             "人工QA点": "是否没有强行指定案例或资产。",
         },
@@ -927,7 +927,7 @@ def qa_rows(validation: ValidationResult) -> list[dict[str, str]]:
         {"检查项": "实操证据", "结果": "revise" if validation.evidence_gaps else "pass", "说明": md_list(validation.evidence_gaps, "已有证据")},
         {"检查项": "真人判断", "结果": "revise" if validation.notes else "pass", "说明": md_list(validation.notes, "已有人工判断")},
         {"检查项": "事实核验", "结果": "revise" if validation.fact_check_points else "pass", "说明": md_list(validation.fact_check_points, "无额外核验点")},
-        {"检查项": "是否进入06", "结果": "blocked", "说明": "05大纲不自动拆06任务；需要人工确认后再进入完整执行。"},
+        {"检查项": "是否继续制作", "结果": "revise" if validation.evidence_gaps else "pass", "说明": "已生成完整执行包；是否拆任务仍需人工确认。"},
     ]
 
 
@@ -957,6 +957,11 @@ def write_text(path: Path, content: str) -> None:
 
 
 def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str | None = None) -> dict[str, Any]:
+    """Legacy v0.4 outline renderer kept for old tests and explicit callers.
+
+    The production path no longer calls this function. Use
+    render_full_execution_package() for v0.5.
+    """
     run_date = run_date or datetime.now().strftime("%Y-%m-%d")
     display_title = topic.get("topic_title") or "未命名选题"
     private_runtime = load_private_runtime()
@@ -971,7 +976,7 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
     folder = output_root / run_date / f"{slugify(str(topic.get('topic_id', 'topic')))}_{slugify(display_title)}"
     folder.mkdir(parents=True, exist_ok=True)
     status = script_status_from_validation(validation)
-    document_path = folder / OUTPUT_FILES[0]
+    document_path = folder / LEGACY_OUTLINE_FILE
     write_text(document_path, f"""# {display_title}
 
 ## 05 脚本大纲确认
@@ -1017,7 +1022,7 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
         "fact_check_points": validation.fact_check_points,
         "notes": validation.notes,
         "private_case_anchors": [case.get("name", "") for case in private_cases],
-        "generated_files": OUTPUT_FILES,
+        "generated_files": [LEGACY_OUTLINE_FILE],
         "version": SKILL_VERSION,
     }
 
@@ -1052,7 +1057,6 @@ def voice_skill_candidates() -> list[Path]:
     if env_dir:
         candidates.append(Path(env_dir).expanduser())
     candidates.append(Path.home() / ".codex" / "skills" / VOICE_SKILL_NAME)
-    candidates.append(SKILL_ROOT.parent / VOICE_SKILL_NAME)
     return candidates
 
 
@@ -1355,15 +1359,19 @@ def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_
         "document_path": str(document_path),
         "recommended_template": template,
         "template_reason": template_reason,
+        "director_summary": director_summary(topic, template, private_cases),
         "core_thesis": topic.get("core_thesis"),
         "core_viewpoint": core_viewpoint(topic, validation),
         "outline_segments": outline,
         "generation_input_06": generation_input_for_06(topic, template, template_reason, validation, private_cases),
         "opening_hook": full_script_opening(topic, validation),
+        "reader_summary": f"{qa_status}｜{template}｜{full_script_opening(topic, validation)}",
         "qa_status": qa_status,
         "qa_issues": qa_issues,
         "p0_todos": production_todo_items(validation),
+        "evidence_gaps": validation.evidence_gaps,
         "fact_check_points": validation.fact_check_points,
+        "notes": validation.notes,
         "private_case_anchors": [case.get("name", "") for case in private_cases],
         "generated_files": [FULL_PACKAGE_FILE],
         "version": SKILL_VERSION,
@@ -1389,5 +1397,5 @@ def render_records(records: list[dict[str, Any]], output_root: Path, run_date: s
     summaries = []
     for index, record in enumerate(selected, 1):
         topic = normalize_topic(record, record_id=str(record.get("record_id") or f"T{datetime.now().strftime('%Y%m%d')}-{index:03d}"))
-        summaries.append(render_topic_package(topic, output_root=output_root, run_date=run_date))
+        summaries.append(render_full_execution_package(topic, output_root=output_root, run_date=run_date))
     return summaries

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Render v0.2 Austin scripting packages from JSON or CSV input."""
+"""Render Austin full execution packages from JSON or CSV input."""
 from __future__ import annotations
 
 import argparse

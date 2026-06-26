@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Create an index.md for Austin script outline briefs."""
+"""Create an index.md for Austin full execution packages."""
 from __future__ import annotations
 
 import argparse
@@ -20,20 +20,20 @@ def main() -> int:
 
     run_dir = Path(args.run_dir)
     rows = []
-    for doc_path in sorted(run_dir.glob("*/script_outline_brief.md")):
+    for doc_path in sorted(run_dir.glob("*/full_script_execution_package.md")):
         text = doc_path.read_text(encoding="utf-8")
         rows.append({
             "title": pick(r"^#\s+(.+)$", text, doc_path.parent.name),
             "template": pick(r"^- 推荐模板：(.+)$", text),
-            "qa": pick(r"^- QA结果：(.+)$", text),
-            "status": pick(r"^- 脚本状态：(.+)$", text),
+            "qa": pick(r"^- 结果：(.+)$", text),
+            "status": pick(r"^- 生产判断：(.+)$", text),
             "path": doc_path.parent.name,
-            "needs_fact_check": "否" if "事实核验：无额外核验点" in text else "是",
+            "needs_fact_check": "否" if "发布前核验：无额外事实核验点" in text else "是",
         })
 
-    lines = ["# Austin不加班脚本Skill｜当日索引", "", f"输出目录：`{run_dir}`", "", "| 选题 | 状态 | 模板 | QA | 需事实核验 | 文档 |", "|---|---|---|---|---|---|"]
+    lines = ["# Austin不加班脚本Skill｜当日执行包索引", "", f"输出目录：`{run_dir}`", "", "| 选题 | 状态 | 模板 | QA | 需事实核验 | 文档 |", "|---|---|---|---|---|---|"]
     for row in rows:
-        lines.append(f"| {row['title']} | {row['status']} | {row['template']} | {row['qa']} | {row['needs_fact_check']} | `{row['path']}/script_outline_brief.md` |")
+        lines.append(f"| {row['title']} | {row['status']} | {row['template']} | {row['qa']} | {row['needs_fact_check']} | `{row['path']}/full_script_execution_package.md` |")
     index_path = run_dir / "index.md"
     index_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
     print(json.dumps({"ok": True, "index": str(index_path), "topics": len(rows)}, ensure_ascii=False, indent=2))

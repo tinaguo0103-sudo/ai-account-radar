@@ -6,7 +6,7 @@ This is the post-selection step:
 04 进入Brief + 我的制作补充 -> local full_script_execution_package.md -> light 05 record.
 
 It does not split 06 task rows yet. The user-facing artifact is the local
-Markdown package; Feishu keeps only the index and short decision fields.
+Markdown package; Feishu keeps only the index and short production fields.
 """
 from __future__ import annotations
 
@@ -127,13 +127,13 @@ def package_to_brief_row(package: dict[str, Any]) -> dict[str, str]:
     qa_status = str(package.get("qa_status") or "revise")
     if qa_status == "pass":
         script_status = "已生成完整脚本包"
-        can_enter = "是：可进入拍摄准备"
+        can_enter = "是：可制作，可按需拆06任务"
     elif qa_status == "blocked":
         script_status = "完整脚本包-阻塞"
         can_enter = "否：先补字段"
     else:
         script_status = "完整脚本包-待补素材"
-        can_enter = "待补素材后可制作"
+        can_enter = "待补素材后可制作，可按需拆06任务"
     outline = package.get("outline_segments") or []
     issues = package.get("qa_issues") or []
     return {

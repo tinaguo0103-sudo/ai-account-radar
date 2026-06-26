@@ -139,7 +139,7 @@ def build_records(rules: dict[str, Any]) -> list[dict[str, str]]:
             说明=ai_rule["rule"],
             AI是否参与=f"允许：{ai_rule['allowed']}",
             人工判断点=ai_rule["human_check"],
-            禁止事项="不能自动发布、不能伪造数据、不能绕过登录/验证码/反爬、不能生成完整成稿。",
+            禁止事项="不能自动发布、不能伪造数据、不能绕过登录/验证码/反爬、不能跳过用户确认自动定稿。",
         )
 
     for console_rule in rules["console_daily_rules"]:
