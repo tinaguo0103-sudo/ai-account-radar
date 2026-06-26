@@ -10,6 +10,8 @@ description: 将奥斯汀AI账号已确认选题、04工作流实验命题卡、
 - `05`：一页脚本大纲确认稿，用于快速判断观点、结构和是否值得继续。
 - `06`：完整口播稿与执行包，用于已经确认推进的选题，输出口播全文、录屏清单、剪辑交接、发布包和 QA。
 
+口播全文不在本 Skill 内硬塞风格规则；生成 `06` 时优先交给独立 Skill `austin-voice-scriptwriter` 处理真人口播语气。本 Skill 保持为流程、证据、执行包和飞书衔接层。
+
 ## 核心原则
 
 1. 先承接 `04 工作流实验命题卡`，不要从短标题重新理解选题。
@@ -44,6 +46,7 @@ description: 将奥斯汀AI账号已确认选题、04工作流实验命题卡、
 
 - 需要批量渲染脚本大纲确认稿时，运行 `scripts/batch_render.py`。
 - 需要从飞书 04 指定记录生成完整执行包时，运行仓库脚本 `scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`。
+- 需要调整真人口播风格时，修改独立 Skill `austin-voice-scriptwriter`；本 Skill 的渲染脚本会优先读取全局私有版 `/Users/congcong/.codex/skills/austin-voice-scriptwriter`，缺失时才使用仓库脱敏版。
 - 需要只校验 Topic Card 时，运行 `scripts/validate_topic_card.py`。
 - 需要汇总某天输出时，运行 `scripts/merge_daily_index.py`。
 - 需要字段映射细节时，读 `integrations/feishu_bitable_mapping.md`。

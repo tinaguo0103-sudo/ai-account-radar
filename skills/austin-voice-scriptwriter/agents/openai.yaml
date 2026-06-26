@@ -1,0 +1,7 @@
+interface:
+  display_name: "Austin口播写作"
+  short_description: "把选题写成 Austin 真人口播稿"
+  default_prompt: "Use $austin-voice-scriptwriter to turn this confirmed topic into an Austin-style spoken video script."
+policy:
+  allow_implicit_invocation: true
+

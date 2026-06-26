@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import csv
+import importlib.util
 import json
+import os
 import re
 from dataclasses import dataclass
 from datetime import datetime
@@ -11,8 +13,10 @@ from pathlib import Path
 from typing import Any
 
 
-SKILL_VERSION = "austin-script-skill-v0.3"
+SKILL_VERSION = "austin-script-skill-v0.4"
 SKILL_ROOT = Path(__file__).resolve().parents[1]
+VOICE_SKILL_NAME = "austin-voice-scriptwriter"
+VOICE_SKILL_VERSION = "austin-voice-scriptwriter-v0.1"
 
 REQUIRED_FIELDS = [
     "topic_title",
@@ -1042,7 +1046,67 @@ def full_script_opening(topic: dict[str, Any], validation: ValidationResult) -> 
     return hook.rstrip("。") + "。"
 
 
+def voice_skill_candidates() -> list[Path]:
+    candidates: list[Path] = []
+    env_dir = os.getenv("AUSTIN_VOICE_SCRIPT_SKILL_DIR", "").strip()
+    if env_dir:
+        candidates.append(Path(env_dir).expanduser())
+    candidates.append(Path.home() / ".codex" / "skills" / VOICE_SKILL_NAME)
+    candidates.append(SKILL_ROOT.parent / VOICE_SKILL_NAME)
+    return candidates
+
+
+def load_voice_skill_module() -> Any | None:
+    for skill_dir in voice_skill_candidates():
+        module_path = skill_dir / "scripts" / "austin_voice.py"
+        if not module_path.exists():
+            continue
+        try:
+            spec = importlib.util.spec_from_file_location("austin_voice_scriptwriter", module_path)
+            if not spec or not spec.loader:
+                continue
+            module = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(module)
+            return module
+        except Exception:
+            continue
+    return None
+
+
+def voice_skill_context(topic: dict[str, Any], validation: ValidationResult) -> dict[str, str]:
+    return {
+        "opening": full_script_opening(topic, validation),
+        "evidence_text": inline_items(script_evidence_items(topic, validation), "输入、输出、错误点和人工修改记录", limit=3, item_limit=42),
+        "todo_text": inline_items(readable_todo_items(validation), "一段真实录屏和一个失败样例", limit=2, item_limit=42),
+        "fact_text": inline_items(validation.fact_check_points, "", limit=2, item_limit=48),
+        "voice_skill_version": VOICE_SKILL_VERSION,
+    }
+
+
+def voice_skill_sections(topic: dict[str, Any], validation: ValidationResult) -> list[tuple[str, str]]:
+    module = load_voice_skill_module()
+    if not module or not hasattr(module, "render_voice_sections"):
+        return []
+    try:
+        sections = module.render_voice_sections(topic, voice_skill_context(topic, validation))
+    except Exception:
+        return []
+    clean: list[tuple[str, str]] = []
+    for item in sections or []:
+        if not isinstance(item, (list, tuple)) or len(item) != 2:
+            continue
+        heading = str(item[0]).strip()
+        body = str(item[1]).strip()
+        if heading and body:
+            clean.append((heading, body))
+    return clean
+
+
 def teleprompter_sections(topic: dict[str, Any], validation: ValidationResult) -> list[tuple[str, str]]:
+    styled_sections = voice_skill_sections(topic, validation)
+    if styled_sections:
+        return styled_sections
+
     opening = full_script_opening(topic, validation)
     title = trim_end_punctuation(topic.get("topic_title"), "这条选题")
     core = trim_end_punctuation(topic.get("core_thesis"), title)
@@ -1131,15 +1195,19 @@ def capture_hint_for_segment(topic: dict[str, Any], validation: ValidationResult
     evidence = script_evidence_items(topic, validation)
     if "开场" in purpose:
         return clip_text(evidence[0] if evidence else topic.get("topic_title"), 72, "先闪现结果或冲突画面")
-    if "痛点" in purpose:
+    if "痛点" in purpose or "旧流程" in purpose:
         return clip_text(topic.get("old_workflow") or topic.get("pain_point"), 72, "旧流程截图或任务卡住的画面")
-    if "判断" in purpose:
+    if "判断" in purpose or "真正要做什么" in purpose:
         return "切真人大画面，旁边给方法卡或验收字段草稿"
-    if "实操" in purpose:
+    if "实操" in purpose or "三个动作" in purpose:
         return clip_text(topic.get("ai_intervention"), 84, "录屏展示输入、AI处理和验收字段")
     if "失败" in purpose:
         return inline_items(production_todo_items(validation), "错误结果、人工修正、验收打叉", limit=2, item_limit=38)
-    return clip_text(topic.get("takeaway_asset"), 72, "最终验收表或待补清单")
+    if "对比" in purpose:
+        return inline_items(evidence, "前后对比、验收字段、人工修改痕迹", limit=2, item_limit=38)
+    if "边界" in purpose or "收尾" in purpose:
+        return inline_items(production_todo_items(validation), "待补素材和人工边界提醒", limit=2, item_limit=38)
+    return inline_items(evidence, "真实录屏、字段表或人工修正画面", limit=2, item_limit=38)
 
 
 def editing_hint_for_segment(purpose: str) -> str:

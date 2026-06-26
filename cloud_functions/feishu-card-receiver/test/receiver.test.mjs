@@ -131,6 +131,7 @@ test("sends production direction card after selected topics are written", async 
   const card = JSON.parse(sends[0].body.content);
   const cardText = JSON.stringify(card);
   assert.match(cardText, /补充制作方向/);
+  assert.match(cardText, /真实案例 \/ 讲法方向 \/ 不要讲什么（可选）/);
   assert.match(cardText, /production_direction__rec_a/);
   assert.doesNotMatch(cardText, /production_direction__rec_b/);
 });

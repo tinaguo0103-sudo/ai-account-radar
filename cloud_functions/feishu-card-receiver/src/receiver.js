@@ -276,7 +276,7 @@ function buildProductionDirectionCard(selectedRecords, runId) {
     {
       tag: "markdown",
       content:
-        `你刚刚选中了这些题。这里只补一句制作方向：用什么案例、从哪个角度讲、哪些不要讲。可以留空，留空就由系统按私有案例库建议。\n\n这张卡只能提交一次，${DEFAULT_CARD_EXPIRE_DAYS} 天后提交无效。`,
+        `你刚刚选中了这些题。下面每条都有一个可选建议字段：准备用哪个真实案例讲、从哪个角度讲、哪些不要讲。可以留空，留空就由系统按私有案例库建议。\n\n这张卡只能提交一次，${DEFAULT_CARD_EXPIRE_DAYS} 天后提交无效。`,
     },
   ];
   const formElements = [];
@@ -289,6 +289,7 @@ function buildProductionDirectionCard(selectedRecords, runId) {
     const lines = [`**${index + 1}. ${title}**`];
     if (brief) lines.push(`Brief：${brief}`);
     if (experiment) lines.push(`实验：${experiment}`);
+    lines.push("建议补充：真实案例 / 讲法方向 / 不要讲什么（可选）");
     formElements.push({ tag: "markdown", content: lines.join("\n") });
     formElements.push({
       tag: "input",
@@ -297,7 +298,7 @@ function buildProductionDirectionCard(selectedRecords, runId) {
       width: "fill",
       placeholder: {
         tag: "plain_text",
-        content: "例：用 AI账号信息雷达案例讲，重点讲选题判断，不要讲成工具教程",
+        content: "例：用 AI账号信息雷达案例讲，重点讲选题判断；不要讲成工具教程",
       },
       default_value: "",
     });
