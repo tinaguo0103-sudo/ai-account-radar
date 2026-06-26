@@ -24,6 +24,12 @@ function makeMockFetch(records, calls) {
     if (path.includes("/records?")) {
       return Response.json({ code: 0, data: { has_more: false, items: records } });
     }
+    const recordMatch = path.match(/\/records\/([^/?]+)$/);
+    if (recordMatch && (init.method || "GET") === "GET") {
+      const record = records.find((item) => item.record_id === decodeURIComponent(recordMatch[1]));
+      if (!record) return Response.json({ code: 1254045, msg: "record not found" }, { status: 404 });
+      return Response.json({ code: 0, data: { record } });
+    }
     if (path.endsWith("/fields")) {
       return Response.json({ code: 0, data: { items: [] } });
     }
@@ -130,7 +136,10 @@ test("sends production direction card after selected topics are written", async 
 });
 
 test("uses candidate snapshots to skip full-table reads on selection submit", async () => {
-  const records = [];
+  const records = [
+    { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } },
+    { record_id: "rec_b", fields: { "选题标题": "B", "运行批次": "run_1", "状态": "待判断" } },
+  ];
   const calls = [];
   const response = await handlePayload(
     {
@@ -171,7 +180,10 @@ test("uses candidate snapshots to skip full-table reads on selection submit", as
 });
 
 test("defers production direction card by default", async () => {
-  const records = [];
+  const records = [
+    { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } },
+    { record_id: "rec_b", fields: { "选题标题": "B", "运行批次": "run_1", "状态": "待判断" } },
+  ];
   const calls = [];
   const deferredTasks = [];
   const response = await handlePayload(
@@ -237,7 +249,71 @@ test("writes per-topic production directions", async () => {
   });
 });
 
-test("no-ops duplicate submission when fields are already updated", async () => {
+test("blocks expired cards before writing records", async () => {
+  const records = [
+    { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: {
+            action: "submit_topic_decisions",
+            run_id: "run_1",
+            candidate_ids: ["rec_a"],
+            card_issued_at: "2026-06-01T00:00:00.000Z",
+            card_expires_at: "2026-06-06T00:00:00.000Z",
+          },
+          form_value: {
+            enter_brief_records: ["rec_a"],
+            positive_reason_tags: ["证据够"],
+            manual_reason: "",
+          },
+        },
+      },
+    },
+    env,
+    { fetchImpl: makeMockFetch(records, calls), nowMs: Date.parse("2026-06-07T00:00:00.000Z") },
+  );
+  assert.deepEqual(await response.json(), { toast: { type: "warning", content: "这张卡已超过 5 天，不再处理，请使用最新卡片" } });
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
+});
+
+test("blocks a production direction card after direction has already been saved", async () => {
+  const records = [
+    {
+      record_id: "rec_a",
+      fields: {
+        "选题标题": "A",
+        "运行批次": "run_1",
+        "状态": "进入Brief",
+        "我的制作补充": "已有方向",
+      },
+    },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: { action: "submit_production_directions", run_id: "run_1", candidate_ids: ["rec_a"] },
+          form_value: {
+            production_direction__rec_a: "新的方向",
+          },
+        },
+      },
+    },
+    env,
+    { fetchImpl: makeMockFetch(records, calls) },
+  );
+  assert.deepEqual(await response.json(), { toast: { type: "warning", content: "这张制作方向卡已经保存过，不再重复处理" } });
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
+});
+
+test("blocks a selection card after it has already changed record status", async () => {
   const records = [
     {
       record_id: "rec_a",
@@ -269,6 +345,6 @@ test("no-ops duplicate submission when fields are already updated", async () => 
     env,
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), { toast: { type: "warning", content: "这次提交已经处理过" } });
+  assert.deepEqual(await response.json(), { toast: { type: "warning", content: "这张选题卡已经提交过，不再重复处理" } });
   assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
 });

@@ -12,6 +12,8 @@ const SUPPORTED_SUBMIT_ACTIONS = new Set([
   SUBMIT_PRODUCTION_DIRECTIONS_ACTION,
 ]);
 const TOKEN_CACHE_SAFETY_SECONDS = 300;
+const DEFAULT_CARD_EXPIRE_DAYS = 5;
+const OPEN_SELECTION_STATUSES = new Set(["", "待判断"]);
 
 let cachedTenantToken = { value: "", expiresAt: 0 };
 let cachedTopicTableId = "";
@@ -37,6 +39,35 @@ function normalize(value) {
 function compact(value, limit = 240) {
   const text = normalize(value).replace(/\s+/g, " ");
   return text.length > limit ? `${text.slice(0, limit).trimEnd()}...` : text;
+}
+
+function cardExpireDays(env) {
+  const raw = Number(env.FEISHU_CARD_EXPIRE_DAYS || env.CARD_EXPIRE_DAYS || DEFAULT_CARD_EXPIRE_DAYS);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CARD_EXPIRE_DAYS;
+}
+
+function parseTimeMs(value) {
+  const text = normalize(value);
+  if (!text) return 0;
+  const ms = Date.parse(text);
+  return Number.isFinite(ms) ? ms : 0;
+}
+
+function currentTimeMs(options) {
+  return Number.isFinite(options?.nowMs) ? Number(options.nowMs) : Date.now();
+}
+
+function cardExpiryStatus(value, env, options) {
+  const issuedAtMs = parseTimeMs(value.card_issued_at || value.issued_at);
+  const explicitExpiresAtMs = parseTimeMs(value.card_expires_at || value.expires_at);
+  const expiresAtMs = explicitExpiresAtMs || (issuedAtMs ? issuedAtMs + cardExpireDays(env) * 24 * 60 * 60 * 1000 : 0);
+  if (!expiresAtMs) return { expired: false, configured: false };
+  return {
+    expired: currentTimeMs(options) > expiresAtMs,
+    configured: true,
+    issued_at: normalize(value.card_issued_at || value.issued_at),
+    expires_at: new Date(expiresAtMs).toISOString(),
+  };
 }
 
 function coerceList(value) {
@@ -230,11 +261,22 @@ function shortField(fields, name, limit = 80) {
 }
 
 function buildProductionDirectionCard(selectedRecords, runId) {
+  const issuedAt = new Date();
+  const expiresAt = new Date(issuedAt.getTime() + DEFAULT_CARD_EXPIRE_DAYS * 24 * 60 * 60 * 1000);
+  const candidateIds = selectedRecords.map((record) => record.record_id);
+  const submitValue = {
+    action: SUBMIT_PRODUCTION_DIRECTIONS_ACTION,
+    run_id: runId,
+    candidate_ids: candidateIds,
+    card_issued_at: issuedAt.toISOString(),
+    card_expires_at: expiresAt.toISOString(),
+    card_ttl_days: DEFAULT_CARD_EXPIRE_DAYS,
+  };
   const elements = [
     {
       tag: "markdown",
       content:
-        "你刚刚选中了这些题。这里只补一句制作方向：用什么案例、从哪个角度讲、哪些不要讲。可以留空，留空就由系统按私有案例库建议。",
+        `你刚刚选中了这些题。这里只补一句制作方向：用什么案例、从哪个角度讲、哪些不要讲。可以留空，留空就由系统按私有案例库建议。\n\n这张卡只能提交一次，${DEFAULT_CARD_EXPIRE_DAYS} 天后提交无效。`,
     },
   ];
   const formElements = [];
@@ -279,11 +321,7 @@ function buildProductionDirectionCard(selectedRecords, runId) {
             behaviors: [
               {
                 type: "callback",
-                value: {
-                  action: SUBMIT_PRODUCTION_DIRECTIONS_ACTION,
-                  run_id: runId,
-                  candidate_ids: selectedRecords.map((record) => record.record_id),
-                },
+                value: submitValue,
               },
             ],
           },
@@ -385,6 +423,63 @@ async function updateRecordFields(env, token, tableId, recordId, fields, options
     `/bitable/v1/apps/${env.FEISHU_BASE_APP_TOKEN}/tables/${tableId}/records/${recordId}`,
     { ...options, token, body: { fields } },
   );
+}
+
+async function getRecord(env, token, tableId, recordId, options) {
+  try {
+    const payload = await requestJson(
+      env,
+      "GET",
+      `/bitable/v1/apps/${env.FEISHU_BASE_APP_TOKEN}/tables/${tableId}/records/${recordId}`,
+      { ...options, token },
+    );
+    return payload.data?.record || null;
+  } catch (error) {
+    const message = String(error?.message || error);
+    if (message.includes("HTTP 404") || message.includes("1254045")) return null;
+    throw error;
+  }
+}
+
+async function recordsById(env, token, tableId, recordIds, options) {
+  const entries = await Promise.all(
+    [...new Set(recordIds.filter(Boolean))].map(async (recordId) => [recordId, await getRecord(env, token, tableId, recordId, options)]),
+  );
+  return Object.fromEntries(entries.filter(([, record]) => record));
+}
+
+function runIdMismatch(record, runId) {
+  const actualRunId = normalize(record?.fields?.["运行批次"]);
+  return Boolean(runId && actualRunId && actualRunId !== runId);
+}
+
+async function selectionCardGuard(env, token, tableId, candidateIds, runId, options) {
+  const records = await recordsById(env, token, tableId, candidateIds, options);
+  const missing = candidateIds.filter((recordId) => recordId && !records[recordId]);
+  if (missing.length) return { blocked: true, reason: "card_records_missing", missing };
+
+  const mismatched = candidateIds.filter((recordId) => runIdMismatch(records[recordId], runId));
+  if (mismatched.length) return { blocked: true, reason: "card_run_mismatch", record_ids: mismatched };
+
+  const processed = candidateIds.filter((recordId) => {
+    const status = normalize(records[recordId]?.fields?.["状态"]);
+    return !OPEN_SELECTION_STATUSES.has(status);
+  });
+  if (processed.length) return { blocked: true, reason: "selection_card_already_submitted", record_ids: processed };
+  return { blocked: false };
+}
+
+async function productionDirectionCardGuard(env, token, tableId, candidateIds, runId, options) {
+  const records = await recordsById(env, token, tableId, candidateIds, options);
+  const missing = candidateIds.filter((recordId) => recordId && !records[recordId]);
+  if (missing.length) return { blocked: true, reason: "card_records_missing", missing };
+
+  const mismatched = candidateIds.filter((recordId) => runIdMismatch(records[recordId], runId));
+  if (mismatched.length) return { blocked: true, reason: "card_run_mismatch", record_ids: mismatched };
+
+  const alreadyFilled = candidateIds.filter((recordId) => normalize(records[recordId]?.fields?.[PRODUCTION_DIRECTION_FIELD]));
+  if (alreadyFilled.length) return { blocked: true, reason: "production_direction_card_already_submitted", record_ids: alreadyFilled };
+  return { blocked: false };
 }
 
 async function fieldsByName(env, token, tableId, options) {
@@ -586,6 +681,19 @@ export async function processCardSubmission(env, value, formValue, options = {})
 
   const candidateIds = coerceList(value.candidate_ids);
   const runId = String(value.run_id || "");
+  const expiry = cardExpiryStatus(value, env, options);
+  if (expiry.expired) {
+    return {
+      ok: false,
+      blocked: true,
+      reason: "card_expired",
+      action: actionName,
+      run_id: runId,
+      updated_count: 0,
+      candidate_update_count: 0,
+      expiry,
+    };
+  }
   const candidateSnapshots = candidateSnapshotsFromValue(value);
   const effectiveFormValue = { ...formValue };
   if (actionName === SUBMIT_NO_SELECTION_ACTION) {
@@ -596,6 +704,17 @@ export async function processCardSubmission(env, value, formValue, options = {})
   const token = await tenantToken(env, options);
   const tableId = await topicTableId(env, token, options);
   if (actionName === SUBMIT_PRODUCTION_DIRECTIONS_ACTION) {
+    const guard = await productionDirectionCardGuard(env, token, tableId, candidateIds, runId, options);
+    if (guard.blocked) {
+      return {
+        ok: false,
+        ...guard,
+        action: actionName,
+        run_id: runId,
+        updated_count: 0,
+        candidate_update_count: 0,
+      };
+    }
     const directionSummary = await applyProductionDirections(env, token, tableId, effectiveFormValue, {
       candidateIds,
       runId,
@@ -604,6 +723,18 @@ export async function processCardSubmission(env, value, formValue, options = {})
     directionSummary.action = actionName;
     directionSummary.receipt_key = await submissionFingerprint(actionName, runId, candidateIds, effectiveFormValue);
     return directionSummary;
+  }
+
+  const guard = await selectionCardGuard(env, token, tableId, candidateIds, runId, options);
+  if (guard.blocked) {
+    return {
+      ok: false,
+      ...guard,
+      action: actionName,
+      run_id: runId,
+      updated_count: 0,
+      candidate_update_count: 0,
+    };
   }
 
   const hasSnapshots = Object.keys(candidateSnapshots).length > 0;
@@ -656,6 +787,14 @@ export async function handlePayload(payload, env, options = {}) {
 
   try {
     const summary = await processCardSubmission(env, value, formValue, options);
+    if (summary.blocked) {
+      if (summary.reason === "card_expired") return toast("warning", "这张卡已超过 5 天，不再处理，请使用最新卡片");
+      if (summary.reason === "selection_card_already_submitted") return toast("warning", "这张选题卡已经提交过，不再重复处理");
+      if (summary.reason === "production_direction_card_already_submitted") return toast("warning", "这张制作方向卡已经保存过，不再重复处理");
+      if (summary.reason === "card_run_mismatch") return toast("warning", "这张卡对应的记录批次已变化，请使用最新卡片");
+      if (summary.reason === "card_records_missing") return toast("warning", "这张卡对应的记录不存在，请使用最新卡片");
+      return toast("warning", "这张卡当前不能提交，请使用最新卡片");
+    }
     if (summary.action === SUBMIT_PRODUCTION_DIRECTIONS_ACTION) {
       const count = summary.updated_count;
       if (count === 0) return toast("warning", "没有保存新的制作方向");

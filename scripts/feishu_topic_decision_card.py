@@ -14,7 +14,7 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -29,6 +29,7 @@ ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output" / "decision_cards"
 TARGET_TABLE_KEY = "topic_decision"
 DEFAULT_LIMIT = 7
+CARD_EXPIRE_DAYS = 5
 DEFAULT_STATUS_FILTER = {"待判断", ""}
 ENTER_BRIEF_FORM_KEY = "enter_brief_records"
 SUBMIT_SELECTION_ACTION = "submit_topic_decisions"
@@ -214,11 +215,20 @@ def tag_options(values: list[str]) -> list[dict[str, str]]:
 
 
 def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
+    issued_at = datetime.now(timezone.utc).replace(microsecond=0)
+    expires_at = issued_at + timedelta(days=CARD_EXPIRE_DAYS)
     options = [
         {"text": option_text(index, record.get("fields", {})), "value": str(record.get("record_id") or "")}
         for index, record in enumerate(records, start=1)
         if record.get("record_id")
     ]
+    card_meta = {
+        "run_id": run_id,
+        "candidate_ids": [option["value"] for option in options],
+        "card_issued_at": issued_at.isoformat().replace("+00:00", "Z"),
+        "card_expires_at": expires_at.isoformat().replace("+00:00", "Z"),
+        "card_ttl_days": CARD_EXPIRE_DAYS,
+    }
     candidate_snapshots = {
         str(record.get("record_id") or ""): {
             "title": compact(record.get("fields", {}).get("选题标题"), 72),
@@ -232,7 +242,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
-            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成口播稿和制作包的编号；提交后，已选记录进入 `脚本与制作`，未选记录标记为 `不做`。如果有选中记录，系统会再发一张卡片让你逐条补制作方向。\n\n运行批次：`{run_id or '未指定'}`",
+            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成口播稿和制作包的编号；提交后，已选记录进入 `脚本与制作`，未选记录标记为 `不做`。如果有选中记录，系统会再发一张卡片让你逐条补制作方向。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n运行批次：`{run_id or '未指定'}`",
         }
     ]
     for index, record in enumerate(records, start=1):
@@ -263,8 +273,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
                                     "type": "callback",
                                     "value": {
                                         "action": SUBMIT_SELECTION_ACTION,
-                                        "run_id": run_id,
-                                        "candidate_ids": [option["value"] for option in options],
+                                        **card_meta,
                                         "candidate_snapshots": candidate_snapshots,
                                         "unselected_status": "不做",
                                     },
@@ -289,8 +298,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
                                     "type": "callback",
                                     "value": {
                                         "action": SUBMIT_NO_SELECTION_ACTION,
-                                        "run_id": run_id,
-                                        "candidate_ids": [option["value"] for option in options],
+                                        **card_meta,
                                         "candidate_snapshots": candidate_snapshots,
                                         "unselected_status": "不做",
                                     },

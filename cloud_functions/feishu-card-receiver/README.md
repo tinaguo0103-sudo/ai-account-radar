@@ -43,6 +43,7 @@ FEISHU_CARD_RECEIVE_TARGETS=open_id:ou_xxx,chat_id:oc_xxx
 FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS=chat_id:oc_xxx
 SEND_PRODUCTION_DIRECTION_CARD=true
 DEFER_PRODUCTION_DIRECTION_CARD=true
+FEISHU_CARD_EXPIRE_DAYS=5
 DRY_RUN=true
 ```
 
@@ -54,8 +55,16 @@ DRY_RUN=true
 - `FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS` 可选；如果设置，第二张卡只发到这里。
 - `SEND_PRODUCTION_DIRECTION_CARD=false` 可临时关闭第二张卡。
 - `DEFER_PRODUCTION_DIRECTION_CARD=true` 会把第二张卡发送任务从主逻辑中拆出；但腾讯云 SCF Node.js 运行时仍可能等待未完成的异步 HTTP 任务，因此它不是严格的异步队列。
+- `FEISHU_CARD_EXPIRE_DAYS` 默认是 5。新生成的选题卡和制作方向卡都会携带发卡时间和过期时间，超过有效期提交会直接拦截。
 - 本地测试可以设置 `DRY_RUN=true`，云端生产不要设置。
 - 当前版本不支持加密回调。如果飞书开放平台事件订阅启用了 Encrypt Key，需要先关闭事件加密，或后续补解密逻辑。
+
+## 卡片提交保护
+
+- 云函数不是常驻监听进程；每次用户点击卡片，飞书才调用一次腾讯云 SCF。
+- 第一张选题卡只允许处理一次。receiver 写入前会读取候选记录当前 `状态`，只有 `待判断` 或空状态可被处理；如果旧卡再次提交，已变成 `进入Brief` 或 `不做` 的记录会触发拦截。
+- 第二张制作方向卡只允许保存一次。receiver 写入前会读取 `我的制作补充`，已有内容时不允许旧卡覆盖。
+- 新卡默认 5 天过期。过期卡提交时返回提醒，不写表、不发第二张卡。
 
 ## 回调耗时结论
 
