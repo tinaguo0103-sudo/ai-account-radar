@@ -36,13 +36,13 @@ AIHOT / 公众号全文 / 抖音主页标题文案 / URL投喂
 立即补跑：
 
 ```bash
-python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --only-today
+python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5
 ```
 
 只检查队列、不调用 Codex：
 
 ```bash
-python3 scripts/codex_script_package_runner.py --skip-codex --limit 2 --only-today
+python3 scripts/codex_script_package_runner.py --skip-codex --limit 2 --max-age-days 5
 ```
 
 本机批量补跑/对比：

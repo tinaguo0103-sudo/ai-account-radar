@@ -7,6 +7,7 @@
 - 卡片点击回写仍由腾讯云 SCF receiver 承接。
 - `06` 脚本包生成由本机 `launchd` 定时运行 `scripts/codex_script_package_runner.py`。
 - runner 先扫描飞书 `04`，只有存在待生成记录时才调用 `codex exec`，不会空跑消耗 LLM。
+- 自动队列默认和卡片有效期一致，只扫近 5 天推荐记录，并排除明显测试标题；旧记录或测试记录要用 `--record-id` / `--include-test-records` 手动补跑。
 - 锁屏但 Mac 不睡眠、不断网时可以跑；睡眠、关机、断网时不会跑，恢复后等下一次定时触发或手动补跑。
 
 ## 1. 安装本机 06 生成定时任务
@@ -44,13 +45,13 @@ launchctl kickstart -k gui/$(id -u)/com.austin.ai-account-radar.codex-script-pac
 不经过 launchd，直接手动跑：
 
 ```bash
-python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --only-today
+python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5
 ```
 
 只检查是否有待生成选题，不调用 Codex：
 
 ```bash
-python3 scripts/codex_script_package_runner.py --skip-codex --limit 2 --only-today
+python3 scripts/codex_script_package_runner.py --skip-codex --limit 2 --max-age-days 5
 ```
 
 ## 2. 日常采集和选题
@@ -150,5 +151,5 @@ python3 scripts/daily_pipeline.py --write-feishu
 生成 06 脚本包：
 
 ```bash
-python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --only-today
+python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5
 ```

@@ -39,7 +39,7 @@ def kickstart() -> None:
     run(["launchctl", "kickstart", "-k", f"{launchctl_target()}/{LABEL}"], check=False)
 
 
-def build_plist(interval_seconds: int, limit: int, run_at_load: bool) -> dict[str, object]:
+def build_plist(interval_seconds: int, limit: int, max_age_days: int, run_at_load: bool) -> dict[str, object]:
     log_dir = ROOT / "output" / "logs"
     log_dir.mkdir(parents=True, exist_ok=True)
     return {
@@ -50,13 +50,15 @@ def build_plist(interval_seconds: int, limit: int, run_at_load: bool) -> dict[st
             "--write-feishu",
             "--limit",
             str(limit),
-            "--only-today",
+            "--max-age-days",
+            str(max_age_days),
         ],
         "WorkingDirectory": str(ROOT),
         "EnvironmentVariables": {
             "PATH": "/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "CODEX_BIN": CODEX_BIN,
             "CODEX_SCRIPT_PACKAGE_LIMIT": str(limit),
+            "CODEX_SCRIPT_PACKAGE_MAX_AGE_DAYS": str(max_age_days),
         },
         "StartInterval": int(interval_seconds),
         "RunAtLoad": bool(run_at_load),
@@ -65,9 +67,9 @@ def build_plist(interval_seconds: int, limit: int, run_at_load: bool) -> dict[st
     }
 
 
-def install(interval_minutes: int, limit: int, run_at_load: bool, dry_run: bool) -> None:
+def install(interval_minutes: int, limit: int, max_age_days: int, run_at_load: bool, dry_run: bool) -> None:
     interval_seconds = max(300, int(interval_minutes) * 60)
-    plist = build_plist(interval_seconds, limit, run_at_load)
+    plist = build_plist(interval_seconds, limit, max(0, int(max_age_days)), run_at_load)
     if dry_run:
         print(plist)
         return
@@ -95,6 +97,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--interval-minutes", type=int, default=30, help="Run interval. Default 30 minutes.")
     parser.add_argument("--limit", type=int, default=2, help="Max topics per run. Default 2.")
+    parser.add_argument("--max-age-days", type=int, default=5, help="Only auto-process topics recommended within this many days. Default 5.")
     parser.add_argument("--no-run-at-load", action="store_true", help="Do not kick off immediately after install.")
     parser.add_argument("--uninstall", action="store_true", help="Remove the launchd job.")
     parser.add_argument("--dry-run", action="store_true")
@@ -103,7 +106,7 @@ def main() -> int:
     if args.uninstall:
         uninstall(args.dry_run)
     else:
-        install(args.interval_minutes, args.limit, not args.no_run_at_load, args.dry_run)
+        install(args.interval_minutes, args.limit, args.max_age_days, not args.no_run_at_load, args.dry_run)
     return 0
 
 

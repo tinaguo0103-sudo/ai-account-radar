@@ -123,7 +123,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `scripts/check_feishu_card_cloud_receiver.py`：不写表的健康检查脚本，用 `challenge` 校验腾讯云 SCF 函数 URL，并读一次 `04 分析与选题` 确认飞书凭证和表权限正常。
 - `scripts/learn_from_topic_selection.py`：读取 `04` 中用户已经改过的状态和原因标签，生成待确认的选题偏好学习摘要；默认只学习最近一次正式运行批次。建议日常使用 `--mark-pending-confirm`，先把样本标为 `待确认学习`。只有用户确认后运行 `--approve-latest`，`editorial_skill_runner.py` 才会读取已确认摘要并带入下一轮主编判断。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并准备 `06 完整脚本与制作包`。
-- `scripts/codex_script_package_runner.py`：本机 Codex 定时生成器；从 `04 分析与选题` 读取已确认选题和制作方向补充，默认只处理今日推荐记录，调用本机 `codex exec` 与全局私有 Skill 生成 `full_script_execution_package.md`，写入 `06 完整脚本与制作包` 轻量记录，并把原 `04` 标记为已生成。
+- `scripts/codex_script_package_runner.py`：本机 Codex 定时生成器；从 `04 分析与选题` 读取已确认选题和制作方向补充，默认只处理近 5 天推荐记录并排除明显测试标题，调用本机 `codex exec` 与全局私有 Skill 生成 `full_script_execution_package.md`，写入 `06 完整脚本与制作包` 轻量记录，并把原 `04` 标记为已生成。
 - `scripts/install_codex_script_package_launchd.py`：安装/卸载 macOS launchd 定时任务，默认每 30 分钟扫描一次待生成脚本包。
 - `scripts/content_ops_pipeline.py`：本机确定性补跑/对比脚本；从 `04 分析与选题` 读取已确认选题和制作方向补充，调用 Austin不加班脚本Skill 生成 `full_script_execution_package.md`，并把轻量记录写入 `06 完整脚本与制作包`；默认 dry-run 不落本地文件。
 - `scripts/generate_script_execution_package.py`：从指定 `04` 记录生成单条 `full_script_execution_package.md`，并可回写 `06 完整脚本与制作包` 的轻量记录。它用于单条真实测试或补跑，不自动拆制作任务。
@@ -512,7 +512,7 @@ python3 scripts/sync_rules_dictionary.py --sync-feishu
 2. 如果想理解系统关系，再切到 `00 主控台 / 系统导航`，或看 `docs/system_map.md`。
 3. 优先看 `04 分析与选题 / 今日挑选卡片`，而不是看原始内容、粉丝数、点赞数或竞品报表。
 4. 进入 `04 分析与选题` 做选题决策：日常只需要确认哪些候选生成脚本包，剩下的暂存、归档或不做；系统内部仍兼容旧状态值 `进入Brief` / `本周做`，用于触发脚本包生成；尽量补一个 `选择原因标签`，方便后续学习你的判断逻辑。
-5. 对已确认推进的选题等待本机 Codex 定时器生成 `06 完整脚本与制作包`；急用时运行 `python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --only-today`。
+5. 对已确认推进的选题等待本机 Codex 定时器生成 `06 完整脚本与制作包`；急用时运行 `python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5`。
 6. 进入 `06 完整脚本与制作包` 看脚本状态、本地文档、素材提醒、发布前核验和 QA。
 7. 必要时打开 `02 URL投喂入口`，手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接；小红书、视频号、评论区和抖音主页批量抓取暂不支持。
 8. 不要每天看系统导航，也不需要每天打开 `01 来源与采样`、`02 URL投喂入口`、`03 内容收件箱` 和 `99 规则与字典`。
@@ -550,7 +550,7 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 3. 再看 `可复刻内容`、`来源异常/采集失败`。
 4. 快速挑选优先用交互式选题速选卡：运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，它只负责把卡片发到飞书；后续点击由腾讯云 SCF receiver 自动回写。在飞书卡片里只勾选值得生成脚本包的候选，补原因标签或一句手工原因后提交。未选中的候选会标记为 `不做`。飞书 `04 / 今日挑选卡片` 保留为兜底编辑入口。
 5. 运行 `python3 scripts/learn_from_topic_selection.py --mark-pending-confirm`，把本轮选择沉淀成本地待确认学习摘要；确认摘要正确后再运行 `python3 scripts/learn_from_topic_selection.py --approve-latest --mark-learned`。
-6. 本机 Codex 定时器会把今日已确认推进且未生成脚本稿的选题写入 `06 完整脚本与制作包`，完整 Markdown 落到本地 `full_script_execution_package.md`。
+6. 本机 Codex 定时器会把近 5 天已确认推进且未生成脚本稿的选题写入 `06 完整脚本与制作包`，完整 Markdown 落到本地 `full_script_execution_package.md`。
 7. 单条补跑或测试时，运行 `python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>`；只想用确定性本地脚本对比时，再运行 `python3 scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`。
 8. 打开 `06 完整脚本与制作包`，看脚本状态、本地文档、素材提醒、发布前核验和 QA，继续拍摄、剪辑和发布准备。
 9. 必要时进入 `02 URL投喂入口`，粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
@@ -583,7 +583,7 @@ python3 scripts/refresh_console_daily.py
 2. 运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，把一张选题速选卡发到飞书里一次勾选；本机不用常驻监听。开发预览时可先用 `python3 scripts/feishu_topic_decision_card.py build --limit 7`，排查腾讯云 SCF receiver 时可运行 `.venv/bin/python scripts/check_feishu_card_cloud_receiver.py --url <腾讯云SCF函数URL>`。
 3. 如果不用交互卡片，再进入 `04 分析与选题 / 今日挑选卡片`，手动决定生成脚本包、暂存、归档或不做，并尽量补 `选择原因标签`；旧状态值 `进入Brief / 本周做` 仍可触发脚本包生成。
 4. 需要沉淀选择偏好时，运行 `python3 scripts/learn_from_topic_selection.py`。
-5. 等本机 Codex 定时器自动生成 `06 完整脚本与制作包`；需要立即补跑时运行 `python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --only-today`。
+5. 等本机 Codex 定时器自动生成 `06 完整脚本与制作包`；需要立即补跑时运行 `python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5`。
 6. 单条补跑或调试时运行 `python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>`，看本地完整口播稿和执行包。
 7. 必要时用 `02 URL投喂入口` 手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
 8. 如果需要排查来源、重复内容或采集状态，再打开 `03 内容收件箱`。

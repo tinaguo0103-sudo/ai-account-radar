@@ -16,7 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
-from datetime import date, datetime
+from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -42,6 +42,8 @@ LOG_DIR = ROOT / "output" / "logs"
 LOCK_FILE = ROOT / ".runtime" / "codex_script_package_runner.lock"
 RUNNER_VERSION = "codex-local-script-package-runner-v0.1"
 DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
+TEST_TITLE_PREFIXES = ("【测试】", "【流程测试】", "【部署后测试】", "【模拟测试】", "[测试]", "测试：", "测试:")
+TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(测试|测速)[^\]]*\])")
 
 
 def now_stamp() -> str:
@@ -68,24 +70,68 @@ def inline_items(items: list[str], fallback: str = "无", limit: int = 6) -> str
     return "；".join(clean[:limit]) if clean else fallback
 
 
-def record_date(value: Any) -> str:
+def record_day(value: Any) -> date | None:
     if isinstance(value, (int, float)):
         timestamp = float(value)
         if timestamp > 10_000_000_000:
             timestamp = timestamp / 1000
-        return datetime.fromtimestamp(timestamp).date().isoformat()
+        return datetime.fromtimestamp(timestamp).date()
     text = str(value or "").strip()
     match = re.search(r"\d{4}-\d{2}-\d{2}", text)
-    return match.group(0) if match else ""
+    if not match:
+        return None
+    try:
+        return datetime.strptime(match.group(0), "%Y-%m-%d").date()
+    except ValueError:
+        return None
 
 
-def filter_today(records: list[dict[str, Any]], topic_cards: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+def record_date(value: Any) -> str:
+    day = record_day(value)
+    return day.isoformat() if day else ""
+
+
+def within_recent_days(value: Any, max_age_days: int) -> bool:
+    if max_age_days <= 0:
+        return True
+    day = record_day(value)
+    if not day:
+        return False
     today = date.today().isoformat()
+    oldest = date.today() - timedelta(days=max_age_days - 1)
+    return oldest <= day <= date.fromisoformat(today)
+
+
+def filter_recent(records: list[dict[str, Any]], topic_cards: list[dict[str, Any]], max_age_days: int) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     kept_records: list[dict[str, Any]] = []
     kept_topics: list[dict[str, Any]] = []
     for record, topic in zip(records, topic_cards):
         fields = record.get("fields", {})
-        if record_date(fields.get("推荐日期")) == today:
+        if within_recent_days(fields.get("推荐日期"), max_age_days):
+            kept_records.append(record)
+            kept_topics.append(topic)
+    return kept_records, kept_topics
+
+
+def is_test_topic(record: dict[str, Any], topic: dict[str, Any]) -> bool:
+    fields = record.get("fields", {})
+    title = str(
+        topic.get("topic_title")
+        or fields.get("选题标题")
+        or fields.get("选题命题")
+        or fields.get("一句话Brief")
+        or ""
+    ).strip()
+    return title.startswith(TEST_TITLE_PREFIXES) or bool(TEST_TITLE_TAG_RE.match(title))
+
+
+def filter_test_records(records: list[dict[str, Any]], topic_cards: list[dict[str, Any]], include_test_records: bool) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if include_test_records:
+        return records, topic_cards
+    kept_records: list[dict[str, Any]] = []
+    kept_topics: list[dict[str, Any]] = []
+    for record, topic in zip(records, topic_cards):
+        if not is_test_topic(record, topic):
             kept_records.append(record)
             kept_topics.append(topic)
     return kept_records, kept_topics
@@ -249,15 +295,21 @@ def main() -> int:
     parser.add_argument("--record-id", default="", help="Only process specific 04 record_id. Comma-separated ids are supported.")
     parser.add_argument("--limit", type=int, default=int(os.getenv("CODEX_SCRIPT_PACKAGE_LIMIT", "2")), help="Max topics per run.")
     parser.add_argument("--timeout-seconds", type=int, default=int(os.getenv("CODEX_SCRIPT_PACKAGE_TIMEOUT", "900")), help="Timeout per Codex topic.")
-    parser.add_argument("--only-today", action="store_true", help="Only auto-process records whose 推荐日期 is today. Ignored when --record-id is set.")
+    parser.add_argument("--max-age-days", type=int, default=int(os.getenv("CODEX_SCRIPT_PACKAGE_MAX_AGE_DAYS", "0")), help="Only auto-process records whose 推荐日期 is within this many days. 0 means no date filter.")
+    parser.add_argument("--only-today", action="store_true", help="Deprecated alias for --max-age-days 1. Ignored when --record-id is set.")
+    parser.add_argument("--include-test-records", action="store_true", help="Allow obvious test-titled topics to be processed.")
     parser.add_argument("--skip-codex", action="store_true", help="Only list ready topics. Useful for scheduler health checks.")
     args = parser.parse_args()
 
     _lock = acquire_lock()
-    initial_limit = 0 if args.only_today and not args.record_id else args.limit
+    max_age_days = 1 if args.only_today else max(0, args.max_age_days)
+    initial_limit = 0 if max_age_days > 0 and not args.record_id else args.limit
     token, app_token, table_ids, records, topic_cards = load_ready_topics(args.record_id, initial_limit)
-    if args.only_today and not args.record_id:
-        records, topic_cards = filter_today(records, topic_cards)
+    if max_age_days > 0 and not args.record_id:
+        records, topic_cards = filter_recent(records, topic_cards, max_age_days)
+    if not args.record_id:
+        records, topic_cards = filter_test_records(records, topic_cards, args.include_test_records)
+    if (max_age_days > 0 or not args.include_test_records) and not args.record_id:
         if args.limit > 0:
             records = records[:args.limit]
             topic_cards = topic_cards[:args.limit]
@@ -266,7 +318,8 @@ def main() -> int:
         "count": len(topic_cards),
         "write_feishu": args.write_feishu,
         "skip_codex": args.skip_codex,
-        "only_today": args.only_today,
+        "max_age_days": max_age_days,
+        "include_test_records": args.include_test_records,
         "topics": [{"record_id": record.get("record_id"), "title": topic.get("topic_title")} for record, topic in zip(records, topic_cards)],
     }, ensure_ascii=False))
 
