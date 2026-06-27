@@ -1,12 +1,13 @@
 #!/usr/bin/env python3
-"""Create Austin v0.5 production packages from approved topics.
+"""Create Austin v0.6 script packages from approved topics.
 
 Default mode is dry-run. With --write-feishu, reads 04 分析与选题 records whose
 status is 进入Brief or 本周做, renders a single Austin full execution package,
-creates a light 05 Brief与制作 index record, then marks the topic as 已生成脚本稿.
+creates a light 06 完整脚本与制作包 record, then marks the topic as 已生成脚本稿.
 
-v0.5 intentionally skips the old 05 outline step. The user-facing artifact is
-full_script_execution_package.md; Feishu 05 remains a light index.
+v0.6 skips the old 05 index layer. The user-facing artifact is
+full_script_execution_package.md; Feishu 06 stores only status, summary, path,
+reminders, and QA.
 
 Production runtime reads the global private Austin Skill only. The repository
 Skill is a sanitized mirror for sync/bootstrap/testing and is never used as an
@@ -33,7 +34,7 @@ ROOT = Path(__file__).resolve().parents[1]
 LEGACY_TODAY10 = ROOT / "output" / "today_10_topics.csv"
 LATEST_WRITE_TODAY10 = ROOT / "output" / "latest_write" / "today_10_topics.csv"
 LEGACY_LOG = ROOT / "output" / "content_sampler_log.json"
-SCRIPT_VERSION = "austin-production-packager-v0.5"
+SCRIPT_VERSION = "austin-production-packager-v0.6"
 GLOBAL_AUSTIN_SKILL_DIR = Path.home() / ".codex" / "skills" / "austin-no-overtime-scripting"
 REPO_AUSTIN_SKILL_DIR = ROOT / "skills" / "austin-no-overtime-scripting"
 SCRIPT_OUTPUT_ROOT = ROOT / "output" / "script_execution_packages"
@@ -54,16 +55,17 @@ def legacy_today10_is_official() -> bool:
 
 
 TODAY10 = LATEST_WRITE_TODAY10 if LATEST_WRITE_TODAY10.exists() else (LEGACY_TODAY10 if legacy_today10_is_official() else LATEST_WRITE_TODAY10)
-BRIEF_FIELDS = [
+SCRIPT_PACKAGE_FIELDS = [
     "关联选题",
     "脚本状态",
     "推荐模板",
     "核心观点",
-    "视频大纲",
-    "给06的生成输入",
-    "一句话说明",
+    "开头钩子",
     "本地文档",
-    "是否可进入06",
+    "素材提醒",
+    "发布前核验",
+    "QA结果",
+    "是否可拍",
     "版本",
 ]
 TOPIC_MARK_FIELD = "是否已生成脚本稿"
@@ -181,7 +183,7 @@ def update_topics_mark(token: str, app_token: str, table_id: str, records: list[
     return updated
 
 
-def brief_from_validation(validation: Any) -> str:
+def status_from_validation(validation: Any) -> str:
     if getattr(validation, "missing_required", []):
         return "缺字段"
     if getattr(validation, "notes", []):
@@ -195,28 +197,44 @@ def brief_from_validation(validation: Any) -> str:
     return "已生成完整执行包"
 
 
-def brief_from_package(package: dict[str, Any]) -> dict[str, str]:
+def inline_list(items: Any, fallback: str) -> str:
+    values = [str(item).strip() for item in (items or []) if str(item).strip()]
+    return "；".join(values) if values else fallback
+
+
+def qa_items_from_package(package: dict[str, Any]) -> list[str]:
+    qa_issues = [str(item).strip() for item in (package.get("qa_issues") or []) if str(item).strip()]
+    if qa_issues:
+        return qa_issues
+    values: list[str] = []
+    for key in ("missing_required", "evidence_gaps", "notes"):
+        values.extend(str(item).strip() for item in (package.get(key) or []) if str(item).strip())
+    return values
+
+
+def script_package_row_from_package(package: dict[str, Any]) -> dict[str, str]:
     qa_status = str(package.get("qa_status", "revise"))
     if qa_status == "blocked":
-        script_status = "缺字段"
-        can_enter_06 = "否：先补字段"
+        script_status = "完整脚本包-阻塞"
+        can_shoot = "否：先补字段"
     elif qa_status == "revise":
-        script_status = "完整执行包-待修订"
-        can_enter_06 = "否：先补关键判断或证据"
+        script_status = "完整脚本包-待修订"
+        can_shoot = "否：先修订关键判断或证据"
     else:
-        script_status = "已生成完整执行包"
-        can_enter_06 = "是：可制作；按提醒补素材/核验，可按需拆06任务"
-    outline = package.get("outline_segments", [])
+        script_status = "已生成完整脚本包"
+        can_shoot = "是：可拍；按素材提醒和发布前核验处理"
+    qa_issues = qa_items_from_package(package)
     return {
         "关联选题": str(package.get("topic_title", "")),
         "脚本状态": script_status,
         "推荐模板": str(package.get("recommended_template", "")),
         "核心观点": str(package.get("core_viewpoint") or package.get("core_thesis") or ""),
-        "视频大纲": "\n".join(f"{idx}. {item}" for idx, item in enumerate(outline, 1)),
-        "给06的生成输入": str(package.get("generation_input_06") or ""),
-        "一句话说明": str(package.get("reader_summary") or package.get("director_summary", ""))[:500],
+        "开头钩子": str(package.get("opening_hook") or package.get("reader_summary") or "")[:500],
         "本地文档": str(package.get("document_path") or package.get("output_dir", "")),
-        "是否可进入06": can_enter_06,
+        "素材提醒": inline_list(package.get("p0_todos"), "无P0素材缺口"),
+        "发布前核验": inline_list(package.get("release_reminders") or package.get("fact_check_points"), "无额外事实核验点"),
+        "QA结果": f"{qa_status}｜{inline_list(qa_issues, '可进入拍摄准备')}"[:1000],
+        "是否可拍": can_shoot,
         "版本": str(package.get("version", SCRIPT_VERSION)),
     }
 
@@ -240,7 +258,7 @@ def feishu_ready_topics(token: str, app_token: str) -> tuple[dict[str, str], lis
     by_name = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
     table_ids = {
         "topic_decision": resolve_table_id(by_name, "topic_decision"),
-        "brief_production": resolve_table_id(by_name, "brief_production"),
+        "script_package": resolve_table_id(by_name, "script_package"),
     }
     missing = [TABLES[key] for key, table_id in table_ids.items() if not table_id]
     if missing:
@@ -280,10 +298,15 @@ def preview_packages(topic_cards: list[dict[str, Any]], austin: Any) -> list[dic
         template, template_reason = austin.classify_template(topic)
         validation = austin.validate_topic(topic)
         summary = austin.outline_summary(topic, template, validation) if hasattr(austin, "outline_summary") else austin.director_summary(topic, template, private_cases)
-        status = austin.script_status_from_validation(validation) if hasattr(austin, "script_status_from_validation") else brief_from_validation(validation)
+        status = austin.script_status_from_validation(validation) if hasattr(austin, "script_status_from_validation") else status_from_validation(validation)
         outline = austin.outline_segments(topic) if hasattr(austin, "outline_segments") else []
         core_viewpoint = austin.core_viewpoint(topic, validation) if hasattr(austin, "core_viewpoint") else topic.get("core_thesis")
-        generation_input = (
+        opening_hook = (
+            austin.full_script_opening(topic, validation)
+            if hasattr(austin, "full_script_opening")
+            else str(topic.get("core_thesis") or "")
+        )
+        production_context = (
             austin.generation_input_for_06(topic, template, template_reason, validation, private_cases)
             if hasattr(austin, "generation_input_for_06")
             else ""
@@ -293,6 +316,11 @@ def preview_packages(topic_cards: list[dict[str, Any]], austin: Any) -> list[dic
             austin.shooting_reminder_items(validation)
             if hasattr(austin, "shooting_reminder_items")
             else list(validation.evidence_gaps)
+        )
+        release_reminders = (
+            austin.release_reminder_items(validation)
+            if hasattr(austin, "release_reminder_items")
+            else list(validation.fact_check_points)
         )
         packages.append({
             "topic_id": topic.get("topic_id"),
@@ -305,9 +333,11 @@ def preview_packages(topic_cards: list[dict[str, Any]], austin: Any) -> list[dic
             "core_thesis": topic.get("core_thesis"),
             "core_viewpoint": core_viewpoint,
             "outline_segments": outline,
-            "generation_input_06": generation_input,
+            "production_context": production_context,
+            "opening_hook": opening_hook,
             "key_evidence": key_evidence,
             "p0_todos": p0_todos,
+            "release_reminders": release_reminders,
             "reader_summary": f"{status}｜{template}｜{topic.get('core_thesis')}",
             "qa_status": validation.status,
             "missing_required": validation.missing_required,
@@ -331,7 +361,7 @@ def render_packages(topic_cards: list[dict[str, Any]], austin: Any) -> list[dict
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--write-feishu", action="store_true", help="Create 05 index records in Feishu. Default dry-run.")
+    parser.add_argument("--write-feishu", action="store_true", help="Create 06 script package records in Feishu. Default dry-run.")
     parser.add_argument("--render-local", action="store_true", help="In dry-run mode, also write local full execution package files. Default dry-run is read-only.")
     parser.add_argument("--record-id", default="", help="Only process the specified 04 record_id. Comma-separated ids are supported.")
     parser.add_argument("--limit", type=int, default=0, help="Cap the number of ready topics processed for safe tests.")
@@ -356,7 +386,7 @@ def main() -> int:
     topic_cards = normalize_topics(topics, austin)
     rendered_local = args.write_feishu or args.render_local
     packages = render_packages(topic_cards, austin) if rendered_local else preview_packages(topic_cards, austin)
-    brief_rows = [brief_from_package(package) for package in packages]
+    script_package_rows = [script_package_row_from_package(package) for package in packages]
 
     print(json.dumps({
         "ok": True,
@@ -367,21 +397,21 @@ def main() -> int:
         "ready_topics": len(topics),
         "topic_cards": topic_cards,
         "script_packages": packages,
-        "brief_records": brief_rows,
+        "script_package_records": script_package_rows,
         "task_records": [],
-        "note": "v0.5跳过中间确认稿，直接生成完整口播稿与执行包。飞书05只保留索引、摘要和本地文档路径，不自动创建06任务。dry-run默认不落本地文件；需要本地MD时加 --render-local。",
+        "note": "v0.6跳过05中间层，直接生成完整口播稿与制作执行包。本地Markdown为主，飞书06只保留状态、摘要、路径、提醒和QA。dry-run默认不落本地文件；需要本地MD时加 --render-local。",
     }, ensure_ascii=False, indent=2))
 
     if not args.write_feishu:
         return 0
 
     ensure_text_fields(token, app_token, table_ids["topic_decision"], [TOPIC_MARK_FIELD])
-    ensure_text_fields(token, app_token, table_ids["brief_production"], BRIEF_FIELDS)
-    created_briefs = batch_create(token, app_token, table_ids["brief_production"], brief_rows)
+    ensure_text_fields(token, app_token, table_ids["script_package"], SCRIPT_PACKAGE_FIELDS)
+    created_script_packages = batch_create(token, app_token, table_ids["script_package"], script_package_rows)
     marked = update_topics_mark(token, app_token, table_ids["topic_decision"], topics, packages)
     print(json.dumps({
         "ok": True,
-        "created_briefs": created_briefs,
+        "created_script_packages": created_script_packages,
         "created_tasks": 0,
         "marked_topics": marked,
     }, ensure_ascii=False, indent=2))

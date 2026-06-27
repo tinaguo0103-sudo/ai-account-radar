@@ -16,7 +16,7 @@ TABLES: dict[str, str] = {
     "content_inbox": "03 内容收件箱",
     "topic_decision": "04 分析与选题",
     "brief_production": "05 Brief与制作",
-    "task_master": "06 内容任务主表",
+    "script_package": "06 完整脚本与制作包",
     "review_assets": "07 资产与复盘",
     "rules_dictionary": "99 规则与字典",
 }
@@ -26,6 +26,7 @@ ALIASES: dict[str, list[str]] = {
     "content_inbox": ["02 内容收件箱"],
     "topic_decision": ["03 分析与选题"],
     "brief_production": ["04 Brief与制作"],
+    "script_package": ["06 内容任务主表"],
     "review_assets": ["05 资产与复盘"],
 }
 
@@ -35,8 +36,8 @@ VIEW_NAMES: dict[str, list[str]] = {
     "url_inbox": ["URL投喂入口"],
     "content_inbox": ["内容收件箱", "今日采集", "最近15天", "永久保留"],
     "topic_decision": ["今日挑选卡片", "今日决策看板", "证据不足", "待学习样本", "今日候选池", "今日最值得做", "暂存观察"],
-    "brief_production": ["Brief制作后台"],
-    "task_master": ["今日待办", "明日预警", "本周任务", "发布相关任务", "直播排期", "复盘任务"],
+    "brief_production": ["历史Brief制作后台"],
+    "script_package": ["脚本包后台", "可拍脚本包", "待修订脚本包"],
     "review_assets": ["资产复盘后台"],
     "rules_dictionary": ["规则与字典"],
 }

@@ -215,4 +215,4 @@ FEISHU_TENCENT_SCF_URL=https://你的腾讯云SCF函数URL
 - 增加 Encrypt Key 解密。
 - 增加独立回调日志表。
 - 提交成功后自动触发选择学习。
-- 进入Brief后自动触发 05 Brief 生成。
+- 进入Brief后自动触发本地或云端任务生成 `06 完整脚本与制作包`。

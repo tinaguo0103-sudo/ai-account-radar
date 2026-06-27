@@ -50,7 +50,6 @@ TABLE_FILES = [
     (table_name("source_sampling"), "sources_config.csv"),
     (table_name("content_inbox"), "content_inbox.csv"),
     (table_name("topic_decision"), "topic_candidates.csv"),
-    (table_name("brief_production"), "content_briefs.csv"),
     (table_name("review_assets"), "assets.csv"),
 ]
 

@@ -7,7 +7,7 @@ import json
 import os
 import time
 from collections import Counter
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +43,15 @@ DAILY_CARD_TYPES = {"今日工作", "预警提醒", "进度统计", "临时入�
 NAV_CARD_TYPES = {"系统导航", "规则说明"}
 DAILY_VIEW_VISIBLE_FIELDS = ["动作", "卡片类型", "优先级", "工作区", "状态", "数量/摘要", "下一步", "入口表", "入口视图", "最后更新时间"]
 NAV_VIEW_VISIBLE_FIELDS = ["动作", "卡片类型", "优先级", "工作区", "状态", "数量/摘要", "下一步", "入口表", "入口视图", "最后更新时间"]
+DEPRECATED_CONSOLE_ACTIONS = {
+    "制作层：05 Brief与制作",
+    "执行层：06 内容任务主表",
+    "今日必须完成",
+    "明日预警",
+    "本周内容进度",
+    "未来7天发布",
+    "待复盘内容",
+}
 
 
 def require_env() -> str:
@@ -282,30 +291,6 @@ def summarize_sources(records: list[dict[str, Any]]) -> str:
     return "、".join(f"{name} {count}条" for name, count in counter.most_common(4))
 
 
-def date_text(value: Any) -> str:
-    if isinstance(value, list):
-        return " ".join(date_text(item) for item in value)
-    if isinstance(value, dict):
-        return str(value.get("text") or value.get("value") or "")
-    return str(value or "")
-
-
-def has_date(value: Any, day: datetime) -> bool:
-    text = date_text(value)
-    return day.strftime("%Y-%m-%d") in text or day.strftime("%Y/%m/%d") in text
-
-
-def is_open_task(fields: dict[str, Any]) -> bool:
-    return str(fields.get("状态", "")) not in {"完成", "取消"}
-
-
-def task_type_counter(records: list[dict[str, Any]]) -> str:
-    counter = Counter(str(record.get("fields", {}).get("任务类型") or "未分类") for record in records if is_open_task(record.get("fields", {})))
-    if not counter:
-        return "暂无待办任务"
-    return "、".join(f"{name}{count}" for name, count in counter.most_common(4))
-
-
 def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[str, Any], updated_at: str) -> list[dict[str, str]]:
     links = {name: table_url(app_token, table_id) for name, table_id in table_ids.items()}
     return [
@@ -315,8 +300,8 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "优先级": "高",
             "工作区": "系统地图",
             "状态": "固定导航",
-            "数量/摘要": "01/02 输入 → 03 内容池 → 04 今日候选池 → 05 Brief与平台内容 → 06 今日任务/排期 → 07 复盘资产化",
-            "说明": "系统不是一堆孤立表，而是一条从内容输入到选题、制作、任务和复盘的链路。",
+            "数量/摘要": "01/02 输入 → 03 内容池 → 04 今日候选池 → 06 完整脚本与制作包 → 07 复盘资产化",
+            "说明": "系统不是一堆孤立表，而是一条从内容输入到选题、脚本制作包和复盘的链路。",
             "下一步": "看完地图后回到 今日工作台。",
             "入口表": "00 主控台",
             "入口视图": "今日工作台",
@@ -352,31 +337,17 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "最后更新时间": updated_at,
         },
         {
-            "动作": "制作层：05 Brief与制作",
+            "动作": "制作层：06 完整脚本与制作包",
             "卡片类型": "系统导航",
             "优先级": "高",
             "工作区": "制作层",
             "状态": "固定导航",
-            "数量/摘要": "保存已生成口播稿与执行包的轻量索引。",
-            "说明": "这里承接被选中的选题，生成本地完整执行包；飞书只保留状态、摘要和路径。",
-            "下一步": "打开本地执行包，确认口播、素材待办、剪辑交接和 QA 是否可制作。",
-            "入口表": "05 Brief与制作",
-            "入口视图": "Brief制作后台",
-            "入口说明": links.get("05 Brief与制作", ""),
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "执行层：06 内容任务主表",
-            "卡片类型": "系统导航",
-            "优先级": "高",
-            "工作区": "执行层",
-            "状态": "固定导航",
-            "数量/摘要": "今天真正要做的写稿、拍摄、剪辑、封面、发布、直播、复盘提醒。",
-            "说明": "这里是今天真正要做的执行任务。",
-            "下一步": "每天看 今日待办，只处理今天必须完成的任务。",
-            "入口表": "06 内容任务主表",
-            "入口视图": "今日待办",
-            "入口说明": links.get("06 内容任务主表", ""),
+            "数量/摘要": "保存已生成完整口播稿、制作执行包、本地文档路径、素材提醒和 QA。",
+            "说明": "这里承接被选中的选题；完整内容看本地 Markdown，飞书只保留轻量记录。",
+            "下一步": "打开脚本包后台，按本地文档继续拍摄准备。",
+            "入口表": "06 完整脚本与制作包",
+            "入口视图": "脚本包后台",
+            "入口说明": links.get("06 完整脚本与制作包", ""),
             "最后更新时间": updated_at,
         },
         {
@@ -427,8 +398,8 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "优先级": "高",
             "工作区": "分析与选题",
             "状态": "今日工作台",
-            "数量/摘要": f"{stats['topic_to_brief_count']} 条选题已标记进入Brief/本周做，等待生成完整口播稿与执行包。",
-            "说明": "daily_pipeline 只写入 04，不自动生成脚本包；由 content_ops_pipeline 承接到 05 索引，不自动拆 06。",
+            "数量/摘要": f"{stats['topic_to_brief_count']} 条选题已标记进入Brief/本周做，等待生成完整口播稿与制作执行包。",
+            "说明": "daily_pipeline 只写入 04，不自动生成脚本包；由 content_ops_pipeline 直接生成本地 Markdown 并写入 06。",
             "下一步": "确认 04 状态后运行 content_ops_pipeline.py --write-feishu。",
             "入口表": "04 分析与选题",
             "入口视图": "今日候选池",
@@ -436,73 +407,31 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "最后更新时间": updated_at,
         },
         {
-            "动作": "今日必须完成",
-            "卡片类型": "今日工作",
-            "优先级": "高",
-            "工作区": "内容任务",
-            "状态": "今日工作台",
-            "数量/摘要": f"{stats['due_today_count']} 个今天必须完成的未完成任务。",
-            "说明": "只看今天到期或标记今天必须完成的任务。",
-            "下一步": "进入 06 今日待办，先处理今天必须完成。",
-            "入口表": "06 内容任务主表",
-            "入口视图": "今日待办",
-            "入口说明": links["06 内容任务主表"],
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "明日预警",
-            "卡片类型": "预警提醒",
-            "优先级": "高",
-            "工作区": "内容任务",
-            "状态": "今日工作台",
-            "数量/摘要": f"{stats['tomorrow_warning_count']} 个明天发布/复盘/到期任务。",
-            "说明": "提前处理明天发布或复盘任务，避免临时赶。",
-            "下一步": "进入 06 明日预警，提前处理阻塞项。",
-            "入口表": "06 内容任务主表",
-            "入口视图": "明日预警",
-            "入口说明": links["06 内容任务主表"],
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "本周内容进度",
+            "动作": "已生成脚本包",
             "卡片类型": "进度统计",
             "优先级": "中高",
-            "工作区": "内容任务",
+            "工作区": "脚本与制作",
             "状态": "今日工作台",
-            "数量/摘要": f"{stats['task_pending_count']} 个未完成任务；{stats['task_type_summary']}。",
-            "说明": "看内容卡在写稿、拍摄、剪辑、封面还是发布。",
-            "下一步": "进入 06 本周任务，处理卡住的环节。",
-            "入口表": "06 内容任务主表",
-            "入口视图": "本周任务",
-            "入口说明": links["06 内容任务主表"],
+            "数量/摘要": f"{stats['script_package_count']} 个完整脚本与制作包；{stats['script_package_ready_count']} 个标记可拍。",
+            "说明": "完整内容以本地 Markdown 为准，飞书只看状态、路径和提醒。",
+            "下一步": "进入 06 脚本包后台，打开本地文档继续制作。",
+            "入口表": "06 完整脚本与制作包",
+            "入口视图": "脚本包后台",
+            "入口说明": links["06 完整脚本与制作包"],
             "最后更新时间": updated_at,
         },
         {
-            "动作": "未来7天发布",
+            "动作": "待修订脚本包",
             "卡片类型": "预警提醒",
-            "优先级": "高",
-            "工作区": "内容任务",
-            "状态": "今日工作台",
-            "数量/摘要": f"{stats['next_7_publish_count']} 个未来7天发布任务。",
-            "说明": "检查是否断更或平台排期冲突。",
-            "下一步": "进入 06 发布相关任务，确认未来7天排期。",
-            "入口表": "06 内容任务主表",
-            "入口视图": "发布相关任务",
-            "入口说明": links["06 内容任务主表"],
-            "最后更新时间": updated_at,
-        },
-        {
-            "动作": "待复盘内容",
-            "卡片类型": "今日工作",
             "优先级": "中高",
-            "工作区": "Brief与制作",
+            "工作区": "脚本与制作",
             "状态": "今日工作台",
-            "数量/摘要": f"{stats['published_review_count']} 条发布后待复盘内容。",
-            "说明": "发布后24h/72h/7天未复盘内容。",
-            "下一步": "进入 05，回填真实数据和复盘结论。",
-            "入口表": "05 Brief与制作",
-            "入口视图": "Brief制作后台",
-            "入口说明": links["05 Brief与制作"],
+            "数量/摘要": f"{stats['script_package_revise_count']} 个脚本包需要补关键判断、字段或证据。",
+            "说明": "只有 package 本身不成立才算待修订；普通拍摄提醒不降级。",
+            "下一步": "进入 06 待修订脚本包，补齐后重新生成或人工确认。",
+            "入口表": "06 完整脚本与制作包",
+            "入口视图": "待修订脚本包",
+            "入口说明": links["06 完整脚本与制作包"],
             "最后更新时间": updated_at,
         },
         {
@@ -589,15 +518,26 @@ def sync_console_cards(token: str, app_token: str, table_id: str, cards: list[di
             created += 1
         time.sleep(0.1)
 
-    stale = [record["record_id"] for record in records if record.get("fields", {}).get("动作") not in expected]
-    return {"updated": updated, "created": created, "deleted_stale": deleted, "preserved_stale": len(stale)}
+    stale = [record for record in records if record.get("fields", {}).get("动作") not in expected]
+    for record in stale:
+        if record.get("fields", {}).get("动作") not in DEPRECATED_CONSOLE_ACTIONS:
+            continue
+        feishu.request_json(
+            "DELETE",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record['record_id']}",
+            token=token,
+        )
+        deleted += 1
+        time.sleep(0.1)
+    preserved = len(stale) - deleted
+    return {"updated": updated, "created": created, "deleted_stale": deleted, "preserved_stale": preserved}
 
 
 def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
     REPORT_DIR.mkdir(parents=True, exist_ok=True)
     path = REPORT_DIR / f"ai_account_radar_daily_{today_slug()}.md"
     top_topics = stats["top_topics"]
-    brief_items = stats["brief_need_case_items"][:5]
+    package_items = stats["script_package_revise_items"][:5]
     assets = stats["asset_items"][:5]
 
     def topic_line(record: dict[str, Any]) -> str:
@@ -608,9 +548,9 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
             f"{fields.get('推荐理由', '待补推荐理由')}"
         )
 
-    def brief_line(record: dict[str, Any]) -> str:
+    def package_line(record: dict[str, Any]) -> str:
         fields = record.get("fields", {})
-        return f"- {fields.get('关联选题', '未命名Brief')}：{fields.get('人工补充', '补真实案例、个人判断和边界')}"
+        return f"- {fields.get('关联选题', '未命名脚本包')}：{fields.get('QA结果', fields.get('脚本状态', '待确认'))}"
 
     def asset_line(record: dict[str, Any]) -> str:
         fields = record.get("fields", {})
@@ -618,7 +558,7 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
 
     actions = [
         "先在 04 分析与选题 中处理高分待判断选题，至少选 1 条改为 进入Brief 或 本周做。",
-        "在 05 Brief与制作 中确认核心观点、视频大纲和给06的生成输入。",
+        "对已确认推进的选题运行 content_ops_pipeline.py --write-feishu，直接生成 06 完整脚本与制作包。",
         "从本周可沉淀资产里选 1 个轻量资产，先做精简版，不追求完整大包。",
     ]
     if stats["source_errors"] != ["暂无异常"]:
@@ -636,8 +576,8 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
         "## 2. 今日最值得看的选题",
         *(topic_line(record) for record in top_topics[:5]),
         "",
-        "## 3. 待补 Brief",
-        *(brief_line(record) for record in brief_items),
+        "## 3. 待修订脚本包",
+        *(package_line(record) for record in package_items),
         "",
         "## 4. 来源异常/采集失败",
         *[f"- {item}" for item in stats["source_errors"]],
@@ -699,40 +639,17 @@ def main() -> int:
 
     inbox_records = all_records(token, app_token, tables["03 内容收件箱"])
     topic_records = all_records(token, app_token, tables["04 分析与选题"])
-    brief_records = all_records(token, app_token, tables["05 Brief与制作"])
-    task_records = all_records(token, app_token, tables["06 内容任务主表"])
+    script_package_records = all_records(token, app_token, tables["06 完整脚本与制作包"])
     asset_records = all_records(token, app_token, tables["07 资产与复盘"])
 
     pending_inbox = [r for r in inbox_records if r.get("fields", {}).get("处理状态") == "待分析"]
     high_topics = [r for r in topic_records if r.get("fields", {}).get("状态") == "待判断" and is_ab_or_high(r.get("fields", {}))]
     topic_to_brief = [r for r in topic_records if r.get("fields", {}).get("状态") in {"进入Brief", "本周做"}]
-    brief_need_case = [r for r in brief_records if r.get("fields", {}).get("制作状态") == "待补案例"]
-    brief_ready = [r for r in brief_records if r.get("fields", {}).get("制作状态") == "可制作"]
-    published_review = [r for r in brief_records if r.get("fields", {}).get("制作状态") == "已发布待复盘"]
-    task_pending = [r for r in task_records if r.get("fields", {}).get("状态") in {"待办", "进行中", "阻塞"}]
-    today = datetime.now()
-    tomorrow = today + timedelta(days=1)
-    due_today = [
-        r for r in task_records
-        if is_open_task(r.get("fields", {}))
-        and (
-            str(r.get("fields", {}).get("是否今天必须完成", "")) == "是"
-            or has_date(r.get("fields", {}).get("截止时间"), today)
-        )
-    ]
-    tomorrow_warning = [
-        r for r in task_records
-        if is_open_task(r.get("fields", {}))
-        and has_date(r.get("fields", {}).get("截止时间"), tomorrow)
-    ]
-    next_7_publish = [
-        r for r in task_records
-        if is_open_task(r.get("fields", {}))
-        and "发布" in str(r.get("fields", {}).get("任务类型", ""))
-        and (
-            not date_text(r.get("fields", {}).get("截止时间"))
-            or any(has_date(r.get("fields", {}).get("截止时间"), today + timedelta(days=offset)) for offset in range(8))
-        )
+    script_package_ready = [r for r in script_package_records if str(r.get("fields", {}).get("是否可拍", "")).startswith("是")]
+    script_package_revise = [
+        r for r in script_package_records
+        if "待修订" in str(r.get("fields", {}).get("脚本状态", ""))
+        or "阻塞" in str(r.get("fields", {}).get("脚本状态", ""))
     ]
     assets = asset_candidates(asset_records)
     today10 = load_today_10()
@@ -745,18 +662,13 @@ def main() -> int:
         "source_summary": summarize_sources(pending_inbox),
         "high_topic_count": len(high_topics),
         "topic_to_brief_count": len(topic_to_brief),
-        "brief_need_case_count": len(brief_need_case),
-        "brief_ready_count": len(brief_ready),
-        "published_review_count": len(published_review),
-        "task_pending_count": len(task_pending),
-        "due_today_count": len(due_today),
-        "tomorrow_warning_count": len(tomorrow_warning),
-        "next_7_publish_count": len(next_7_publish),
-        "task_type_summary": task_type_counter(task_pending),
+        "script_package_count": len(script_package_records),
+        "script_package_ready_count": len(script_package_ready),
+        "script_package_revise_count": len(script_package_revise),
         "asset_count": len(assets),
         "source_errors": load_run_errors(),
         "top_topics": top_records(high_topics, 5),
-        "brief_need_case_items": brief_need_case,
+        "script_package_revise_items": script_package_revise,
         "asset_items": assets,
     }
     updated_at = now_cn()

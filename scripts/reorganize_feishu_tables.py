@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Rename Feishu tables to the v0.2 logical order and add 06 内容任务主表.
+"""Rename Feishu tables to the current logical order and prepare 06 script packages.
 
 This script preserves existing table IDs and records. Default mode is dry-run.
 Use --write-feishu to apply changes.
@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import time
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -19,22 +20,20 @@ from feishu_table_registry import TABLES, VIEW_NAMES, resolve_table_name
 
 ROOT = Path(__file__).resolve().parents[1]
 BASE_INFO = ROOT / "feishu_created_base.json"
-TASK_FIELDS = [
-    "任务名称",
-    "任务类型",
-    "关联母题",
-    "关联平台内容",
-    "截止时间",
-    "预计耗时",
-    "优先级",
-    "状态",
-    "是否今天必须完成",
-    "阻塞原因",
-    "下一步动作",
-    "备注",
+SCRIPT_PACKAGE_FIELDS = [
+    "关联选题",
+    "脚本状态",
+    "推荐模板",
+    "核心观点",
+    "开头钩子",
+    "本地文档",
+    "素材提醒",
+    "发布前核验",
+    "QA结果",
+    "是否可拍",
+    "版本",
 ]
-TASK_TYPES = "写稿、拍摄、剪辑、封面、发布、直播准备、直播预告、直播问题池、直播执行、直播切片、24小时复盘、72小时复盘、7天复盘、私信跟进、资产化"
-TASK_STATUSES = "待办、进行中、阻塞、完成、取消"
+SCRIPT_PACKAGE_STATUSES = "已生成完整脚本包、完整脚本包-待修订、完整脚本包-阻塞"
 
 
 def require_app_token() -> str:
@@ -79,16 +78,16 @@ def rename_table(token: str, app_token: str, table_id: str, new_name: str) -> No
     raise RuntimeError("Feishu table rename API failed; no delete/recreate attempted. " + " | ".join(errors))
 
 
-def create_task_table(token: str, app_token: str) -> str:
+def create_script_package_table(token: str, app_token: str) -> str:
     payload = feishu.request_json(
         "POST",
         f"/bitable/v1/apps/{app_token}/tables",
         token=token,
         body={
             "table": {
-                "name": TABLES["task_master"],
-                "default_view_name": VIEW_NAMES["task_master"][0],
-                "fields": [{"field_name": name, "type": 1} for name in TASK_FIELDS],
+                "name": TABLES["script_package"],
+                "default_view_name": VIEW_NAMES["script_package"][0],
+                "fields": [{"field_name": name, "type": 1} for name in SCRIPT_PACKAGE_FIELDS],
             }
         },
     )
@@ -96,7 +95,7 @@ def create_task_table(token: str, app_token: str) -> str:
     table = data.get("table", data)
     table_id = table.get("table_id") or data.get("table_id")
     if not table_id:
-        raise SystemExit(f"Could not create {TABLES['task_master']}: {payload}")
+        raise SystemExit(f"Could not create {TABLES['script_package']}: {payload}")
     return table_id
 
 
@@ -143,10 +142,10 @@ def update_base_info(app_token: str, rows: list[dict[str, Any]]) -> None:
     data.update({
         "app_token": app_token,
         "last_updated_at": "2026-06-01",
-        "restructured_at": "2026-06-01",
+        "restructured_at": datetime.now().strftime("%Y-%m-%d"),
         "tables": rows,
         "logical_tables": TABLES,
-        "note": "2026-06-01 按输入层/内容池/选题决策/制作/任务/复盘顺序重命名；02 URL投喂入口由旧06保留table_id和数据改名；06 内容任务主表新增；99 规则与字典继续受保护。",
+        "note": "2026-06-27 取消05正式中间层；06 调整为完整脚本与制作包，保留旧表ID和数据；任务拆分表后续单独设计；99 规则与字典继续受保护。",
     })
     console = next((row for row in rows if row["name"] == TABLES["console"]), None)
     if console:
@@ -176,13 +175,13 @@ def main() -> int:
             table_id = by_name[actual]
             action = "keep" if actual == desired else "rename"
             plan.append({"key": key, "from": actual, "to": desired, "table_id": table_id, "action": action})
-        elif key == "task_master":
+        elif key == "script_package":
             plan.append({"key": key, "from": None, "to": desired, "table_id": None, "action": "create"})
         else:
             plan.append({"key": key, "from": None, "to": desired, "table_id": None, "action": "missing"})
 
     if not args.write_feishu:
-        print(json.dumps({"ok": True, "mode": "dry-run", "plan": plan, "task_types": TASK_TYPES, "task_statuses": TASK_STATUSES}, ensure_ascii=False, indent=2))
+        print(json.dumps({"ok": True, "mode": "dry-run", "plan": plan, "script_package_statuses": SCRIPT_PACKAGE_STATUSES}, ensure_ascii=False, indent=2))
         return 0
 
     if any(row["action"] == "missing" for row in plan):
@@ -196,11 +195,11 @@ def main() -> int:
             rename_table(token, app_token, row["table_id"], row["to"])
             time.sleep(0.2)
         elif row["action"] == "create":
-            row["table_id"] = create_task_table(token, app_token)
+            row["table_id"] = create_script_package_table(token, app_token)
             time.sleep(0.2)
         table_ids[key] = row["table_id"]
-        if key == "task_master":
-            row["created_fields"] = ensure_text_fields(token, app_token, row["table_id"], TASK_FIELDS)
+        if key == "script_package":
+            row["created_fields"] = ensure_text_fields(token, app_token, row["table_id"], SCRIPT_PACKAGE_FIELDS)
         row["views"] = ensure_views(token, app_token, row["table_id"], VIEW_NAMES.get(key, []))
         applied.append(row)
 

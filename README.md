@@ -14,11 +14,11 @@
 
 ## 最快理解方式
 
-`00 主控台` 是唯一入口。每天先从这里看系统地图、`04 / 今日挑选卡片`、待办任务和异常提示。
+`00 主控台` 是唯一入口。每天先从这里看系统地图、`04 / 今日挑选卡片`、待生成脚本包和异常提示。
 
 - `04 分析与选题` 决定今天做什么：在 `今日挑选卡片` 里快速扫选题，把候选改成进入 Brief、本周做、暂存或不做，并留下选择原因标签。
-- `05 Brief与制作` 决定怎么做成内容：保留大纲、完整执行包索引、本地文档路径和制作判断，不把全文塞进表格。
-- `06 内容任务主表` 决定今天做哪些任务：写稿、拍摄、剪辑、封面、发布、直播和复盘提醒都在这里执行；完整口播稿与执行包优先看本地 Markdown。
+- `05 Brief与制作` 是历史测试表，正式链路不再写入，也不作为日常入口。
+- `06 完整脚本与制作包` 承接已确认选题：保留脚本包状态、本地文档路径、核心观点、开头钩子、素材提醒、发布前核验和 QA；完整口播稿与执行包优先看本地 Markdown。
 - `07 资产与复盘` 决定发完后是否复刻和资产化：看 24小时、72小时、7天反馈，判断是否改角度再发、沉淀清单/SOP/案例库。
 - `01 来源与采样`、`02 URL投喂入口`、`03 内容收件箱`、`99 规则与字典` 是后台或说明层，不需要每天打开。
 
@@ -123,9 +123,9 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `scripts/run_topic_decision_card_session.py`：一键发送选题速选卡，发送后即可结束；用户点击后的回写由腾讯云 SCF receiver 承接，适合作为日常挑选入口。
 - `scripts/check_feishu_card_cloud_receiver.py`：不写表的健康检查脚本，用 `challenge` 校验腾讯云 SCF 函数 URL，并读一次 `04 分析与选题` 确认飞书凭证和表权限正常。
 - `scripts/learn_from_topic_selection.py`：读取 `04` 中用户已经改过的状态和原因标签，生成待确认的选题偏好学习摘要；默认只学习最近一次正式运行批次。建议日常使用 `--mark-pending-confirm`，先把样本标为 `待确认学习`。只有用户确认后运行 `--approve-latest`，`editorial_skill_runner.py` 才会读取已确认摘要并带入下一轮主编判断。
-- `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并创建 `06 内容任务主表`。
-- `scripts/content_ops_pipeline.py`：从 `04 分析与选题` 读取已确认选题和制作方向补充，调用 Austin不加班脚本Skill 直接生成 `full_script_execution_package.md`，并只把轻量索引写入 `05 Brief与制作`；默认 dry-run 不落本地文件。
-- `scripts/generate_script_execution_package.py`：从指定 `04` 记录生成单条 `full_script_execution_package.md`，并可回写 `05 Brief与制作` 的轻量索引。它用于单条真实测试或补跑，不自动拆 `06 内容任务主表`。
+- `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并准备 `06 完整脚本与制作包`。
+- `scripts/content_ops_pipeline.py`：从 `04 分析与选题` 读取已确认选题和制作方向补充，调用 Austin不加班脚本Skill 直接生成 `full_script_execution_package.md`，并把轻量记录写入 `06 完整脚本与制作包`；默认 dry-run 不落本地文件。
+- `scripts/generate_script_execution_package.py`：从指定 `04` 记录生成单条 `full_script_execution_package.md`，并可回写 `06 完整脚本与制作包` 的轻量记录。它用于单条真实测试或补跑，不自动拆制作任务。
 - `scripts/sync_austin_scripting_skill.py`：把仓库公开脱敏版 `skills/austin-no-overtime-scripting/` 单向安装到全局 Codex Skills。只支持“仓库脱敏版 -> 全局安装”，不提供全局私有版回写仓库；已有全局 Skill 时默认拒绝覆盖，避免敏感素材误提交。
 - `scripts/simplify_feishu_workspace.py`：按当前白名单清理飞书 `03/04` 字段；`04` 会保留挑选卡片、决策看板、证据和学习相关视图。
 - `output/`：运行后生成 CSV 和 Excel。
@@ -140,7 +140,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 
 ## Austin不加班脚本Skill
 
-`Austin不加班脚本Skill` 现在不再生成中间脚本大纲。选题确认后，系统直接生成单一主文档 `full_script_execution_package.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA。飞书 `05 Brief与制作` 只保留索引、状态、核心信息和本地文档路径，完整内容以本地 Markdown 为主。
+`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写 `05 Brief与制作`。选题确认并补充制作方向后，系统直接生成单一主文档 `full_script_execution_package.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA。飞书 `06 完整脚本与制作包` 只保留状态、核心信息、本地文档路径、素材提醒、发布前核验和 QA，完整内容以本地 Markdown 为主。
 
 运行时规则：
 
@@ -361,9 +361,9 @@ python3 scripts/editorial_skill_runner.py \
 
 在 Codex 对话里手动调用这个脚本时，偶尔会看到权限审查，不是因为 Skill 不能被项目使用，而是因为脚本会启动本机 `codex exec` 子进程并写入 `~/.codex` 的运行状态。命令前缀已尽量收敛到 `python3 scripts/editorial_skill_runner.py`；日常在本机终端运行项目脚本时，不会把这个审批流程暴露成业务步骤。
 
-`04 分析与选题` 已收敛为飞书原生选题挑选台：主字段 `选题标题` 直接承担短选题命题职责，不再额外保留一列 `选题命题`。飞书只保留你实际判断要不要推进所需的短决策卡字段：状态、建议级别、AI味风险、对应方向、来源、Brief、推荐/不推荐理由、工作流实验、痛点、AI介入、验证方式、可沉淀资产、思考点和证据。`卡片速读` 是专门给画册卡片看的自动汇总字段，会把 Brief、实验、痛点、验证、证据缺口和操作提示压成一段正文，让你不必逐个打开记录。交互式选题卡提交后，如果你勾选了题，腾讯云 SCF receiver 会再发一张“制作方向补充卡”，让你可选补充每条准备用哪个真实案例讲、从哪个角度讲、哪些不要讲；非空内容会回填到 `我的制作补充`，留空则由系统按私有案例库建议。标题门控、分数、可信度、内容指纹、版本路径等后台字段保留在本地 CSV/MD 或 05，不再塞进 04。写入前会先经过 `content_sampler.py` 的初筛和 `editorial_skill_runner.py` 的真实 Skill 主编判断，让你能区分“今日最值得做”“可选候选”“暂存观察”和“不建议制作”。
+`04 分析与选题` 已收敛为飞书原生选题挑选台：主字段 `选题标题` 直接承担短选题命题职责，不再额外保留一列 `选题命题`。飞书只保留你实际判断要不要推进所需的短决策卡字段：状态、建议级别、AI味风险、对应方向、来源、Brief、推荐/不推荐理由、工作流实验、痛点、AI介入、验证方式、可沉淀资产、思考点和证据。`卡片速读` 是专门给画册卡片看的自动汇总字段，会把 Brief、实验、痛点、验证、证据缺口和操作提示压成一段正文，让你不必逐个打开记录。交互式选题卡提交后，如果你勾选了题，腾讯云 SCF receiver 会再发一张“制作方向补充卡”，让你可选补充每条准备用哪个真实案例讲、从哪个角度讲、哪些不要讲；非空内容会回填到 `我的制作补充`，留空则由系统按私有案例库建议。标题门控、分数、可信度、内容指纹、版本路径等后台字段保留在本地 CSV/MD 或 06，不再塞进 04。写入前会先经过 `content_sampler.py` 的初筛和 `editorial_skill_runner.py` 的真实 Skill 主编判断，让你能区分“今日最值得做”“可选候选”“暂存观察”和“不建议制作”。
 
-口播全文风格已从 Austin 流程 Skill 中拆出为独立 `austin-voice-scriptwriter` Skill：`austin-no-overtime-scripting` 继续负责 04/05/06 流程、证据、执行包和飞书衔接；`austin-voice-scriptwriter` 只负责把已确认选题写成接近 Austin 真人表达的口播全文。生产运行优先读取全局私有版 `/Users/congcong/.codex/skills/austin-voice-scriptwriter`，仓库只保留脱敏镜像。
+口播全文风格已从 Austin 流程 Skill 中拆出为独立 `austin-voice-scriptwriter` Skill：`austin-no-overtime-scripting` 继续负责 04 到 06 的流程、证据、执行包和飞书衔接；`austin-voice-scriptwriter` 只负责把已确认选题写成接近 Austin 真人表达的口播全文。生产运行优先读取全局私有版 `/Users/congcong/.codex/skills/austin-voice-scriptwriter`，仓库只保留脱敏镜像。
 
 日常挑选不再要求你在长表格里逐格点开看。`04` 现在保留这些飞书原生视图：
 
@@ -462,7 +462,7 @@ FEISHU_BASE_APP_TOKEN=xxx
 - `output/hotspot_analysis.csv`：热点分析表。
 - `output/competitor_analysis.csv`：对标分析表。
 - `output/topic_candidates.csv`：选题候选库。
-- `output/content_briefs.csv`：内容 Brief 表。
+- `output/content_briefs.csv`：历史内容 Brief 降级文件，正式脚本包以 `06 完整脚本与制作包` 和本地 Markdown 为准。
 - `output/publishing_review.csv`：发布复盘表。
 - `output/system_rules_dictionary.csv`：规则与字典表，可导入飞书。
 - `output/system_rules_dictionary.xlsx`：规则与字典 Excel 版。
@@ -481,7 +481,7 @@ FEISHU_BASE_APP_TOKEN=xxx
 
 - `表逻辑`：核心业务表分别为什么存在，是前台表还是后台表，数据从哪里来，流向哪里，是否每天需要打开。
 - `字段字典`：关键字段的含义、生产者、消费者、是否可编辑、AI 是否参与。
-- `状态字典`：`03 内容收件箱` 的内容处理流、`04 分析与选题` 的选题决策流、`05 Brief与制作` 的制作发布流。
+- `状态字典`：`03 内容收件箱` 的内容处理流、`04 分析与选题` 的选题决策流、`06 完整脚本与制作包` 的脚本包生成流。
 - `评分规则`：选题总分的维度、权重、高分标准、低分标准和人工修正规则。
 - `AI处理规则`：AI 能做摘要、分类、分析、候选选题，以及在选题确认后生成口播稿与执行包；不能自动发布、伪造数据、绕过平台限制或替你最终定稿。
 - `主控台/日报规则`：`00 主控台` 是伪仪表盘/每日入口；日报如果生成，只回答“今天我该做什么”，不写成长报告。
@@ -511,8 +511,8 @@ python3 scripts/sync_rules_dictionary.py --sync-feishu
 2. 如果想理解系统关系，再切到 `00 主控台 / 系统导航`，或看 `docs/system_map.md`。
 3. 优先看 `04 分析与选题 / 今日挑选卡片`，而不是看原始内容、粉丝数、点赞数或竞品报表。
 4. 进入 `04 分析与选题` 做选题决策：状态只使用 `待判断`、`进入Brief`、`本周做`、`暂存`、`归档`、`不做`；尽量补一个 `选择原因标签`，方便后续学习你的判断逻辑。
-5. 进入 `05 Brief与制作` 补案例和制作：状态只使用 `待补案例`、`可制作`、`已制作待发布`、`已发布待复盘`、`复盘完成`。
-6. 进入 `06 内容任务主表` 看今天要完成的写稿、拍摄、封面、发布、直播和复盘任务。
+5. 对已确认推进的选题运行 `content_ops_pipeline.py --write-feishu`，直接生成本地 Markdown 和 `06 完整脚本与制作包` 记录。
+6. 进入 `06 完整脚本与制作包` 看脚本状态、本地文档、素材提醒、发布前核验和 QA。
 7. 必要时打开 `02 URL投喂入口`，手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接；小红书、视频号、评论区和抖音主页批量抓取暂不支持。
 8. 不要每天看系统导航，也不需要每天打开 `01 来源与采样`、`02 URL投喂入口`、`03 内容收件箱` 和 `99 规则与字典`。
 
@@ -534,25 +534,25 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 - `04 分析与选题 / 证据不足`
 - `04 分析与选题 / 待学习样本`
 - `04 分析与选题 / 今日候选池`
-- `05 Brief与制作 / Brief制作后台`
-- `06 内容任务主表 / 今日待办`
+- `05 Brief与制作 / 历史Brief制作后台`，仅保留历史测试数据，不作为日常入口
+- `06 完整脚本与制作包 / 脚本包后台`
 - `07 资产与复盘 / 资产复盘后台`
 - `99 规则与字典 / 规则与字典`
 
-其中 `01 来源与采样 / 当前主对标池` 默认只看主对标、辅助对标和 AI项目复盘占位；旧字段 `来源名称`、`获取方式`、`关注重点/原始内容`、`是否主对标`、`是否重点跟踪` 不进入默认视图。`02 URL投喂入口` 是输入层，不是任务表；`03 内容收件箱` 是所有参与拆解的内容账本，包括 URL 投喂和 AIHOT；`04 分析与选题 / 今日挑选卡片` 是选题决策主入口，`今日决策看板` 用来拖状态，`待学习样本` 用来沉淀选择偏好；`06 内容任务主表` 才是写稿、拍摄、剪辑、封面、发布、直播、复盘、私信跟进和资产化任务的执行表。
+其中 `01 来源与采样 / 当前主对标池` 默认只看主对标、辅助对标和 AI项目复盘占位；旧字段 `来源名称`、`获取方式`、`关注重点/原始内容`、`是否主对标`、`是否重点跟踪` 不进入默认视图。`02 URL投喂入口` 是输入层，不是任务表；`03 内容收件箱` 是所有参与拆解的内容账本，包括 URL 投喂和 AIHOT；`04 分析与选题 / 今日挑选卡片` 是选题决策主入口，`今日决策看板` 用来拖状态，`待学习样本` 用来沉淀选择偏好；`06 完整脚本与制作包` 是脚本和制作执行包记录表，不是任务拆分表。
 
 ## 每天打开什么
 
 每天：
 
 1. 打开 `00 主控台 / 今日工作台`。
-2. 先看 `04 / 今日挑选卡片`、`今日必须完成`、`明日预警`、`本周内容进度`。
-3. 再看 `待复盘内容`、`可复刻内容`、`来源异常/采集失败`。
+2. 先看 `04 / 今日挑选卡片`、`待生成脚本包`、`已生成脚本包`、`待修订脚本包`。
+3. 再看 `可复刻内容`、`来源异常/采集失败`。
 4. 快速挑选优先用交互式选题速选卡：运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，它只负责把卡片发到飞书；后续点击由腾讯云 SCF receiver 自动回写。在飞书卡片里只勾选值得 `进入Brief` 的候选，补原因标签或一句手工原因后提交。未选中的候选会标记为 `不做`。飞书 `04 / 今日挑选卡片` 保留为兜底编辑入口。
 5. 运行 `python3 scripts/learn_from_topic_selection.py --mark-pending-confirm`，把本轮选择沉淀成本地待确认学习摘要；确认摘要正确后再运行 `python3 scripts/learn_from_topic_selection.py --approve-latest --mark-learned`。
-6. 如需把 `04` 的已确认选题转成口播稿和执行包，运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，它会把状态为 `进入Brief` 或 `本周做` 且未生成脚本稿的选题承接到 `05 Brief与制作`，并生成本地 `full_script_execution_package.md`。
-7. 单条补跑或测试时，运行 `python3 scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`；飞书 `05` 只保存索引、摘要和路径。
-8. 进入 `06 内容任务主表`，只看已经人工确认执行包可制作后的今天必须完成和本周任务。
+6. 如需把 `04` 的已确认选题转成口播稿和执行包，运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，它会把状态为 `进入Brief` 或 `本周做` 且未生成脚本稿的选题直接写入 `06 完整脚本与制作包`，并生成本地 `full_script_execution_package.md`。
+7. 单条补跑或测试时，运行 `python3 scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`；飞书 `06` 只保存状态、摘要、路径、素材提醒、发布前核验和 QA。
+8. 打开 `06 完整脚本与制作包` 的本地 Markdown，继续拍摄、剪辑和发布准备。
 9. 必要时进入 `02 URL投喂入口`，粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
 10. 只有看不懂表关系时，才切到 `00 主控台 / 系统导航` 或打开 `docs/system_map.md`。
 
@@ -575,7 +575,7 @@ python3 scripts/refresh_console_daily.py
 
 本机定时运行先不启用；以后确认稳定后可参考 `docs/schedule_local.md`。
 
-说明：脚本会确保核心视图存在。`06 内容任务主表` 第一版视图包括 `今日待办`、`明日预警`、`本周任务`、`发布相关任务`、`直播排期`、`复盘任务`。如果飞书 OpenAPI 不支持复杂筛选条件，先只创建视图名，筛选规则写在 README 和规则表里。
+说明：脚本会确保核心视图存在。`06 完整脚本与制作包` 第一版视图包括 `脚本包后台`、`可拍脚本包`、`待修订脚本包`。如果飞书 OpenAPI 不支持复杂筛选条件，先只创建视图名，筛选规则写在 README 和规则表里。
 
 ## 每天怎么用
 
@@ -583,7 +583,7 @@ python3 scripts/refresh_console_daily.py
 2. 运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，把一张选题速选卡发到飞书里一次勾选；本机不用常驻监听。开发预览时可先用 `python3 scripts/feishu_topic_decision_card.py build --limit 7`，排查腾讯云 SCF receiver 时可运行 `.venv/bin/python scripts/check_feishu_card_cloud_receiver.py --url <腾讯云SCF函数URL>`。
 3. 如果不用交互卡片，再进入 `04 分析与选题 / 今日挑选卡片`，手动决定 `进入Brief`、`本周做`、`暂存`、`归档` 或 `不做`，并尽量补 `选择原因标签`。
 4. 需要沉淀选择偏好时，运行 `python3 scripts/learn_from_topic_selection.py`。
-5. 对已确认推进的选题运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，进入 `05 Brief与制作` 看脚本状态、核心摘要和本地执行包路径。
+5. 对已确认推进的选题运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，进入 `06 完整脚本与制作包` 看脚本状态、本地执行包路径、素材提醒和 QA。
 6. 单条补跑或调试时运行 `python3 scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`，看本地完整口播稿和执行包。
 7. 必要时用 `02 URL投喂入口` 手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
 8. 如果需要排查来源、重复内容或采集状态，再打开 `03 内容收件箱`。

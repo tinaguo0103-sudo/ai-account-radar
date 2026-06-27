@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any
 
 
-SKILL_VERSION = "austin-production-packager-v0.5"
+SKILL_VERSION = "austin-production-packager-v0.6"
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 VOICE_SKILL_NAME = "austin-voice-scriptwriter"
 VOICE_SKILL_VERSION = "austin-voice-scriptwriter-v0.1"
@@ -792,7 +792,7 @@ def key_evidence_items(topic: dict[str, Any], validation: ValidationResult) -> l
 
 def outline_summary(topic: dict[str, Any], template: str, validation: ValidationResult) -> str:
     core = clip_text(topic.get("core_thesis"), 64, "待确认核心观点")
-    return f"{template}｜{core}｜已按全文口播稿生成完整执行包，05只保留索引。"
+    return f"{template}｜{core}｜已按全文口播稿生成完整执行包，并写入06轻量记录。"
 
 
 def generation_input_for_06(topic: dict[str, Any], template: str, template_reason: str, validation: ValidationResult, private_cases: list[dict[str, Any]]) -> str:
@@ -970,7 +970,7 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
     """Legacy v0.4 outline renderer kept for old tests and explicit callers.
 
     The production path no longer calls this function. Use
-    render_full_execution_package() for v0.5.
+    render_full_execution_package() for v0.6.
     """
     run_date = run_date or datetime.now().strftime("%Y-%m-%d")
     display_title = topic.get("topic_title") or "未命名选题"
@@ -989,7 +989,7 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
     document_path = folder / LEGACY_OUTLINE_FILE
     write_text(document_path, f"""# {display_title}
 
-## 05 脚本大纲确认
+## 历史兼容：脚本大纲确认
 
 ### 先看能不能拍
 
@@ -1003,7 +1003,7 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
 
 {md_numbered(outline)}
 
-### 给06的生成输入
+### 制作包生成输入
 
 {generation_input}
 """)
@@ -1022,7 +1022,7 @@ def render_topic_package(topic: dict[str, Any], output_root: Path, run_date: str
         "golden_lines": golden_lines(topic),
         "core_viewpoint": viewpoint,
         "outline_segments": outline,
-        "generation_input_06": generation_input,
+        "production_context": generation_input,
         "key_evidence": key_evidence_items(topic, validation),
         "p0_todos": shooting_reminder_items(validation),
         "reader_summary": f"{status}｜{template}｜{topic.get('core_thesis')}",
@@ -1420,12 +1420,13 @@ def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_
         "core_thesis": topic.get("core_thesis"),
         "core_viewpoint": core_viewpoint(topic, validation),
         "outline_segments": outline,
-        "generation_input_06": generation_input_for_06(topic, template, template_reason, validation, private_cases),
+        "production_context": generation_input_for_06(topic, template, template_reason, validation, private_cases),
         "opening_hook": full_script_opening(topic, validation),
         "reader_summary": f"{qa_status}｜{template}｜{full_script_opening(topic, validation)}",
         "qa_status": qa_status,
         "qa_issues": qa_issues,
         "p0_todos": shooting_reminder_items(validation),
+        "release_reminders": release_reminder_items(validation),
         "evidence_gaps": validation.evidence_gaps,
         "fact_check_points": validation.fact_check_points,
         "notes": validation.notes,

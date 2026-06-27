@@ -3,10 +3,10 @@
 
 This is the post-selection step:
 
-04 进入Brief + 我的制作补充 -> local full_script_execution_package.md -> light 05 record.
+04 进入Brief + 我的制作补充 -> local full_script_execution_package.md -> light 06 script package record.
 
-It does not split 06 task rows yet. The user-facing artifact is the local
-Markdown package; Feishu keeps only the index and short production fields.
+It does not split production tasks yet. The user-facing artifact is the local
+Markdown package; Feishu 06 keeps only status, path, reminders, and QA.
 """
 from __future__ import annotations
 
@@ -31,16 +31,17 @@ GLOBAL_AUSTIN_SKILL_DIR = Path.home() / ".codex" / "skills" / "austin-no-overtim
 REPO_AUSTIN_SKILL_DIR = ROOT / "skills" / "austin-no-overtime-scripting"
 OUTPUT_ROOT = ROOT / "output" / "script_execution_packages"
 TOPIC_MARK_FIELD = "是否已生成脚本稿"
-BRIEF_FIELDS = [
+SCRIPT_PACKAGE_FIELDS = [
     "关联选题",
     "脚本状态",
     "推荐模板",
     "核心观点",
-    "视频大纲",
-    "给06的生成输入",
-    "一句话说明",
+    "开头钩子",
     "本地文档",
-    "是否可进入06",
+    "素材提醒",
+    "发布前核验",
+    "QA结果",
+    "是否可拍",
     "版本",
 ]
 
@@ -82,15 +83,15 @@ def load_austin_module() -> tuple[Any, Path]:
 def all_tables(token: str, app_token: str) -> dict[str, str]:
     by_name = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
     topic_table = resolve_table_id(by_name, "topic_decision")
-    brief_table = resolve_table_id(by_name, "brief_production")
+    script_package_table = resolve_table_id(by_name, "script_package")
     missing = []
     if not topic_table:
         missing.append(TABLES["topic_decision"])
-    if not brief_table:
-        missing.append(TABLES["brief_production"])
+    if not script_package_table:
+        missing.append(TABLES["script_package"])
     if missing:
         raise SystemExit(f"Missing required Feishu tables: {missing}")
-    return {"topic_decision": topic_table, "brief_production": brief_table}
+    return {"topic_decision": topic_table, "script_package": script_package_table}
 
 
 def fields_by_name(token: str, app_token: str, table_id: str) -> dict[str, dict[str, Any]]:
@@ -123,34 +124,49 @@ def read_topic_record(token: str, app_token: str, table_id: str, record_id: str)
     return record
 
 
-def package_to_brief_row(package: dict[str, Any]) -> dict[str, str]:
+def inline_list(items: Any, fallback: str) -> str:
+    values = [str(item).strip() for item in (items or []) if str(item).strip()]
+    return "；".join(values) if values else fallback
+
+
+def qa_items_from_package(package: dict[str, Any]) -> list[str]:
+    qa_issues = [str(item).strip() for item in (package.get("qa_issues") or []) if str(item).strip()]
+    if qa_issues:
+        return qa_issues
+    values: list[str] = []
+    for key in ("missing_required", "evidence_gaps", "notes"):
+        values.extend(str(item).strip() for item in (package.get(key) or []) if str(item).strip())
+    return values
+
+
+def package_to_script_package_row(package: dict[str, Any]) -> dict[str, str]:
     qa_status = str(package.get("qa_status") or "revise")
     if qa_status == "pass":
         script_status = "已生成完整脚本包"
-        can_enter = "是：可制作；按提醒补素材/核验，可按需拆06任务"
+        can_shoot = "是：可拍；按素材提醒和发布前核验处理"
     elif qa_status == "blocked":
         script_status = "完整脚本包-阻塞"
-        can_enter = "否：先补字段"
+        can_shoot = "否：先补字段"
     else:
         script_status = "完整脚本包-待修订"
-        can_enter = "否：先补关键判断或证据"
-    outline = package.get("outline_segments") or []
-    issues = package.get("qa_issues") or []
+        can_shoot = "否：先修订关键判断或证据"
+    issues = qa_items_from_package(package)
     return {
         "关联选题": str(package.get("topic_title") or ""),
         "脚本状态": script_status,
         "推荐模板": str(package.get("recommended_template") or ""),
         "核心观点": str(package.get("core_viewpoint") or package.get("core_thesis") or ""),
-        "视频大纲": "\n".join(f"{idx}. {item}" for idx, item in enumerate(outline, 1)),
-        "给06的生成输入": str(package.get("generation_input_06") or ""),
-        "一句话说明": "；".join(str(item) for item in issues[:3])[:500] if issues else str(package.get("opening_hook") or "")[:500],
+        "开头钩子": str(package.get("opening_hook") or "")[:500],
         "本地文档": str(package.get("document_path") or package.get("output_dir") or ""),
-        "是否可进入06": can_enter,
+        "素材提醒": inline_list(package.get("p0_todos"), "无P0素材缺口"),
+        "发布前核验": inline_list(package.get("release_reminders") or package.get("fact_check_points"), "无额外事实核验点"),
+        "QA结果": f"{qa_status}｜{inline_list(issues, '可进入拍摄准备')}"[:1000],
+        "是否可拍": can_shoot,
         "版本": str(package.get("version") or ""),
     }
 
 
-def create_brief_record(token: str, app_token: str, table_id: str, row: dict[str, str]) -> str:
+def create_script_package_record(token: str, app_token: str, table_id: str, row: dict[str, str]) -> str:
     payload = feishu.request_json(
         "POST",
         f"/bitable/v1/apps/{app_token}/tables/{table_id}/records",
@@ -172,7 +188,7 @@ def mark_topic_generated(token: str, app_token: str, table_id: str, record_id: s
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--record-id", required=True, help="Feishu 04 record_id to render.")
-    parser.add_argument("--write-feishu", action="store_true", help="Create a light 05 record and mark the 04 topic generated.")
+    parser.add_argument("--write-feishu", action="store_true", help="Create a light 06 script package record and mark the 04 topic generated.")
     parser.add_argument("--output-root", default=str(OUTPUT_ROOT), help="Local output root.")
     args = parser.parse_args()
 
@@ -186,13 +202,13 @@ def main() -> int:
     austin, skill_dir = load_austin_module()
     topic = austin.normalize_topic(topic_record.get("fields", {}), record_id=args.record_id)
     package = austin.render_full_execution_package(topic, output_root=Path(args.output_root), run_date=today_slug())
-    brief_row = package_to_brief_row(package)
+    script_package_row = package_to_script_package_row(package)
 
-    created_brief_id = ""
+    created_script_package_id = ""
     if args.write_feishu:
         ensure_text_fields(token, app_token, table_ids["topic_decision"], [TOPIC_MARK_FIELD])
-        ensure_text_fields(token, app_token, table_ids["brief_production"], BRIEF_FIELDS)
-        created_brief_id = create_brief_record(token, app_token, table_ids["brief_production"], brief_row)
+        ensure_text_fields(token, app_token, table_ids["script_package"], SCRIPT_PACKAGE_FIELDS)
+        created_script_package_id = create_script_package_record(token, app_token, table_ids["script_package"], script_package_row)
         mark_topic_generated(token, app_token, table_ids["topic_decision"], args.record_id)
 
     print(json.dumps({
@@ -206,9 +222,9 @@ def main() -> int:
             "production_direction": topic.get("production_direction"),
         },
         "package": package,
-        "brief_record": brief_row,
-        "created_brief_id": created_brief_id,
-        "note": "06 execution package is a local Markdown artifact; Feishu 05 only stores a light index.",
+        "script_package_record": script_package_row,
+        "created_script_package_id": created_script_package_id,
+        "note": "06 script package is a local Markdown artifact plus a light Feishu 06 record. No 05 record or task split is created.",
     }, ensure_ascii=False, indent=2))
     return 0
 
