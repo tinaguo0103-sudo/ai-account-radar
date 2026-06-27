@@ -4,7 +4,7 @@
 
 它接收飞书开放平台的 `card.action.trigger` 事件，把用户在卡片里勾选的选题回写到 `04 分析与选题`，并在有选中记录时继续发送“制作方向补充卡”，替代本机常驻 `serve-long-connection`。
 
-`06 完整脚本与制作包` 不在腾讯云生成。当前生产路径是本机 launchd 定时运行 `scripts/codex_script_package_runner.py`，由本机 `codex exec` 和全局私有 Skill 生成完整 Markdown，再写入飞书 `06` 的轻量记录。
+`06 完整脚本与制作包` 不在腾讯云生成。当前生产路径是 Codex App automation `ai-06` 定时运行 `scripts/codex_script_package_runner.py`，由本机 `codex exec` 和全局私有 Skill 生成完整 Markdown，再写入飞书 `06` 的轻量记录。
 
 ## 卡片 receiver 做什么
 
@@ -210,7 +210,7 @@ FEISHU_TENCENT_SCF_URL=https://你的腾讯云SCF函数URL
 
 - 本机 `serve-long-connection --write` 只作为开发调试兜底。
 - 生产点击回写走腾讯云 SCF。
-- 生产脚本包生成走本机 launchd + `codex_script_package_runner.py`，因为这一步需要 Codex 和全局私有 Skill。
+- 生产脚本包生成走 Codex App automation + `codex_script_package_runner.py`，因为这一步需要 Codex 和全局私有 Skill。
 - 本机 `content_ops_pipeline.py --write-feishu` 只作为确定性补跑、对比和调试；高质量自动生成优先走 `codex_script_package_runner.py`。
 
 ## 后续可增强

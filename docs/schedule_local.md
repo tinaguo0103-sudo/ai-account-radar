@@ -1,48 +1,28 @@
-# macOS 本机定时运行说明
+# Codex 本机定时运行说明
 
 当前正式脚本包生成走本机定时。原因是 `06 完整脚本与制作包` 需要 Codex 和全局私有 Skill 参与，不能退化成纯模板代码。
 
 边界要清楚：
 
 - 卡片点击回写仍由腾讯云 SCF receiver 承接。
-- `06` 脚本包生成由本机 `launchd` 定时运行 `scripts/codex_script_package_runner.py`。
+- `06` 脚本包生成由 Codex App automation `ai-06` 定时运行 `scripts/codex_script_package_runner.py`。
 - runner 先扫描飞书 `04`，只有存在待生成记录时才调用 `codex exec`，不会空跑消耗 LLM。
 - 自动队列默认和卡片有效期一致，只扫近 5 天推荐记录，并排除明显测试标题；旧记录或测试记录要用 `--record-id` / `--include-test-records` 手动补跑。
 - 锁屏但 Mac 不睡眠、不断网时可以跑；睡眠、关机、断网时不会跑，恢复后等下一次定时触发或手动补跑。
 
-## 1. 安装本机 06 生成定时任务
+## 1. 当前生产定时任务
 
-默认每 30 分钟扫描一次，每次最多生成 2 条：
+当前已创建 Codex App automation：
 
-```bash
-python3 scripts/install_codex_script_package_launchd.py --interval-minutes 30 --limit 2
-```
+- ID：`ai-06`
+- 名称：`AI账号 06脚本包生成`
+- 频率：每小时一次
+- 工作区：`/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar`
+- 命令：`python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5`
 
-如果只想安装但不立刻触发：
+`launchd` 方案已不作为生产路径。原因是项目目录在 Desktop 下，macOS TCC 会阻止后台 `/usr/bin/python3` 打开脚本，日志表现为 `Operation not permitted`。保留 `scripts/install_codex_script_package_launchd.py` 只作为以后迁移到非 Desktop 路径后的备用方案。
 
-```bash
-python3 scripts/install_codex_script_package_launchd.py --interval-minutes 30 --limit 2 --no-run-at-load
-```
-
-卸载：
-
-```bash
-python3 scripts/install_codex_script_package_launchd.py --uninstall
-```
-
-检查状态：
-
-```bash
-launchctl print gui/$(id -u)/com.austin.ai-account-radar.codex-script-packages
-```
-
-立即手动触发 launchd：
-
-```bash
-launchctl kickstart -k gui/$(id -u)/com.austin.ai-account-radar.codex-script-packages
-```
-
-不经过 launchd，直接手动跑：
+手动重跑：
 
 ```bash
 python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5
@@ -54,7 +34,15 @@ python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-ag
 python3 scripts/codex_script_package_runner.py --skip-codex --limit 2 --max-age-days 5
 ```
 
+指定单条生成：
+
+```bash
+python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>
+```
+
 ## 2. 日常采集和选题
+
+当前 `ai-06` 只负责生成 `06`，不会生成新选题，也不会发送第一张选题卡。
 
 在项目目录运行：
 
@@ -101,7 +89,7 @@ python3 scripts/editorial_skill_runner.py \
 - 不写入被淘汰的调试候选。
 - 不新增业务表。
 - 不自动发布。
-- 定时采集/选题阶段不生成完整成稿；已确认选题的口播稿与执行包由本机 Codex 定时 runner 生成。
+- 定时采集/选题阶段不生成完整成稿；已确认选题的口播稿与执行包由 Codex App automation 生成。
 - 不强抓抖音、小红书、视频号。
 
 ## 4. 所需环境变量
@@ -125,8 +113,6 @@ output/logs/daily_pipeline_YYYY-MM-DD.json
 
 ```text
 output/logs/codex_script_package_runner_YYYY-MM-DD.log
-output/logs/launchd_codex_script_packages.out.log
-output/logs/launchd_codex_script_packages.err.log
 ```
 
 常见处理：
@@ -135,7 +121,7 @@ output/logs/launchd_codex_script_packages.err.log
 - 飞书环境变量缺失：补齐 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_BASE_APP_TOKEN` 后重跑。
 - 飞书权限不足：检查自建应用是否有多维表格读写权限。
 - Codex 失败：确认 Codex 桌面端已登录，`/Applications/Codex.app/Contents/Resources/codex exec` 可在终端运行。
-- 定时不触发：确认 Mac 没有睡眠，检查 `launchctl print` 和 launchd stderr 日志。
+- 定时不触发：确认 Mac 没有睡眠，检查 Codex App automation `ai-06` 是否处于 ACTIVE。
 
 ## 6. 手动重跑
 

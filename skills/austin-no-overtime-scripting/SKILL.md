@@ -67,9 +67,9 @@ full_script_execution_package.md
 
 ## 资源使用
 
-- 无人值守批量生成：本机 launchd 定时运行 `scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5`，由本机 `codex exec` 调用全局私有 Skill 生成完整包。
-- 本机确定性补跑/对比：运行仓库脚本 `scripts/content_ops_pipeline.py --write-feishu`。
-- 从指定 `04` 记录生成单条执行包：运行 `scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`。
+- 无人值守批量生成：Codex App automation `ai-06` 定时运行 `scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5`，由本机 `codex exec` 调用全局私有 Skill 生成完整包。
+- 从指定 `04` 记录立即生成单条执行包：运行 `scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>`。
+- 本机确定性补跑/对比：仅调试旧模板输出时运行 `scripts/content_ops_pipeline.py --write-feishu` 或 `scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`。
 - 只校验 Topic Card：运行 `scripts/validate_topic_card.py`。
 - 汇总某天本地执行包：运行 `scripts/merge_daily_index.py`。
 - 调整 Austin 真人口播风格：修改独立 Skill `austin-voice-scriptwriter`。

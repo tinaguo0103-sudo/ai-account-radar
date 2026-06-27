@@ -124,13 +124,13 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `scripts/learn_from_topic_selection.py`：读取 `04` 中用户已经改过的状态和原因标签，生成待确认的选题偏好学习摘要；默认只学习最近一次正式运行批次。建议日常使用 `--mark-pending-confirm`，先把样本标为 `待确认学习`。只有用户确认后运行 `--approve-latest`，`editorial_skill_runner.py` 才会读取已确认摘要并带入下一轮主编判断。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并准备 `06 完整脚本与制作包`。
 - `scripts/codex_script_package_runner.py`：本机 Codex 定时生成器；从 `04 分析与选题` 读取已确认选题和制作方向补充，默认只处理近 5 天推荐记录并排除明显测试标题，调用本机 `codex exec` 与全局私有 Skill 生成 `full_script_execution_package.md`，写入 `06 完整脚本与制作包` 轻量记录，并把原 `04` 标记为已生成。
-- `scripts/install_codex_script_package_launchd.py`：安装/卸载 macOS launchd 定时任务，默认每 30 分钟扫描一次待生成脚本包。
+- `scripts/install_codex_script_package_launchd.py`：历史备用的 macOS launchd 安装脚本。当前生产不使用 launchd，因为 Desktop 路径会触发 macOS TCC 后台权限拦截。
 - `scripts/content_ops_pipeline.py`：本机确定性补跑/对比脚本；从 `04 分析与选题` 读取已确认选题和制作方向补充，调用 Austin不加班脚本Skill 生成 `full_script_execution_package.md`，并把轻量记录写入 `06 完整脚本与制作包`；默认 dry-run 不落本地文件。
 - `scripts/generate_script_execution_package.py`：从指定 `04` 记录生成单条 `full_script_execution_package.md`，并可回写 `06 完整脚本与制作包` 的轻量记录。它用于单条真实测试或补跑，不自动拆制作任务。
 - `scripts/sync_austin_scripting_skill.py`：把仓库公开脱敏版 `skills/austin-no-overtime-scripting/` 单向安装到全局 Codex Skills。只支持“仓库脱敏版 -> 全局安装”，不提供全局私有版回写仓库；已有全局 Skill 时默认拒绝覆盖，避免敏感素材误提交。
 - `scripts/simplify_feishu_workspace.py`：按当前白名单清理飞书 `03/04` 字段；`04` 会保留挑选卡片、决策看板、证据和学习相关视图。
 - `output/`：运行后生成 CSV 和 Excel。
-- `docs/schedule_local.md`：macOS 本机定时运行说明；当前只记录，不启用定时任务。
+- `docs/schedule_local.md`：Codex App 本机定时运行说明；当前 `06` 生成由 automation `ai-06` 承接。
 - `docs/feishu_topic_selection_v0_3.md`：`04 分析与选题` 的飞书原生挑选台说明，包含卡片/看板/学习字段和自动化边界。
 - `docs/feishu_interactive_topic_card.md`：飞书交互式选题速选卡说明；用于解决卡片视图字段截断、逐条点开太慢的问题。
 - `prompt_templates.md`：对标分析、热点分析、转选题、生成 Brief 的 Prompt。
@@ -141,7 +141,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 
 ## Austin不加班脚本Skill
 
-`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写 `05 Brief与制作`。选题确认并补充制作方向后，正式无人值守路径由本机 launchd 定时运行 `scripts/codex_script_package_runner.py`，通过本机 `codex exec` 和全局私有 Skill 生成 `06 完整脚本与制作包`。完整内容统一落到单一主文档 `full_script_execution_package.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA；飞书 `06` 只保存轻量记录和本地文档路径。
+`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写 `05 Brief与制作`。选题确认并补充制作方向后，正式无人值守路径由 Codex App automation `ai-06` 定时运行 `scripts/codex_script_package_runner.py`，通过本机 `codex exec` 和全局私有 Skill 生成 `06 完整脚本与制作包`。完整内容统一落到单一主文档 `full_script_execution_package.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA；飞书 `06` 只保存轻量记录和本地文档路径。
 
 运行时规则：
 
@@ -573,7 +573,7 @@ python3 scripts/refresh_console_daily.py
 
 日报输出在 `output/daily_reports/`。日报只回答“今天我该做什么”，不会在日报里生成完整成稿、自动发布、伪造数据或绕过平台限制。
 
-本机定时运行是当前 06 生成的生产路径。定时器只在有待生成记录时调用 Codex；锁屏但不睡眠、不断网时可以跑，睡眠、关机或断网时不会跑。
+Codex App 本机定时运行是当前 06 生成的生产路径。定时器只在有待生成记录时调用 Codex；锁屏但不睡眠、不断网时可以跑，睡眠、关机或断网时不会跑。
 
 说明：脚本会确保核心视图存在。`06 完整脚本与制作包` 第一版视图包括 `脚本包后台`、`可拍脚本包`、`待修订脚本包`。如果飞书 OpenAPI 不支持复杂筛选条件，先只创建视图名，筛选规则写在 README 和规则表里。
 
