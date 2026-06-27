@@ -3,7 +3,7 @@
 
 This is the post-selection step:
 
-04 进入Brief + 我的制作补充 -> local full_script_execution_package.md -> light 06 script package record.
+04 已确认选题 + 我的制作补充 -> local full_script_execution_package.md -> light 06 script package record.
 
 It does not split production tasks yet. The user-facing artifact is the local
 Markdown package; Feishu 06 keeps only status, path, reminders, and QA.

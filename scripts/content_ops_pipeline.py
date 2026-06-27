@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Create Austin v0.6 script packages from approved topics.
 
-Default mode is dry-run. With --write-feishu, reads 04 分析与选题 records whose
-status is 进入Brief or 本周做, renders a single Austin full execution package,
+Default mode is dry-run. With --write-feishu, reads 04 分析与选题 records that are
+confirmed for script-package generation (legacy statuses: 进入Brief / 本周做),
+renders a single Austin full execution package,
 creates a light 06 完整脚本与制作包 record, then marks the topic as 已生成脚本稿.
 
 v0.6 skips the old 05 index layer. The user-facing artifact is

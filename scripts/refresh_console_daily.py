@@ -329,7 +329,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "工作区": "选题层",
             "状态": "固定导航",
             "数量/摘要": "今日候选池和选题决策区。",
-            "说明": "这里决定做、不做、暂存、进入 Brief 或本周做。",
+            "说明": "这里决定做、不做、暂存，或确认生成脚本包。",
             "下一步": "看 今日候选池 视图，决定 1 条。",
             "入口表": "04 分析与选题",
             "入口视图": "今日候选池",
@@ -386,7 +386,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "状态": "今日工作台",
             "数量/摘要": f"今日候选池 {stats['today_10_count']} 条，优先只推进 1 条。",
             "说明": f"最建议优先看：{stats['top_today_topic']}",
-            "下一步": "进入 04 今日候选池，选 1 条进入Brief或本周做。",
+            "下一步": "进入 04 今日候选池，选 1 条生成脚本包。",
             "入口表": "04 分析与选题",
             "入口视图": "今日候选池",
             "入口说明": links["04 分析与选题"],
@@ -398,7 +398,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "优先级": "高",
             "工作区": "分析与选题",
             "状态": "今日工作台",
-            "数量/摘要": f"{stats['topic_to_brief_count']} 条选题已标记进入Brief/本周做，等待生成完整口播稿与制作执行包。",
+            "数量/摘要": f"{stats['topic_to_script_count']} 条选题已确认生成脚本包，等待生成完整口播稿与制作执行包。",
             "说明": "daily_pipeline 只写入 04，不自动生成脚本包；由 content_ops_pipeline 直接生成本地 Markdown 并写入 06。",
             "下一步": "确认 04 状态后运行 content_ops_pipeline.py --write-feishu。",
             "入口表": "04 分析与选题",
@@ -557,7 +557,7 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
         return f"- {fields.get('名称/模块', '未命名资产')}：{fields.get('核心内容', '待补核心内容')}"
 
     actions = [
-        "先在 04 分析与选题 中处理高分待判断选题，至少选 1 条改为 进入Brief 或 本周做。",
+        "先在 04 分析与选题 中处理高分待判断选题，至少确认 1 条生成脚本包。",
         "对已确认推进的选题运行 content_ops_pipeline.py --write-feishu，直接生成 06 完整脚本与制作包。",
         "从本周可沉淀资产里选 1 个轻量资产，先做精简版，不追求完整大包。",
     ]
@@ -644,7 +644,7 @@ def main() -> int:
 
     pending_inbox = [r for r in inbox_records if r.get("fields", {}).get("处理状态") == "待分析"]
     high_topics = [r for r in topic_records if r.get("fields", {}).get("状态") == "待判断" and is_ab_or_high(r.get("fields", {}))]
-    topic_to_brief = [r for r in topic_records if r.get("fields", {}).get("状态") in {"进入Brief", "本周做"}]
+    topic_to_script = [r for r in topic_records if r.get("fields", {}).get("状态") in {"进入Brief", "本周做"}]
     script_package_ready = [r for r in script_package_records if str(r.get("fields", {}).get("是否可拍", "")).startswith("是")]
     script_package_revise = [
         r for r in script_package_records
@@ -661,7 +661,7 @@ def main() -> int:
         "pending_inbox_count": len(pending_inbox),
         "source_summary": summarize_sources(pending_inbox),
         "high_topic_count": len(high_topics),
-        "topic_to_brief_count": len(topic_to_brief),
+        "topic_to_script_count": len(topic_to_script),
         "script_package_count": len(script_package_records),
         "script_package_ready_count": len(script_package_ready),
         "script_package_revise_count": len(script_package_revise),

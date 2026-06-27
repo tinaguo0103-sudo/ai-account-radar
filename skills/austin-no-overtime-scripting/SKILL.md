@@ -1,6 +1,6 @@
 ---
 name: austin-no-overtime-scripting
-description: 将奥斯汀AI账号已确认选题、04工作流实验命题卡、Topic Card或制作方向补充，编排成完整口播稿与制作执行包。适用于 AI业务定调、真实工作流改造、AI导演工作流、非技术Agent实战、AI汽车与品牌增长现场、AI项目复盘。默认调用 austin-voice-scriptwriter 生成真人口播全文，并输出 full_script_execution_package.md；飞书 06 完整脚本与制作包只保存轻量记录，不再经过 05 中间层。不得用于自动发布、自动剪辑或替用户最终决定观点。
+description: 将奥斯汀AI账号已确认选题、04工作流实验命题卡、Topic Card或制作方向补充，编排成完整口播稿与制作执行包。适用于 AI业务定调、真实工作流改造、AI导演工作流、非技术Agent实战、AI汽车与品牌增长现场、AI项目复盘。默认调用 austin-voice-scriptwriter 生成真人口播全文，并输出 full_script_execution_package.md；飞书 06 完整脚本与制作包只保存轻量记录，不存在 05 中间层。不得用于自动发布、自动剪辑或替用户最终决定观点。
 ---
 
 # Austin不加班脚本Skill
@@ -13,7 +13,7 @@ description: 将奥斯汀AI账号已确认选题、04工作流实验命题卡、
 full_script_execution_package.md
 ```
 
-飞书 `06 完整脚本与制作包` 只保存状态、核心观点、开头钩子、本地文档路径、素材提醒、发布前核验和 QA，不再让用户先读 `05` 中间层。
+飞书 `06 完整脚本与制作包` 只保存状态、核心观点、开头钩子、本地文档路径、素材提醒、发布前核验和 QA，不再存在 `05` 中间层。
 
 ## 职责边界
 
@@ -21,7 +21,7 @@ full_script_execution_package.md
 2. 交互式选题卡负责让用户勾选要推进的题；第二张补充卡负责补“这条想怎么讲、用什么案例、不要讲什么”。
 3. `austin-voice-scriptwriter` 负责写接近 Austin 真人口播习惯的全文。
 4. 本 Skill 负责把口播全文编排成执行包：视频结构、分段口播、录屏/素材清单、剪辑交接、发布包草稿、QA。
-5. `05 Brief与制作` 是历史测试表，不再作为正式链路入口，也不再写入。
+5. 正式链路没有 `05 Brief与制作`，也不写任何中间索引表。
 6. `06 完整脚本与制作包` 是飞书轻量记录表；完整内容以本地 Markdown 为准。
 
 ## 核心原则
@@ -48,7 +48,7 @@ full_script_execution_package.md
 4. 读取全局私有 `austin-voice-scriptwriter`，生成口播全文；需要测试仓库脱敏镜像时必须显式设置 `AUSTIN_VOICE_SCRIPT_SKILL_DIR`。
 5. 生成 `full_script_execution_package.md`。
 6. 飞书 `06 完整脚本与制作包` 只写轻量记录：关联选题、脚本状态、推荐模板、核心观点、开头钩子、本地文档、素材提醒、发布前核验、QA结果、是否可拍、版本。
-7. 不自动拆拍摄、剪辑、发布任务；任务拆分以后单独设计，不塞回 `05`。
+7. 不自动拆拍摄、剪辑、发布任务；任务拆分以后单独设计，不恢复 `05` 中间层。
 
 ## 输出文档
 
