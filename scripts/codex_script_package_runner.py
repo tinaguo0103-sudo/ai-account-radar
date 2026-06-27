@@ -296,13 +296,12 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=int(os.getenv("CODEX_SCRIPT_PACKAGE_LIMIT", "2")), help="Max topics per run.")
     parser.add_argument("--timeout-seconds", type=int, default=int(os.getenv("CODEX_SCRIPT_PACKAGE_TIMEOUT", "900")), help="Timeout per Codex topic.")
     parser.add_argument("--max-age-days", type=int, default=int(os.getenv("CODEX_SCRIPT_PACKAGE_MAX_AGE_DAYS", "0")), help="Only auto-process records whose 推荐日期 is within this many days. 0 means no date filter.")
-    parser.add_argument("--only-today", action="store_true", help="Deprecated alias for --max-age-days 1. Ignored when --record-id is set.")
     parser.add_argument("--include-test-records", action="store_true", help="Allow obvious test-titled topics to be processed.")
     parser.add_argument("--skip-codex", action="store_true", help="Only list ready topics. Useful for scheduler health checks.")
     args = parser.parse_args()
 
     _lock = acquire_lock()
-    max_age_days = 1 if args.only_today else max(0, args.max_age_days)
+    max_age_days = max(0, args.max_age_days)
     initial_limit = 0 if max_age_days > 0 and not args.record_id else args.limit
     token, app_token, table_ids, records, topic_cards = load_ready_topics(args.record_id, initial_limit)
     if max_age_days > 0 and not args.record_id:
