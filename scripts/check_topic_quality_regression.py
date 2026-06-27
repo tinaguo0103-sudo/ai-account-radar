@@ -155,7 +155,7 @@ def contains_unqualified_any(text: str, terms: list[str]) -> list[str]:
     """Find terms unless the sentence is explicitly saying the evidence is missing."""
     value = text or ""
     hits: list[str] = []
-    negations = ["不能声称", "不能直接声称", "不能说", "不说", "不能证明", "不能假装", "不能展示", "不能当成", "没有", "未拿到", "没拿到", "缺少", "不含", "不是"]
+    negations = ["不能声称", "不能直接声称", "不声称", "不能说", "不说", "不能证明", "不能假装", "不能展示", "不能当成", "没有", "未拿到", "没拿到", "缺少", "缺的是", "不含", "不是"]
     for term in terms:
         start = value.find(term)
         if start < 0:
