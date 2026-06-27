@@ -1,0 +1,55 @@
+{
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "topic_title",
+    "recommended_template",
+    "core_viewpoint",
+    "opening_hook",
+    "material_reminders",
+    "release_checks",
+    "qa_status",
+    "qa_result",
+    "can_shoot",
+    "full_markdown"
+  ],
+  "properties": {
+    "topic_title": {
+      "type": "string"
+    },
+    "recommended_template": {
+      "type": "string"
+    },
+    "core_viewpoint": {
+      "type": "string"
+    },
+    "opening_hook": {
+      "type": "string"
+    },
+    "material_reminders": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "release_checks": {
+      "type": "array",
+      "items": {
+        "type": "string"
+      }
+    },
+    "qa_status": {
+      "type": "string",
+      "enum": ["pass", "revise", "blocked"]
+    },
+    "qa_result": {
+      "type": "string"
+    },
+    "can_shoot": {
+      "type": "string"
+    },
+    "full_markdown": {
+      "type": "string"
+    }
+  }
+}

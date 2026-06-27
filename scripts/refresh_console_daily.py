@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import time
 from collections import Counter
 from datetime import datetime
@@ -67,6 +68,23 @@ def now_cn() -> str:
 
 def today_slug() -> str:
     return datetime.now().strftime("%Y-%m-%d")
+
+
+def record_date(value: Any) -> str:
+    if isinstance(value, (int, float)):
+        timestamp = float(value)
+        if timestamp > 10_000_000_000:
+            timestamp = timestamp / 1000
+        return datetime.fromtimestamp(timestamp).date().isoformat()
+    match = re.search(r"\d{4}-\d{2}-\d{2}", str(value or ""))
+    return match.group(0) if match else ""
+
+
+def ready_for_script_today(record: dict[str, Any]) -> bool:
+    fields = record.get("fields", {})
+    status = str(fields.get("状态") or fields.get("推荐动作") or "")
+    already_generated = str(fields.get("是否已生成脚本稿", "")) == "是"
+    return status in {"进入Brief", "本周做"} and not already_generated and record_date(fields.get("推荐日期")) == today_slug()
 
 
 def legacy_sampler_log_is_official(path: Path) -> bool:
@@ -343,7 +361,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "工作区": "制作层",
             "状态": "固定导航",
             "数量/摘要": "保存已生成完整口播稿、制作执行包、本地文档路径、素材提醒和 QA。",
-            "说明": "这里承接被选中的选题；云端生成时完整内容看「完整脚本与执行包」，本机补跑时可看本地 Markdown。",
+            "说明": "这里承接被选中的选题；完整内容看本地 Markdown，飞书只保留摘要、路径、素材提醒和 QA。",
             "下一步": "打开脚本包后台，按本地文档继续拍摄准备。",
             "入口表": "06 完整脚本与制作包",
             "入口视图": "脚本包后台",
@@ -398,9 +416,9 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "优先级": "高",
             "工作区": "分析与选题",
             "状态": "今日工作台",
-            "数量/摘要": f"{stats['topic_to_script_count']} 条选题已确认生成脚本包，等待生成完整口播稿与制作执行包。",
-            "说明": "daily_pipeline 只写入 04；腾讯云 SCF 定时 runner 会自动生成 06，必要时可本机补跑。",
-            "下一步": "等待腾讯云定时 runner；急用时再运行 content_ops_pipeline.py --write-feishu 补跑。",
+            "数量/摘要": f"今日 {stats['topic_to_script_count']} 条选题已确认生成脚本包，等待生成完整口播稿与制作执行包。",
+            "说明": "daily_pipeline 只写入 04；本机 Codex 定时器会自动生成 06，只有有待生成记录时才调用 Codex。",
+            "下一步": "等待本机 Codex 定时器；急用时运行 codex_script_package_runner.py --write-feishu --limit 2 --only-today。",
             "入口表": "04 分析与选题",
             "入口视图": "今日候选池",
             "入口说明": links["04 分析与选题"],
@@ -413,7 +431,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "工作区": "脚本与制作",
             "状态": "今日工作台",
             "数量/摘要": f"{stats['script_package_count']} 个完整脚本与制作包；{stats['script_package_ready_count']} 个标记可拍。",
-            "说明": "云端生成看 06 的完整脚本字段；本机补跑看本地 Markdown。",
+            "说明": "完整脚本统一看 06 里的本地文档路径；飞书只放轻量摘要和提醒。",
             "下一步": "进入 06 脚本包后台，打开本地文档继续制作。",
             "入口表": "06 完整脚本与制作包",
             "入口视图": "脚本包后台",
@@ -558,7 +576,7 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
 
     actions = [
         "先在 04 分析与选题 中处理高分待判断选题，至少确认 1 条生成脚本包。",
-        "等待腾讯云 SCF 定时 runner 生成 06；急用时再本机运行 content_ops_pipeline.py --write-feishu 补跑。",
+        "等待本机 Codex 定时器生成 06；急用时运行 codex_script_package_runner.py --write-feishu --limit 2 --only-today。",
         "从本周可沉淀资产里选 1 个轻量资产，先做精简版，不追求完整大包。",
     ]
     if stats["source_errors"] != ["暂无异常"]:
@@ -644,7 +662,7 @@ def main() -> int:
 
     pending_inbox = [r for r in inbox_records if r.get("fields", {}).get("处理状态") == "待分析"]
     high_topics = [r for r in topic_records if r.get("fields", {}).get("状态") == "待判断" and is_ab_or_high(r.get("fields", {}))]
-    topic_to_script = [r for r in topic_records if r.get("fields", {}).get("状态") in {"进入Brief", "本周做"}]
+    topic_to_script = [r for r in topic_records if ready_for_script_today(r)]
     script_package_ready = [r for r in script_package_records if str(r.get("fields", {}).get("是否可拍", "")).startswith("是")]
     script_package_revise = [
         r for r in script_package_records

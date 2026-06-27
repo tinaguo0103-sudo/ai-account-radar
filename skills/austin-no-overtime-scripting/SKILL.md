@@ -13,7 +13,7 @@ description: 将奥斯汀AI账号已确认选题、04工作流实验命题卡、
 full_script_execution_package.md
 ```
 
-飞书 `06 完整脚本与制作包` 保存状态、核心观点、开头钩子、文档入口、素材提醒、发布前核验和 QA，不再存在 `05` 中间层。云端定时 runner 第一版会把完整 Markdown 暂存到 `06` 字段 `完整脚本与执行包`；本机私有 Skill 路径仍输出本地 `full_script_execution_package.md`。
+飞书 `06 完整脚本与制作包` 保存状态、核心观点、开头钩子、本地文档入口、素材提醒、发布前核验和 QA，不再存在 `05` 中间层。完整内容统一输出到本地 `full_script_execution_package.md`，不要塞进飞书长字段。
 
 ## 职责边界
 
@@ -22,7 +22,7 @@ full_script_execution_package.md
 3. `austin-voice-scriptwriter` 负责写接近 Austin 真人口播习惯的全文。
 4. 本 Skill 负责把口播全文编排成执行包：视频结构、分段口播、录屏/素材清单、剪辑交接、发布包草稿、QA。
 5. 正式链路没有 `05 Brief与制作`，也不写任何中间索引表。
-6. `06 完整脚本与制作包` 是正式制作包记录表；本机私有 Skill 输出以本地 Markdown 为准，云端无人值守 runner 输出以 `完整脚本与执行包` 字段为准。
+6. `06 完整脚本与制作包` 是正式制作包记录表；完整内容以本地 Markdown 为准，飞书只保存摘要和路径。
 
 ## 核心原则
 
@@ -47,7 +47,7 @@ full_script_execution_package.md
 3. 判断制作模板：`Skill公开型`、`热点业务转译型`、`认知定调型`、`真实工作流改造型`、`Agent实战型`、`项目复盘型`。
 4. 读取全局私有 `austin-voice-scriptwriter`，生成口播全文；需要测试仓库脱敏镜像时必须显式设置 `AUSTIN_VOICE_SCRIPT_SKILL_DIR`。
 5. 生成 `full_script_execution_package.md`。
-6. 飞书 `06 完整脚本与制作包` 写记录字段：关联选题、脚本状态、推荐模板、核心观点、开头钩子、本地文档、完整脚本与执行包、素材提醒、发布前核验、QA结果、是否可拍、版本。
+6. 飞书 `06 完整脚本与制作包` 写记录字段：关联选题、脚本状态、推荐模板、核心观点、开头钩子、本地文档、素材提醒、发布前核验、QA结果、是否可拍、版本。
 7. 不自动拆拍摄、剪辑、发布任务；任务拆分以后单独设计，不恢复 `05` 中间层。
 
 ## 输出文档
@@ -63,12 +63,12 @@ full_script_execution_package.md
 7. `发布包草稿`：标题、封面大字、置顶评论。
 8. `QA`：`pass/revise/blocked`、原因和拍摄/发布前提醒。
 
-不要恢复 00-08 多文件散包。本机私有 Skill 路径不要把完整内容塞进飞书长文本；云端定时 runner 因为没有本地 Markdown 阅读入口，第一版允许把完整 Markdown 暂存到 `06 / 完整脚本与执行包`，后续可迁移到 COS 或飞书云文档。
+不要恢复 00-08 多文件散包。不要把完整内容塞进飞书长文本；飞书只作为索引和状态台，完整阅读入口是本地 Markdown。
 
 ## 资源使用
 
-- 无人值守批量生成：腾讯云 SCF `script-package-runner` 定时扫描 `04` 并写入 `06 完整脚本与制作包`。
-- 本机高质量私有版补跑：运行仓库脚本 `scripts/content_ops_pipeline.py --write-feishu`。
+- 无人值守批量生成：本机 launchd 定时运行 `scripts/codex_script_package_runner.py --write-feishu --limit 2 --only-today`，由本机 `codex exec` 调用全局私有 Skill 生成完整包。
+- 本机确定性补跑/对比：运行仓库脚本 `scripts/content_ops_pipeline.py --write-feishu`。
 - 从指定 `04` 记录生成单条执行包：运行 `scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`。
 - 只校验 Topic Card：运行 `scripts/validate_topic_card.py`。
 - 汇总某天本地执行包：运行 `scripts/merge_daily_index.py`。

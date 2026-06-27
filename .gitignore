@@ -27,6 +27,7 @@ feishu_created_base.json
 # Generated runtime outputs
 .external/
 .local_services/
+.runtime/
 .worktrees/
 output/
 output_no_fetch_test/

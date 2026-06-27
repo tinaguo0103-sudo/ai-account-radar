@@ -10,9 +10,9 @@ AIHOT / 公众号全文 / 抖音主页标题文案 / URL投喂
 -> 04 分析与选题
 -> 交互式选题卡：选择要推进的选题
 -> 制作方向补充卡：补真实案例、讲法、边界和不要讲的内容
--> 腾讯云 SCF 定时任务：生成完整脚本与制作包
+-> 本机 launchd 定时任务：调用 Codex 生成完整脚本与制作包
 -> 06 完整脚本与制作包
--> 字段「完整脚本与执行包」或后续 COS/云文档链接
+-> 本地 full_script_execution_package.md
 -> 人工拍摄、剪辑、发布
 -> 07 资产与复盘
 ```
@@ -20,17 +20,30 @@ AIHOT / 公众号全文 / 抖音主页标题文案 / URL投喂
 ## 表边界
 
 - `04 分析与选题`：负责判断这条内容为什么值得做、切入点是什么、验证方式是什么、能沉淀什么资产。
-- `06 完整脚本与制作包`：保存脚本包记录。云端正式路径下，完整 Markdown 暂存在 `完整脚本与执行包` 字段；本机补跑路径下，完整内容仍可看本地 Markdown。
+- `06 完整脚本与制作包`：保存脚本包记录、摘要和本地文档路径；完整正文统一看本地 `full_script_execution_package.md`，不塞进飞书长字段。
 - `07 资产与复盘`：发布后沉淀复盘、可复刻角度和下一轮选题规则。
 
 ## 生成脚本包
 
 正式无人值守生成：
 
-- 腾讯云 SCF `script-package-runner` 每天定时扫描 `04`。
+- macOS `launchd` 定时运行 `scripts/codex_script_package_runner.py`。
+- runner 先扫描 `04`，只有发现待生成记录时才调用本机 `codex exec`。
 - 只处理状态为 `进入Brief` / `本周做`，且 `是否已生成脚本稿 != 是` 的记录。
 - 生成成功后创建 `06 完整脚本与制作包`，并把原 `04` 记录标记为 `是否已生成脚本稿 = 是`。
-- 完整 Markdown 第一版写入 `06` 字段 `完整脚本与执行包`；后续可迁移到腾讯 COS 或飞书云文档。
+- 完整 Markdown 写入本地 `output/script_execution_packages/YYYY-MM-DD/.../full_script_execution_package.md`；飞书 `06` 只保存摘要、路径、素材提醒、发布前核验和 QA。
+
+立即补跑：
+
+```bash
+python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --only-today
+```
+
+只检查队列、不调用 Codex：
+
+```bash
+python3 scripts/codex_script_package_runner.py --skip-codex --limit 2 --only-today
+```
 
 本机批量补跑/对比：
 
@@ -44,7 +57,7 @@ python3 scripts/content_ops_pipeline.py --write-feishu
 python3 scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu
 ```
 
-本机补跑后会发生三件事：
+本机生成后会发生三件事：
 
 - 本地生成 `output/script_execution_packages/YYYY-MM-DD/.../full_script_execution_package.md`。
 - 飞书 `06 完整脚本与制作包` 新增一条轻量记录。
@@ -52,9 +65,9 @@ python3 scripts/generate_script_execution_package.py --record-id <04_record_id> 
 
 ## 自动化边界
 
-- 腾讯云卡片 receiver 负责接收第一张选题卡和第二张制作方向补充卡，并写回 `04`。
-- 腾讯云定时 runner 负责把已确认选题生成 `06 完整脚本与制作包`。
-- 云端第一版不依赖本机全局 Skill；如果要注入更完整的私有风格和案例，后续通过腾讯云环境变量或 COS 私有配置文件接入。
+- 腾讯云卡片 receiver 只负责接收第一张选题卡和第二张制作方向补充卡，并写回 `04`。
+- 本机 launchd 只负责定时运行 `codex_script_package_runner.py`；真正写作由本机已登录的 Codex CLI 完成。
+- 锁屏但不睡眠、不断网时可以运行；睡眠、关机、断网时不会运行，恢复后等下一次定时触发或手动补跑。
 - 本轮不做任务拆分、自动剪辑或自动发布；这些能力以后单独设计，不再恢复 `05` 中间层。
 
 ## QA 语义

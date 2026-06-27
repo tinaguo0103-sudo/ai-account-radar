@@ -7,7 +7,6 @@
   "scripts": {
     "start": "node scripts/local-server.mjs",
     "test": "node --test",
-    "package:tencent-scf": "mkdir -p dist && zip -j dist/tencent-scf-feishu-card-receiver.zip tencent-scf/index.js",
-    "package:tencent-scf:script-runner": "rm -rf dist/script-package-runner && mkdir -p dist/script-package-runner/src && cp src/script_package_runner.cjs dist/script-package-runner/src/script_package_runner.cjs && cp tencent-scf/script-package-runner/index.js dist/script-package-runner/index.js && cd dist/script-package-runner && zip -r ../tencent-scf-script-package-runner.zip index.js src"
+    "package:tencent-scf": "mkdir -p dist && zip -j dist/tencent-scf-feishu-card-receiver.zip tencent-scf/index.js"
   }
 }

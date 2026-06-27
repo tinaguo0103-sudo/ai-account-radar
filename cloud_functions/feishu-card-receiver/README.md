@@ -1,11 +1,10 @@
 # Feishu Card Receiver 腾讯云 SCF
 
-这个目录包含两类腾讯云 SCF 函数：
-
-1. `feishu-card-receiver`：`04 分析与选题` 交互式卡片的云端 receiver。
-2. `script-package-runner`：每天定时扫描 `04`，把已确认选题生成 `06 完整脚本与制作包`。
+这个目录只包含 `04 分析与选题` 交互式卡片的腾讯云 SCF receiver。
 
 它接收飞书开放平台的 `card.action.trigger` 事件，把用户在卡片里勾选的选题回写到 `04 分析与选题`，并在有选中记录时继续发送“制作方向补充卡”，替代本机常驻 `serve-long-connection`。
+
+`06 完整脚本与制作包` 不在腾讯云生成。当前生产路径是本机 launchd 定时运行 `scripts/codex_script_package_runner.py`，由本机 `codex exec` 和全局私有 Skill 生成完整 Markdown，再写入飞书 `06` 的轻量记录。
 
 ## 卡片 receiver 做什么
 
@@ -62,21 +61,6 @@ DRY_RUN=true
 - 本地测试可以设置 `DRY_RUN=true`，云端生产不要设置。
 - 当前版本不支持加密回调。如果飞书开放平台事件订阅启用了 Encrypt Key，需要先关闭事件加密，或后续补解密逻辑。
 
-`script-package-runner` 额外支持：
-
-```bash
-FEISHU_SCRIPT_PACKAGE_TABLE_ID=tbl_xxx
-AUSTIN_SCRIPT_PACKAGE_LIMIT=3
-AUSTIN_SCRIPT_PACKAGE_DRY_RUN=false
-```
-
-说明：
-
-- `FEISHU_SCRIPT_PACKAGE_TABLE_ID` 建议填写 `06 完整脚本与制作包` 的 table_id，减少定时函数每次查表。
-- `AUSTIN_SCRIPT_PACKAGE_LIMIT` 默认 3，表示每次最多生成 3 条，避免一次积压太多时超时。
-- `AUSTIN_SCRIPT_PACKAGE_DRY_RUN=true` 只扫描不写表，联调时使用；生产定时任务必须为 `false` 或不设置。
-- 云端没有本地文件系统作为阅读入口，第一版会把完整 Markdown 写入 `06` 字段 `完整脚本与执行包`，`本地文档` 字段写明“腾讯云SCF生成”。后续可接腾讯 COS 或飞书云文档。
-
 ## 卡片提交保护
 
 - 云函数不是常驻监听进程；每次用户点击卡片，飞书才调用一次腾讯云 SCF。
@@ -130,7 +114,7 @@ curl -sS http://127.0.0.1:8787 \
 
 ## 生产部署边界
 
-生产只走腾讯云 SCF。卡片 receiver 使用「事件函数 + 函数 URL」，脚本包 runner 使用「事件函数 + 定时触发器」。仓库不再保留其他云平台入口，避免部署路径分叉。
+卡片点击回写生产只走腾讯云 SCF。仓库不再保留其他云平台入口，避免部署路径分叉。
 
 这个包的核心文件是 `src/receiver.js`，腾讯云专用入口是 `tencent-scf/index.js`。本地 `npm start` 只用于开发调试，不作为生产 receiver。
 
@@ -192,78 +176,6 @@ FEISHU_VERIFICATION_TOKEN=xxx
 
 说明：`dist/` 是本地部署包输出目录，已被 `.gitignore` 忽略。
 
-## 腾讯云 SCF 部署：06 定时生成 Runner
-
-这个函数不需要函数 URL，也不接飞书开放平台事件。它由腾讯云「定时触发器」每天唤起。
-
-打包：
-
-```bash
-cd ai_account_radar/cloud_functions/feishu-card-receiver
-npm run package:tencent-scf:script-runner
-```
-
-上传包：
-
-```text
-dist/tencent-scf-script-package-runner.zip
-```
-
-控制台创建建议：
-
-- 函数类型：事件函数。
-- 运行环境：Node.js 20 或 Node.js 18。
-- 提交方法：本地上传 zip 包。
-- 执行方法：`index.main_handler`。
-- 触发器：定时触发器，例如每天 09:30 或每天 21:30。
-- 函数 URL：不需要开启。
-- 超时时间：建议先设 60 秒。
-- 内存：建议先设 256MB 或 512MB。
-
-生产环境变量至少填写：
-
-```bash
-FEISHU_APP_ID=cli_xxx
-FEISHU_APP_SECRET=xxx
-FEISHU_BASE_APP_TOKEN=xxx
-FEISHU_TOPIC_TABLE_ID=tbl_xxx
-FEISHU_SCRIPT_PACKAGE_TABLE_ID=tbl_xxx
-AUSTIN_SCRIPT_PACKAGE_LIMIT=3
-AUSTIN_SCRIPT_PACKAGE_DRY_RUN=false
-```
-
-本地最小验证：
-
-```bash
-cd ai_account_radar/cloud_functions/feishu-card-receiver
-npm test
-npm run package:tencent-scf:script-runner
-```
-
-上传前 dry-run 建议：
-
-```bash
-AUSTIN_SCRIPT_PACKAGE_DRY_RUN=true \
-FEISHU_APP_ID=cli_xxx \
-FEISHU_APP_SECRET=xxx \
-FEISHU_BASE_APP_TOKEN=xxx \
-node -e "const h=require('./src/script_package_runner.cjs'); h.runScriptPackageJob({}, process.env).then(r=>console.log(JSON.stringify(r,null,2)))"
-```
-
-正式行为：
-
-- 扫描 `04 分析与选题`。
-- 只处理状态为 `进入Brief / 本周做`，且 `是否已生成脚本稿 != 是` 的记录。
-- 为每条创建 `06 完整脚本与制作包` 记录。
-- 完整 Markdown 写入 `完整脚本与执行包`。
-- 创建成功后，把 `04` 的 `是否已生成脚本稿` 标记为 `是`。
-
-幂等边界：
-
-- 只有成功写入 06 后才标记 04。
-- 重复触发时，已标记 `是否已生成脚本稿 = 是` 的记录不会再次生成。
-- 如果中途失败，未标记的记录会在下一次定时触发时重试。
-
 ## 飞书开放平台配置
 
 1. 打开当前应用的飞书开放平台后台。
@@ -298,13 +210,12 @@ FEISHU_TENCENT_SCF_URL=https://你的腾讯云SCF函数URL
 
 - 本机 `serve-long-connection --write` 只作为开发调试兜底。
 - 生产点击回写走腾讯云 SCF。
-- 生产脚本包生成走腾讯云定时 runner。
-- 本机 `content_ops_pipeline.py --write-feishu` 只作为补跑、对比和私有 Skill 高质量版本调试，不作为无人值守生产定时入口。
+- 生产脚本包生成走本机 launchd + `codex_script_package_runner.py`，因为这一步需要 Codex 和全局私有 Skill。
+- 本机 `content_ops_pipeline.py --write-feishu` 只作为确定性补跑、对比和调试；高质量自动生成优先走 `codex_script_package_runner.py`。
 
 ## 后续可增强
 
 - 增加 Encrypt Key 解密。
 - 增加独立回调日志表。
 - 提交成功后自动触发选择学习。
-- 把 `06` 的完整 Markdown 从字段迁移到腾讯 COS 或飞书云文档。
-- 为云端 runner 增加私有风格/案例配置注入，减少云端保底版和本机私有 Skill 版本之间的表达差异。
+- 为第二张制作方向卡增加真正异步发送队列，减少飞书前端提交等待。
