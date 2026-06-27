@@ -343,7 +343,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "工作区": "制作层",
             "状态": "固定导航",
             "数量/摘要": "保存已生成完整口播稿、制作执行包、本地文档路径、素材提醒和 QA。",
-            "说明": "这里承接被选中的选题；完整内容看本地 Markdown，飞书只保留轻量记录。",
+            "说明": "这里承接被选中的选题；云端生成时完整内容看「完整脚本与执行包」，本机补跑时可看本地 Markdown。",
             "下一步": "打开脚本包后台，按本地文档继续拍摄准备。",
             "入口表": "06 完整脚本与制作包",
             "入口视图": "脚本包后台",
@@ -399,8 +399,8 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "工作区": "分析与选题",
             "状态": "今日工作台",
             "数量/摘要": f"{stats['topic_to_script_count']} 条选题已确认生成脚本包，等待生成完整口播稿与制作执行包。",
-            "说明": "daily_pipeline 只写入 04，不自动生成脚本包；由 content_ops_pipeline 直接生成本地 Markdown 并写入 06。",
-            "下一步": "确认 04 状态后运行 content_ops_pipeline.py --write-feishu。",
+            "说明": "daily_pipeline 只写入 04；腾讯云 SCF 定时 runner 会自动生成 06，必要时可本机补跑。",
+            "下一步": "等待腾讯云定时 runner；急用时再运行 content_ops_pipeline.py --write-feishu 补跑。",
             "入口表": "04 分析与选题",
             "入口视图": "今日候选池",
             "入口说明": links["04 分析与选题"],
@@ -413,7 +413,7 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "工作区": "脚本与制作",
             "状态": "今日工作台",
             "数量/摘要": f"{stats['script_package_count']} 个完整脚本与制作包；{stats['script_package_ready_count']} 个标记可拍。",
-            "说明": "完整内容以本地 Markdown 为准，飞书只看状态、路径和提醒。",
+            "说明": "云端生成看 06 的完整脚本字段；本机补跑看本地 Markdown。",
             "下一步": "进入 06 脚本包后台，打开本地文档继续制作。",
             "入口表": "06 完整脚本与制作包",
             "入口视图": "脚本包后台",
@@ -558,7 +558,7 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
 
     actions = [
         "先在 04 分析与选题 中处理高分待判断选题，至少确认 1 条生成脚本包。",
-        "对已确认推进的选题运行 content_ops_pipeline.py --write-feishu，直接生成 06 完整脚本与制作包。",
+        "等待腾讯云 SCF 定时 runner 生成 06；急用时再本机运行 content_ops_pipeline.py --write-feishu 补跑。",
         "从本周可沉淀资产里选 1 个轻量资产，先做精简版，不追求完整大包。",
     ]
     if stats["source_errors"] != ["暂无异常"]:

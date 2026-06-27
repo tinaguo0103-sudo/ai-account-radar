@@ -1,6 +1,13 @@
 # macOS 本机定时运行说明
 
-当前先不启用定时任务。这里仅记录以后确认稳定后如何开启。
+当前不把本机定时作为生产方案。本机锁屏但不睡眠时可以跑，睡眠、合盖、关机或断网时不可靠。
+
+正式无人值守链路已改为腾讯云 SCF：
+
+- 卡片点击回写：`cloud_functions/feishu-card-receiver` 的卡片 receiver。
+- 06 脚本包生成：`cloud_functions/feishu-card-receiver/src/script_package_runner.cjs` 对应的腾讯云定时 runner。
+
+这里仅保留本机采集、补跑和排障说明。
 
 ## 1. 日常正式运行
 
@@ -49,7 +56,7 @@ python3 scripts/editorial_skill_runner.py \
 - 不写入被淘汰的调试候选。
 - 不新增业务表。
 - 不自动发布。
-- 定时采集/选题阶段不生成完整成稿；已确认选题的口播稿与执行包由后续脚本生成。
+- 定时采集/选题阶段不生成完整成稿；已确认选题的口播稿与执行包由腾讯云 SCF 定时 runner 生成，本机脚本只做补跑。
 - 不强抓抖音、小红书、视频号。
 
 ## 3. 所需环境变量

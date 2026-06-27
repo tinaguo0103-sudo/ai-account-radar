@@ -17,7 +17,7 @@
 `00 主控台` 是唯一入口。每天先从这里看系统地图、`04 / 今日挑选卡片`、待生成脚本包和异常提示。
 
 - `04 分析与选题` 决定今天做什么：在 `今日挑选卡片` 里快速扫选题，确认哪些候选要生成脚本包，剩下的暂存或不做，并留下选择原因标签。
-- `06 完整脚本与制作包` 承接已确认选题：保留脚本包状态、本地文档路径、核心观点、开头钩子、素材提醒、发布前核验和 QA；完整口播稿与执行包优先看本地 Markdown。
+- `06 完整脚本与制作包` 承接已确认选题：保留脚本包状态、文档入口、核心观点、开头钩子、素材提醒、发布前核验和 QA；云端生成优先看 `完整脚本与执行包` 字段，本机补跑再看本地 Markdown。
 - `07 资产与复盘` 决定发完后是否复刻和资产化：看 24小时、72小时、7天反馈，判断是否改角度再发、沉淀清单/SOP/案例库。
 - `01 来源与采样`、`02 URL投喂入口`、`03 内容收件箱`、`99 规则与字典` 是后台或说明层，不需要每天打开。
 
@@ -123,7 +123,8 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `scripts/check_feishu_card_cloud_receiver.py`：不写表的健康检查脚本，用 `challenge` 校验腾讯云 SCF 函数 URL，并读一次 `04 分析与选题` 确认飞书凭证和表权限正常。
 - `scripts/learn_from_topic_selection.py`：读取 `04` 中用户已经改过的状态和原因标签，生成待确认的选题偏好学习摘要；默认只学习最近一次正式运行批次。建议日常使用 `--mark-pending-confirm`，先把样本标为 `待确认学习`。只有用户确认后运行 `--approve-latest`，`editorial_skill_runner.py` 才会读取已确认摘要并带入下一轮主编判断。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并准备 `06 完整脚本与制作包`。
-- `scripts/content_ops_pipeline.py`：从 `04 分析与选题` 读取已确认选题和制作方向补充，调用 Austin不加班脚本Skill 直接生成 `full_script_execution_package.md`，并把轻量记录写入 `06 完整脚本与制作包`；默认 dry-run 不落本地文件。
+- `cloud_functions/feishu-card-receiver/src/script_package_runner.cjs`：腾讯云 SCF 定时任务使用的云端 06 生成器；每天扫描 `04` 中已确认且未生成脚本稿的记录，创建 `06 完整脚本与制作包`，完整 Markdown 暂存到字段 `完整脚本与执行包`。
+- `scripts/content_ops_pipeline.py`：本机补跑/对比脚本；从 `04 分析与选题` 读取已确认选题和制作方向补充，调用 Austin不加班脚本Skill 直接生成 `full_script_execution_package.md`，并把轻量记录写入 `06 完整脚本与制作包`；默认 dry-run 不落本地文件。
 - `scripts/generate_script_execution_package.py`：从指定 `04` 记录生成单条 `full_script_execution_package.md`，并可回写 `06 完整脚本与制作包` 的轻量记录。它用于单条真实测试或补跑，不自动拆制作任务。
 - `scripts/sync_austin_scripting_skill.py`：把仓库公开脱敏版 `skills/austin-no-overtime-scripting/` 单向安装到全局 Codex Skills。只支持“仓库脱敏版 -> 全局安装”，不提供全局私有版回写仓库；已有全局 Skill 时默认拒绝覆盖，避免敏感素材误提交。
 - `scripts/simplify_feishu_workspace.py`：按当前白名单清理飞书 `03/04` 字段；`04` 会保留挑选卡片、决策看板、证据和学习相关视图。
@@ -139,7 +140,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 
 ## Austin不加班脚本Skill
 
-`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写 `05 Brief与制作`。选题确认并补充制作方向后，系统直接生成单一主文档 `full_script_execution_package.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA。飞书 `06 完整脚本与制作包` 只保留状态、核心信息、本地文档路径、素材提醒、发布前核验和 QA，完整内容以本地 Markdown 为主。
+`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写 `05 Brief与制作`。选题确认并补充制作方向后，正式无人值守路径由腾讯云 SCF 定时生成 `06 完整脚本与制作包`，完整 Markdown 暂存在 `完整脚本与执行包` 字段；本机私有 Skill 补跑仍会生成单一主文档 `full_script_execution_package.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA。
 
 运行时规则：
 
@@ -510,7 +511,7 @@ python3 scripts/sync_rules_dictionary.py --sync-feishu
 2. 如果想理解系统关系，再切到 `00 主控台 / 系统导航`，或看 `docs/system_map.md`。
 3. 优先看 `04 分析与选题 / 今日挑选卡片`，而不是看原始内容、粉丝数、点赞数或竞品报表。
 4. 进入 `04 分析与选题` 做选题决策：日常只需要确认哪些候选生成脚本包，剩下的暂存、归档或不做；系统内部仍兼容旧状态值 `进入Brief` / `本周做`，用于触发脚本包生成；尽量补一个 `选择原因标签`，方便后续学习你的判断逻辑。
-5. 对已确认推进的选题运行 `content_ops_pipeline.py --write-feishu`，直接生成本地 Markdown 和 `06 完整脚本与制作包` 记录。
+5. 对已确认推进的选题等待腾讯云 SCF 定时 runner 生成 `06 完整脚本与制作包`；急用时本机运行 `content_ops_pipeline.py --write-feishu` 补跑。
 6. 进入 `06 完整脚本与制作包` 看脚本状态、本地文档、素材提醒、发布前核验和 QA。
 7. 必要时打开 `02 URL投喂入口`，手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接；小红书、视频号、评论区和抖音主页批量抓取暂不支持。
 8. 不要每天看系统导航，也不需要每天打开 `01 来源与采样`、`02 URL投喂入口`、`03 内容收件箱` 和 `99 规则与字典`。
@@ -548,9 +549,9 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 3. 再看 `可复刻内容`、`来源异常/采集失败`。
 4. 快速挑选优先用交互式选题速选卡：运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，它只负责把卡片发到飞书；后续点击由腾讯云 SCF receiver 自动回写。在飞书卡片里只勾选值得生成脚本包的候选，补原因标签或一句手工原因后提交。未选中的候选会标记为 `不做`。飞书 `04 / 今日挑选卡片` 保留为兜底编辑入口。
 5. 运行 `python3 scripts/learn_from_topic_selection.py --mark-pending-confirm`，把本轮选择沉淀成本地待确认学习摘要；确认摘要正确后再运行 `python3 scripts/learn_from_topic_selection.py --approve-latest --mark-learned`。
-6. 如需把 `04` 的已确认选题转成口播稿和执行包，运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，它会把已确认推进且未生成脚本稿的选题直接写入 `06 完整脚本与制作包`，并生成本地 `full_script_execution_package.md`。
-7. 单条补跑或测试时，运行 `python3 scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`；飞书 `06` 只保存状态、摘要、路径、素材提醒、发布前核验和 QA。
-8. 打开 `06 完整脚本与制作包` 的本地 Markdown，继续拍摄、剪辑和发布准备。
+6. 腾讯云 SCF 定时 runner 会把已确认推进且未生成脚本稿的选题写入 `06 完整脚本与制作包`；云端第一版的完整 Markdown 暂存在 `完整脚本与执行包` 字段。
+7. 单条补跑或测试时，运行 `python3 scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`；本机会额外生成本地 `full_script_execution_package.md`。
+8. 打开 `06 完整脚本与制作包`，看脚本状态、完整脚本字段、素材提醒、发布前核验和 QA，继续拍摄、剪辑和发布准备。
 9. 必要时进入 `02 URL投喂入口`，粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
 10. 只有看不懂表关系时，才切到 `00 主控台 / 系统导航` 或打开 `docs/system_map.md`。
 
@@ -571,7 +572,7 @@ python3 scripts/refresh_console_daily.py
 
 日报输出在 `output/daily_reports/`。日报只回答“今天我该做什么”，不会在日报里生成完整成稿、自动发布、伪造数据或绕过平台限制。
 
-本机定时运行先不启用；以后确认稳定后可参考 `docs/schedule_local.md`。
+本机定时运行不作为生产路径；正式无人值守生成走腾讯云 SCF 定时 runner。本机脚本只用于补跑、对比和调试。
 
 说明：脚本会确保核心视图存在。`06 完整脚本与制作包` 第一版视图包括 `脚本包后台`、`可拍脚本包`、`待修订脚本包`。如果飞书 OpenAPI 不支持复杂筛选条件，先只创建视图名，筛选规则写在 README 和规则表里。
 
@@ -581,7 +582,7 @@ python3 scripts/refresh_console_daily.py
 2. 运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，把一张选题速选卡发到飞书里一次勾选；本机不用常驻监听。开发预览时可先用 `python3 scripts/feishu_topic_decision_card.py build --limit 7`，排查腾讯云 SCF receiver 时可运行 `.venv/bin/python scripts/check_feishu_card_cloud_receiver.py --url <腾讯云SCF函数URL>`。
 3. 如果不用交互卡片，再进入 `04 分析与选题 / 今日挑选卡片`，手动决定生成脚本包、暂存、归档或不做，并尽量补 `选择原因标签`；旧状态值 `进入Brief / 本周做` 仍可触发脚本包生成。
 4. 需要沉淀选择偏好时，运行 `python3 scripts/learn_from_topic_selection.py`。
-5. 对已确认推进的选题运行 `python3 scripts/content_ops_pipeline.py --write-feishu`，进入 `06 完整脚本与制作包` 看脚本状态、本地执行包路径、素材提醒和 QA。
+5. 等腾讯云 SCF 定时 runner 自动生成 `06 完整脚本与制作包`；需要立即补跑时再用 `python3 scripts/content_ops_pipeline.py --write-feishu`。
 6. 单条补跑或调试时运行 `python3 scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`，看本地完整口播稿和执行包。
 7. 必要时用 `02 URL投喂入口` 手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
 8. 如果需要排查来源、重复内容或采集状态，再打开 `03 内容收件箱`。
