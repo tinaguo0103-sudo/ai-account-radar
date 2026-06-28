@@ -155,11 +155,6 @@
 - 推荐：P1 统一做抖音主页 `source_watch_probe`。
 - 不进入默认 `daily_pipeline.py`。
 
-### AI项目复盘-待定
-
-- 当前没有目标账号。
-- 不做自动拉取。
-
 ## 未来 PoC 分支命名
 
 - 公众号自动发现 PoC：`spike/source-watch-wechat-rss`

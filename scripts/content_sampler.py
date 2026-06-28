@@ -281,7 +281,7 @@ def aihot_daily_rows(data: dict[str, Any], source: dict[str, Any]) -> list[Conte
                 fetch_status="ok",
                 failure_reason="",
                 fingerprint=fingerprint(url, title, source_name, daily_date),
-                column=normalize_column(source.get("column", "")),
+                column="",
                 learn_focus=source.get("learn_focus", ""),
                 do_not_copy=source.get("do_not_copy", ""),
                 convert_direction=source.get("convert_direction", ""),
@@ -425,7 +425,7 @@ def aihot_items(source: dict[str, Any], fetch: bool) -> tuple[list[ContentItem],
             fetch_status="ok",
             failure_reason="",
             fingerprint=fingerprint(url, title, source_name),
-            column=normalize_column(source.get("column", "")),
+            column="",
             learn_focus=source.get("learn_focus", ""),
             do_not_copy=source.get("do_not_copy", ""),
             convert_direction=source.get("convert_direction", ""),
@@ -594,7 +594,7 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
                 parse_hint=raw.get("解析说明", ""),
             )
         item.source_type = normalize_source_type(item.source_type)
-        item.column = normalize_column(item.column or source_meta.get("column", ""))
+        item.column = normalize_column(item.column)
         item.learn_focus = item.learn_focus or source_meta.get("learn_focus", "")
         item.do_not_copy = item.do_not_copy or source_meta.get("do_not_copy", "")
         item.convert_direction = item.convert_direction or source_meta.get("convert_direction", "")

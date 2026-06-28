@@ -3,6 +3,8 @@
 
 This is intentionally narrow: it only upserts source rows, never deletes
 records, never rebuilds tables, and does not touch content or Top10 logic.
+Source rows do not carry content columns; topic-stage Skills decide direction
+after each content item is collected.
 """
 from __future__ import annotations
 
@@ -25,8 +27,6 @@ SYNC_FIELDS = [
     "名称",
     "来源角色",
     "是否参与主采样",
-    "栏目",
-    "栏目权重",
     "默认启用",
     "优先级",
     "平台",
@@ -36,15 +36,16 @@ SYNC_FIELDS = [
     "关注重点",
     "备注",
 ]
+LEGACY_CLEAR_FIELDS = ["栏目", "栏目权重"]
 FALLBACK_NAME_FIELDS = ["名称", "来源名称", "来源"]
 SOURCE_VIEW_PLANS = {
     "当前主对标池": {
-        "roles": {"current_main_competitor", "current_aux_competitor", "current_main_competitor_placeholder"},
-        "visible_fields": ["名称", "来源角色", "栏目", "栏目权重", "平台", "主页链接", "是否参与主采样", "默认启用", "优先级", "抓取方式", "跟踪频率", "关注重点", "备注"],
+        "roles": {"current_main_competitor", "current_aux_competitor"},
+        "visible_fields": ["名称", "来源角色", "平台", "主页链接", "是否参与主采样", "默认启用", "优先级", "抓取方式", "跟踪频率", "关注重点", "备注"],
     },
     "历史参考池": {
         "roles": {"historical_reference"},
-        "visible_fields": ["名称", "来源角色", "栏目", "平台", "主页链接", "默认启用", "备注"],
+        "visible_fields": ["名称", "来源角色", "平台", "主页链接", "默认启用", "备注"],
     },
     "系统/官方源": {
         "roles": {"system_hotspot_source", "official_source"},
@@ -55,7 +56,6 @@ SOURCE_VIEW_PLANS = {
         "visible_fields": ["名称", "来源角色", "主页链接", "默认启用", "抓取方式", "备注"],
     },
 }
-COLUMN_ORDER = ["AI业务定调", "真实工作流改造", "汽车与内容营销", "AI导演工作流", "AI项目复盘"]
 PRIORITY_ORDER = {"high": 0, "medium": 1, "low": 2, "待定": 3, "": 4}
 
 
@@ -143,8 +143,6 @@ def row_from_source(source: dict[str, Any]) -> dict[str, str]:
         "名称": source.get("account_name", ""),
         "来源角色": role,
         "是否参与主采样": yes_no(bool(source.get("participates_main_sampling"))),
-        "栏目": source.get("column", ""),
-        "栏目权重": source.get("column_weight") or "不适用",
         "默认启用": enabled_label(bool(source.get("default_enabled"))),
         "优先级": source.get("priority", ""),
         "平台": source.get("platform", ""),
@@ -160,7 +158,7 @@ def load_rows() -> list[dict[str, str]]:
     config = json.loads(CONFIG.read_text(encoding="utf-8"))
     rows = [row_from_source(source) for source in config.get("sources", [])]
     return sorted(rows, key=lambda row: (
-        COLUMN_ORDER.index(row["栏目"]) if row["栏目"] in COLUMN_ORDER else 99,
+        row["来源角色"],
         PRIORITY_ORDER.get(row["优先级"], 9),
         row["名称"],
     ))
@@ -246,6 +244,7 @@ def sync_rows(token: str, app_token: str, rows: list[dict[str, str]]) -> dict[st
         raise SystemExit(f"Missing Feishu table: {table_name(TABLE_KEY)}")
     created_fields = ensure_fields(token, app_token, table_id)
     records = all_records(token, app_token, table_id)
+    existing_field_names = set(list_fields(token, app_token, table_id))
     by_name: dict[str, dict[str, Any]] = {}
     for record in records:
         fields = record.get("fields", {})
@@ -264,6 +263,9 @@ def sync_rows(token: str, app_token: str, rows: list[dict[str, str]]) -> dict[st
         record = by_name.get(name)
         fields = merge_existing_values(row, record.get("fields", {}) if record else {})
         fields = {field: fields.get(field, "") for field in SYNC_FIELDS}
+        for legacy_field in LEGACY_CLEAR_FIELDS:
+            if legacy_field in existing_field_names:
+                fields[legacy_field] = ""
         if record:
             feishu.request_json(
                 "PUT",
@@ -292,7 +294,7 @@ def sync_rows(token: str, app_token: str, rows: list[dict[str, str]]) -> dict[st
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Sync source pool and competitor weights to Feishu 01 来源与采样.")
+    parser = argparse.ArgumentParser(description="Sync source pool to Feishu 01 来源与采样.")
     parser.add_argument("--write-feishu", action="store_true", help="Actually upsert rows to Feishu. Default is dry-run.")
     parser.add_argument("--dry-run", action="store_true", help="Dry-run alias for clarity; dry-run is the default.")
     args = parser.parse_args()
@@ -302,7 +304,6 @@ def main() -> int:
         "mode": "write-feishu" if args.write_feishu else "dry-run",
         "rows": len(rows),
         "current_main_competitors": [row["名称"] for row in rows if row["来源角色"] == "current_main_competitor"],
-        "placeholders": [row["名称"] for row in rows if row["来源角色"] == "current_main_competitor_placeholder"],
         "legacy_manual_entries": [row["名称"] for row in rows if row["来源角色"] == "legacy_manual_entry"],
         "historical_references": [row["名称"] for row in rows if row["来源角色"] == "historical_reference"],
     }

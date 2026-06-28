@@ -220,7 +220,6 @@ def main() -> int:
             "account_name": name,
             "homepage_url": homepage,
             "source_role": source_role(source),
-            "column": source.get("column", ""),
             "fetch_status": fetch_status,
             "status": status,
             "failure_reason": reason,
