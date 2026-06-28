@@ -75,6 +75,8 @@ def selected_douyin_sources(path: Path, limit: int | None = None) -> list[dict[s
     roles = {"current_main_competitor", "current_aux_competitor"}
     rows = []
     for source in load_sources(path):
+        if source.get("default_enabled") is False or source.get("participates_main_sampling") is False:
+            continue
         if source_platform(source) != "抖音":
             continue
         if source_role(source) not in roles:

@@ -38,6 +38,15 @@ def text(value: Any) -> str:
     return str(value or "").strip()
 
 
+def label_bool(value: Any, default: bool) -> bool:
+    label = text(value)
+    if label in {"是", "启用", "true", "True", "1"}:
+        return True
+    if label in {"否", "停用", "false", "False", "0"}:
+        return False
+    return default
+
+
 def usable_url(value: Any) -> str:
     url = text(value)
     return url if url.startswith(("http://", "https://")) else ""
@@ -70,6 +79,8 @@ def infer_fetch_method(platform: str, role: str) -> str:
 def source_needs_home_url(source: dict[str, Any]) -> bool:
     platform = text(source.get("platform"))
     fetch_method = text(source.get("fetch_method"))
+    if fetch_method.startswith("paused_"):
+        return False
     if "微信公众号" in platform and fetch_method in {
         "public_article_url_or_manual_article_list",
         "wechat_fulltext_provider_or_single_url_intake",
@@ -168,6 +179,10 @@ def promote_to_aux(source: dict[str, Any], fields: dict[str, Any], config: dict[
 
 
 def active_priority(source: dict[str, Any], fields: dict[str, Any], role: str) -> str:
+    enabled = label_bool(fields.get("默认启用"), bool(source.get("default_enabled", True)))
+    sampling = label_bool(fields.get("是否参与主采样"), bool(source.get("participates_main_sampling", True)))
+    if not enabled or not sampling:
+        return "low"
     if role == "current_main_competitor":
         return "high"
     if text(source.get("priority")) == "high" or text(fields.get("优先级")) == "high":
@@ -187,8 +202,8 @@ def keep_active(source: dict[str, Any], fields: dict[str, Any], config: dict[str
     source["source_group"] = role
     source["source_role"] = role
     source["is_main_competitor"] = role == "current_main_competitor"
-    source["participates_main_sampling"] = True
-    source["default_enabled"] = True
+    source["participates_main_sampling"] = label_bool(fields.get("是否参与主采样"), bool(source.get("participates_main_sampling", True)))
+    source["default_enabled"] = label_bool(fields.get("默认启用"), bool(source.get("default_enabled", True)))
     source["priority"] = active_priority(source, fields, role)
     update_common_from_feishu(source, fields, config)
     return text(source.get("priority"))
@@ -227,6 +242,7 @@ def reconcile(config: dict[str, Any], records: list[dict[str, Any]]) -> dict[str
     summary: dict[str, Any] = {
         "existing_active_high": [],
         "existing_active_medium": [],
+        "existing_active_low": [],
         "promoted_historical_medium": [],
         "new_medium": [],
         "renamed_by_same_url": [],
@@ -263,8 +279,10 @@ def reconcile(config: dict[str, Any], records: list[dict[str, Any]]) -> dict[str
             priority = keep_active(source, fields, config)
             if priority == "high":
                 summary["existing_active_high"].append(name)
-            else:
+            elif priority == "medium":
                 summary["existing_active_medium"].append(name)
+            else:
+                summary["existing_active_low"].append(name)
         elif source and source_role == PLACEHOLDER_ROLE:
             keep_active(source, fields, config)
             summary["skipped"].append(name)
