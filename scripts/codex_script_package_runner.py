@@ -213,6 +213,7 @@ def run_codex_for_topic(topic: dict[str, Any], timeout_seconds: int) -> dict[str
             "exec",
             "-C",
             str(ROOT),
+            "--skip-git-repo-check",
             "--sandbox",
             "workspace-write",
             "--output-schema",
