@@ -194,7 +194,7 @@ http://127.0.0.1:4000/feeds/all.json?limit=5&mode=fulltext
 
 `needs_user_dependency -> usable_p1_provider`
 
-原因：需要用户本机扫码登录微信读书 / 微信小号，并维护低频本地服务；但一旦登录和订阅完成，能够稳定输出卡兹克最近文章全文，适合作为 P1 全文 provider 接入现有 `--fetch-wechat-feed` 链路。
+原因：需要用户本机扫码登录微信读书 / 微信小号，并维护低频本地服务；但一旦登录和订阅完成，能够稳定输出卡兹克最近文章全文，适合作为 P1 全文 provider 通过 `--fetch-wechat-fulltext-provider` 显式接入。
 
 ## 是否拿到卡兹克最近文章全文
 
@@ -232,8 +232,8 @@ http://127.0.0.1:4000/feeds/all.json?limit=5&mode=fulltext
 1. `Wechat2RSS` 公共 feed 继续负责发现卡兹克文章列表。
 2. `wewe-rss` 本地服务负责补全文。
 3. 用 `scripts/wechat_fulltext_provider_probe.py` 验证输出能转成 ContentItem。
-4. 若至少连续 2-3 天稳定，再把全文 provider 接到现有 `--fetch-wechat-feed` 链路，作为“公共 feed 发现 + 本地 provider 补全文”的 P1 增强。
-5. 如果 wewe-rss 登录态失效或 provider 不稳定，降级回“公共 feed 发现 + 02 URL 投喂补全文”。
+4. 若至少连续 2-3 天稳定，再继续使用显式 `--fetch-wechat-fulltext-provider` 路线；不恢复公共 feed intake。
+5. 如果 wewe-rss 登录态失效或 provider 不稳定，降级回 `02 URL 投喂` 单篇文章补全文。
 
 示例验证命令：
 
@@ -246,12 +246,6 @@ python3 scripts/wechat_fulltext_provider_probe.py --config config/wechat_fulltex
 ```bash
 python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5
 python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5 --write-feishu
-```
-
-也可以和 Wechat2RSS 发现源一起运行：
-
-```bash
-python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5
 ```
 
 默认 `python3 scripts/daily_pipeline.py` 不调用 `wewe-rss`。

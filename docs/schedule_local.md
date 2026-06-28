@@ -12,7 +12,7 @@
 
 ## 1. 当前生产 watcher
 
-当前不使用 Codex App automation。旧的 `ai-06` 每小时 automation 已停用，避免空队列时仍占用 Codex automation 调度额度。
+当前不使用旧的每小时自动任务。旧 `ai-06` 已停用，避免空队列时仍占用调度额度。
 
 安装为登录后自动启动：
 
@@ -66,7 +66,7 @@ screen -ls
 screen -S ai06-watcher -X quit
 ```
 
-旧的 `install_codex_script_package_launchd.py` 已不作为生产路径。原因是它让 launchd 直接定时跑生成器，既不符合轻量 watcher 语义，也容易因为项目目录在 Desktop 下触发 macOS TCC 后台权限拦截。当前只使用 `install_script_package_watcher_launch_agent.py` 安装登录自启 watcher，且 LaunchAgent 从非 Desktop runtime 目录启动。
+旧的“launchd 直接定时跑生成器”方案已删除。原因是它既不符合轻量 watcher 语义，也容易因为项目目录在 Desktop 下触发 macOS TCC 后台权限拦截。当前只使用 `install_script_package_watcher_launch_agent.py` 安装登录自启 watcher，且 LaunchAgent 从非 Desktop runtime 目录启动。
 
 只检查队列、不调用 Codex：
 

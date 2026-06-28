@@ -23,7 +23,7 @@ from typing import Any
 from local_env import load_local_env
 
 import push_to_feishu as feishu
-from content_ops_pipeline import (
+from script_package_shared import (
     SCRIPT_PACKAGE_FIELDS,
     TOPIC_MARK_FIELD,
     ensure_text_fields,

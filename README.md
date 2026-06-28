@@ -110,7 +110,6 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `config/content_sources.yaml`：内容源配置，说明每个对标账号对应栏目、主要内容形态、重点学习什么、不能照搬什么、转成你的什么方向。
 - `data/manual/manual_items.example.jsonl`：手动导入样例，适合放抖音/小红书/视频号/公众号/AIHOT复制内容。
 - `data/manual/content_items.example.jsonl`：内容对象样例，适合放公众号正文、对标视频标题/封面/字幕/OCR/评论问题。
-- `scripts/run_radar.py`：采集与分析脚本。
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和初筛后的今日候选池。
 - `scripts/editorial_skill_runner.py`：Skill 主编层执行脚本，默认调用本机已登录的 Codex CLI，只读取本机全局私有版 `ai-account-editorial-director`；全局版缺失时直接失败，不自动使用仓库脱敏版。需要临时测试脱敏镜像时，必须用 `EDITORIAL_SKILL_DIR` 显式指定目录。它要求 Skill 先完成 `Gate` 主编门控，输出 `主编筛选 / 主编自由稿 / 我的真实矛盾 / 场景依据 / 证据强度 / title_permission`；再整理 `Workflow Experiment Card` 工作流实验命题卡，核心写入 `选题命题 / 我要做的实验 / 热点触发点 / 我的工作流痛点 / 旧流程痛点 / AI介入点 / 验证方式 / 可沉淀资产 / 我的思考点 / 重点体现 / 可展示证据 / 需要补的证据`；最后只有 `title_permission=可发布标题` 才写入 `可发布标题 / 标题备选`。`--engine deterministic` 只作为显式离线应急选项。
 - `scripts/sync_editorial_skill.py`：把仓库中的公开脱敏版 `skills/ai-account-editorial-director/` 安装到全局 Codex Skills。默认 dry-run；已有全局 Skill 时会拒绝覆盖，只有显式 `--install-public --yes --force-overwrite-existing` 才会先备份再替换。
@@ -124,11 +123,9 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `scripts/learn_from_topic_selection.py`：读取 `04` 中用户已经改过的状态和原因标签，生成待确认的选题偏好学习摘要；默认只学习最近一次正式运行批次。建议日常使用 `--mark-pending-confirm`，先把样本标为 `待确认学习`。只有用户确认后运行 `--approve-latest`，`editorial_skill_runner.py` 才会读取已确认摘要并带入下一轮主编判断。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并准备 `06 完整脚本与制作包`。
 - `scripts/codex_script_package_runner.py`：本机 Codex 脚本包生成器；从 `04 分析与选题` 读取已确认选题和制作方向补充，默认只处理近 5 天推荐记录并排除明显测试标题，调用本机 `codex exec` 与全局私有 Skill 生成 `full_script_execution_package.md`，写入 `06 完整脚本与制作包` 轻量记录，并把原 `04` 标记为已生成。
+- `scripts/script_package_shared.py`：`04 -> 06` 脚本包链路共享函数，集中维护飞书字段、待生成队列、Austin Skill 加载和 Topic Card 标准化。
 - `scripts/watch_script_package_queue.py`：本机轻量 watcher；每隔几分钟扫描一次 `04` 的待生成队列，空队列只做飞书 API 检查，不调用 Codex，有待生成记录时才调用 `codex_script_package_runner.py`。
 - `scripts/install_script_package_watcher_launch_agent.py`：把 06 watcher 安装成 macOS 用户级 LaunchAgent，登录后自动拉起；睡眠唤醒通常会继续跑，重启后登录会自动恢复。
-- `scripts/install_codex_script_package_launchd.py`：历史备用的 macOS launchd 安装脚本。当前生产不使用 launchd，因为 Desktop 路径会触发 macOS TCC 后台权限拦截。
-- `scripts/content_ops_pipeline.py`：本机确定性补跑/对比脚本；从 `04 分析与选题` 读取已确认选题和制作方向补充，调用 Austin不加班脚本Skill 生成 `full_script_execution_package.md`，并把轻量记录写入 `06 完整脚本与制作包`；默认 dry-run 不落本地文件。
-- `scripts/generate_script_execution_package.py`：从指定 `04` 记录生成单条 `full_script_execution_package.md`，并可回写 `06 完整脚本与制作包` 的轻量记录。它用于单条真实测试或补跑，不自动拆制作任务。
 - `scripts/sync_austin_scripting_skill.py`：把仓库公开脱敏版 `skills/austin-no-overtime-scripting/` 单向安装到全局 Codex Skills。只支持“仓库脱敏版 -> 全局安装”，不提供全局私有版回写仓库；已有全局 Skill 时默认拒绝覆盖，避免敏感素材误提交。
 - `scripts/simplify_feishu_workspace.py`：按当前白名单清理飞书 `03/04` 字段；`04` 会保留挑选卡片、决策看板、证据和学习相关视图。
 - `output/`：运行后生成 CSV 和 Excel。
@@ -143,7 +140,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 
 ## Austin不加班脚本Skill
 
-`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写 `05 Brief与制作`。选题确认并补充制作方向后，正式路径由本机轻量 watcher `scripts/watch_script_package_queue.py` 扫描近 5 天待生成队列；空队列不调用 Codex，有待生成记录时才调用 `scripts/codex_script_package_runner.py`，通过本机 `codex exec` 和全局私有 Skill 生成 `06 完整脚本与制作包`。完整内容统一落到单一主文档 `full_script_execution_package.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA；飞书 `06` 只保存轻量记录和本地文档路径。
+`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写任何中间 Brief 表。选题确认并补充制作方向后，正式路径由本机轻量 watcher `scripts/watch_script_package_queue.py` 扫描近 5 天待生成队列；空队列不调用 Codex，有待生成记录时才调用 `scripts/codex_script_package_runner.py`，通过本机 `codex exec` 和全局私有 Skill 生成 `06 完整脚本与制作包`。完整内容统一落到单一主文档 `full_script_execution_package.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA；飞书 `06` 只保存轻量记录和本地文档路径。
 
 运行时规则：
 
@@ -239,25 +236,13 @@ python3 scripts/daily_pipeline.py --url-file data/manual/urls.example.txt
 
 默认不启用 URL 解析，只有传入 `--url-file` 或 `--resolve-url-intake` 时才运行 resolver。
 
-卡兹克公众号公共 feed 只保留为“发现源”说明，不再进入候选池。原因是 Wechat2RSS 能发现文章列表，但不能稳定提供全文；我们真正需要的是公众号全文拆解。若要做卡兹克公众号内容，请优先使用本地 `wewe-rss` 全文 provider，或把单篇文章 URL 丢进 `02 URL投喂入口`。
+卡兹克公众号公共 feed 不再保留脚本入口，也不进入候选池。原因是 Wechat2RSS 能发现文章列表，但不能稳定提供全文；我们真正需要的是公众号全文拆解。若要做卡兹克公众号内容，请优先使用本地 `wewe-rss` 全文 provider，或把单篇文章 URL 丢进 `02 URL投喂入口`。
 
 ```text
 https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml
 ```
 
-本地验证公共 feed 只用于排查发现源，不参与 `04 分析与选题`：
-
-```bash
-python3 scripts/wechat_feed_intake.py --config config/wechat_feed_candidates.yaml --limit 5 --dry-run
-```
-
-下面命令仍保留兼容，但现在是 no-op 提醒，不会把公共 feed 合入候选池：
-
-```bash
-python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5
-```
-
-如果 feed 失效或缺全文，不需要修它；继续使用 `wewe-rss` 全文 provider 或 `02 URL投喂入口` 单篇公众号文章 URL。
+如果公共 feed 失效或缺全文，不需要修它；继续使用 `wewe-rss` 全文 provider 或 `02 URL投喂入口` 单篇公众号文章 URL。
 
 卡兹克公众号全文 provider 已作为 P1 显式源接入。本地 `wewe-rss` 服务启动并订阅 `数字生命卡兹克` 后，可以显式拉取全文：
 
@@ -419,20 +404,6 @@ python3 scripts/content_sampler.py --no-fetch-aihot
 - `output/latest_dry_run/`：最近一次 dry-run 快捷副本。
 - 正式写入后，对应文件会在 `output/runs/<run_id>/` 和 `output/latest_write/` 中保留；根目录 `output/today_10_topics.csv` 只代表最近一次正式写入飞书的兼容输出。
 
-旧雷达导入包仍可运行，但不是当前核心方向：
-
-在当前目录执行：
-
-```bash
-python3 scripts/run_radar.py
-```
-
-只使用手动样例、不访问 AIHOT：
-
-```bash
-python3 scripts/run_radar.py --no-fetch
-```
-
 ## 不手动导入：直接写入飞书 API
 
 飞书线上结构以 8 张核心业务表 + `99 规则与字典` 为准。`push_to_feishu.py` 当前只会处理当前 8 表命名，不会再创建旧拆分表，例如 `热点分析表`、`对标分析表`、`选题候选库`、`发布复盘表`。
@@ -553,7 +524,7 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 4. 快速挑选优先用交互式选题速选卡：运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，它只负责把卡片发到飞书；后续点击由腾讯云 SCF receiver 自动回写。在飞书卡片里只勾选值得生成脚本包的候选，补原因标签或一句手工原因后提交。未选中的候选会标记为 `不做`。飞书 `04 / 今日挑选卡片` 保留为兜底编辑入口。
 5. 运行 `python3 scripts/learn_from_topic_selection.py --mark-pending-confirm`，把本轮选择沉淀成本地待确认学习摘要；确认摘要正确后再运行 `python3 scripts/learn_from_topic_selection.py --approve-latest --mark-learned`。
 6. 本机轻量 watcher 会把近 5 天已确认推进且未生成脚本稿的选题写入 `06 完整脚本与制作包`，完整 Markdown 落到本地 `full_script_execution_package.md`；没有待生成记录时只做队列检查，不消耗 Codex。
-7. 单条补跑或测试时，运行 `python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>`；只想用确定性本地脚本对比时，再运行 `python3 scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`。
+7. 单条补跑或测试时，运行 `python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>`。
 8. 打开 `06 完整脚本与制作包`，看脚本状态、本地文档、素材提醒、发布前核验和 QA，继续拍摄、剪辑和发布准备。
 9. 必要时进入 `02 URL投喂入口`，粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。
 10. 只有看不懂表关系时，才切到 `00 主控台 / 系统导航` 或打开 `docs/system_map.md`。

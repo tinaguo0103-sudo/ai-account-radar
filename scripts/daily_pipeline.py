@@ -31,15 +31,12 @@ LATEST_WRITE_DIR = OUT / "latest_write"
 DEFAULT_MANUAL = ROOT / "data" / "manual" / "content_items.example.jsonl"
 URL_RESOLVED = OUT / "url_content_items.jsonl"
 URL_RESOLVED_MANUAL = OUT / "url_content_items_manual.jsonl"
-WECHAT_FEED_RESOLVED = OUT / "wechat_feed_content_items.jsonl"
-WECHAT_FEED_RESOLVED_MANUAL = OUT / "wechat_feed_content_items_manual.jsonl"
 WECHAT_FULLTEXT_RESOLVED_MANUAL = OUT / "wechat_fulltext_provider_items.jsonl"
 DOUYIN_CDP_RESOLVED_MANUAL = OUT / "spikes" / "douyin_cdp_source_watch_probe" / "content_items_manual.jsonl"
 DOUYIN_CDP_RETRY_DIR = OUT / "spikes" / "douyin_cdp_source_watch_probe_verification_retry"
 DOUYIN_CDP_RETRY_MANUAL = DOUYIN_CDP_RETRY_DIR / "content_items_manual.jsonl"
 DOUYIN_TRANSCRIPTS_MANUAL = OUT / "spikes" / "douyin_transcripts" / "transcribed_content_items.jsonl"
 COMBINED_MANUAL = OUT / "daily_pipeline_manual_combined.jsonl"
-DEFAULT_WECHAT_FEED_CONFIG = ROOT / "config" / "wechat_feed_candidates.yaml"
 DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG = ROOT / "config" / "wechat_fulltext_provider.example.yaml"
 SOURCE_CACHE_DIR = OUT / "source_collection_cache"
 
@@ -268,12 +265,10 @@ def main() -> int:
     parser.add_argument("--resolve-url-intake", action="store_true", help="Resolve URLs from Feishu 02 URL投喂入口 into ContentItem rows before sampling.")
     parser.add_argument("--include-resolved-url-intake", action="store_true", help="Testing mode: reuse already parsed Feishu 02 URLs as candidates without changing default intake behavior.")
     parser.add_argument("--url-file", help="Resolve URLs from a local text file into ContentItem rows before sampling.")
-    parser.add_argument("--fetch-wechat-feed", action="store_true", help="Deprecated: public WeChat feed is discovery-only and no longer enters the candidate pool. Use --fetch-wechat-fulltext-provider.")
     parser.add_argument("--fetch-wechat-fulltext-provider", action="store_true", help="Explicit P1 mode: fetch local WeChat fulltext provider rows into the candidate pool. Default is off.")
-    parser.add_argument("--wechat-feed-config", default=str(DEFAULT_WECHAT_FEED_CONFIG), help="Config for explicit WeChat feed intake.")
     parser.add_argument("--wechat-fulltext-provider-config", default=str(DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG), help="Config for explicit WeChat fulltext provider intake.")
     parser.add_argument("--wechat-fulltext-provider", default="", help="Provider id/name to fetch, e.g. wewe-rss. Only used with explicit WeChat fulltext provider mode.")
-    parser.add_argument("--wechat-feed-limit", type=int, default=5, help="Max articles to fetch per WeChat feed when --fetch-wechat-feed is enabled.")
+    parser.add_argument("--wechat-feed-limit", type=int, default=5, help="Max articles to fetch from the explicit WeChat fulltext provider.")
     parser.add_argument("--fetch-douyin-cdp-source-watch", action="store_true", help="Compatibility flag: Douyin homepage title/caption sampling is now attempted by default unless --no-fetch-douyin is set.")
     parser.add_argument("--no-fetch-douyin-cdp-source-watch", "--no-fetch-douyin", dest="no_fetch_douyin_cdp_source_watch", action="store_true", help="Skip daily Douyin homepage title/caption sampling.")
     parser.add_argument("--douyin-cdp", default=os.getenv("DOUYIN_CDP_URL", "http://127.0.0.1:9333"), help="Chrome DevTools endpoint for explicit Douyin homepage probe.")
@@ -315,18 +310,6 @@ def main() -> int:
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
         manual_inputs = [URL_RESOLVED_MANUAL]
-
-    if args.fetch_wechat_feed:
-        steps.append({
-            "name": "skip deprecated WeChat public feed",
-            "command": ["--fetch-wechat-feed"],
-            "started_at": datetime.now().isoformat(timespec="seconds"),
-            "returncode": 0,
-            "stdout": "Wechat2RSS public feed is discovery-only and no longer enters the daily candidate pool. Use --fetch-wechat-fulltext-provider / --wechat-fulltext-provider wewe-rss for fulltext.",
-            "stderr": "",
-        })
-        print("\n== skip deprecated WeChat public feed ==")
-        print("Wechat2RSS public feed is discovery-only and no longer enters the daily candidate pool. Use --fetch-wechat-fulltext-provider / --wechat-fulltext-provider wewe-rss for fulltext.")
 
     if args.fetch_wechat_fulltext_provider or args.wechat_fulltext_provider:
         provider_cmd = [

@@ -1,6 +1,6 @@
 ---
 name: austin-no-overtime-scripting
-description: 将奥斯汀AI账号已确认选题、04工作流实验命题卡、Topic Card或制作方向补充，编排成完整口播稿与制作执行包。适用于 AI业务定调、真实工作流改造、AI导演工作流、非技术Agent实战、AI汽车与品牌增长现场、AI项目复盘。默认调用 austin-voice-scriptwriter 生成真人口播全文，并输出 full_script_execution_package.md；飞书 06 完整脚本与制作包只保存轻量记录，不存在 05 中间层。不得用于自动发布、自动剪辑或替用户最终决定观点。
+description: 将奥斯汀AI账号已确认选题、04工作流实验命题卡、Topic Card或制作方向补充，编排成完整口播稿与制作执行包。适用于 AI业务定调、真实工作流改造、AI导演工作流、非技术Agent实战、AI汽车与品牌增长现场、AI项目复盘。默认调用 austin-voice-scriptwriter 生成真人口播全文，并输出 full_script_execution_package.md；飞书 06 完整脚本与制作包只保存轻量记录，不存在中间 Brief 层。不得用于自动发布、自动剪辑或替用户最终决定观点。
 ---
 
 # Austin不加班脚本Skill
@@ -21,7 +21,7 @@ full_script_execution_package.md
 2. 交互式选题卡负责让用户勾选要推进的题；第二张补充卡负责补“这条想怎么讲、用什么案例、不要讲什么”。
 3. `austin-voice-scriptwriter` 负责写接近 Austin 真人口播习惯的全文。
 4. 本 Skill 负责把口播全文编排成执行包：视频结构、分段口播、录屏/素材清单、剪辑交接、发布包草稿、QA。
-5. 正式链路没有 `05 Brief与制作`，也不写任何中间索引表。
+5. 正式链路不写任何中间 Brief 表或中间索引表。
 6. `06 完整脚本与制作包` 是正式制作包记录表；完整内容以本地 Markdown 为准，飞书只保存摘要和路径。
 
 ## 核心原则
@@ -69,7 +69,6 @@ full_script_execution_package.md
 
 - 批量生成：本机轻量 watcher `scripts/watch_script_package_queue.py --interval-minutes 5 --limit 2 --max-age-days 5` 扫描近 5 天待生成队列；空队列不调用 Codex，有待生成记录时才运行 `scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5`，由本机 `codex exec` 调用全局私有 Skill 生成完整包。
 - 从指定 `04` 记录立即生成单条执行包：运行 `scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>`。
-- 本机确定性补跑/对比：仅调试旧模板输出时运行 `scripts/content_ops_pipeline.py --write-feishu` 或 `scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`。
 - 只校验 Topic Card：运行 `scripts/validate_topic_card.py`。
 - 汇总某天本地执行包：运行 `scripts/merge_daily_index.py`。
 - 调整 Austin 真人口播风格：修改独立 Skill `austin-voice-scriptwriter`。

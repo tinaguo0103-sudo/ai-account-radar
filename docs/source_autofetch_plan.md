@@ -54,12 +54,11 @@
 - 用于规则测试、候选池调试、对比 AIHOT + URL 混合候选效果。
 - 不作为默认日常流程。
 
-### `--fetch-wechat-feed`
+### 公共 Wechat2RSS feed
 
 - 卡兹克公众号公共 feed 已降级为发现源说明，不再进入日常候选池。
 - feed URL：`https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml`。
-- 默认 `daily_pipeline.py` 不拉取该 feed。
-- 主动运行 `python3 scripts/daily_pipeline.py --fetch-wechat-feed --wechat-feed-limit 5` 时，脚本只输出 no-op 提醒，不会把公共 feed 摘要写入 `03` 或送入 `04`。
+- 仓库不再保留公共 feed intake 脚本，也不保留 no-op 兼容参数。
 - 原因：公共 feed 能发现文章列表，但不能稳定提供全文；摘要会让选题继续有“资讯味”和“猜测感”。
 - 如果要处理卡兹克公众号文章，使用本地 `wewe-rss` 全文 provider，或把单篇公众号文章 URL 放入 `02 URL投喂入口`。
 

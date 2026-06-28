@@ -211,7 +211,7 @@ FEISHU_TENCENT_SCF_URL=https://你的腾讯云SCF函数URL
 - 本机 `serve-long-connection --write` 只作为历史开发调试入口。
 - 生产点击回写走腾讯云 SCF。
 - 生产脚本包生成走本机轻量 watcher + `codex_script_package_runner.py`，因为这一步需要 Codex 和全局私有 Skill。
-- 本机 `content_ops_pipeline.py --write-feishu` 只作为确定性补跑、对比和调试；高质量自动生成优先走 `codex_script_package_runner.py`。
+- 本机脚本包生成统一走 `codex_script_package_runner.py`；单条补跑使用 `--record-id`。
 
 ## 后续可增强
 

@@ -37,7 +37,7 @@ AIHOT / 公众号全文 / 抖音主页标题文案 / URL投喂
 - watcher 调用 runner 先扫描 `04`，只有发现待生成记录时才调用本机 `codex exec`。
 - 只处理状态为 `进入Brief` / `本周做`，且 `是否已生成脚本稿 != 是` 的记录。
 - 生成成功后创建 `06 完整脚本与制作包`，并把原 `04` 记录标记为 `是否已生成脚本稿 = 是`。
-- 完整 Markdown 写入本地 `output/script_execution_packages/YYYY-MM-DD/.../full_script_execution_package.md`；飞书 `06` 只保存摘要、路径、素材提醒、发布前核验和 QA。
+- 完整 Markdown 从项目文档库根目录的 `06 完整脚本与制作包/YYYY-MM-DD/.../full_script_execution_package.md` 打开；后台真实写入 runtime 并通过软链接暴露到项目根目录。飞书 `06` 只保存摘要、路径、素材提醒、发布前核验和 QA。
 
 立即补跑：
 
@@ -57,21 +57,9 @@ python3 scripts/codex_script_package_runner.py --skip-codex --limit 2 --max-age-
 python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>
 ```
 
-确定性批量补跑/对比，仅用于调试旧模板输出：
-
-```bash
-python3 scripts/content_ops_pipeline.py --write-feishu
-```
-
-确定性单条补跑/对比，仅用于调试旧模板输出：
-
-```bash
-python3 scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu
-```
-
 本机生成后会发生三件事：
 
-- 本地生成 `output/script_execution_packages/YYYY-MM-DD/.../full_script_execution_package.md`。
+- 本地生成 `06 完整脚本与制作包/YYYY-MM-DD/.../full_script_execution_package.md`。
 - 飞书 `06 完整脚本与制作包` 新增一条轻量记录。
 - 飞书 `04 分析与选题` 的 `是否已生成脚本稿` 标记为 `是`，避免重复生成。
 
@@ -79,7 +67,7 @@ python3 scripts/generate_script_execution_package.py --record-id <04_record_id> 
 
 - 腾讯云卡片 receiver 只负责接收第一张选题卡和第二张制作方向补充卡，并写回 `04`。
 - 本机轻量 watcher 只负责按需运行 `codex_script_package_runner.py`；真正写作由本机已登录的 Codex CLI 和全局私有 Skill 完成。
-- 锁屏但不睡眠、不断网时可以运行；睡眠、关机、断网时不会运行，恢复后等下一次定时触发或手动补跑。
+- 锁屏但不睡眠、不断网时可以运行；睡眠唤醒后通常会继续运行；重启后登录系统会自动拉起。关机、睡眠、断网期间不会生成，但腾讯云已写回的选择会留在 `04`，恢复后补生成。
 - 本轮不做任务拆分、自动剪辑或自动发布；这些能力以后单独设计，不再恢复 `05` 中间层。
 
 ## QA 语义
