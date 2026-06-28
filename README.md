@@ -125,6 +125,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并准备 `06 完整脚本与制作包`。
 - `scripts/codex_script_package_runner.py`：本机 Codex 脚本包生成器；从 `04 分析与选题` 读取已确认选题和制作方向补充，默认只处理近 5 天推荐记录并排除明显测试标题，调用本机 `codex exec` 与全局私有 Skill 生成 `full_script_execution_package.md`，写入 `06 完整脚本与制作包` 轻量记录，并把原 `04` 标记为已生成。
 - `scripts/watch_script_package_queue.py`：本机轻量 watcher；每隔几分钟扫描一次 `04` 的待生成队列，空队列只做飞书 API 检查，不调用 Codex，有待生成记录时才调用 `codex_script_package_runner.py`。
+- `scripts/install_script_package_watcher_launch_agent.py`：把 06 watcher 安装成 macOS 用户级 LaunchAgent，登录后自动拉起；睡眠唤醒通常会继续跑，重启后登录会自动恢复。
 - `scripts/install_codex_script_package_launchd.py`：历史备用的 macOS launchd 安装脚本。当前生产不使用 launchd，因为 Desktop 路径会触发 macOS TCC 后台权限拦截。
 - `scripts/content_ops_pipeline.py`：本机确定性补跑/对比脚本；从 `04 分析与选题` 读取已确认选题和制作方向补充，调用 Austin不加班脚本Skill 生成 `full_script_execution_package.md`，并把轻量记录写入 `06 完整脚本与制作包`；默认 dry-run 不落本地文件。
 - `scripts/generate_script_execution_package.py`：从指定 `04` 记录生成单条 `full_script_execution_package.md`，并可回写 `06 完整脚本与制作包` 的轻量记录。它用于单条真实测试或补跑，不自动拆制作任务。

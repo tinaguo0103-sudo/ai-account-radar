@@ -8,11 +8,29 @@
 - `06` 脚本包生成由本机轻量 watcher `scripts/watch_script_package_queue.py` 承接。
 - watcher 每隔几分钟扫描飞书 `04`，空队列只做飞书 API 检查，不调用 Codex；只有存在待生成记录时才调用 `codex_script_package_runner.py` 和 `codex exec`。
 - 自动队列默认和卡片有效期一致，只扫近 5 天推荐记录，并排除明显测试标题；旧记录或测试记录要用 `--record-id` / `--include-test-records` 手动补跑。
-- 锁屏但 Mac 不睡眠、不断网时可以跑；睡眠、关机、断网时不会跑，恢复后等下一次定时触发或手动补跑。
+- 锁屏但 Mac 不睡眠、不断网时可以跑；睡眠后唤醒一般会继续跑；关机或重启期间不会跑，但登录后会由 LaunchAgent 自动拉起。
 
 ## 1. 当前生产 watcher
 
 当前不使用 Codex App automation。旧的 `ai-06` 每小时 automation 已停用，避免空队列时仍占用 Codex automation 调度额度。
+
+安装为登录后自动启动：
+
+```bash
+python3 scripts/install_script_package_watcher_launch_agent.py --interval-minutes 5 --limit 2 --max-age-days 5
+```
+
+这个命令会先把运行时同步到 `~/.codex/ai-account-radar-runtime`，再安装用户级 LaunchAgent。这样后台进程不直接读取 Desktop 下的仓库，避免 macOS TCC 拦截。之后如果改了 watcher、runner、Skill 镜像或字段映射，要重新运行一次安装命令，或只同步 runtime：
+
+```bash
+python3 scripts/install_script_package_watcher_launch_agent.py --sync-runtime-only
+```
+
+查看 LaunchAgent 状态：
+
+```bash
+python3 scripts/install_script_package_watcher_launch_agent.py --status
+```
 
 启动前台 watcher：
 
@@ -38,7 +56,7 @@ screen -ls
 screen -S ai06-watcher -X quit
 ```
 
-`launchd` 方案已不作为生产路径。原因是项目目录在 Desktop 下，macOS TCC 会阻止后台 `/usr/bin/python3` 打开脚本，日志表现为 `Operation not permitted`。保留 `scripts/install_codex_script_package_launchd.py` 只作为以后迁移到非 Desktop 路径后的备用方案。
+旧的 `install_codex_script_package_launchd.py` 已不作为生产路径。原因是它让 launchd 直接定时跑生成器，既不符合轻量 watcher 语义，也容易因为项目目录在 Desktop 下触发 macOS TCC 后台权限拦截。当前只使用 `install_script_package_watcher_launch_agent.py` 安装登录自启 watcher，且 LaunchAgent 从非 Desktop runtime 目录启动。
 
 只检查队列、不调用 Codex：
 
@@ -145,7 +163,7 @@ output/logs/codex_script_package_runner_YYYY-MM-DD.log
 - 飞书环境变量缺失：补齐 `FEISHU_APP_ID`、`FEISHU_APP_SECRET`、`FEISHU_BASE_APP_TOKEN` 后重跑。
 - 飞书权限不足：检查自建应用是否有多维表格读写权限。
 - Codex 失败：确认 Codex 桌面端已登录，`/Applications/Codex.app/Contents/Resources/codex exec` 可在终端运行。
-- watcher 不触发：确认 Mac 没有睡眠，运行 `screen -ls` 查看 `ai06-watcher` 是否存在，再查看 `output/logs/script_package_watcher_YYYY-MM-DD.log`。
+- watcher 不触发：先运行 `python3 scripts/install_script_package_watcher_launch_agent.py --status`，再查看 `~/Library/Logs/ai-account-radar/script_package_watcher_launch_agent.err.log` 和 `output/logs/script_package_watcher_YYYY-MM-DD.log`。
 
 ## 6. 手动重跑
 
