@@ -321,8 +321,10 @@ TITLE_FORBIDDEN_TERMS = [
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
-    "选择", "选", "记录", "导出", "输出", "标出", "标注", "检查", "统计", "回填",
+    "选择", "选", "记录", "导出", "输出", "标出", "标注", "检查", "统计",
+    "回填", "输入", "补", "决定", "复核",
 ]
+FALLBACK_EXPERIMENT_PROMPT = "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。"
 
 PROPOSITION_OVERLOAD_TERMS = [
     "旧流程", "AI介入", "验证方式", "需要补", "还缺", "我要证明", "可沉淀",
@@ -618,7 +620,7 @@ def experiment_for(row: dict[str, str]) -> str:
         value = short_sentence(row.get(field, ""), 130)
         if value and has_experiment_action(value):
             return value
-    return "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。"
+    return FALLBACK_EXPERIMENT_PROMPT
 
 
 def tension_looks_classification(value: str) -> bool:
@@ -656,10 +658,12 @@ def proposition_for(row: dict[str, str]) -> str:
         if proposition_is_short_and_clean(value):
             return value
     experiment = experiment_for(row)
-    if proposition_is_short_and_clean(experiment):
+    if experiment != FALLBACK_EXPERIMENT_PROMPT and proposition_is_short_and_clean(experiment):
         return experiment
     hook = workflow_trigger_for(row)
-    action = short_sentence(experiment, 56)
+    action = "先暂存，等补出具体实验动作"
+    if experiment != FALLBACK_EXPERIMENT_PROMPT:
+        action = short_sentence(experiment, 56)
     proposition = f"{short_sentence(hook, 24)}触发的实验：{action}"
     return short_sentence(proposition, 90)
 
@@ -726,6 +730,16 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     level = normalize_level(out.get("今日建议级别") or out.get("候选状态"))
     out["今日建议级别"] = level
     out["候选状态"] = level
+    if out.get("我要做的实验") == FALLBACK_EXPERIMENT_PROMPT:
+        reason = out.get("不建议做的原因") or out.get("降级原因") or out.get("推荐动作原因")
+        extra = "还没有形成可执行的最小实验动作，先不进入前台可选候选。"
+        out["今日建议级别"] = "暂存观察"
+        out["候选状态"] = "暂存观察"
+        out["是否建议进入制作"] = "否"
+        out["推荐动作"] = "观察"
+        out["降级原因"] = f"{reason}；{extra}".strip("；")
+        out["不建议做的原因"] = out["降级原因"]
+        level = "暂存观察"
 
     publishable = (out.get("可发布标题", "") or "").strip()
     alternatives = (out.get("标题备选", "") or "").strip()

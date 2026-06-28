@@ -13,7 +13,7 @@ from typing import Any
 
 import push_to_feishu as feishu
 from feishu_table_registry import TABLES, resolve_table_id
-from push_today10_to_feishu import default_today10_path, map_row, today_slug
+from push_today10_to_feishu import FALLBACK_EXPERIMENT_PROMPT, default_today10_path, map_row, today_slug
 from topic_decision_fields import DAILY_WRITE_FIELDS, DETAIL_VISIBLE_FIELDS
 
 
@@ -54,7 +54,8 @@ VISIBLE_FIELDS = DETAIL_VISIBLE_FIELDS
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
-    "选择", "选", "记录", "导出", "输出", "标出", "检查", "统计", "回填",
+    "选择", "选", "记录", "导出", "输出", "标出", "标注", "检查", "统计",
+    "回填", "输入", "补", "决定", "复核",
 ]
 WEAK_VALIDATION_PHRASES = [
     "检查是否可用",
@@ -103,7 +104,10 @@ def read_local(run_id: str, path: Path) -> list[dict[str, str]]:
 
 
 def is_visible_candidate(row: dict[str, str]) -> bool:
-    return row.get("今日建议级别") not in {"暂存观察", "不建议制作"}
+    return (
+        row.get("今日建议级别") not in {"暂存观察", "不建议制作"}
+        and row.get("我要做的实验") != FALLBACK_EXPERIMENT_PROMPT
+    )
 
 
 def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:

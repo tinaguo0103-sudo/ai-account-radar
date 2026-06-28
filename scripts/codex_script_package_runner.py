@@ -37,7 +37,12 @@ from script_package_shared import (
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "config" / "codex_script_package_schema.json"
-DEFAULT_OUTPUT_ROOT = ROOT / "output" / "script_execution_packages"
+PROJECT_SCRIPT_PACKAGE_ROOT = ROOT.parent / "06 完整脚本与制作包"
+DEFAULT_OUTPUT_ROOT = (
+    PROJECT_SCRIPT_PACKAGE_ROOT
+    if PROJECT_SCRIPT_PACKAGE_ROOT.exists() or PROJECT_SCRIPT_PACKAGE_ROOT.is_symlink()
+    else ROOT / "output" / "script_execution_packages"
+)
 LOG_DIR = ROOT / "output" / "logs"
 LOCK_FILE = ROOT / ".runtime" / "codex_script_package_runner.lock"
 RUNNER_VERSION = "codex-local-script-package-runner-v0.1"
@@ -210,8 +215,6 @@ def run_codex_for_topic(topic: dict[str, Any], timeout_seconds: int) -> dict[str
             str(ROOT),
             "--sandbox",
             "workspace-write",
-            "--ask-for-approval",
-            "never",
             "--output-schema",
             str(SCHEMA),
             "--output-last-message",

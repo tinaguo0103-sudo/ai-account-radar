@@ -76,8 +76,10 @@ def short_text(value: str, limit: int = 38) -> str:
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
-    "选择", "选", "记录", "导出", "输出", "标出", "检查", "统计", "回填",
+    "选择", "选", "记录", "导出", "输出", "标出", "标注", "检查", "统计",
+    "回填", "输入", "补", "决定", "复核",
 ]
+FALLBACK_EXPERIMENT_PROMPT = "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。"
 PROPOSITION_OVERLOAD_TERMS = ["旧流程", "AI介入", "验证方式", "需要补", "还缺", "我要证明", "可沉淀"]
 
 
@@ -106,7 +108,7 @@ def experiment_for(row: dict[str, str]) -> str:
         value = short_text(row.get(field, ""), 140)
         if value and has_experiment_action(value):
             return value
-    return "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。"
+    return FALLBACK_EXPERIMENT_PROMPT
 
 
 def clean_short_proposition(value: str) -> str:
@@ -123,10 +125,13 @@ def proposition_for(row: dict[str, str]) -> str:
             return value
     experiment = experiment_for(row)
     value = clean_short_proposition(experiment)
-    if value:
+    if value and experiment != FALLBACK_EXPERIMENT_PROMPT:
         return value
     trigger = workflow_trigger_for(row)
-    return short_text(f"{short_text(trigger, 24)}触发的实验：{short_text(experiment, 56)}", 90)
+    action = "先暂存，等补出具体实验动作"
+    if experiment != FALLBACK_EXPERIMENT_PROMPT:
+        action = short_text(experiment, 56)
+    return short_text(f"{short_text(trigger, 24)}触发的实验：{action}", 90)
 
 
 def display_title_for(row: dict[str, str]) -> str:
@@ -163,6 +168,7 @@ def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]
     visible = [
         row for row in rows
         if normalize_level(row.get("今日建议级别", "")) in FEISHU_VISIBLE_LEVELS
+        and experiment_for(row) != FALLBACK_EXPERIMENT_PROMPT
     ]
     return visible, len(rows) - len(visible)
 
@@ -213,6 +219,23 @@ def list_fields(token: str, app_token: str, table_id: str) -> dict[str, dict[str
 def list_views(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
     payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views", token=token)
     return payload.get("data", {}).get("items", [])
+
+
+def option_filter_values(field: dict[str, Any], values: list[Any]) -> list[Any]:
+    """Feishu view filters require option ids for single/multi select fields."""
+    if field.get("type") not in {3, 4}:
+        return values
+    options = field.get("property", {}).get("options", [])
+    option_by_name = {
+        str(option.get("name", "")): (
+            option.get("id")
+            or option.get("option_id")
+            or option.get("value")
+            or option.get("name")
+        )
+        for option in options
+    }
+    return [option_by_name.get(str(value), value) for value in values]
 
 
 def ensure_fields(token: str, app_token: str, table_id: str) -> list[str]:
@@ -350,10 +373,11 @@ def patch_candidate_view(token: str, app_token: str, table_id: str, view_name: s
     }]
     if extra_filter and extra_filter.get("field") in fields:
         field = fields[extra_filter["field"]]
+        filter_values = option_filter_values(field, extra_filter.get("value", []))
         conditions.append({
             "field_id": field["field_id"],
             "operator": extra_filter.get("operator", "is"),
-            "value": json.dumps(extra_filter.get("value", []), ensure_ascii=False),
+            "value": json.dumps(filter_values, ensure_ascii=False),
         })
     body = {
         "view_name": view_name,

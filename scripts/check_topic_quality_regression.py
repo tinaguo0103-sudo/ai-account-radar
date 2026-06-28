@@ -51,8 +51,10 @@ ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建�
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
-    "选择", "选", "记录", "导出", "输出", "标出", "标注", "检查", "统计", "回填",
+    "选择", "选", "记录", "导出", "输出", "标出", "标注", "检查", "统计",
+    "回填", "输入", "补", "决定", "复核",
 ]
+FALLBACK_EXPERIMENT_PROMPT = "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。"
 PROPOSITION_OVERLOAD_TERMS = ["旧流程", "AI介入", "验证方式", "需要补", "还缺", "我要证明", "可沉淀"]
 WEAK_VALIDATION_PHRASES = [
     "检查是否可用",
@@ -224,6 +226,10 @@ def main() -> int:
         if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
             if not row.get("选题命题", "").strip():
                 failures.append(f"row {idx}: {row.get('今日建议级别')} missing 选题命题")
+            if row.get("选题命题", "").strip() == FALLBACK_EXPERIMENT_PROMPT:
+                failures.append(f"row {idx}: fallback experiment prompt leaked into 选题命题")
+            if row.get("我要做的实验", "").strip() == FALLBACK_EXPERIMENT_PROMPT:
+                failures.append(f"row {idx}: fallback experiment prompt leaked into visible candidate")
             if len(row.get("选题命题", "").strip()) > 90:
                 failures.append(f"row {idx}: 选题命题 too long (>90 chars)")
             overload = contains_any(row.get("选题命题", ""), PROPOSITION_OVERLOAD_TERMS)
