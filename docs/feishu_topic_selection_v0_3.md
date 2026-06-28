@@ -53,4 +53,4 @@
 原生自动化规则本身是否能通过开放 API 创建，当前未在项目内稳定接入；因此 v0.3 先把字段、视图和学习脚本准备好。需要自动触发时，优先用飞书 UI 配置：
 
 - 当 `状态` 改为 `进入Brief / 本周做 / 暂存 / 不做`，把 `学习状态` 设为 `待学习`。
-- 当 `状态` 改为 `进入Brief / 本周做`，由本机定时器运行 `codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5` 生成 `06 完整脚本与制作包`；急用时可手动运行同一命令。
+- 当 `状态` 改为 `进入Brief / 本周做`，由本机轻量 watcher 扫描近 5 天待生成队列并按需运行 `codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5` 生成 `06 完整脚本与制作包`；急用时可手动运行同一命令。

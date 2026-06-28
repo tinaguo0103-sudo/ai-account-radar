@@ -67,7 +67,7 @@ full_script_execution_package.md
 
 ## 资源使用
 
-- 无人值守批量生成：Codex App automation `ai-06` 定时运行 `scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5`，由本机 `codex exec` 调用全局私有 Skill 生成完整包。
+- 批量生成：本机轻量 watcher `scripts/watch_script_package_queue.py --interval-minutes 5 --limit 2 --max-age-days 5` 扫描近 5 天待生成队列；空队列不调用 Codex，有待生成记录时才运行 `scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5`，由本机 `codex exec` 调用全局私有 Skill 生成完整包。
 - 从指定 `04` 记录立即生成单条执行包：运行 `scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>`。
 - 本机确定性补跑/对比：仅调试旧模板输出时运行 `scripts/content_ops_pipeline.py --write-feishu` 或 `scripts/generate_script_execution_package.py --record-id <04_record_id> --write-feishu`。
 - 只校验 Topic Card：运行 `scripts/validate_topic_card.py`。

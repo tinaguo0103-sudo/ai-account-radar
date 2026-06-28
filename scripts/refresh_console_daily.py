@@ -451,8 +451,8 @@ def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[s
             "工作区": "分析与选题",
             "状态": "今日工作台",
             "数量/摘要": f"近 {SCRIPT_PACKAGE_QUEUE_DAYS} 天 {stats['topic_to_script_count']} 条选题已确认生成脚本包，等待生成完整口播稿与制作执行包。",
-            "说明": "daily_pipeline 只写入 04；本机 Codex 定时器会自动生成 06，扫描窗口和卡片有效期一致。",
-            "下一步": f"等待本机 Codex 定时器；急用时运行 codex_script_package_runner.py --write-feishu --limit 2 --max-age-days {SCRIPT_PACKAGE_QUEUE_DAYS}。",
+            "说明": "daily_pipeline 只写入 04；本机轻量 watcher 会自动生成 06，扫描窗口和卡片有效期一致，空队列不调用 Codex。",
+            "下一步": f"等待本机轻量 watcher；急用时运行 codex_script_package_runner.py --write-feishu --limit 2 --max-age-days {SCRIPT_PACKAGE_QUEUE_DAYS}。",
             "入口表": "04 分析与选题",
             "入口视图": "今日候选池",
             "入口说明": links["04 分析与选题"],
@@ -610,7 +610,7 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
 
     actions = [
         "先在 04 分析与选题 中处理高分待判断选题，至少确认 1 条生成脚本包。",
-        f"等待本机 Codex 定时器生成 06；急用时运行 codex_script_package_runner.py --write-feishu --limit 2 --max-age-days {SCRIPT_PACKAGE_QUEUE_DAYS}。",
+        f"等待本机轻量 watcher 生成 06；急用时运行 codex_script_package_runner.py --write-feishu --limit 2 --max-age-days {SCRIPT_PACKAGE_QUEUE_DAYS}。",
         "从本周可沉淀资产里选 1 个轻量资产，先做精简版，不追求完整大包。",
     ]
     if stats["source_errors"] != ["暂无异常"]:

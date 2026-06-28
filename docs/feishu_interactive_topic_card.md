@@ -23,7 +23,7 @@
 - `send --dry-run`：生成卡片但不发送。
 - `send`：通过应用机器人发送一张交互卡片。
 - `apply`：把卡片提交后的 `form_value` 回写到 `04`，默认 dry-run，只有加 `--write` 才真正写飞书。
-- `serve-long-connection`：启动飞书官方 SDK 长连接，接收 `card.action.trigger` 并复用 `apply` 的回写逻辑。只作为开发调试兜底，不作为日常生产路径。
+- `serve-long-connection`：启动飞书官方 SDK 长连接，接收 `card.action.trigger` 并复用 `apply` 的回写逻辑。只作为历史开发调试入口，不作为日常生产路径。
 - `serve-callback`：最小 HTTP 回调接收服务，作为本地 HTTP Webhook 调试入口。
 
 日常生产路径是：本机或自动化只负责 `send` 第一张选题卡。用户点击后的 `card.action.trigger` 由腾讯云 SCF receiver 接收并回写 `04`；如果有选中记录，receiver 会继续发送第二张制作方向卡。第二张卡提交后，receiver 把每条非空补充写回 `04 / 我的制作补充`；留空的题不会写入补充，后续脚本生成按私有案例库建议。腾讯云 SCF 代码在 `cloud_functions/feishu-card-receiver/`。
@@ -172,7 +172,7 @@ python3 scripts/feishu_topic_decision_card.py send --limit 7
 .venv/bin/python scripts/check_feishu_card_cloud_receiver.py
 ```
 
-本机长连接仍可用于开发兜底：
+本机长连接只保留为历史开发调试入口，日常不使用：
 
 ```bash
 .venv/bin/python scripts/feishu_topic_decision_card.py serve-long-connection --write
