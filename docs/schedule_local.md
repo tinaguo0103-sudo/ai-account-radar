@@ -20,7 +20,17 @@
 python3 scripts/install_script_package_watcher_launch_agent.py --interval-minutes 5 --limit 2 --max-age-days 5
 ```
 
-这个命令会先把运行时同步到 `~/.codex/ai-account-radar-runtime`，再安装用户级 LaunchAgent。这样后台进程不直接读取 Desktop 下的仓库，避免 macOS TCC 拦截。之后如果改了 watcher、runner、Skill 镜像或字段映射，要重新运行一次安装命令，或只同步 runtime：
+这个命令会先把运行时同步到 `~/.codex/ai-account-radar-runtime`，再安装用户级 LaunchAgent。这样后台进程不直接读取 Desktop 下的仓库，避免 macOS TCC 拦截。
+
+生成的 `06` 文档会通过项目文档库根目录下的固定入口查看：
+
+```text
+/Users/congcong/Desktop/AI/AI项目/AI账号工作流/06 完整脚本与制作包/
+```
+
+这个入口是一个指向 runtime 输出目录的软链接。后台真实写入 runtime，飞书 `06` 里的 `本地文档` 字段显示项目根目录下的路径，方便直接打开。
+
+之后如果改了 watcher、runner、Skill 镜像或字段映射，要重新运行一次安装命令，或只同步 runtime：
 
 ```bash
 python3 scripts/install_script_package_watcher_launch_agent.py --sync-runtime-only

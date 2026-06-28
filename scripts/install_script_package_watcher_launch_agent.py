@@ -19,6 +19,7 @@ LOG_DIR = Path.home() / "Library" / "Logs" / "ai-account-radar"
 CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 RUNTIME_DIRS = ("scripts", "config", "skills", "docs")
 RUNTIME_FILES = ("README.md", ".env.local", ".env")
+DEFAULT_DISPLAY_LINK_NAME = "06 完整脚本与制作包"
 
 
 def run(command: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -68,7 +69,24 @@ def sync_runtime(runtime_dir: Path) -> None:
     )
 
 
-def build_plist(runtime_dir: Path, interval_minutes: float, limit: int, max_age_days: int, python_bin: str) -> dict[str, object]:
+def create_display_link(runtime_dir: Path, display_root: Path) -> None:
+    target = runtime_dir / "output" / "script_execution_packages"
+    target.mkdir(parents=True, exist_ok=True)
+    display_root.parent.mkdir(parents=True, exist_ok=True)
+    if display_root.is_symlink():
+        if display_root.resolve() != target.resolve():
+            display_root.unlink()
+            display_root.symlink_to(target, target_is_directory=True)
+        return
+    if display_root.exists():
+        raise SystemExit(
+            f"Display path exists and is not a symlink: {display_root}\n"
+            "Please rename it or choose --display-link-name."
+        )
+    display_root.symlink_to(target, target_is_directory=True)
+
+
+def build_plist(runtime_dir: Path, display_root: Path, interval_minutes: float, limit: int, max_age_days: int, python_bin: str) -> dict[str, object]:
     interval = max(1.0, float(interval_minutes))
     return {
         "Label": LABEL,
@@ -87,6 +105,8 @@ def build_plist(runtime_dir: Path, interval_minutes: float, limit: int, max_age_
             "PATH": "/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
             "CODEX_BIN": CODEX_BIN,
             "PYTHONUNBUFFERED": "1",
+            "SCRIPT_PACKAGE_OUTPUT_ROOT": str(runtime_dir / "output" / "script_execution_packages"),
+            "SCRIPT_PACKAGE_DISPLAY_OUTPUT_ROOT": str(display_root),
         },
         "RunAtLoad": True,
         "KeepAlive": {"SuccessfulExit": False},
@@ -98,12 +118,20 @@ def build_plist(runtime_dir: Path, interval_minutes: float, limit: int, max_age_
 def install(args: argparse.Namespace) -> None:
     python_bin = args.python_bin or sys.executable
     runtime_dir = Path(args.runtime_dir).expanduser().resolve()
-    plist = build_plist(runtime_dir, args.interval_minutes, args.limit, args.max_age_days, python_bin)
+    project_doc_root = Path(args.project_doc_root).expanduser().resolve()
+    display_root = (
+        runtime_dir / "output" / "script_execution_packages"
+        if args.no_display_link
+        else project_doc_root / args.display_link_name
+    )
+    plist = build_plist(runtime_dir, display_root, args.interval_minutes, args.limit, args.max_age_days, python_bin)
     if args.dry_run:
         print(plist)
         return
     if not args.no_sync_runtime:
         sync_runtime(runtime_dir)
+    if not args.no_display_link:
+        create_display_link(runtime_dir, display_root)
     PLIST_PATH.parent.mkdir(parents=True, exist_ok=True)
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     Path(str(plist["StandardOutPath"])).write_text("", encoding="utf-8")
@@ -117,6 +145,7 @@ def install(args: argparse.Namespace) -> None:
     print(f"installed {LABEL}")
     print(f"plist: {PLIST_PATH}")
     print(f"runtime: {runtime_dir}")
+    print(f"display: {display_root}")
     print(f"stdout: {plist['StandardOutPath']}")
     print(f"stderr: {plist['StandardErrorPath']}")
 
@@ -147,6 +176,9 @@ def main() -> int:
     parser.add_argument("--max-age-days", type=int, default=5)
     parser.add_argument("--python-bin", default="", help="Python executable. Defaults to the interpreter running this installer.")
     parser.add_argument("--runtime-dir", default=str(DEFAULT_RUNTIME_DIR), help="Non-Desktop runtime directory used by LaunchAgent.")
+    parser.add_argument("--project-doc-root", default=str(ROOT.parent), help="Human-facing project document root.")
+    parser.add_argument("--display-link-name", default=DEFAULT_DISPLAY_LINK_NAME, help="Symlink name under --project-doc-root.")
+    parser.add_argument("--no-display-link", action="store_true", help="Do not create a project-root symlink for generated packages.")
     parser.add_argument("--no-sync-runtime", action="store_true", help="Install plist without refreshing the runtime copy.")
     parser.add_argument("--sync-runtime-only", action="store_true", help="Refresh runtime copy and exit without touching LaunchAgent.")
     parser.add_argument("--no-kickstart", action="store_true")
@@ -161,8 +193,13 @@ def main() -> int:
         if args.dry_run:
             print(f"would sync runtime to {Path(args.runtime_dir).expanduser().resolve()}")
             return 0
-        sync_runtime(Path(args.runtime_dir).expanduser().resolve())
-        print(f"synced runtime to {Path(args.runtime_dir).expanduser().resolve()}")
+        runtime_dir = Path(args.runtime_dir).expanduser().resolve()
+        sync_runtime(runtime_dir)
+        if not args.no_display_link:
+            display_root = Path(args.project_doc_root).expanduser().resolve() / args.display_link_name
+            create_display_link(runtime_dir, display_root)
+            print(f"display link: {display_root}")
+        print(f"synced runtime to {runtime_dir}")
         return 0
     if args.uninstall:
         uninstall(args.dry_run)

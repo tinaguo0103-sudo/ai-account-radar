@@ -37,7 +37,7 @@ from content_ops_pipeline import (
 
 ROOT = Path(__file__).resolve().parents[1]
 SCHEMA = ROOT / "config" / "codex_script_package_schema.json"
-OUTPUT_ROOT = ROOT / "output" / "script_execution_packages"
+DEFAULT_OUTPUT_ROOT = ROOT / "output" / "script_execution_packages"
 LOG_DIR = ROOT / "output" / "logs"
 LOCK_FILE = ROOT / ".runtime" / "codex_script_package_runner.lock"
 RUNNER_VERSION = "codex-local-script-package-runner-v0.1"
@@ -161,6 +161,26 @@ def codex_bin() -> str:
     return os.getenv("CODEX_BIN", DEFAULT_CODEX_BIN)
 
 
+def configured_path(env_name: str, default: Path) -> Path:
+    return Path(os.getenv(env_name, str(default))).expanduser()
+
+
+def output_root() -> Path:
+    return configured_path("SCRIPT_PACKAGE_OUTPUT_ROOT", DEFAULT_OUTPUT_ROOT)
+
+
+def display_output_root() -> Path:
+    return configured_path("SCRIPT_PACKAGE_DISPLAY_OUTPUT_ROOT", output_root())
+
+
+def display_path_for(actual_path: Path) -> Path:
+    root = output_root()
+    try:
+        return display_output_root() / actual_path.relative_to(root)
+    except ValueError:
+        return actual_path
+
+
 def topic_prompt(topic: dict[str, Any]) -> str:
     return f"""你是 Austin AI账号的本地定时脚本生成器。
 
@@ -224,11 +244,11 @@ def run_codex_for_topic(topic: dict[str, Any], timeout_seconds: int) -> dict[str
 
 def write_package_markdown(topic: dict[str, Any], package: dict[str, Any]) -> Path:
     title = str(topic.get("topic_title") or package.get("topic_title") or "未命名选题")
-    folder = OUTPUT_ROOT / date_slug() / f"{slugify(str(topic.get('topic_id') or topic.get('record_id') or 'topic'))}_{slugify(title)}"
+    folder = output_root() / date_slug() / f"{slugify(str(topic.get('topic_id') or topic.get('record_id') or 'topic'))}_{slugify(title)}"
     folder.mkdir(parents=True, exist_ok=True)
     path = folder / "full_script_execution_package.md"
     path.write_text(str(package["full_markdown"]).rstrip() + "\n", encoding="utf-8")
-    return path
+    return display_path_for(path)
 
 
 def script_status(qa_status: str) -> str:
