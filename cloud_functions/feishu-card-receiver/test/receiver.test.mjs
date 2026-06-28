@@ -10,6 +10,10 @@ const env = {
   SEND_PRODUCTION_DIRECTION_CARD: "false",
 };
 
+function toastBody(type, content) {
+  return { code: 0, toast: { type, content } };
+}
+
 function makeMockFetch(records, calls) {
   return async (url, init = {}) => {
     const parsed = new URL(url);
@@ -54,7 +58,7 @@ test("returns Feishu challenge", async () => {
 
 test("rejects invalid callback token", async () => {
   const response = await handlePayload({ header: { token: "wrong" }, event: {} }, env);
-  assert.deepEqual(await response.json(), { toast: { type: "error", content: "回调 token 校验失败" } });
+  assert.deepEqual(await response.json(), toastBody("error", "回调 token 校验失败"));
 });
 
 test("updates selected and unselected candidate records", async () => {
@@ -80,7 +84,7 @@ test("updates selected and unselected candidate records", async () => {
     env,
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), { toast: { type: "success", content: "已回写 2 条选择" } });
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择"));
   const puts = calls.filter((call) => call.method === "PUT");
   assert.equal(puts.length, 2);
   assert.deepEqual(puts[0].body.fields, {
@@ -125,7 +129,7 @@ test("sends production direction card after selected topics are written", async 
     },
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), { toast: { type: "success", content: "已回写 2 条选择，并发送制作方向卡" } });
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择，并发送制作方向卡"));
   const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
   assert.equal(sends.length, 1);
   const card = JSON.parse(sends[0].body.content);
@@ -172,7 +176,7 @@ test("uses candidate snapshots to skip full-table reads on selection submit", as
     },
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), { toast: { type: "success", content: "已回写 2 条选择，并发送制作方向卡" } });
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择，并发送制作方向卡"));
   assert.equal(calls.filter((call) => call.path.includes("/records?")).length, 0);
   assert.equal(calls.filter((call) => call.method === "PUT").length, 2);
   const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
@@ -212,7 +216,7 @@ test("defers production direction card by default", async () => {
     { ...env, SEND_PRODUCTION_DIRECTION_CARD: "true", FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow" },
     { fetchImpl: makeMockFetch(records, calls), deferredTasks },
   );
-  assert.deepEqual(await response.json(), { toast: { type: "success", content: "已回写 2 条选择，制作方向卡稍后发送" } });
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择，制作方向卡稍后发送"));
   assert.equal(deferredTasks.length, 1);
   await Promise.all(deferredTasks);
   assert.equal(calls.filter((call) => call.path.includes("/records?")).length, 0);
@@ -242,7 +246,7 @@ test("writes per-topic production directions", async () => {
     env,
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), { toast: { type: "success", content: "已保存 1 条制作方向" } });
+  assert.deepEqual(await response.json(), toastBody("success", "已保存 1 条制作方向"));
   const puts = calls.filter((call) => call.method === "PUT");
   assert.equal(puts.length, 1);
   assert.deepEqual(puts[0].body.fields, {
@@ -278,7 +282,7 @@ test("blocks expired cards before writing records", async () => {
     env,
     { fetchImpl: makeMockFetch(records, calls), nowMs: Date.parse("2026-06-07T00:00:00.000Z") },
   );
-  assert.deepEqual(await response.json(), { toast: { type: "warning", content: "这张卡已超过 5 天，不再处理，请使用最新卡片" } });
+  assert.deepEqual(await response.json(), toastBody("warning", "这张卡已超过 5 天，不再处理，请使用最新卡片"));
   assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
 });
 
@@ -310,7 +314,7 @@ test("blocks a production direction card after direction has already been saved"
     env,
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), { toast: { type: "warning", content: "这张制作方向卡已经保存过，不再重复处理" } });
+  assert.deepEqual(await response.json(), toastBody("warning", "这张制作方向卡已经保存过，不再重复处理"));
   assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
 });
 
@@ -346,6 +350,6 @@ test("blocks a selection card after it has already changed record status", async
     env,
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), { toast: { type: "warning", content: "这张选题卡已经提交过，不再重复处理" } });
+  assert.deepEqual(await response.json(), toastBody("warning", "这张选题卡已经提交过，不再重复处理"));
   assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
 });

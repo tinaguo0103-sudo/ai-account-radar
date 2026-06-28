@@ -29,7 +29,7 @@ function jsonResponse(body, statusCode = 200) {
 }
 
 function toast(type, content) {
-  return jsonResponse({ toast: { type, content } });
+  return jsonResponse({ code: 0, toast: { type, content } });
 }
 
 function normalize(value) {
