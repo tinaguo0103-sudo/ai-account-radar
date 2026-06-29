@@ -214,6 +214,30 @@ function selectionSubmittedAt(record) {
   return parseTimeMs(record?.fields?.[SELECTION_SUBMITTED_AT_FIELD]);
 }
 
+function queueCutoffIso() {
+  return new Date(Date.now() - cardExpireDays() * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function recordFilterCondition(fieldName, operator, value = []) {
+  const condition = { field_name: fieldName, operator };
+  if (!["isEmpty", "isNotEmpty"].includes(operator)) {
+    condition.value = Array.isArray(value) ? value : [value];
+  }
+  return condition;
+}
+
+function productionDirectionQueueFilter(cutoffIso = "", cutoffOperator = "") {
+  const conditions = [
+    recordFilterCondition(PRODUCTION_DIRECTION_CARD_STATUS_FIELD, "is", [PRODUCTION_DIRECTION_CARD_PENDING]),
+    recordFilterCondition("状态", "is", ["进入Brief"]),
+    recordFilterCondition(PRODUCTION_DIRECTION_FIELD, "isEmpty"),
+  ];
+  if (cutoffIso && cutoffOperator) {
+    conditions.push(recordFilterCondition(SELECTION_SUBMITTED_AT_FIELD, cutoffOperator, [cutoffIso]));
+  }
+  return { conjunction: "and", conditions };
+}
+
 function pendingQueueRecords(records) {
   const nowMs = Date.now();
   const expiresAfterMs = cardExpireDays() * 24 * 60 * 60 * 1000;
@@ -262,12 +286,47 @@ async function markRecords(token, tableId, records, fields) {
   await Promise.all(records.map((record) => updateRecordFields(token, tableId, record.record_id, fields)));
 }
 
+async function queueRecords(token, tableId) {
+  const cutoffIso = queueCutoffIso();
+  try {
+    return await allRecords(token, tableId, {
+      filter: productionDirectionQueueFilter(cutoffIso, "isGreaterEqual"),
+    });
+  } catch (error) {
+    const records = await allRecords(token, tableId, {
+      filter: productionDirectionQueueFilter(),
+    });
+    records.filter_fallback_error = errorText(error);
+    return records;
+  }
+}
+
+async function expiredQueueRecords(token, tableId) {
+  try {
+    return await allRecords(token, tableId, {
+      filter: productionDirectionQueueFilter(queueCutoffIso(), "isLess"),
+    });
+  } catch (_error) {
+    return [];
+  }
+}
+
+function uniqueRecords(records) {
+  const byId = new Map();
+  for (const record of records) {
+    if (!record?.record_id || byId.has(record.record_id)) continue;
+    byId.set(record.record_id, record);
+  }
+  return [...byId.values()];
+}
+
 async function sendPendingProductionDirectionCards() {
   if (!envValue("FEISHU_BASE_APP_TOKEN")) throw new Error("Missing FEISHU_BASE_APP_TOKEN");
   const token = await tenantToken();
   const tableId = await topicTableId(token);
-  const records = await allRecords(token, tableId);
-  const { pending, expired } = pendingQueueRecords(records);
+  const records = await queueRecords(token, tableId);
+  const expiredRecords = await expiredQueueRecords(token, tableId);
+  const { pending, expired } = pendingQueueRecords(uniqueRecords([...records, ...expiredRecords]));
   const nowIso = new Date().toISOString();
   const limit = Math.max(1, Number(envValue("PRODUCTION_DIRECTION_SEND_GROUP_LIMIT") || 1));
   const groups = groupPendingRecords(pending).slice(0, limit);
@@ -309,6 +368,8 @@ async function sendPendingProductionDirectionCards() {
     ok: failed.length === 0,
     action: SEND_PENDING_PRODUCTION_DIRECTION_CARDS_ACTION,
     scanned_count: records.length,
+    expired_scanned_count: expiredRecords.length,
+    filter_fallback_error: records.filter_fallback_error || "",
     pending_count: pending.length,
     expired_count: expired.length,
     group_count: groups.length,
@@ -497,12 +558,13 @@ async function sendInteractiveCard(token, card, uuidBase) {
   return { sent_count: sends.length, sends };
 }
 
-async function allRecords(token, tableId) {
+async function allRecords(token, tableId, queryOptions = {}) {
   const records = [];
   let pageToken = "";
   while (true) {
     const query = new URLSearchParams({ page_size: "500" });
     if (pageToken) query.set("page_token", pageToken);
+    if (queryOptions.filter) query.set("filter", JSON.stringify(queryOptions.filter));
     const payload = await requestJson(
       "GET",
       `/bitable/v1/apps/${envValue("FEISHU_BASE_APP_TOKEN")}/tables/${tableId}/records?${query}`,

@@ -221,6 +221,30 @@ function selectionSubmittedAt(record) {
   return parseTimeMs(record?.fields?.[SELECTION_SUBMITTED_AT_FIELD]);
 }
 
+function queueCutoffIso(env, options) {
+  return new Date(currentTimeMs(options) - cardExpireDays(env) * 24 * 60 * 60 * 1000).toISOString();
+}
+
+function recordFilterCondition(fieldName, operator, value = []) {
+  const condition = { field_name: fieldName, operator };
+  if (!["isEmpty", "isNotEmpty"].includes(operator)) {
+    condition.value = Array.isArray(value) ? value : [value];
+  }
+  return condition;
+}
+
+function productionDirectionQueueFilter(cutoffIso = "", cutoffOperator = "") {
+  const conditions = [
+    recordFilterCondition(PRODUCTION_DIRECTION_CARD_STATUS_FIELD, "is", [PRODUCTION_DIRECTION_CARD_PENDING]),
+    recordFilterCondition("状态", "is", ["进入Brief"]),
+    recordFilterCondition(PRODUCTION_DIRECTION_FIELD, "isEmpty"),
+  ];
+  if (cutoffIso && cutoffOperator) {
+    conditions.push(recordFilterCondition(SELECTION_SUBMITTED_AT_FIELD, cutoffOperator, [cutoffIso]));
+  }
+  return { conjunction: "and", conditions };
+}
+
 function pendingQueueRecords(records, env, options) {
   const nowMs = currentTimeMs(options);
   const expiresAfterMs = cardExpireDays(env) * 24 * 60 * 60 * 1000;
@@ -269,12 +293,47 @@ async function markRecords(env, token, tableId, records, fields, options) {
   await Promise.all(records.map((record) => updateRecordFields(env, token, tableId, record.record_id, fields, options)));
 }
 
+async function queueRecords(env, token, tableId, options) {
+  const cutoffIso = queueCutoffIso(env, options);
+  try {
+    return await allRecords(env, token, tableId, options, {
+      filter: productionDirectionQueueFilter(cutoffIso, "isGreaterEqual"),
+    });
+  } catch (error) {
+    const records = await allRecords(env, token, tableId, options, {
+      filter: productionDirectionQueueFilter(),
+    });
+    records.filter_fallback_error = errorText(error);
+    return records;
+  }
+}
+
+async function expiredQueueRecords(env, token, tableId, options) {
+  try {
+    return await allRecords(env, token, tableId, options, {
+      filter: productionDirectionQueueFilter(queueCutoffIso(env, options), "isLess"),
+    });
+  } catch (_error) {
+    return [];
+  }
+}
+
+function uniqueRecords(records) {
+  const byId = new Map();
+  for (const record of records) {
+    if (!record?.record_id || byId.has(record.record_id)) continue;
+    byId.set(record.record_id, record);
+  }
+  return [...byId.values()];
+}
+
 export async function sendPendingProductionDirectionCards(env, options = {}) {
   if (!env.FEISHU_BASE_APP_TOKEN) throw new Error("Missing FEISHU_BASE_APP_TOKEN");
   const token = await tenantToken(env, options);
   const tableId = await topicTableId(env, token, options);
-  const records = await allRecords(env, token, tableId, options);
-  const { pending, expired } = pendingQueueRecords(records, env, options);
+  const records = await queueRecords(env, token, tableId, options);
+  const expiredRecords = await expiredQueueRecords(env, token, tableId, options);
+  const { pending, expired } = pendingQueueRecords(uniqueRecords([...records, ...expiredRecords]), env, options);
   const nowIso = new Date(currentTimeMs(options)).toISOString();
   const limit = Math.max(1, Number(options.limit || env.PRODUCTION_DIRECTION_SEND_GROUP_LIMIT || 1));
   const groups = groupPendingRecords(pending).slice(0, limit);
@@ -316,6 +375,8 @@ export async function sendPendingProductionDirectionCards(env, options = {}) {
     ok: failed.length === 0,
     action: SEND_PENDING_PRODUCTION_DIRECTION_CARDS_ACTION,
     scanned_count: records.length,
+    expired_scanned_count: expiredRecords.length,
+    filter_fallback_error: records.filter_fallback_error || "",
     pending_count: pending.length,
     expired_count: expired.length,
     group_count: groups.length,
@@ -506,12 +567,13 @@ async function sendInteractiveCard(env, token, card, uuidBase, options) {
   return { sent_count: sends.length, sends };
 }
 
-async function allRecords(env, token, tableId, options) {
+async function allRecords(env, token, tableId, options, queryOptions = {}) {
   const records = [];
   let pageToken = "";
   while (true) {
     const query = new URLSearchParams({ page_size: "500" });
     if (pageToken) query.set("page_token", pageToken);
+    if (queryOptions.filter) query.set("filter", JSON.stringify(queryOptions.filter));
     const payload = await requestJson(
       env,
       "GET",
