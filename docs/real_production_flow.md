@@ -60,13 +60,13 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 本机生成后会发生三件事：
 
 - 本地生成 `06 完整脚本与制作包/YYYY-MM-DD_选题标题_完整脚本与制作包.md`。
-- 飞书文档优先生成到用户可见的 `AI账号信息雷达` 文件夹，并在飞书 `06 完整脚本与制作包` 新增一条轻量记录；如果当前 token 无权写入用户可见文件夹，06 会保留本地文档并写出同步报警。
+- 飞书文档优先生成到用户可见的 `AI账号信息雷达 / 06完整脚本与制作包` 子文件夹，并在飞书 `06 完整脚本与制作包` 新增一条轻量记录；如果当前 token 无权写入用户可见文件夹，06 会保留本地文档并写出同步报警。
 - 飞书 `04 分析与选题` 的 `是否已生成脚本稿` 标记为 `是`，避免重复生成。
 
 用户可见飞书文件夹配置：
 
-- `FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_TOKEN`：用户在普通飞书云盘里能看到的目标文件夹 token。
-- `FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_URL`：同一个文件夹的浏览器链接，写入 06 的 `飞书文件夹`。
+- `FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_TOKEN`：用户在普通飞书云盘里能看到的 `06完整脚本与制作包` 子文件夹 token。
+- `FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_URL`：同一个子文件夹的浏览器链接，写入 06 的 `飞书文件夹`。
 - `FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN` / `FEISHU_USER_ACCESS_TOKEN`：可选。若 tenant/app token 无法写入用户可见文件夹，需要用用户身份 token 创建文档；否则 runner 会写出 `文档同步状态=飞书文档同步失败` 和具体错误。
 - 旧 `FEISHU_SCRIPT_PACKAGE_FOLDER_TOKEN` 只作为应用空间兼容路径，不视为用户可见正常文件夹入口。
 
