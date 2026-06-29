@@ -24,6 +24,9 @@ SCRIPT_PACKAGE_FIELDS = [
     "核心观点",
     "开头钩子",
     "飞书文档",
+    "飞书文件夹",
+    "文档同步状态",
+    "文档同步错误",
     "本地文档",
     "素材提醒",
     "发布前核验",
@@ -35,7 +38,13 @@ SCRIPT_PACKAGE_FIELDS = [
 
 def ready_status(value: Any) -> bool:
     text = str(value or "").strip()
-    return text in {"进入Brief", "本周做"} or "进入Brief" in text or "本周做" in text or "进入制作" in text
+    return (
+        text in {"生成脚本包", "进入Brief", "本周做"}
+        or "生成脚本包" in text
+        or "进入Brief" in text
+        or "本周做" in text
+        or "进入制作" in text
+    )
 
 
 def resolve_austin_skill_dir() -> Path:
@@ -122,7 +131,7 @@ def feishu_ready_topics(token: str, app_token: str) -> tuple[dict[str, str], lis
     for record in records:
         fields = record.get("fields", {})
         already_generated = str(fields.get(TOPIC_MARK_FIELD, "")) == "是"
-        if ready_status(fields.get("状态") or fields.get("推荐动作")) and not already_generated:
+        if ready_status(fields.get("状态")) and not already_generated:
             ready.append(record)
     return table_ids, ready
 

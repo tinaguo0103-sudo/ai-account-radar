@@ -32,6 +32,7 @@ DEFAULT_LIMIT = 7
 CARD_EXPIRE_DAYS = 5
 DEFAULT_STATUS_FILTER = {"待判断", ""}
 ENTER_BRIEF_FORM_KEY = "enter_brief_records"
+SCRIPT_PACKAGE_READY_STATUS = "生成脚本包"
 SUBMIT_SELECTION_ACTION = "submit_topic_decisions"
 SUBMIT_NO_SELECTION_ACTION = "submit_no_selection"
 SUPPORTED_SUBMIT_ACTIONS = {SUBMIT_SELECTION_ACTION, SUBMIT_NO_SELECTION_ACTION}
@@ -242,7 +243,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
-            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成口播稿和制作包的编号；提交后，已选记录进入 `脚本与制作`，未选记录标记为 `不做`。如果有选中记录，系统会稍后再发一张卡片让你逐条补制作方向。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n运行批次：`{run_id or '未指定'}`",
+            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成口播稿和制作包的编号；提交后，已选记录进入 `{SCRIPT_PACKAGE_READY_STATUS}`，未选记录标记为 `不做`。如果有选中记录，系统会稍后再发一张卡片让你逐条补制作方向。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n运行批次：`{run_id or '未指定'}`",
         }
     ]
     for index, record in enumerate(records, start=1):
@@ -251,7 +252,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
             elements.append({"tag": "hr"})
 
     form_elements: list[dict[str, Any]] = [
-        select_component(ENTER_BRIEF_FORM_KEY, "进入脚本与制作：只选值得继续写口播稿的编号", options),
+        select_component(ENTER_BRIEF_FORM_KEY, "生成脚本包：只选值得继续写口播稿的编号", options),
         select_component("positive_reason_tags", "推进原因标签", tag_options(POSITIVE_REASON_OPTIONS)),
         text_input_component("manual_reason", "手工原因：标签不够用时，写一句真实判断"),
         {
@@ -484,7 +485,7 @@ def decisions_from_form(
 
     selected_record_ids = set(coerce_list(form_value.get(ENTER_BRIEF_FORM_KEY)))
     for record_id in selected_record_ids:
-        decisions[record_id] = {"status": "进入Brief", "tags": positive_tags, "manual_reason": manual_reason}
+        decisions[record_id] = {"status": SCRIPT_PACKAGE_READY_STATUS, "tags": positive_tags, "manual_reason": manual_reason}
 
     # Backward compatibility for cards sent before the simplified one-action form.
     negative_tags = coerce_list(form_value.get("negative_reason_tags"))

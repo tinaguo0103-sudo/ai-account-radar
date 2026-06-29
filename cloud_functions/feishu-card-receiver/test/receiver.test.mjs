@@ -88,7 +88,7 @@ test("updates selected and unselected candidate records", async () => {
   const puts = calls.filter((call) => call.method === "PUT");
   assert.equal(puts.length, 2);
   assert.deepEqual(puts[0].body.fields, {
-    "状态": "进入Brief",
+    "状态": "生成脚本包",
     "学习状态": "待学习",
     "选择原因标签": ["证据够"],
     "人工一句话判断": "测试原因",

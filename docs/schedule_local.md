@@ -28,7 +28,7 @@ python3 scripts/install_script_package_watcher_launch_agent.py --interval-minute
 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/06 完整脚本与制作包/
 ```
 
-这个入口是一个指向 runtime 输出目录的软链接。后台真实写入 runtime，文件以 `YYYY-MM-DD_选题标题_完整脚本与制作包.md` 平铺保存；飞书 `06` 里的 `飞书文档` 字段是线上阅读入口，`本地文档` 字段显示项目根目录下的备份路径。
+这个入口是一个指向 runtime 输出目录的软链接。后台真实写入 runtime，文件以 `YYYY-MM-DD_选题标题_完整脚本与制作包.md` 平铺保存；飞书 `06` 里的 `飞书文档` 字段是线上阅读入口，`飞书文件夹` 字段保存用户可见文件夹入口，`文档同步状态 / 文档同步错误` 用来暴露同步异常，`本地文档` 字段显示项目根目录下的备份路径。
 
 之后如果改了 watcher、runner、Skill 镜像或字段映射，要重新运行一次安装命令，或只同步 runtime：
 

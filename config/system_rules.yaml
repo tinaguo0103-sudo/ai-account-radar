@@ -244,9 +244,9 @@
     {
       "name": "06 完整脚本与制作包",
       "role": "完整口播稿与制作执行包记录表",
-      "why": "承接 04 里被选中的选题和制作方向补充，生成完整脚本与制作执行包，并在飞书保留状态、本地文档路径、素材提醒、发布前核验和 QA。",
-      "input": "04 分析与选题 中已确认生成脚本包的记录，以及交互卡片里的制作方向补充；底层兼容旧状态值 进入Brief/本周做。",
-      "output": "06 完整脚本与制作包、本地 full_script_execution_package.md、人工制作、07 资产与复盘。",
+      "why": "承接 04 里被选中的选题和制作方向补充，生成完整脚本与制作执行包，并在飞书保留状态、飞书文档/文件夹入口、本地文档路径、文档同步报警、素材提醒、发布前核验和 QA。",
+      "input": "04 分析与选题 中人工状态为生成脚本包/进入Brief/本周做的记录，以及交互卡片里的制作方向补充；不再仅凭AI推荐动作自动生成。",
+      "output": "06 完整脚本与制作包、本地平铺 Markdown、飞书文档入口、人工制作、07 资产与复盘。",
       "upstream": "04 分析与选题、本机 watcher、codex_script_package_runner.py、script_package_shared.py、Austin不加班脚本Skill。",
       "downstream": "人工拍摄制作、07 资产与复盘；任务拆分表后续单独设计。",
       "daily_usage": "daily",
@@ -255,7 +255,7 @@
       "daily_visible": "是，进入制作阶段后查看。",
       "user_editable": "是，可人工修正是否可拍、素材提醒、发布前核验和 QA。",
       "default_view": "脚本包后台 / 可拍脚本包 / 待修订脚本包",
-      "scripts_write": "本机 LaunchAgent 登录自启 watch_script_package_queue.py，默认每5分钟扫描04里推荐日期在近5天内的待生成记录，并排除明显测试标题；空队列不调用 Codex，有待生成记录时才调用 codex_script_package_runner.py 和 codex exec 生成06。超过5天的旧记录或测试记录需要显式 --record-id / --include-test-records 补跑。完整 Markdown 从项目根目录 06 完整脚本与制作包 打开，飞书06只保存轻量记录和本地文档路径。",
+      "scripts_write": "本机 LaunchAgent 登录自启 watch_script_package_queue.py，默认每5分钟扫描04里推荐日期在近5天内且人工状态已确认的待生成记录，并排除明显测试标题；空队列不调用 Codex，有待生成记录时才调用 codex_script_package_runner.py 和 codex exec 生成06。超过5天的旧记录或测试记录需要显式 --record-id / --include-test-records 补跑。完整 Markdown 从项目根目录 06 完整脚本与制作包 打开，飞书06只保存轻量记录、飞书文档/文件夹入口、本地文档路径和同步报警。",
       "human_edit": "打开06完整脚本或本机 Markdown 后，确认脚本是否可拍、素材提醒是否准确、发布前核验是否完成。"
     },
     {
@@ -517,7 +517,7 @@
     {
       "table": "04 分析与选题",
       "field": "状态",
-      "purpose": "选题决策流状态，决定下一步生成脚本包、暂存、归档或不做；底层兼容旧状态值 进入Brief/本周做。",
+      "purpose": "选题决策流状态，决定下一步生成脚本包、暂存、归档或不做；正式状态为生成脚本包，底层兼容旧状态值进入Brief/本周做。",
       "required": "是",
       "producer": "人工为主",
       "consumer": "用户、脚本包生成流程",
@@ -858,7 +858,7 @@
     {
       "table": "06 完整脚本与制作包",
       "field": "本地文档",
-      "purpose": "记录本地 full_script_execution_package.md 路径，是完整脚本和制作执行包的主阅读入口。",
+      "purpose": "记录本地平铺 Markdown 路径，是完整脚本和制作执行包的备份阅读入口；线上主入口优先看飞书文档。",
       "required": "是",
       "producer": "codex_script_package_runner.py",
       "consumer": "用户/后续自动化",
@@ -987,10 +987,10 @@
       "flow": "选题决策流",
       "table": "04 分析与选题",
       "field": "状态",
-      "status": "进入Brief",
+      "status": "生成脚本包",
       "meaning": "值得进一步生成口播稿和执行包。",
       "entry": "用户认为选题符合定位且有表达空间。",
-      "next_action": "由本机轻量 watcher 按需生成 full_script_execution_package.md 并写入 06 完整脚本与制作包。",
+      "next_action": "由本机轻量 watcher 按需生成本地平铺 Markdown 并写入 06 完整脚本与制作包。",
       "human_required": "是。"
     },
     {

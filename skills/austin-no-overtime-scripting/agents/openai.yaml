@@ -2,6 +2,6 @@ interface:
   display_name: "Austin不加班脚本Skill"
   short_description: "生成AI账号完整口播稿与执行包"
   brand_color: "#0F766E"
-  default_prompt: "使用 $austin-no-overtime-scripting，把这条已确认选题、04工作流实验命题卡和制作方向补充，生成 full_script_execution_package.md；飞书06只保留轻量脚本包记录，不存在中间Brief层。"
+  default_prompt: "使用 $austin-no-overtime-scripting，把这条已确认选题、04工作流实验命题卡和制作方向补充，生成单一 Markdown 完整脚本与制作包；飞书06只保留轻量脚本包记录，不存在中间Brief层。"
 policy:
   allow_implicit_invocation: true

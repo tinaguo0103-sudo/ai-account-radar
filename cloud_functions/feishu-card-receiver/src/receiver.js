@@ -13,6 +13,9 @@ const PRODUCTION_DIRECTION_CARD_SENDING = "发送中";
 const PRODUCTION_DIRECTION_CARD_SENT = "已发送";
 const PRODUCTION_DIRECTION_CARD_FAILED = "发送失败";
 const PRODUCTION_DIRECTION_CARD_IGNORED = "已忽略";
+const SCRIPT_PACKAGE_READY_STATUS = "生成脚本包";
+const LEGACY_SCRIPT_PACKAGE_READY_STATUS = "进入Brief";
+const SCRIPT_PACKAGE_READY_STATUSES = new Set([SCRIPT_PACKAGE_READY_STATUS, LEGACY_SCRIPT_PACKAGE_READY_STATUS]);
 const SUBMIT_SELECTION_ACTION = "submit_topic_decisions";
 const SUBMIT_NO_SELECTION_ACTION = "submit_no_selection";
 const SUBMIT_PRODUCTION_DIRECTIONS_ACTION = "submit_production_directions";
@@ -236,7 +239,7 @@ function recordFilterCondition(fieldName, operator, value = []) {
 function productionDirectionQueueFilter(cutoffIso = "", cutoffOperator = "") {
   const conditions = [
     recordFilterCondition(PRODUCTION_DIRECTION_CARD_STATUS_FIELD, "is", [PRODUCTION_DIRECTION_CARD_PENDING]),
-    recordFilterCondition("状态", "is", ["进入Brief"]),
+    recordFilterCondition("状态", "is", [SCRIPT_PACKAGE_READY_STATUS, LEGACY_SCRIPT_PACKAGE_READY_STATUS]),
     recordFilterCondition(PRODUCTION_DIRECTION_FIELD, "isEmpty"),
   ];
   if (cutoffIso && cutoffOperator) {
@@ -253,7 +256,7 @@ function pendingQueueRecords(records, env, options) {
   for (const record of records) {
     const fields = record.fields || {};
     if (normalize(fields[PRODUCTION_DIRECTION_CARD_STATUS_FIELD]) !== PRODUCTION_DIRECTION_CARD_PENDING) continue;
-    if (normalize(fields["状态"]) !== "进入Brief") continue;
+    if (!SCRIPT_PACKAGE_READY_STATUSES.has(normalize(fields["状态"]))) continue;
     if (normalize(fields[PRODUCTION_DIRECTION_FIELD])) continue;
     const submittedAtMs = selectionSubmittedAt(record);
     if (submittedAtMs && nowMs - submittedAtMs > expiresAfterMs) {
@@ -693,7 +696,7 @@ function decisionsFromForm(formValue, candidateIds, forceNoSelection = false) {
   const decisions = {};
   const selected = new Set(coerceList(formValue[ENTER_BRIEF_FORM_KEY]));
   for (const recordId of selected) {
-    decisions[recordId] = { status: "进入Brief", tags: positiveTags, manual_reason: manualReason };
+    decisions[recordId] = { status: SCRIPT_PACKAGE_READY_STATUS, tags: positiveTags, manual_reason: manualReason };
   }
   for (const recordId of candidateIds || []) {
     if (recordId && !decisions[recordId]) {
@@ -708,7 +711,7 @@ function fieldsEqual(current, next) {
 }
 
 function selectionQueueFields(decision, queueInfo) {
-  if (!queueInfo?.enabled || decision.status !== "进入Brief") return {};
+  if (!queueInfo?.enabled || !SCRIPT_PACKAGE_READY_STATUSES.has(decision.status)) return {};
   return {
     [PRODUCTION_DIRECTION_CARD_STATUS_FIELD]: PRODUCTION_DIRECTION_CARD_PENDING,
     [SELECTION_SUBMISSION_ID_FIELD]: queueInfo.submissionId,
@@ -767,7 +770,7 @@ async function applyFormValue(env, token, tableId, formValue, { candidateIds, ru
     updates,
     skipped,
     selected_records: (candidateIds || [])
-      .filter((recordId) => decisions[recordId]?.status === "进入Brief" && records[recordId])
+      .filter((recordId) => SCRIPT_PACKAGE_READY_STATUSES.has(decisions[recordId]?.status) && records[recordId])
       .map((recordId) => records[recordId]),
   };
 }
@@ -811,7 +814,7 @@ async function applyFormValueFast(env, token, tableId, formValue, { candidateIds
     updates,
     skipped,
     selected_records: (candidateIds || [])
-      .filter((recordId) => decisions[recordId]?.status === "进入Brief")
+      .filter((recordId) => SCRIPT_PACKAGE_READY_STATUSES.has(decisions[recordId]?.status))
       .map((recordId) => snapshotRecord(recordId, snapshots[recordId] || {})),
   };
 }

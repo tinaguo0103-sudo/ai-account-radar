@@ -7,6 +7,6 @@ v0.6 可拆成以下节点：
 3. If/Else：判断缺字段、证据缺口和事实核验点。
 4. LLM/Tool Node：调用 `austin-voice-scriptwriter` 生成 Austin 口播全文。
 5. LLM/Template Node：编排视频结构、录屏清单、剪辑交接、发布包和 QA。
-6. Output：返回单一 Markdown 主文档 `full_script_execution_package.md` 和 `06 完整脚本与制作包` 轻量记录字段。
+6. Output：返回单一 Markdown 主文档和 `06 完整脚本与制作包` 轻量记录字段；文件名由运行器平铺保存。
 
 注意：Dify 不负责自动发布，也不拆拍摄、剪辑、发布任务；任务表后续单独设计。

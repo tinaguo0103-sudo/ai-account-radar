@@ -116,7 +116,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `scripts/check_feishu_card_cloud_receiver.py`：不写表的健康检查脚本，用 `challenge` 校验腾讯云 SCF 函数 URL，并读一次 `04 分析与选题` 确认飞书凭证和表权限正常。
 - `scripts/learn_from_topic_selection.py`：读取 `04` 中用户已经改过的状态和原因标签，生成待确认的选题偏好学习摘要；默认只学习最近一次正式运行批次。建议日常使用 `--mark-pending-confirm`，先把样本标为 `待确认学习`。只有用户确认后运行 `--approve-latest`，`editorial_skill_runner.py` 才会读取已确认摘要并带入下一轮主编判断。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并准备 `06 完整脚本与制作包`。
-- `scripts/codex_script_package_runner.py`：本机 Codex 脚本包生成器；从 `04 分析与选题` 读取已确认选题和制作方向补充，默认只处理近 5 天推荐记录并排除明显测试标题，调用本机 `codex exec` 与全局私有 Skill 生成 `full_script_execution_package.md`，写入 `06 完整脚本与制作包` 轻量记录，并把原 `04` 标记为已生成。
+- `scripts/codex_script_package_runner.py`：本机 Codex 脚本包生成器；从 `04 分析与选题` 读取人工确认的选题状态和制作方向补充，默认只处理近 5 天记录并排除明显测试标题，调用本机 `codex exec` 与全局私有 Skill 生成平铺 Markdown 脚本包，写入 `06 完整脚本与制作包` 轻量记录，并把原 `04` 标记为已生成。
 - `scripts/script_package_shared.py`：`04 -> 06` 脚本包链路共享函数，集中维护飞书字段、待生成队列、Austin Skill 加载和 Topic Card 标准化。
 - `scripts/watch_script_package_queue.py`：本机轻量 watcher；每隔几分钟扫描一次 `04` 的待生成队列，空队列只做飞书 API 检查，不调用 Codex，有待生成记录时才调用 `codex_script_package_runner.py`。
 - `scripts/install_script_package_watcher_launch_agent.py`：把 06 watcher 安装成 macOS 用户级 LaunchAgent，登录后自动拉起；睡眠唤醒通常会继续跑，重启后登录会自动恢复。
@@ -134,7 +134,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 
 ## Austin不加班脚本Skill
 
-`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写任何中间 Brief 表。选题确认并补充制作方向后，正式路径由本机轻量 watcher `scripts/watch_script_package_queue.py` 扫描近 5 天待生成队列；空队列不调用 Codex，有待生成记录时才调用 `scripts/codex_script_package_runner.py`，通过本机 `codex exec` 和全局私有 Skill 生成 `06 完整脚本与制作包`。完整内容统一落到单一主文档 `full_script_execution_package.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA；飞书 `06` 只保存轻量记录和本地文档路径。
+`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写任何中间 Brief 表。选题确认并补充制作方向后，正式路径由本机轻量 watcher `scripts/watch_script_package_queue.py` 扫描近 5 天待生成队列；空队列不调用 Codex，有待生成记录时才调用 `scripts/codex_script_package_runner.py`，通过本机 `codex exec` 和全局私有 Skill 生成 `06 完整脚本与制作包`。完整内容统一落到项目根目录 `06 完整脚本与制作包/YYYY-MM-DD_选题标题_完整脚本与制作包.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA；飞书 `06` 只保存轻量记录、飞书文档/文件夹入口、本地文档路径和同步报警。
 
 运行时规则：
 
@@ -350,7 +350,7 @@ python3 scripts/editorial_skill_runner.py \
 日常挑选不再要求你在长表格里逐格点开看。`04` 现在保留这些飞书原生视图：
 
 - `今日挑选卡片`：主入口，快速扫标题和 `卡片速读`，直接改状态和原因标签。
-- `今日决策看板`：按 `状态` 看候选从 `待判断` 到生成脚本包、暂存或不做的推进；底层兼容旧状态值 `进入Brief / 本周做`。
+- `今日决策看板`：按 `状态` 看候选从 `待判断` 到 `生成脚本包`、暂存或不做的推进；底层兼容旧状态值 `进入Brief / 本周做`。
 - `证据不足`：专门看 `可展示证据` 和 `需要补的证据`，判断是不是先补素材。
 - `待学习样本`：看已经做过选择、等待被学习脚本汇总的样本。
 - `今日候选池`：保留表格视图，主要用于排查和批量查看。
@@ -478,7 +478,7 @@ python3 scripts/sync_rules_dictionary.py --sync-feishu
 1. 每天默认打开 `00 主控台 / 今日工作台`，只看当天动作、预警、进度和临时入口。
 2. 如果想理解系统关系，再切到 `00 主控台 / 系统导航`，或看 `docs/system_map.md`。
 3. 优先看 `04 分析与选题 / 今日挑选卡片`，而不是看原始内容、粉丝数、点赞数或竞品报表。
-4. 进入 `04 分析与选题` 做选题决策：日常只需要确认哪些候选生成脚本包，剩下的暂存、归档或不做；系统内部仍兼容旧状态值 `进入Brief` / `本周做`，用于触发脚本包生成；尽量补一个 `选择原因标签`，方便后续学习你的判断逻辑。
+4. 进入 `04 分析与选题` 做选题决策：日常只需要确认哪些候选进入 `生成脚本包`，剩下的暂存、归档或不做；系统内部仍兼容旧状态值 `进入Brief` / `本周做`，用于触发脚本包生成；尽量补一个 `选择原因标签`，方便后续学习你的判断逻辑。
 5. 对已确认推进的选题等待本机轻量 watcher 生成 `06 完整脚本与制作包`；急用时运行 `python3 scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5`。
 6. 进入 `06 完整脚本与制作包` 看脚本状态、本地文档、素材提醒、发布前核验和 QA。
 7. 必要时打开 `02 URL投喂入口`，手动粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接；小红书、视频号、评论区和抖音主页批量抓取暂不支持。
@@ -517,7 +517,7 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 3. 再看 `可复刻内容`、`来源异常/采集失败`。
 4. 快速挑选优先用交互式选题速选卡：运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，它只负责把卡片发到飞书；后续点击由腾讯云 SCF receiver 自动回写。在飞书卡片里只勾选值得生成脚本包的候选，补原因标签或一句手工原因后提交。未选中的候选会标记为 `不做`；选中的候选会进入第二张制作方向卡发送队列，腾讯云每 5 分钟扫描并发送补充卡。飞书 `04 / 今日挑选卡片` 保留为兜底编辑入口。
 5. 运行 `python3 scripts/learn_from_topic_selection.py --mark-pending-confirm`，把本轮选择沉淀成本地待确认学习摘要；确认摘要正确后再运行 `python3 scripts/learn_from_topic_selection.py --approve-latest --mark-learned`。
-6. 本机轻量 watcher 会把近 5 天已确认推进且未生成脚本稿的选题写入 `06 完整脚本与制作包`，完整 Markdown 落到本地 `full_script_execution_package.md`；没有待生成记录时只做队列检查，不消耗 Codex。
+6. 本机轻量 watcher 会把近 5 天已确认推进且未生成脚本稿的选题写入 `06 完整脚本与制作包`，完整 Markdown 落到项目根目录 `06 完整脚本与制作包/`；没有待生成记录时只做队列检查，不消耗 Codex。
 7. 单条补跑或测试时，运行 `python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>`。
 8. 打开 `06 完整脚本与制作包`，看脚本状态、本地文档、素材提醒、发布前核验和 QA，继续拍摄、剪辑和发布准备。
 9. 必要时进入 `02 URL投喂入口`，粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接。

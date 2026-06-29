@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import os
 import plistlib
 import shutil
@@ -86,6 +87,50 @@ def create_display_link(runtime_dir: Path, display_root: Path) -> None:
     display_root.symlink_to(target, target_is_directory=True)
 
 
+def file_hash(path: Path) -> str:
+    digest = hashlib.sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def relative_runtime_files() -> list[Path]:
+    files: list[Path] = []
+    for dirname in RUNTIME_DIRS:
+        source = ROOT / dirname
+        if source.exists():
+            files.extend(path.relative_to(ROOT) for path in source.rglob("*") if path.is_file())
+    for filename in RUNTIME_FILES:
+        if (ROOT / filename).exists():
+            files.append(Path(filename))
+    return sorted(files)
+
+
+def runtime_sync_report(runtime_dir: Path) -> dict[str, object]:
+    missing: list[str] = []
+    changed: list[str] = []
+    checked = 0
+    for rel_path in relative_runtime_files():
+        source = ROOT / rel_path
+        target = runtime_dir / rel_path
+        checked += 1
+        if not target.exists():
+            missing.append(str(rel_path))
+            continue
+        if file_hash(source) != file_hash(target):
+            changed.append(str(rel_path))
+    return {
+        "runtime": str(runtime_dir),
+        "checked": checked,
+        "missing": missing[:50],
+        "changed": changed[:50],
+        "missing_count": len(missing),
+        "changed_count": len(changed),
+        "in_sync": not missing and not changed,
+    }
+
+
 def build_plist(runtime_dir: Path, display_root: Path, interval_minutes: float, limit: int, max_age_days: int, python_bin: str) -> dict[str, object]:
     interval = max(1.0, float(interval_minutes))
     return {
@@ -160,12 +205,15 @@ def uninstall(dry_run: bool) -> None:
     print(f"uninstalled {LABEL}")
 
 
-def status() -> int:
+def status(runtime_dir: Path | None = None) -> int:
     result = run(["launchctl", "print", service_name()], check=False)
     if result.stdout:
         print(result.stdout)
     if result.stderr:
         print(result.stderr, file=sys.stderr)
+    if runtime_dir:
+        print("runtime sync:")
+        print(runtime_sync_report(runtime_dir))
     return result.returncode
 
 
@@ -188,7 +236,7 @@ def main() -> int:
     args = parser.parse_args()
 
     if args.status:
-        return status()
+        return status(Path(args.runtime_dir).expanduser().resolve())
     if args.sync_runtime_only:
         if args.dry_run:
             print(f"would sync runtime to {Path(args.runtime_dir).expanduser().resolve()}")

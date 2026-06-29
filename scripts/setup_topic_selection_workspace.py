@@ -159,6 +159,31 @@ def ensure_fields(token: str, app_token: str, table_id: str) -> list[str]:
     return created
 
 
+def ensure_select_options(token: str, app_token: str, table_id: str) -> list[str]:
+    fields = list_fields(token, app_token, table_id)
+    updated: list[str] = []
+    for field_name, expected_options in FIELD_OPTIONS.items():
+        field = fields.get(field_name)
+        if not field or field.get("type") != 3:
+            continue
+        current_names = {
+            option.get("name")
+            for option in field.get("property", {}).get("options", [])
+            if option.get("name")
+        }
+        if all(option in current_names for option in expected_options):
+            continue
+        feishu.request_json(
+            "PUT",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields/{field['field_id']}",
+            token=token,
+            body=field_create_body(field_name),
+        )
+        updated.append(field_name)
+        time.sleep(0.15)
+    return updated
+
+
 def selectable_field_names() -> set[str]:
     return set(FIELD_OPTIONS) | set(MULTI_SELECT_FIELD_OPTIONS)
 
@@ -372,6 +397,7 @@ def main() -> int:
         raise SystemExit(f"Missing table: {TABLES[TARGET_TABLE_KEY]}")
 
     created_fields = ensure_fields(token, app_token, table_id)
+    updated_select_options = ensure_select_options(token, app_token, table_id)
     converted = convert_existing_select_fields(token, app_token, table_id)
     run_id = latest_run_id()
     card_summary = backfill_card_summary(token, app_token, table_id, run_id)
@@ -382,6 +408,7 @@ def main() -> int:
         "table_id": table_id,
         "latest_run_id": run_id,
         "created_fields": created_fields,
+        "updated_select_options": updated_select_options,
         "select_conversion": converted,
         "card_summary": card_summary,
         "views": views,

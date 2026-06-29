@@ -16,6 +16,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -53,6 +54,14 @@ TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(
 DOC_SYNC_MAX_PARAGRAPHS = 180
 
 
+@dataclass
+class FeishuDocSyncResult:
+    url: str = ""
+    folder_url: str = ""
+    status: str = "未配置飞书文档同步"
+    error: str = ""
+
+
 def now_stamp() -> str:
     return datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -87,8 +96,34 @@ def inline_items(items: list[str], fallback: str = "无", limit: int = 6) -> str
     return "；".join(clean[:limit]) if clean else fallback
 
 
-def script_package_folder_token() -> str:
+def visible_script_package_folder_token() -> str:
+    return os.getenv("FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_TOKEN", "").strip()
+
+
+def legacy_script_package_folder_token() -> str:
     return os.getenv("FEISHU_SCRIPT_PACKAGE_FOLDER_TOKEN", "").strip()
+
+
+def script_package_folder_token() -> str:
+    return visible_script_package_folder_token() or legacy_script_package_folder_token()
+
+
+def script_package_folder_url() -> str:
+    return os.getenv("FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_URL", "").strip()
+
+
+def feishu_doc_token(default_tenant_token: str) -> str:
+    """Prefer user identity for user-visible Drive folders.
+
+    Tenant tokens can create documents in app-owned space, but they often cannot
+    write into a folder the user can browse in normal Feishu Drive. When a user
+    access token is configured, use it only for docx creation.
+    """
+    return (
+        os.getenv("FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN", "").strip()
+        or os.getenv("FEISHU_USER_ACCESS_TOKEN", "").strip()
+        or default_tenant_token
+    )
 
 
 def feishu_docs_enabled() -> bool:
@@ -96,6 +131,25 @@ def feishu_docs_enabled() -> bool:
     if value in {"0", "false", "no", "off"}:
         return False
     return bool(script_package_folder_token())
+
+
+def doc_sync_preflight_status() -> FeishuDocSyncResult | None:
+    if feishu_docs_enabled():
+        return None
+    if os.getenv("FEISHU_SCRIPT_PACKAGE_DOCS_ENABLED", "").strip().lower() in {"0", "false", "no", "off"}:
+        return FeishuDocSyncResult(status="已关闭飞书文档同步")
+    return FeishuDocSyncResult(
+        status="未配置用户可见飞书文件夹",
+        error="缺少 FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_TOKEN；旧 FEISHU_SCRIPT_PACKAGE_FOLDER_TOKEN 只适合作为应用空间兼容路径。",
+    )
+
+
+def doc_sync_success_status() -> str:
+    if visible_script_package_folder_token():
+        if os.getenv("FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN", "").strip() or os.getenv("FEISHU_USER_ACCESS_TOKEN", "").strip():
+            return "已同步到用户可见飞书文件夹"
+        return "已创建飞书文档，但需确认文件夹对用户可见"
+    return "已创建飞书文档：应用空间兼容路径，非正常用户文件夹入口"
 
 
 def record_day(value: Any) -> date | None:
@@ -323,14 +377,16 @@ def markdown_blocks(markdown: str) -> list[dict[str, Any]]:
     return blocks
 
 
-def create_feishu_document(token: str, title: str, markdown: str) -> str:
-    if not feishu_docs_enabled():
-        return ""
+def create_feishu_document(token: str, title: str, markdown: str) -> FeishuDocSyncResult:
+    preflight = doc_sync_preflight_status()
+    if preflight:
+        return preflight
     folder_token = script_package_folder_token()
+    doc_token = feishu_doc_token(token)
     payload = feishu.request_json(
         "POST",
         "/docx/v1/documents",
-        token=token,
+        token=doc_token,
         body={"folder_token": folder_token, "title": title[:250]},
     )
     data = payload.get("data", {})
@@ -345,21 +401,31 @@ def create_feishu_document(token: str, title: str, markdown: str) -> str:
         feishu.request_json(
             "POST",
             f"/docx/v1/documents/{document_id}/blocks/{document_id}/children",
-            token=token,
+            token=doc_token,
             body={"children": chunk},
         )
         time.sleep(0.15)
-    return feishu_doc_url(document_id)
+    return FeishuDocSyncResult(
+        url=feishu_doc_url(document_id),
+        folder_url=script_package_folder_url(),
+        status=doc_sync_success_status(),
+    )
 
 
-def try_create_feishu_document(token: str, title: str, package: dict[str, Any]) -> str:
-    if not feishu_docs_enabled():
-        return ""
+def try_create_feishu_document(token: str, title: str, package: dict[str, Any]) -> FeishuDocSyncResult:
+    preflight = doc_sync_preflight_status()
+    if preflight:
+        return preflight
     try:
         return create_feishu_document(token, f"{date_slug()}_{title}_完整脚本与制作包", str(package["full_markdown"]))
     except Exception as exc:
-        log("feishu document sync skipped: " + compact(exc, 1000))
-        return ""
+        message = compact(exc, 1000)
+        log("feishu document sync failed: " + message)
+        return FeishuDocSyncResult(
+            folder_url=script_package_folder_url(),
+            status="飞书文档同步失败",
+            error=message,
+        )
 
 
 def script_status(qa_status: str) -> str:
@@ -370,16 +436,20 @@ def script_status(qa_status: str) -> str:
     return "已生成完整脚本包"
 
 
-def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: Path, feishu_document_url: str = "") -> dict[str, str]:
+def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: Path, doc_sync: FeishuDocSyncResult | None = None) -> dict[str, str]:
     qa_status = str(package.get("qa_status") or "revise")
     qa_result = str(package.get("qa_result") or "待人工确认")
+    doc_sync = doc_sync or FeishuDocSyncResult()
     return {
         "关联选题": str(topic.get("topic_title") or package.get("topic_title") or ""),
         "脚本状态": script_status(qa_status),
         "推荐模板": str(package.get("recommended_template") or ""),
         "核心观点": str(package.get("core_viewpoint") or "")[:5000],
         "开头钩子": str(package.get("opening_hook") or "")[:500],
-        "飞书文档": feishu_document_url,
+        "飞书文档": doc_sync.url,
+        "飞书文件夹": doc_sync.folder_url,
+        "文档同步状态": doc_sync.status,
+        "文档同步错误": doc_sync.error[:1000],
         "本地文档": str(document_path),
         "素材提醒": inline_items([str(item) for item in package.get("material_reminders", [])], "无P0素材缺口"),
         "发布前核验": inline_items([str(item) for item in package.get("release_checks", [])], "无额外事实核验点"),
@@ -466,8 +536,8 @@ def main() -> int:
         package = run_codex_for_topic(topic, args.timeout_seconds)
         document_path = write_package_markdown(topic, package)
         title = str(topic.get("topic_title") or package.get("topic_title") or "未命名选题")
-        feishu_document_url = try_create_feishu_document(token, title, package) if args.write_feishu else ""
-        row = package_row(topic, package, document_path, feishu_document_url)
+        doc_sync = try_create_feishu_document(token, title, package) if args.write_feishu else FeishuDocSyncResult(status="未写入飞书")
+        row = package_row(topic, package, document_path, doc_sync)
         created_id = ""
         if args.write_feishu:
             created_id = create_script_package_record(token, app_token, table_ids["script_package"], row)
@@ -476,6 +546,8 @@ def main() -> int:
             "record_id": record.get("record_id"),
             "topic_title": topic.get("topic_title"),
             "document_path": str(document_path),
+            "feishu_document_url": doc_sync.url,
+            "doc_sync_status": doc_sync.status,
             "qa_status": package.get("qa_status"),
             "created_script_package_id": created_id,
             "marked_topic": bool(args.write_feishu),
