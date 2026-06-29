@@ -3,9 +3,20 @@ const TOPIC_TABLE_NAMES = ["04 分析与选题", "03 分析与选题"];
 const ENTER_BRIEF_FORM_KEY = "enter_brief_records";
 const PRODUCTION_DIRECTION_FIELD = "我的制作补充";
 const PRODUCTION_DIRECTION_FORM_PREFIX = "production_direction__";
+const PRODUCTION_DIRECTION_CARD_STATUS_FIELD = "制作方向卡状态";
+const SELECTION_SUBMISSION_ID_FIELD = "选择提交批次";
+const SELECTION_SUBMITTED_AT_FIELD = "选择提交时间";
+const PRODUCTION_DIRECTION_CARD_SENT_AT_FIELD = "制作方向卡发送时间";
+const PRODUCTION_DIRECTION_CARD_ERROR_FIELD = "制作方向卡错误";
+const PRODUCTION_DIRECTION_CARD_PENDING = "待发送";
+const PRODUCTION_DIRECTION_CARD_SENDING = "发送中";
+const PRODUCTION_DIRECTION_CARD_SENT = "已发送";
+const PRODUCTION_DIRECTION_CARD_FAILED = "发送失败";
+const PRODUCTION_DIRECTION_CARD_IGNORED = "已忽略";
 const SUBMIT_SELECTION_ACTION = "submit_topic_decisions";
 const SUBMIT_NO_SELECTION_ACTION = "submit_no_selection";
 const SUBMIT_PRODUCTION_DIRECTIONS_ACTION = "submit_production_directions";
+const SEND_PENDING_PRODUCTION_DIRECTION_CARDS_ACTION = "send_pending_production_direction_cards";
 const SUPPORTED_SUBMIT_ACTIONS = new Set([
   SUBMIT_SELECTION_ACTION,
   SUBMIT_NO_SELECTION_ACTION,
@@ -191,8 +202,8 @@ function shouldSendProductionDirectionCard(env, actionName, summary) {
   );
 }
 
-function shouldDeferProductionDirectionCard(env) {
-  return String(env.DEFER_PRODUCTION_DIRECTION_CARD || "true").toLowerCase() !== "false";
+function shouldQueueProductionDirectionCard(env, actionName, summary) {
+  return shouldSendProductionDirectionCard(env, actionName, summary);
 }
 
 async function sendProductionDirectionCard(env, token, runId, selectedRecords, options) {
@@ -206,14 +217,111 @@ async function sendProductionDirectionCard(env, token, runId, selectedRecords, o
   );
 }
 
-function startDeferredTask(promise, options) {
-  if (Array.isArray(options?.deferredTasks)) {
-    options.deferredTasks.push(promise);
-    return;
+function selectionSubmittedAt(record) {
+  return parseTimeMs(record?.fields?.[SELECTION_SUBMITTED_AT_FIELD]);
+}
+
+function pendingQueueRecords(records, env, options) {
+  const nowMs = currentTimeMs(options);
+  const expiresAfterMs = cardExpireDays(env) * 24 * 60 * 60 * 1000;
+  const expired = [];
+  const pending = [];
+  for (const record of records) {
+    const fields = record.fields || {};
+    if (normalize(fields[PRODUCTION_DIRECTION_CARD_STATUS_FIELD]) !== PRODUCTION_DIRECTION_CARD_PENDING) continue;
+    if (normalize(fields["状态"]) !== "进入Brief") continue;
+    if (normalize(fields[PRODUCTION_DIRECTION_FIELD])) continue;
+    const submittedAtMs = selectionSubmittedAt(record);
+    if (submittedAtMs && nowMs - submittedAtMs > expiresAfterMs) {
+      expired.push(record);
+      continue;
+    }
+    pending.push(record);
   }
-  promise.catch((error) => {
-    console.error("Deferred production direction card failed:", error);
-  });
+  return { pending, expired };
+}
+
+function groupPendingRecords(records) {
+  const groups = new Map();
+  for (const record of records) {
+    const fields = record.fields || {};
+    const submissionId = normalize(fields[SELECTION_SUBMISSION_ID_FIELD]) || `record:${record.record_id}`;
+    const runId = normalize(fields["运行批次"]);
+    if (!groups.has(submissionId)) {
+      groups.set(submissionId, {
+        submission_id: submissionId,
+        run_id: runId,
+        submitted_at_ms: selectionSubmittedAt(record) || 0,
+        records: [],
+      });
+    }
+    groups.get(submissionId).records.push(record);
+  }
+  return [...groups.values()].sort((a, b) => a.submitted_at_ms - b.submitted_at_ms);
+}
+
+function errorText(error) {
+  return compact(error?.message || String(error), 500);
+}
+
+async function markRecords(env, token, tableId, records, fields, options) {
+  if (!records.length) return;
+  await Promise.all(records.map((record) => updateRecordFields(env, token, tableId, record.record_id, fields, options)));
+}
+
+export async function sendPendingProductionDirectionCards(env, options = {}) {
+  if (!env.FEISHU_BASE_APP_TOKEN) throw new Error("Missing FEISHU_BASE_APP_TOKEN");
+  const token = await tenantToken(env, options);
+  const tableId = await topicTableId(env, token, options);
+  const records = await allRecords(env, token, tableId, options);
+  const { pending, expired } = pendingQueueRecords(records, env, options);
+  const nowIso = new Date(currentTimeMs(options)).toISOString();
+  const limit = Math.max(1, Number(options.limit || env.PRODUCTION_DIRECTION_SEND_GROUP_LIMIT || 1));
+  const groups = groupPendingRecords(pending).slice(0, limit);
+  const sent = [];
+  const failed = [];
+
+  await markRecords(env, token, tableId, expired, {
+    [PRODUCTION_DIRECTION_CARD_STATUS_FIELD]: PRODUCTION_DIRECTION_CARD_IGNORED,
+    [PRODUCTION_DIRECTION_CARD_ERROR_FIELD]: `超过 ${cardExpireDays(env)} 天未发送，已忽略`,
+  }, options);
+
+  for (const group of groups) {
+    await markRecords(env, token, tableId, group.records, {
+      [PRODUCTION_DIRECTION_CARD_STATUS_FIELD]: PRODUCTION_DIRECTION_CARD_SENDING,
+      [PRODUCTION_DIRECTION_CARD_ERROR_FIELD]: "",
+    }, options);
+    try {
+      const result = await sendProductionDirectionCard(env, token, group.run_id, group.records, options);
+      if (!result.sent_count) {
+        throw new Error(result.skipped === "missing_receive_targets" ? "未配置制作方向卡接收人" : "制作方向卡未发送");
+      }
+      await markRecords(env, token, tableId, group.records, {
+        [PRODUCTION_DIRECTION_CARD_STATUS_FIELD]: PRODUCTION_DIRECTION_CARD_SENT,
+        [PRODUCTION_DIRECTION_CARD_SENT_AT_FIELD]: nowIso,
+        [PRODUCTION_DIRECTION_CARD_ERROR_FIELD]: "",
+      }, options);
+      sent.push({ submission_id: group.submission_id, run_id: group.run_id, record_count: group.records.length, ...result });
+    } catch (error) {
+      const message = errorText(error);
+      await markRecords(env, token, tableId, group.records, {
+        [PRODUCTION_DIRECTION_CARD_STATUS_FIELD]: PRODUCTION_DIRECTION_CARD_FAILED,
+        [PRODUCTION_DIRECTION_CARD_ERROR_FIELD]: message,
+      }, options);
+      failed.push({ submission_id: group.submission_id, run_id: group.run_id, record_count: group.records.length, error: message });
+    }
+  }
+
+  return {
+    ok: failed.length === 0,
+    action: SEND_PENDING_PRODUCTION_DIRECTION_CARDS_ACTION,
+    scanned_count: records.length,
+    pending_count: pending.length,
+    expired_count: expired.length,
+    group_count: groups.length,
+    sent,
+    failed,
+  };
 }
 
 function parseReceiveTargets(env) {
@@ -534,15 +642,21 @@ function decisionsFromForm(formValue, candidateIds, forceNoSelection = false) {
 }
 
 function fieldsEqual(current, next) {
-  return (
-    normalize(current["状态"]) === normalize(next["状态"]) &&
-    normalize(current["学习状态"]) === normalize(next["学习状态"]) &&
-    normalize(current["选择原因标签"]) === normalize(next["选择原因标签"]) &&
-    normalize(current["人工一句话判断"]) === normalize(next["人工一句话判断"])
-  );
+  return Object.entries(next).every(([fieldName, value]) => normalize(current[fieldName]) === normalize(value));
 }
 
-async function applyFormValue(env, token, tableId, formValue, { candidateIds, runId, forceNoSelection, options }) {
+function selectionQueueFields(decision, queueInfo) {
+  if (!queueInfo?.enabled || decision.status !== "进入Brief") return {};
+  return {
+    [PRODUCTION_DIRECTION_CARD_STATUS_FIELD]: PRODUCTION_DIRECTION_CARD_PENDING,
+    [SELECTION_SUBMISSION_ID_FIELD]: queueInfo.submissionId,
+    [SELECTION_SUBMITTED_AT_FIELD]: queueInfo.submittedAt,
+    [PRODUCTION_DIRECTION_CARD_SENT_AT_FIELD]: "",
+    [PRODUCTION_DIRECTION_CARD_ERROR_FIELD]: "",
+  };
+}
+
+async function applyFormValue(env, token, tableId, formValue, { candidateIds, runId, forceNoSelection, options, queueInfo }) {
   const decisions = decisionsFromForm(formValue, candidateIds, forceNoSelection);
   const records = Object.fromEntries((await allRecords(env, token, tableId, options)).map((record) => [record.record_id, record]));
   const updates = [];
@@ -565,6 +679,7 @@ async function applyFormValue(env, token, tableId, formValue, { candidateIds, ru
       "学习状态": "待学习",
       "选择原因标签": decision.tags,
       "人工一句话判断": decision.manual_reason || "",
+      ...selectionQueueFields(decision, queueInfo),
     };
     if (fieldsEqual(fields, updateFields)) {
       skipped.push({ record_id: recordId, title: normalize(fields["选题标题"]), reason: "no_change" });
@@ -595,7 +710,7 @@ async function applyFormValue(env, token, tableId, formValue, { candidateIds, ru
   };
 }
 
-async function applyFormValueFast(env, token, tableId, formValue, { candidateIds, runId, forceNoSelection, options, snapshots }) {
+async function applyFormValueFast(env, token, tableId, formValue, { candidateIds, runId, forceNoSelection, options, snapshots, queueInfo }) {
   const decisions = decisionsFromForm(formValue, candidateIds, forceNoSelection);
   const dryRun = String(env.DRY_RUN || "").toLowerCase() === "true";
   const updates = [];
@@ -615,6 +730,7 @@ async function applyFormValueFast(env, token, tableId, formValue, { candidateIds
         "学习状态": "待学习",
         "选择原因标签": decision.tags,
         "人工一句话判断": decision.manual_reason || "",
+        ...selectionQueueFields(decision, queueInfo),
       },
     });
   }
@@ -738,6 +854,13 @@ export async function processCardSubmission(env, value, formValue, options = {})
     };
   }
 
+  const receiptKey = await submissionFingerprint(actionName, runId, candidateIds, effectiveFormValue);
+  const submittedAt = new Date(currentTimeMs(options)).toISOString();
+  const queueInfo = {
+    enabled: actionName === SUBMIT_SELECTION_ACTION && String(env.SEND_PRODUCTION_DIRECTION_CARD || "true").toLowerCase() !== "false",
+    submissionId: `${runId || "selection"}:${receiptKey.slice(0, 12)}`,
+    submittedAt,
+  };
   const hasSnapshots = Object.keys(candidateSnapshots).length > 0;
   const summary = hasSnapshots
     ? await applyFormValueFast(env, token, tableId, effectiveFormValue, {
@@ -746,24 +869,25 @@ export async function processCardSubmission(env, value, formValue, options = {})
         forceNoSelection: actionName === SUBMIT_NO_SELECTION_ACTION,
         options,
         snapshots: candidateSnapshots,
+        queueInfo,
       })
     : await applyFormValue(env, token, tableId, effectiveFormValue, {
         candidateIds,
         runId,
         forceNoSelection: actionName === SUBMIT_NO_SELECTION_ACTION,
         options,
+        queueInfo,
       });
-  if (shouldSendProductionDirectionCard(env, actionName, summary)) {
-    const sendTask = sendProductionDirectionCard(env, token, runId, summary.selected_records, options);
-    if (shouldDeferProductionDirectionCard(env)) {
-      summary.production_direction_card = { deferred: true };
-      startDeferredTask(sendTask, options);
-    } else {
-      summary.production_direction_card = await sendTask;
-    }
+  if (shouldQueueProductionDirectionCard(env, actionName, summary)) {
+    summary.production_direction_card = {
+      queued: true,
+      status: PRODUCTION_DIRECTION_CARD_PENDING,
+      submission_id: queueInfo.submissionId,
+      selected_count: summary.selected_records.length,
+    };
   }
   summary.action = actionName;
-  summary.receipt_key = await submissionFingerprint(actionName, runId, candidateIds, effectiveFormValue);
+  summary.receipt_key = receiptKey;
   return summary;
 }
 
@@ -771,6 +895,15 @@ export async function handlePayload(payload, env, options = {}) {
   if (payload.challenge) return jsonResponse({ challenge: payload.challenge });
   if (payload.encrypt) {
     return toast("error", "暂不支持加密回调，请先关闭事件加密或改用带解密的版本");
+  }
+
+  if (payload.action === SEND_PENDING_PRODUCTION_DIRECTION_CARDS_ACTION) {
+    const expectedRunnerToken = env.FEISHU_QUEUE_RUNNER_TOKEN || "";
+    const actualRunnerToken = payload.runner_token || payload.token || "";
+    if (expectedRunnerToken && actualRunnerToken !== expectedRunnerToken) {
+      return jsonResponse({ ok: false, error: "runner token mismatch" }, 403);
+    }
+    return jsonResponse(await sendPendingProductionDirectionCards(env, options));
   }
 
   const expectedToken = env.FEISHU_VERIFICATION_TOKEN || "";
@@ -807,6 +940,9 @@ export async function handlePayload(payload, env, options = {}) {
       return toast("warning", "这次提交已经处理过");
     }
     const directionCard = summary.production_direction_card;
+    if (directionCard?.queued) {
+      return toast("success", `已回写 ${count} 条选择，制作方向卡稍后发送`);
+    }
     if (directionCard?.deferred) {
       return toast("success", `已回写 ${count} 条选择，制作方向卡稍后发送`);
     }

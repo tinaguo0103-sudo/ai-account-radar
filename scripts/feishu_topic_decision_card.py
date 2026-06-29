@@ -242,7 +242,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
-            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成口播稿和制作包的编号；提交后，已选记录进入 `脚本与制作`，未选记录标记为 `不做`。如果有选中记录，系统会再发一张卡片让你逐条补制作方向。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n运行批次：`{run_id or '未指定'}`",
+            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成口播稿和制作包的编号；提交后，已选记录进入 `脚本与制作`，未选记录标记为 `不做`。如果有选中记录，系统会稍后再发一张卡片让你逐条补制作方向。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n运行批次：`{run_id or '未指定'}`",
         }
     ]
     for index, record in enumerate(records, start=1):

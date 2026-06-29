@@ -101,7 +101,7 @@ test("updates selected and unselected candidate records", async () => {
   });
 });
 
-test("sends production direction card after selected topics are written", async () => {
+test("queues production direction card after selected topics are written", async () => {
   const records = [
     { record_id: "rec_a", fields: { "选题标题": "A", "一句话Brief": "A brief", "运行批次": "run_1", "状态": "待判断" } },
     { record_id: "rec_b", fields: { "选题标题": "B", "运行批次": "run_1", "状态": "待判断" } },
@@ -124,20 +124,19 @@ test("sends production direction card after selected topics are written", async 
     {
       ...env,
       SEND_PRODUCTION_DIRECTION_CARD: "true",
-      DEFER_PRODUCTION_DIRECTION_CARD: "false",
       FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow",
     },
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择，并发送制作方向卡"));
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择，制作方向卡稍后发送"));
   const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
-  assert.equal(sends.length, 1);
-  const card = JSON.parse(sends[0].body.content);
-  const cardText = JSON.stringify(card);
-  assert.match(cardText, /补充制作方向/);
-  assert.match(cardText, /真实案例 \/ 讲法方向 \/ 不要讲什么（可选）/);
-  assert.match(cardText, /production_direction__rec_a/);
-  assert.doesNotMatch(cardText, /production_direction__rec_b/);
+  assert.equal(sends.length, 0);
+  const puts = calls.filter((call) => call.method === "PUT");
+  assert.equal(puts.length, 2);
+  assert.equal(puts[0].body.fields["制作方向卡状态"], "待发送");
+  assert.match(puts[0].body.fields["选择提交批次"], /^run_1:/);
+  assert.ok(puts[0].body.fields["选择提交时间"]);
+  assert.equal(puts[1].body.fields["制作方向卡状态"], undefined);
 });
 
 test("uses candidate snapshots to skip full-table reads on selection submit", async () => {
@@ -171,57 +170,63 @@ test("uses candidate snapshots to skip full-table reads on selection submit", as
     {
       ...env,
       SEND_PRODUCTION_DIRECTION_CARD: "true",
-      DEFER_PRODUCTION_DIRECTION_CARD: "false",
       FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow",
     },
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择，并发送制作方向卡"));
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择，制作方向卡稍后发送"));
   assert.equal(calls.filter((call) => call.path.includes("/records?")).length, 0);
   assert.equal(calls.filter((call) => call.method === "PUT").length, 2);
   const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
-  assert.equal(sends.length, 1);
-  assert.match(JSON.stringify(JSON.parse(sends[0].body.content)), /A experiment/);
+  assert.equal(sends.length, 0);
 });
 
-test("defers production direction card by default", async () => {
+test("sends queued production direction cards from explicit queue", async () => {
   const records = [
-    { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } },
-    { record_id: "rec_b", fields: { "选题标题": "B", "运行批次": "run_1", "状态": "待判断" } },
-  ];
-  const calls = [];
-  const deferredTasks = [];
-  const response = await handlePayload(
     {
-      header: { token: "verify_test" },
-      event: {
-        action: {
-          value: {
-            action: "submit_topic_decisions",
-            run_id: "run_1",
-            candidate_ids: ["rec_a", "rec_b"],
-            candidate_snapshots: {
-              rec_a: { title: "A", brief: "A brief", experiment: "A experiment", run_id: "run_1" },
-              rec_b: { title: "B", run_id: "run_1" },
-            },
-          },
-          form_value: {
-            enter_brief_records: ["rec_a"],
-            positive_reason_tags: ["证据够"],
-            manual_reason: "",
-          },
-        },
+      record_id: "rec_a",
+      fields: {
+        "选题标题": "A",
+        "一句话Brief": "A brief",
+        "我要做的实验": "A experiment",
+        "运行批次": "run_1",
+        "状态": "进入Brief",
+        "制作方向卡状态": "待发送",
+        "选择提交批次": "run_1:abc",
+        "选择提交时间": "2026-06-29T01:00:00.000Z",
       },
     },
+    {
+      record_id: "rec_b",
+      fields: {
+        "选题标题": "B",
+        "运行批次": "run_1",
+        "状态": "不做",
+        "制作方向卡状态": "待发送",
+        "选择提交批次": "run_1:abc",
+        "选择提交时间": "2026-06-29T01:00:00.000Z",
+      },
+    },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    { action: "send_pending_production_direction_cards" },
     { ...env, SEND_PRODUCTION_DIRECTION_CARD: "true", FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow" },
-    { fetchImpl: makeMockFetch(records, calls), deferredTasks },
+    { fetchImpl: makeMockFetch(records, calls), nowMs: Date.parse("2026-06-29T02:00:00.000Z") },
   );
-  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择，制作方向卡稍后发送"));
-  assert.equal(deferredTasks.length, 1);
-  await Promise.all(deferredTasks);
-  assert.equal(calls.filter((call) => call.path.includes("/records?")).length, 0);
-  assert.equal(calls.filter((call) => call.method === "PUT").length, 2);
-  assert.equal(calls.filter((call) => call.path.includes("/im/v1/messages")).length, 1);
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.sent.length, 1);
+  assert.equal(body.sent[0].record_count, 1);
+  const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
+  assert.equal(sends.length, 1);
+  const cardText = JSON.stringify(JSON.parse(sends[0].body.content));
+  assert.match(cardText, /A experiment/);
+  assert.match(cardText, /production_direction__rec_a/);
+  assert.doesNotMatch(cardText, /production_direction__rec_b/);
+  const puts = calls.filter((call) => call.method === "PUT");
+  assert.equal(puts.filter((call) => call.body.fields["制作方向卡状态"] === "发送中").length, 1);
+  assert.equal(puts.filter((call) => call.body.fields["制作方向卡状态"] === "已发送").length, 1);
 });
 
 test("writes per-topic production directions", async () => {

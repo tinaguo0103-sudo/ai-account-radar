@@ -343,7 +343,7 @@ python3 scripts/editorial_skill_runner.py \
 
 在 Codex 对话里手动调用这个脚本时，偶尔会看到权限审查，不是因为 Skill 不能被项目使用，而是因为脚本会启动本机 `codex exec` 子进程并写入 `~/.codex` 的运行状态。命令前缀已尽量收敛到 `python3 scripts/editorial_skill_runner.py`；日常在本机终端运行项目脚本时，不会把这个审批流程暴露成业务步骤。
 
-`04 分析与选题` 已收敛为飞书原生选题挑选台：主字段 `选题标题` 直接承担短选题命题职责，不再额外保留一列 `选题命题`。飞书只保留你实际判断要不要推进所需的短决策卡字段：状态、建议级别、AI味风险、对应方向、来源、Brief、推荐/不推荐理由、工作流实验、痛点、AI介入、验证方式、可沉淀资产、思考点和证据。`卡片速读` 是专门给画册卡片看的自动汇总字段，会把 Brief、实验、痛点、验证、证据缺口和操作提示压成一段正文，让你不必逐个打开记录。交互式选题卡提交后，如果你勾选了题，腾讯云 SCF receiver 会再发一张“制作方向补充卡”，让你可选补充每条准备用哪个真实案例讲、从哪个角度讲、哪些不要讲；非空内容会回填到 `我的制作补充`，留空则由系统按私有案例库建议。标题门控、分数、可信度、内容指纹、版本路径等后台字段保留在本地 CSV/MD 或 06，不再塞进 04。写入前会先经过 `content_sampler.py` 的初筛和 `editorial_skill_runner.py` 的真实 Skill 主编判断，让你能区分“今日最值得做”“可选候选”“暂存观察”和“不建议制作”。
+`04 分析与选题` 已收敛为飞书原生选题挑选台：主字段 `选题标题` 直接承担短选题命题职责，不再额外保留一列 `选题命题`。飞书只保留你实际判断要不要推进所需的短决策卡字段：状态、建议级别、AI味风险、对应方向、来源、Brief、推荐/不推荐理由、工作流实验、痛点、AI介入、验证方式、可沉淀资产、思考点和证据。`卡片速读` 是专门给画册卡片看的自动汇总字段，会把 Brief、实验、痛点、验证、证据缺口和操作提示压成一段正文，让你不必逐个打开记录。交互式选题卡提交后，如果你勾选了题，腾讯云 SCF receiver 会把选中记录写入 `制作方向卡状态=待发送` 的显式队列；腾讯云定时触发器每 5 分钟发送一张“制作方向补充卡”，让你可选补充每条准备用哪个真实案例讲、从哪个角度讲、哪些不要讲；非空内容会回填到 `我的制作补充`，留空则由系统按私有案例库建议。标题门控、分数、可信度、内容指纹、版本路径等后台字段保留在本地 CSV/MD 或 06，不再塞进 04。写入前会先经过 `content_sampler.py` 的初筛和 `editorial_skill_runner.py` 的真实 Skill 主编判断，让你能区分“今日最值得做”“可选候选”“暂存观察”和“不建议制作”。
 
 口播全文风格已从 Austin 流程 Skill 中拆出为独立 `austin-voice-scriptwriter` Skill：`austin-no-overtime-scripting` 继续负责 04 到 06 的流程、证据、执行包和飞书衔接；`austin-voice-scriptwriter` 只负责把已确认选题写成接近 Austin 真人表达的口播全文。生产运行优先读取全局私有版 `/Users/congcong/.codex/skills/austin-voice-scriptwriter`，仓库只保留脱敏镜像。
 
@@ -515,7 +515,7 @@ CSV/Excel 仍可作为降级输出或导入包，但不要把 `topic_candidates.
 1. 打开 `00 主控台 / 今日工作台`。
 2. 先看 `04 / 今日挑选卡片`、`待生成脚本包`、`已生成脚本包`、`待修订脚本包`。
 3. 再看 `可复刻内容`、`来源异常/采集失败`。
-4. 快速挑选优先用交互式选题速选卡：运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，它只负责把卡片发到飞书；后续点击由腾讯云 SCF receiver 自动回写。在飞书卡片里只勾选值得生成脚本包的候选，补原因标签或一句手工原因后提交。未选中的候选会标记为 `不做`。飞书 `04 / 今日挑选卡片` 保留为兜底编辑入口。
+4. 快速挑选优先用交互式选题速选卡：运行 `.venv/bin/python scripts/run_topic_decision_card_session.py --limit 7`，它只负责把卡片发到飞书；后续点击由腾讯云 SCF receiver 自动回写。在飞书卡片里只勾选值得生成脚本包的候选，补原因标签或一句手工原因后提交。未选中的候选会标记为 `不做`；选中的候选会进入第二张制作方向卡发送队列，腾讯云每 5 分钟扫描并发送补充卡。飞书 `04 / 今日挑选卡片` 保留为兜底编辑入口。
 5. 运行 `python3 scripts/learn_from_topic_selection.py --mark-pending-confirm`，把本轮选择沉淀成本地待确认学习摘要；确认摘要正确后再运行 `python3 scripts/learn_from_topic_selection.py --approve-latest --mark-learned`。
 6. 本机轻量 watcher 会把近 5 天已确认推进且未生成脚本稿的选题写入 `06 完整脚本与制作包`，完整 Markdown 落到本地 `full_script_execution_package.md`；没有待生成记录时只做队列检查，不消耗 Codex。
 7. 单条补跑或测试时，运行 `python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>`。

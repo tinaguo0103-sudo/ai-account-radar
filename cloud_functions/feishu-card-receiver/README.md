@@ -2,7 +2,7 @@
 
 这个目录只包含 `04 分析与选题` 交互式卡片的腾讯云 SCF receiver。
 
-它接收飞书开放平台的 `card.action.trigger` 事件，把用户在卡片里勾选的选题回写到 `04 分析与选题`，并在有选中记录时继续发送“制作方向补充卡”，替代本机常驻 `serve-long-connection`。
+它接收飞书开放平台的 `card.action.trigger` 事件，把用户在卡片里勾选的选题回写到 `04 分析与选题`。有选中记录时，第一张卡回调只写入“制作方向卡待发送”队列；第二张“制作方向补充卡”由腾讯云定时触发器独立发送，替代本机常驻 `serve-long-connection`。
 
 `06 完整脚本与制作包` 不在腾讯云生成。当前生产路径是本机轻量 watcher 扫描 `04` 待生成队列；空队列不调用 Codex，有待生成记录时才运行 `scripts/codex_script_package_runner.py`，由本机 `codex exec` 和全局私有 Skill 生成完整 Markdown，再写入飞书 `06` 的轻量记录。
 
@@ -12,7 +12,7 @@
 - 如果配置了 `FEISHU_VERIFICATION_TOKEN`，则校验飞书回调 token。
 - 解析卡片里的 `event.action.form_value`。
 - 支持三个动作：
-  - `submit_topic_decisions`：选中的记录写为 `进入Brief`，未选中写为 `不做`。
+- `submit_topic_decisions`：选中的记录写为 `进入Brief`，未选中写为 `不做`；选中记录同时写入 `制作方向卡状态=待发送`、`选择提交批次`、`选择提交时间`，作为第二张卡的显式发送队列。
   - `submit_no_selection`：本批全部写为 `不做`。
   - `submit_production_directions`：把第二张卡片里的逐条制作方向/真实案例/讲法建议写回 `我的制作补充`。
 - 回写字段：
@@ -44,8 +44,9 @@ FEISHU_VERIFICATION_TOKEN=xxx
 FEISHU_CARD_RECEIVE_TARGETS=open_id:ou_xxx,chat_id:oc_xxx
 FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS=chat_id:oc_xxx
 SEND_PRODUCTION_DIRECTION_CARD=true
-DEFER_PRODUCTION_DIRECTION_CARD=true
 FEISHU_CARD_EXPIRE_DAYS=5
+FEISHU_QUEUE_RUNNER_TOKEN=xxx
+PRODUCTION_DIRECTION_SEND_GROUP_LIMIT=1
 DRY_RUN=true
 ```
 
@@ -56,7 +57,8 @@ DRY_RUN=true
 - `FEISHU_CARD_RECEIVE_TARGETS` 是第一张选题卡和第二张制作方向卡的默认接收目标。
 - `FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS` 可选；如果设置，第二张卡只发到这里。
 - `SEND_PRODUCTION_DIRECTION_CARD=false` 可临时关闭第二张卡。
-- `DEFER_PRODUCTION_DIRECTION_CARD=true` 会把第二张卡发送任务从主逻辑中拆出；但腾讯云 SCF Node.js 运行时仍可能等待未完成的异步 HTTP 任务，因此它不是严格的异步队列。
+- `FEISHU_QUEUE_RUNNER_TOKEN` 可选；如果设置，外部触发 `send_pending_production_direction_cards` 时必须带同一个 `runner_token`。
+- `PRODUCTION_DIRECTION_SEND_GROUP_LIMIT` 控制每次独立发送任务最多处理多少个 `选择提交批次`，默认 1；建议保持轻量，多次定时触发比单次处理过重更稳。
 - `FEISHU_CARD_EXPIRE_DAYS` 默认是 5。新生成的选题卡和制作方向卡都会携带发卡时间和过期时间，超过有效期提交会直接拦截。
 - 本地测试可以设置 `DRY_RUN=true`，云端生产不要设置。
 - 当前版本不支持加密回调。如果飞书开放平台事件订阅启用了 Encrypt Key，需要先关闭事件加密，或后续补解密逻辑。
@@ -68,21 +70,30 @@ DRY_RUN=true
 - 第二张制作方向卡只允许保存一次。卡片里的“真实案例 / 讲法方向 / 不要讲什么”是建议字段，不必填写；留空时不写 `我的制作补充`，后续脚本生成会按私有案例库建议。receiver 写入前会读取 `我的制作补充`，已有内容时不允许旧卡覆盖。
 - 新卡默认 5 天过期。过期卡提交时返回提醒，不写表、不发第二张卡。
 
-## 回调耗时结论
+## 第二张卡发送队列
 
-2026-06-26 实测：飞书前端出现“提交错误”但 receiver 已收到，主要不是写表失败，而是卡片回调链路耗时过长。
+2026-06-29 调整后，第一张卡回调不再发送第二张“补充制作方向”卡。它只做快速写表和队列打标：
 
-- 新版选题卡会把候选快照写入按钮 value，receiver 可跳过读取整张 `04` 表。
-- receiver 会缓存 `tenant_access_token` 和 `04` 表 table_id；云端建议配置 `FEISHU_TOPIC_TABLE_ID`。
-- 纯回写路径约 2.5 秒，warm 状态约 1.9 秒。
-- “回写后继续发送第二张制作方向卡”路径约 4 秒以上；腾讯云 SCF 会等待后台发卡 HTTP 任务，因此 `DEFER_PRODUCTION_DIRECTION_CARD` 不能完全消除这段等待。
-- 曾验证过“第一张卡提交后，回调直接返回第二张卡内容，让飞书原消息原地更新”的方案。裸 HTTP 回调在飞书 Web 端会卡在提交中，虽然 04 状态已经写回，但客户端不完成提交，因此该路径已从生产代码移除。
-- 同日实测普通两步路径可用：第一张卡选择后写回 `04`，第二张“补充制作方向”卡作为新消息出现；第二张卡提交后可写回 `我的制作补充`。
+- `制作方向卡状态 = 待发送`
+- `选择提交批次 = <运行批次>:<提交指纹前 12 位>`
+- `选择提交时间 = 当前时间`
+- `制作方向卡发送时间 = 空`
+- `制作方向卡错误 = 空`
 
-当前推荐继续保留两张卡，不合并。若后续仍看到飞书前端报“提交错误”，下一步应把第二张卡发送拆成真正独立的异步链路，而不是继续在同一个回调里压榨耗时：
+第二张卡由独立动作发送：
 
-- 方案 A：第一张卡只负责选择和回写，第二张制作方向卡由独立云函数、定时扫描任务或云队列发送。
-- 方案 B：第一张卡提交后只写状态和一个“待补制作方向”的标记；另一个云端任务扫描这个标记并发送第二张卡。
+```json
+{"action":"send_pending_production_direction_cards","runner_token":"可选"}
+```
+
+发送器只处理同时满足以下条件的记录：
+
+- `制作方向卡状态 = 待发送`
+- `状态 = 进入Brief`
+- `我的制作补充` 为空
+- `选择提交时间` 未超过 `FEISHU_CARD_EXPIRE_DAYS`
+
+发送前会改为 `发送中`，发送成功后改为 `已发送` 并写入 `制作方向卡发送时间`。发送失败会改为 `发送失败` 并写入 `制作方向卡错误`。超过有效期仍未发送的记录会改为 `已忽略`。这能避免独立扫描任务扫到历史记录或手动修改记录。
 
 ## 本地测试
 
@@ -218,4 +229,3 @@ FEISHU_TENCENT_SCF_URL=https://你的腾讯云SCF函数URL
 - 增加 Encrypt Key 解密。
 - 增加独立回调日志表。
 - 提交成功后自动触发选择学习。
-- 为第二张制作方向卡增加真正异步发送队列，减少飞书前端提交等待。
