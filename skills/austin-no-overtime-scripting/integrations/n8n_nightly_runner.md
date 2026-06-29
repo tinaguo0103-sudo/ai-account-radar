@@ -7,7 +7,7 @@ v0.6 直接生成完整口播稿与执行包，并把 `06 完整脚本与制作�
 节点建议：
 
 1. Schedule Trigger：每天固定时间。
-2. Feishu Bitable / HTTP Request：读取 `04` 中人工状态为 `生成脚本包 / 进入Brief / 本周做` 的记录。
+2. Feishu Bitable / HTTP Request：读取 `04` 中人工状态为 `生成脚本包` 的记录。
 3. Function：过滤未生成脚本稿的记录，并合并第二张“制作方向补充”结果。
 4. Execute Command：调用 `scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5` 生成本地平铺 Markdown，仅作为替代编排方案。
 5. Execute Command：调用 `merge_daily_index.py` 汇总本地执行包。

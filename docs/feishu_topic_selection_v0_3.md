@@ -36,7 +36,7 @@
 
 1. 打开 `04 分析与选题 / 今日挑选卡片`。
 2. 快速扫每张卡片的标题和 `卡片速读`。
-3. 把 `状态` 改成 `生成脚本包`、`本周做`、`暂存` 或 `不做`。旧状态 `进入Brief` 只作为兼容值保留。
+3. 把 `状态` 改成 `生成脚本包`、`暂存`、`归档` 或 `不做`。只有 `生成脚本包` 会进入脚本包生成队列。
 4. 尽量点一个 `选择原因标签`。
 5. 后续运行 `python3 scripts/learn_from_topic_selection.py --mark-pending-confirm`，生成选择学习摘要并标记为 `待确认学习`。
 6. 你确认摘要正确后，再运行 `python3 scripts/learn_from_topic_selection.py --approve-latest --mark-learned`，学习结果才会进入下一轮主编判断。
@@ -52,5 +52,5 @@
 
 原生自动化规则本身是否能通过开放 API 创建，当前未在项目内稳定接入；因此 v0.3 先把字段、视图和学习脚本准备好。需要自动触发时，优先用飞书 UI 配置：
 
-- 当 `状态` 改为 `生成脚本包 / 进入Brief / 本周做 / 暂存 / 不做`，把 `学习状态` 设为 `待学习`。
-- 当 `状态` 改为 `生成脚本包 / 进入Brief / 本周做`，由本机轻量 watcher 扫描近 5 天待生成队列并按需运行 `codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5` 生成 `06 完整脚本与制作包`；急用时可手动运行同一命令。
+- 当 `状态` 改为 `生成脚本包 / 暂存 / 归档 / 不做`，把 `学习状态` 设为 `待学习`。
+- 当 `状态` 改为 `生成脚本包`，由本机轻量 watcher 扫描近 5 天待生成队列并按需运行 `codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5` 生成 `06 完整脚本与制作包`；急用时可手动运行同一命令。

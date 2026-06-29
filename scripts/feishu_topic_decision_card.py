@@ -37,22 +37,6 @@ SUBMIT_SELECTION_ACTION = "submit_topic_decisions"
 SUBMIT_NO_SELECTION_ACTION = "submit_no_selection"
 SUPPORTED_SUBMIT_ACTIONS = {SUBMIT_SELECTION_ACTION, SUBMIT_NO_SELECTION_ACTION}
 RECEIPT_LOG = OUT / "callback_receipts.jsonl"
-LEGACY_POSITIVE_STATUS_BY_FORM = {
-    "this_week_records": "本周做",
-}
-LEGACY_NEGATIVE_STATUS_BY_FORM = {
-    "hold_records": "暂存",
-    "drop_records": "不做",
-}
-LEGACY_STATUS_BY_FORM = {
-    **LEGACY_NEGATIVE_STATUS_BY_FORM,
-    **LEGACY_POSITIVE_STATUS_BY_FORM,
-}
-LEGACY_FORM_PRECEDENCE = [
-    "drop_records",
-    "hold_records",
-    "this_week_records",
-]
 POSITIVE_REASON_OPTIONS = [
     "有真实业务现场",
     "实验能马上做",
@@ -486,14 +470,6 @@ def decisions_from_form(
     selected_record_ids = set(coerce_list(form_value.get(ENTER_BRIEF_FORM_KEY)))
     for record_id in selected_record_ids:
         decisions[record_id] = {"status": SCRIPT_PACKAGE_READY_STATUS, "tags": positive_tags, "manual_reason": manual_reason}
-
-    # Backward compatibility for cards sent before the simplified one-action form.
-    negative_tags = coerce_list(form_value.get("negative_reason_tags"))
-    for form_key in LEGACY_FORM_PRECEDENCE:
-        status = LEGACY_STATUS_BY_FORM[form_key]
-        tags = positive_tags if form_key in LEGACY_POSITIVE_STATUS_BY_FORM else negative_tags
-        for record_id in coerce_list(form_value.get(form_key)):
-            decisions[record_id] = {"status": status, "tags": tags, "manual_reason": manual_reason}
 
     for record_id in candidate_ids or []:
         if record_id and record_id not in selected_record_ids and record_id not in decisions:

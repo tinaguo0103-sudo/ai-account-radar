@@ -190,7 +190,7 @@ test("sends queued production direction cards from explicit queue", async () => 
         "一句话Brief": "A brief",
         "我要做的实验": "A experiment",
         "运行批次": "run_1",
-        "状态": "进入Brief",
+        "状态": "生成脚本包",
         "制作方向卡状态": "待发送",
         "选择提交批次": "run_1:abc",
         "选择提交时间": "2026-06-29T01:00:00.000Z",
@@ -231,8 +231,8 @@ test("sends queued production direction cards from explicit queue", async () => 
 
 test("writes per-topic production directions", async () => {
   const records = [
-    { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "进入Brief" } },
-    { record_id: "rec_b", fields: { "选题标题": "B", "运行批次": "run_1", "状态": "进入Brief" } },
+    { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "生成脚本包" } },
+    { record_id: "rec_b", fields: { "选题标题": "B", "运行批次": "run_1", "状态": "生成脚本包" } },
   ];
   const calls = [];
   const response = await handlePayload(
@@ -298,7 +298,7 @@ test("blocks a production direction card after direction has already been saved"
       fields: {
         "选题标题": "A",
         "运行批次": "run_1",
-        "状态": "进入Brief",
+        "状态": "生成脚本包",
         "我的制作补充": "已有方向",
       },
     },
@@ -330,7 +330,7 @@ test("blocks a selection card after it has already changed record status", async
       fields: {
         "选题标题": "A",
         "运行批次": "run_1",
-        "状态": "进入Brief",
+        "状态": "生成脚本包",
         "学习状态": "待学习",
         "选择原因标签": ["证据够"],
         "人工一句话判断": "测试原因",

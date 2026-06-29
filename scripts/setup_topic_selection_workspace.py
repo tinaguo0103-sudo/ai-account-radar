@@ -171,7 +171,7 @@ def ensure_select_options(token: str, app_token: str, table_id: str) -> list[str
             for option in field.get("property", {}).get("options", [])
             if option.get("name")
         }
-        if all(option in current_names for option in expected_options):
+        if current_names == set(expected_options):
             continue
         feishu.request_json(
             "PUT",

@@ -38,13 +38,7 @@ SCRIPT_PACKAGE_FIELDS = [
 
 def ready_status(value: Any) -> bool:
     text = str(value or "").strip()
-    return (
-        text in {"生成脚本包", "进入Brief", "本周做"}
-        or "生成脚本包" in text
-        or "进入Brief" in text
-        or "本周做" in text
-        or "进入制作" in text
-    )
+    return text == "生成脚本包"
 
 
 def resolve_austin_skill_dir() -> Path:

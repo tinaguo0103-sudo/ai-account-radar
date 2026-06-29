@@ -289,7 +289,7 @@ def main() -> int:
             if contains_unqualified_any(visible_text, deep_terms):
                 failures.append(f"row {idx}: douyin shallow item overclaims deep video analysis")
         if row.get("来源类型") == "公众号文章" and row.get("内容可信度") != "全文":
-            if row.get("推荐动作") in {"进入Brief", "本周做"}:
+            if row.get("推荐动作") == "生成脚本包":
                 failures.append(f"row {idx}: non-full article promoted as deep work")
 
         title_blob = "\n".join([row.get("来源内容", ""), row.get("我的选题标题", ""), row.get("内部切入角度", ""), row.get("可发布标题", "")])

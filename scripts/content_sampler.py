@@ -973,7 +973,7 @@ def focus_point(topic: dict[str, Any], item: ContentItem) -> str:
     if "Agent" in scene or any(k in text for k in ["Agent", "智能体", "Codex", "Claude Code"]):
         return "重点体现：非技术人如何定义任务边界、输入输出和验收标准。"
     if "内容团队" in scene or "Brief" in scene:
-        return "重点体现：如何从热点和对标内容里筛出能进入Brief的真实选题。"
+        return "重点体现：如何从热点和对标内容里筛出能生成脚本包的真实选题。"
     if "品牌" in scene or "营销" in scene:
         return "重点体现：AI内容上线前的品牌信任、素材风险和人工复核。"
     return "重点体现：这条内容如何被我拿来改造一个真实流程，而不是复述资讯。"
@@ -1386,7 +1386,7 @@ def infer_content_type(topic: dict[str, Any], item: ContentItem) -> str:
         return "踩坑提醒"
     if topic.get("热点切入方式") in {"AI导演流程", "Agent落地", "工作流重排"}:
         return "工作流拆解"
-    if topic.get("推荐动作") == "进入Brief" or any(k in text for k in ["清单", "SOP", "模板", "流程图", "资料包"]):
+    if topic.get("推荐动作") == "生成脚本包" or any(k in text for k in ["清单", "SOP", "模板", "流程图", "资料包"]):
         return "资产沉淀"
     return "热点短评"
 
@@ -1408,7 +1408,7 @@ def title_style(content_type: str, topic: dict[str, Any]) -> str:
 def platform_suggestion(content_type: str, topic: dict[str, Any]) -> str:
     if topic.get("推荐动作") == "立即蹭热点":
         return "小红书短帖 / 抖音短评 / 视频号短评"
-    if topic.get("推荐动作") == "进入Brief":
+    if topic.get("推荐动作") == "生成脚本包":
         return "公众号 / 小红书图文 / 抖音"
     if content_type == "对标学习":
         return "小红书图文 / 公众号短文"
@@ -1734,7 +1734,7 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     news_only = is_news_only(topic, item, persona_score)
     base = int(topic.get("推荐分", 0) or 0)
     credibility_bonus = {"全文": 12, "抖音转写": 10, "AIHOT摘要": 5, "摘要": 0, "抖音浅层": 0}.get(credibility, 0)
-    action_bonus = 5 if topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"} else -5
+    action_bonus = 5 if topic.get("推荐动作") in {"立即蹭热点", "生成脚本包"} else -5
     editor_score = max(0, min(100, round(base * 0.36 + title_score * 0.18 + persona_score * 0.22 + grounding_score * 0.14 + credibility_bonus + action_bonus)))
     not_recommend: list[str] = []
     if template_hits:
@@ -1768,7 +1768,7 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
         suggested = "暂存观察"
     if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
         suggested = "暂存观察"
-    if suggested != "是" and topic.get("推荐动作") in {"立即蹭热点", "进入Brief", "本周做"}:
+    if suggested != "是" and topic.get("推荐动作") in {"立即蹭热点", "生成脚本包"}:
         topic["推荐动作"] = "暂存观察"
     topic["真实用户问题"] = real_user_question(topic, item)
     topic["为什么今天值得做"] = why_today(topic, item)
@@ -1881,18 +1881,18 @@ def recommend_action(item: ContentItem, score: int, scene: str) -> str:
     if item.source_type == "AIHOT热点":
         angle_type = hotspot_angle(item, scene).get("角度类型", "")
         if score >= 90 and angle_type in {"Agent落地", "AI导演流程"}:
-            return "进入Brief"
+            return "生成脚本包"
         if score >= 82 and angle_type in {"产品生死线", "内容团队变化", "商业化机会", "品牌风控/信任危机"}:
             return "立即蹭热点"
         if score >= 76:
-            return "本周做"
+            return "暂存观察"
         if score >= 62:
             return "暂存观察"
         return "不做"
     if score >= 86:
-        return "进入Brief"
+        return "生成脚本包"
     if score >= 76:
-        return "本周做"
+        return "暂存观察"
     if score >= 62:
         return "暂存观察"
     return "不做"
@@ -1907,7 +1907,7 @@ def breakdown(item: ContentItem) -> dict[str, Any]:
     entrance = commercial_entrance(item)
     score = score_item(item, scene)
     action = recommend_action(item, score, scene)
-    worth = "是" if action in {"立即蹭热点", "进入Brief", "本周做"} else "否"
+    worth = "是" if action in {"立即蹭热点", "生成脚本包"} else "否"
     hot = hotspot_angle(item, scene) if item.source_type == "AIHOT热点" else {
         "角度类型": "对标内容拆解",
         "我的蹭热点角度": "不是热点切入，而是学习对标内容的钩子、结构、专业证明和转化方式。",
@@ -2667,7 +2667,6 @@ def write_debug_top10(
 def assign_action_quotas(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
     immediate = 0
     brief = 0
-    weekly = 0
     for topic in topics:
         if topic.get("是否建议进入制作") != "是":
             topic["推荐动作"] = "暂存观察" if topic.get("是否建议进入制作") == "暂存观察" else "不做"
@@ -2677,15 +2676,9 @@ def assign_action_quotas(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
             immediate += 1
             if immediate > 4:
                 topic["推荐动作"] = "暂存观察"
-        elif desired == "进入Brief":
+        elif desired == "生成脚本包":
             brief += 1
             if brief > 2:
-                topic["推荐动作"] = "本周做" if weekly < 2 else "暂存观察"
-                if topic["推荐动作"] == "本周做":
-                    weekly += 1
-        elif desired == "本周做":
-            weekly += 1
-            if weekly > 2:
                 topic["推荐动作"] = "暂存观察"
     return topics
 

@@ -1051,7 +1051,7 @@ def transformation_action(row: dict[str, str]) -> str:
     if basis == "真实案例":
         return f"拿已有「{scene}」相关案例做一次改造复盘：旧流程、AI介入点、人保留的判断、可展示资产都要说清。"
     if basis == "相邻推演":
-        return f"基于「{scene}」做相邻验证：先设计字段表、流程图或验收清单，再决定是否进入Brief。"
+        return f"基于「{scene}」做相邻验证：先设计字段表、流程图或验收清单，再决定是否生成脚本包。"
     return "先只观察热度和来源证据，等能接到具体业务动作或案例素材后再做。"
 
 

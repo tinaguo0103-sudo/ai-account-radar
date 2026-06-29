@@ -149,8 +149,7 @@ def display_title_for(row: dict[str, str]) -> str:
     return row.get("我的选题标题") or f"{direction}候选：{short_text(source)}"
 ACTION_STATUS = {
     "立即蹭热点": "待判断",
-    "进入Brief": "进入Brief",
-    "本周做": "本周做",
+    "生成脚本包": "待判断",
     "暂存观察": "暂存",
     "不做": "不做",
 }

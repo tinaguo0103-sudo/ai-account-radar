@@ -113,7 +113,7 @@ def ready_for_script_recent(record: dict[str, Any]) -> bool:
     status = str(fields.get("状态") or fields.get("推荐动作") or "")
     already_generated = str(fields.get("是否已生成脚本稿", "")) == "是"
     return (
-        status in {"生成脚本包", "进入Brief", "本周做"}
+        status == "生成脚本包"
         and not already_generated
         and not is_test_topic(record)
         and within_recent_days(fields.get("推荐日期"))
