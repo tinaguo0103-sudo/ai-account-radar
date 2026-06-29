@@ -19,6 +19,7 @@ import time
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from local_env import load_local_env
 
@@ -49,6 +50,7 @@ RUNNER_VERSION = "codex-local-script-package-runner-v0.1"
 DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 TEST_TITLE_PREFIXES = ("【测试】", "【流程测试】", "【部署后测试】", "【模拟测试】", "[测试]", "测试：", "测试:")
 TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(测试|测速)[^\]]*\])")
+DOC_SYNC_MAX_PARAGRAPHS = 180
 
 
 def now_stamp() -> str:
@@ -60,9 +62,19 @@ def date_slug() -> str:
 
 
 def slugify(text: str, fallback: str = "topic") -> str:
-    cleaned = re.sub(r"[\\/:*?\"<>|\s]+", "_", str(text).strip())
+    cleaned = re.sub(r"[\\/:*?\"<>|\s：，。！？；、（）()【】《》「」『』]+", "_", str(text).strip())
     cleaned = re.sub(r"_+", "_", cleaned).strip("_")
-    return cleaned[:48] or fallback
+    return cleaned[:64] or fallback
+
+
+def unique_path(path: Path) -> Path:
+    if not path.exists():
+        return path
+    for index in range(2, 1000):
+        candidate = path.with_name(f"{path.stem}_{index}{path.suffix}")
+        if not candidate.exists():
+            return candidate
+    raise RuntimeError(f"Could not find a unique output path for {path}")
 
 
 def compact(value: Any, limit: int = 500) -> str:
@@ -73,6 +85,17 @@ def compact(value: Any, limit: int = 500) -> str:
 def inline_items(items: list[str], fallback: str = "无", limit: int = 6) -> str:
     clean = [str(item).strip() for item in items if str(item).strip()]
     return "；".join(clean[:limit]) if clean else fallback
+
+
+def script_package_folder_token() -> str:
+    return os.getenv("FEISHU_SCRIPT_PACKAGE_FOLDER_TOKEN", "").strip()
+
+
+def feishu_docs_enabled() -> bool:
+    value = os.getenv("FEISHU_SCRIPT_PACKAGE_DOCS_ENABLED", "").strip().lower()
+    if value in {"0", "false", "no", "off"}:
+        return False
+    return bool(script_package_folder_token())
 
 
 def record_day(value: Any) -> date | None:
@@ -248,11 +271,95 @@ def run_codex_for_topic(topic: dict[str, Any], timeout_seconds: int) -> dict[str
 
 def write_package_markdown(topic: dict[str, Any], package: dict[str, Any]) -> Path:
     title = str(topic.get("topic_title") or package.get("topic_title") or "未命名选题")
-    folder = output_root() / date_slug() / f"{slugify(str(topic.get('topic_id') or topic.get('record_id') or 'topic'))}_{slugify(title)}"
-    folder.mkdir(parents=True, exist_ok=True)
-    path = folder / "full_script_execution_package.md"
+    root = output_root()
+    root.mkdir(parents=True, exist_ok=True)
+    filename = f"{date_slug()}_{slugify(title)}_完整脚本与制作包.md"
+    path = unique_path(root / filename)
     path.write_text(str(package["full_markdown"]).rstrip() + "\n", encoding="utf-8")
     return display_path_for(path)
+
+
+def feishu_doc_url(document_id: str) -> str:
+    return f"https://my.feishu.cn/docx/{quote(document_id)}"
+
+
+def markdown_blocks(markdown: str) -> list[dict[str, Any]]:
+    blocks: list[dict[str, Any]] = []
+    for raw_line in markdown.splitlines():
+        line = raw_line.strip()
+        if not line:
+            continue
+        if line.startswith("#"):
+            line = line.lstrip("#").strip()
+        if line.startswith(("- [ ] ", "- [x] ", "- [X] ", "- ")):
+            line = line[2:].strip()
+        if line:
+            blocks.append({
+                "block_type": 2,
+                "text": {
+                    "elements": [{
+                        "text_run": {
+                            "content": line[:1800],
+                            "text_element_style": {},
+                        },
+                    }],
+                    "style": {},
+                },
+            })
+        if len(blocks) >= DOC_SYNC_MAX_PARAGRAPHS:
+            blocks.append({
+                "block_type": 2,
+                "text": {
+                    "elements": [{
+                        "text_run": {
+                            "content": "（后续内容见本地 Markdown 备份）",
+                            "text_element_style": {},
+                        },
+                    }],
+                    "style": {},
+                },
+            })
+            break
+    return blocks
+
+
+def create_feishu_document(token: str, title: str, markdown: str) -> str:
+    if not feishu_docs_enabled():
+        return ""
+    folder_token = script_package_folder_token()
+    payload = feishu.request_json(
+        "POST",
+        "/docx/v1/documents",
+        token=token,
+        body={"folder_token": folder_token, "title": title[:250]},
+    )
+    data = payload.get("data", {})
+    document = data.get("document", data)
+    document_id = str(document.get("document_id") or document.get("token") or data.get("document_id") or "")
+    if not document_id:
+        raise RuntimeError(f"Could not find document_id in create document response: {payload}")
+
+    blocks = markdown_blocks(markdown)
+    for start in range(0, len(blocks), 50):
+        chunk = blocks[start:start + 50]
+        feishu.request_json(
+            "POST",
+            f"/docx/v1/documents/{document_id}/blocks/{document_id}/children",
+            token=token,
+            body={"children": chunk},
+        )
+        time.sleep(0.15)
+    return feishu_doc_url(document_id)
+
+
+def try_create_feishu_document(token: str, title: str, package: dict[str, Any]) -> str:
+    if not feishu_docs_enabled():
+        return ""
+    try:
+        return create_feishu_document(token, f"{date_slug()}_{title}_完整脚本与制作包", str(package["full_markdown"]))
+    except Exception as exc:
+        log("feishu document sync skipped: " + compact(exc, 1000))
+        return ""
 
 
 def script_status(qa_status: str) -> str:
@@ -263,7 +370,7 @@ def script_status(qa_status: str) -> str:
     return "已生成完整脚本包"
 
 
-def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: Path) -> dict[str, str]:
+def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: Path, feishu_document_url: str = "") -> dict[str, str]:
     qa_status = str(package.get("qa_status") or "revise")
     qa_result = str(package.get("qa_result") or "待人工确认")
     return {
@@ -272,6 +379,7 @@ def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: P
         "推荐模板": str(package.get("recommended_template") or ""),
         "核心观点": str(package.get("core_viewpoint") or "")[:5000],
         "开头钩子": str(package.get("opening_hook") or "")[:500],
+        "飞书文档": feishu_document_url,
         "本地文档": str(document_path),
         "素材提醒": inline_items([str(item) for item in package.get("material_reminders", [])], "无P0素材缺口"),
         "发布前核验": inline_items([str(item) for item in package.get("release_checks", [])], "无额外事实核验点"),
@@ -357,7 +465,9 @@ def main() -> int:
     for record, topic in zip(records, topic_cards):
         package = run_codex_for_topic(topic, args.timeout_seconds)
         document_path = write_package_markdown(topic, package)
-        row = package_row(topic, package, document_path)
+        title = str(topic.get("topic_title") or package.get("topic_title") or "未命名选题")
+        feishu_document_url = try_create_feishu_document(token, title, package) if args.write_feishu else ""
+        row = package_row(topic, package, document_path, feishu_document_url)
         created_id = ""
         if args.write_feishu:
             created_id = create_script_package_record(token, app_token, table_ids["script_package"], row)
