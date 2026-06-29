@@ -116,7 +116,7 @@ curl -sS http://127.0.0.1:8787 \
 
 卡片点击回写生产只走腾讯云 SCF。仓库不再保留其他云平台入口，避免部署路径分叉。
 
-这个包的核心文件是 `src/receiver.js`，腾讯云专用入口是 `tencent-scf/index.js`。本地 `npm start` 只用于开发调试，不作为生产 receiver。
+这个包的核心文件是 `src/receiver.js`，腾讯云专用入口是 `tencent-scf/index.js`。`tencent-scf/package.json` 单独声明 CommonJS，避免根目录 `"type": "module"` 影响本地入口校验。本地 `npm start` 只用于开发调试，不作为生产 receiver。
 
 ## 腾讯云 SCF 部署：卡片 Receiver
 
