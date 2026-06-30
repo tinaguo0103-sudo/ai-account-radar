@@ -111,10 +111,16 @@ def is_test_topic(record: dict[str, Any]) -> bool:
 def ready_for_script_recent(record: dict[str, Any]) -> bool:
     fields = record.get("fields", {})
     status = str(fields.get("状态") or fields.get("推荐动作") or "")
-    already_generated = str(fields.get("是否已生成脚本稿", "")) == "是"
+    generated_marker = str(fields.get("是否已生成脚本稿", "")).strip()
+    already_generated = generated_marker not in {"", "否", "未生成"}
+    direction_submitted = (
+        str(fields.get("制作方向卡状态") or "").strip() == "已提交"
+        or bool(str(fields.get("我的制作补充") or "").strip())
+    )
     return (
         status == "生成脚本包"
         and not already_generated
+        and direction_submitted
         and not is_test_topic(record)
         and within_recent_days(fields.get("推荐日期"))
     )

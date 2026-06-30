@@ -42,6 +42,12 @@ def ready_status(value: Any) -> bool:
     return text == "生成脚本包"
 
 
+def production_direction_submitted(fields: dict[str, Any]) -> bool:
+    status = str(fields.get("制作方向卡状态") or "").strip()
+    supplement = str(fields.get("我的制作补充") or "").strip()
+    return status == "已提交" or bool(supplement)
+
+
 def resolve_austin_skill_dir() -> Path:
     override = os.getenv("AUSTIN_SCRIPT_SKILL_DIR", "").strip()
     if override:
@@ -127,7 +133,7 @@ def feishu_ready_topics(token: str, app_token: str) -> tuple[dict[str, str], lis
         fields = record.get("fields", {})
         generated_marker = str(fields.get(TOPIC_MARK_FIELD, "")).strip()
         already_generated = generated_marker not in {"", "否", "未生成"}
-        if ready_status(fields.get("状态")) and not already_generated:
+        if ready_status(fields.get("状态")) and not already_generated and production_direction_submitted(fields):
             ready.append(record)
     return table_ids, ready
 

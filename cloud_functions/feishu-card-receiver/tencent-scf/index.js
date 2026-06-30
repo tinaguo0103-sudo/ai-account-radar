@@ -13,6 +13,7 @@ const PRODUCTION_DIRECTION_CARD_ERROR_FIELD = "制作方向卡错误";
 const PRODUCTION_DIRECTION_CARD_PENDING = "待发送";
 const PRODUCTION_DIRECTION_CARD_SENDING = "发送中";
 const PRODUCTION_DIRECTION_CARD_SENT = "已发送";
+const PRODUCTION_DIRECTION_CARD_SUBMITTED = "已提交";
 const PRODUCTION_DIRECTION_CARD_FAILED = "发送失败";
 const PRODUCTION_DIRECTION_CARD_IGNORED = "已忽略";
 const SCRIPT_PACKAGE_READY_STATUS = "生成脚本包";
@@ -813,13 +814,18 @@ async function applyProductionDirections(token, tableId, formValue, { candidateI
 
   for (const recordId of candidateIds || []) {
     const direction = compact(formValue[productionDirectionKey(recordId)], 1000);
+    const fields = {
+      [PRODUCTION_DIRECTION_CARD_STATUS_FIELD]: PRODUCTION_DIRECTION_CARD_SUBMITTED,
+      [PRODUCTION_DIRECTION_CARD_ERROR_FIELD]: "",
+    };
     if (!direction) {
       skipped.push({ record_id: recordId, reason: "empty_direction" });
-      continue;
+    } else {
+      fields[PRODUCTION_DIRECTION_FIELD] = direction;
     }
     updates.push({
       record_id: recordId,
-      fields: { [PRODUCTION_DIRECTION_FIELD]: direction },
+      fields,
     });
   }
 
