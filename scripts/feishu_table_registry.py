@@ -34,7 +34,7 @@ VIEW_NAMES: dict[str, list[str]] = {
     "url_inbox": ["URL投喂入口"],
     "content_inbox": ["内容收件箱", "今日采集", "最近15天", "永久保留"],
     "topic_decision": ["今日挑选卡片", "今日决策看板", "证据不足", "待学习样本", "今日候选池", "今日最值得做", "暂存观察"],
-    "script_package": ["脚本包主视图", "待处理与异常", "后台记录"],
+    "script_package": ["脚本包主视图", "待处理与异常"],
     "review_assets": ["资产复盘后台"],
     "rules_dictionary": ["规则与字典"],
 }

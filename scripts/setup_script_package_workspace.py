@@ -84,10 +84,6 @@ VIEW_SPECS = [
             "本地文档",
         ],
     },
-    {
-        "name": "后台记录",
-        "visible": BUSINESS_FIELDS,
-    },
 ]
 
 OLD_VIEW_NAMES = [
@@ -100,6 +96,7 @@ OLD_VIEW_NAMES = [
     "脚本包后台",
     "可拍脚本包",
     "待修订脚本包",
+    "后台记录",
 ]
 
 
@@ -118,6 +115,35 @@ def list_fields(token: str, app_token: str, table_id: str) -> dict[str, dict[str
 def list_views(token: str, app_token: str, table_id: str) -> dict[str, dict[str, Any]]:
     payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views", token=token)
     return {view["view_name"]: view for view in payload.get("data", {}).get("items", [])}
+
+
+def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
+    records: list[dict[str, Any]] = []
+    page_token = ""
+    while True:
+        suffix = f"?page_size=500{('&page_token=' + page_token) if page_token else ''}"
+        payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/records{suffix}", token=token)
+        data = payload.get("data", {})
+        records.extend(data.get("items", []))
+        if not data.get("has_more"):
+            return records
+        page_token = data.get("page_token", "")
+
+
+def text_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value.strip()
+    if isinstance(value, list):
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                parts.append(str(item.get("text") or item.get("name") or ""))
+            else:
+                parts.append(str(item))
+        return "".join(parts).strip()
+    return str(value).strip()
 
 
 def ensure_text_fields(token: str, app_token: str, table_id: str) -> list[str]:
@@ -151,6 +177,25 @@ def rename_primary_title_field(token: str, app_token: str, table_id: str) -> str
         body={"field_name": "脚本标题", "type": field.get("type", 1)},
     )
     return "renamed"
+
+
+def backfill_script_titles(token: str, app_token: str, table_id: str) -> int:
+    updated = 0
+    for record in all_records(token, app_token, table_id):
+        fields = record.get("fields", {})
+        current = text_value(fields.get("脚本标题"))
+        if current:
+            continue
+        title = text_value(fields.get("关联选题")) or text_value(fields.get("开头钩子")) or "未命名脚本包"
+        feishu.request_json(
+            "PUT",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record['record_id']}",
+            token=token,
+            body={"fields": {"脚本标题": title}},
+        )
+        updated += 1
+        time.sleep(0.1)
+    return updated
 
 
 def delete_deprecated_fields(token: str, app_token: str, table_id: str) -> dict[str, Any]:
@@ -188,6 +233,14 @@ def ensure_view(token: str, app_token: str, table_id: str, view_name: str) -> di
     return payload.get("data", {}).get("view", payload.get("data", {}))
 
 
+def condition(field: dict[str, Any], operator: str, value: list[str]) -> dict[str, Any]:
+    return {
+        "field_id": field["field_id"],
+        "operator": operator,
+        "value": json.dumps(value, ensure_ascii=False),
+    }
+
+
 def patch_view(token: str, app_token: str, table_id: str, spec: dict[str, Any]) -> dict[str, Any]:
     view = ensure_view(token, app_token, table_id, spec["name"])
     fields = list_fields(token, app_token, table_id)
@@ -197,15 +250,28 @@ def patch_view(token: str, app_token: str, table_id: str, spec: dict[str, Any]) 
         for name, field in fields.items()
         if name not in visible and not field.get("is_primary")
     ]
+    property_body: dict[str, Any] = {"hidden_fields": hidden}
+    if spec["name"] == "待处理与异常":
+        conditions: list[dict[str, Any]] = []
+        if "脚本状态" in fields:
+            conditions.extend([
+                condition(fields["脚本状态"], "is", ["完整脚本包-待修订"]),
+                condition(fields["脚本状态"], "is", ["完整脚本包-阻塞"]),
+            ])
+        if "文档同步状态" in fields:
+            conditions.append(condition(fields["文档同步状态"], "is", ["飞书文档同步失败"]))
+        if conditions:
+            property_body["filter_info"] = {
+                "conditions": conditions,
+                "conjunction": "or",
+            }
     feishu.request_json(
         "PATCH",
         f"/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view['view_id']}",
         token=token,
         body={
             "view_name": spec["name"],
-            "property": {
-                "hidden_fields": hidden,
-            },
+            "property": property_body,
         },
     )
     return {"view": spec["name"], "hidden_fields": len(hidden), "visible_fields": spec["visible"]}
@@ -242,6 +308,7 @@ def main() -> int:
 
     title_field = rename_primary_title_field(token, app_token, table_id)
     created_fields = ensure_text_fields(token, app_token, table_id)
+    title_backfilled = backfill_script_titles(token, app_token, table_id)
     deleted_fields = delete_deprecated_fields(token, app_token, table_id)
     views = [patch_view(token, app_token, table_id, spec) for spec in VIEW_SPECS]
     deleted_views = delete_old_views(token, app_token, table_id)
@@ -253,6 +320,7 @@ def main() -> int:
         "table_id": table_id,
         "created_fields": created_fields,
         "title_field": title_field,
+        "title_backfilled": title_backfilled,
         "deprecated_fields": deleted_fields,
         "views": views,
         "old_views": deleted_views,
