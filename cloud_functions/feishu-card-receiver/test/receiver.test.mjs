@@ -229,7 +229,7 @@ test("sends queued production direction cards from explicit queue", async () => 
   assert.equal(puts.filter((call) => call.body.fields["制作方向卡状态"] === "已发送").length, 1);
 });
 
-test("writes per-topic production directions", async () => {
+test("submits production direction cards and marks empty directions as reviewed", async () => {
   const records = [
     { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "生成脚本包" } },
     { record_id: "rec_b", fields: { "选题标题": "B", "运行批次": "run_1", "状态": "生成脚本包" } },
@@ -251,11 +251,17 @@ test("writes per-topic production directions", async () => {
     env,
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), toastBody("success", "已保存 1 条制作方向"));
+  assert.deepEqual(await response.json(), toastBody("success", "已保存 2 条制作方向"));
   const puts = calls.filter((call) => call.method === "PUT");
-  assert.equal(puts.length, 1);
+  assert.equal(puts.length, 2);
   assert.deepEqual(puts[0].body.fields, {
     "我的制作补充": "用 AI账号信息雷达案例讲，重点讲选题判断",
+    "制作方向卡状态": "已提交",
+    "制作方向卡错误": "",
+  });
+  assert.deepEqual(puts[1].body.fields, {
+    "制作方向卡状态": "已提交",
+    "制作方向卡错误": "",
   });
 });
 
