@@ -255,7 +255,7 @@
       "daily_visible": "是，进入制作阶段后查看。",
       "user_editable": "是，可人工修正是否可拍、素材提醒、发布前核验和 QA。",
       "default_view": "脚本包主视图 / 待处理与异常",
-      "scripts_write": "本机 LaunchAgent 登录自启 watch_script_package_queue.py，默认每5分钟扫描04里推荐日期在近5天内且人工状态已确认的待生成记录，并排除明显测试标题；空队列不调用 Codex，有待生成记录时才调用 codex_script_package_runner.py 和 codex exec 生成06。超过5天的旧记录或测试记录需要显式 --record-id / --include-test-records 补跑。完整 Markdown 从项目根目录 06 完整脚本与制作包 打开，飞书06只保存轻量记录、飞书文档/文件夹入口、本地文档路径和同步报警。",
+      "scripts_write": "本机 LaunchAgent 登录自启 watch_script_package_queue.py，默认每5分钟扫描04里推荐日期在近5天内且人工状态已确认、是否已生成脚本稿为空/否/未生成的待生成记录，并排除明显测试标题；空队列不调用 Codex，有待生成记录时才调用 codex_script_package_runner.py 和 codex exec 生成06。QA 为 revise 时自动带上一轮 QA 原因重跑 1 次；最终 pass 写 是否已生成脚本稿=是，最终 revise/blocked 写 需人工处理，避免重复消耗。超过5天的旧记录或测试记录需要显式 --record-id / --include-test-records 补跑。完整 Markdown 从项目根目录 06 完整脚本与制作包 打开，飞书06只保存轻量记录、飞书文档/文件夹入口、本地文档路径和同步报警。",
       "human_edit": "打开06完整脚本或本机 Markdown 后，确认脚本是否可拍、素材提醒是否准确、发布前核验是否完成。"
     },
     {
@@ -759,7 +759,7 @@
     {
       "table": "04 分析与选题",
       "field": "是否已生成脚本稿",
-      "purpose": "隐藏承接标记，避免同一候选重复生成 06 完整脚本与制作包。",
+      "purpose": "隐藏承接标记，避免同一候选重复生成 06 完整脚本与制作包；pass 写 是，最终仍需人工处理时写 需人工处理。",
       "required": "否",
       "producer": "codex_script_package_runner.py",
       "consumer": "脚本",
@@ -1038,10 +1038,10 @@
       "table": "06 完整脚本与制作包",
       "field": "QA结果",
       "status": "revise",
-      "meaning": "脚本包缺关键判断、关键证据或结构不成立，需要修订。",
-      "entry": "生成脚本包后 QA 发现真实缺陷。",
-      "next_action": "补制作方向、证据或人工判断后重新生成；需要重跑时在 04 清空 是否已生成脚本稿。",
-      "human_required": "是。"
+      "meaning": "脚本包缺关键判断、关键证据或结构不成立；系统会先自动带上一轮 QA 原因重跑 1 次。",
+      "entry": "第二轮生成后 QA 仍发现真实缺陷。",
+      "next_action": "进入 06 待处理与异常查看 QA 原因；补制作方向、证据或人工判断后，如需再次生成，在 04 清空 是否已生成脚本稿。",
+      "human_required": "第二轮后仍 revise 时需要人工处理。"
     },
     {
       "flow": "脚本包生成流",

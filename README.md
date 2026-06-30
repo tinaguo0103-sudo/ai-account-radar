@@ -116,7 +116,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `scripts/check_feishu_card_cloud_receiver.py`：不写表的健康检查脚本，用 `challenge` 校验腾讯云 SCF 函数 URL，并读一次 `04 分析与选题` 确认飞书凭证和表权限正常。
 - `scripts/learn_from_topic_selection.py`：读取 `04` 中用户已经改过的状态和原因标签，生成待确认的选题偏好学习摘要；默认只学习最近一次正式运行批次。建议日常使用 `--mark-pending-confirm`，先把样本标为 `待确认学习`。只有用户确认后运行 `--approve-latest`，`editorial_skill_runner.py` 才会读取已确认摘要并带入下一轮主编判断。
 - `scripts/reorganize_feishu_tables.py`：保留 table_id 和数据，按新逻辑顺序重命名飞书表，并准备 `06 完整脚本与制作包`。
-- `scripts/codex_script_package_runner.py`：本机 Codex 脚本包生成器；从 `04 分析与选题` 读取人工确认的选题状态和制作方向补充，默认只处理近 5 天记录并排除明显测试标题，调用本机 `codex exec` 与全局私有 Skill 生成平铺 Markdown 脚本包，写入 `06 完整脚本与制作包` 轻量记录，并把原 `04` 标记为已生成。
+- `scripts/codex_script_package_runner.py`：本机 Codex 脚本包生成器；从 `04 分析与选题` 读取人工确认的选题状态和制作方向补充，默认只处理近 5 天记录并排除明显测试标题，调用本机 `codex exec` 与全局私有 Skill 生成平铺 Markdown 脚本包，写入 `06 完整脚本与制作包` 轻量记录。QA 为 `revise` 时自动带着上一轮 QA 原因重跑 1 次；最终 `pass` 时把原 `04` 标记为 `是`，最终仍 `revise/blocked` 时标记为 `需人工处理`，避免 watcher 重复消耗。
 - `scripts/script_package_shared.py`：`04 -> 06` 脚本包链路共享函数，集中维护飞书字段、待生成队列、Austin Skill 加载和 Topic Card 标准化。
 - `scripts/watch_script_package_queue.py`：本机轻量 watcher；每隔几分钟扫描一次 `04` 的待生成队列，空队列只做飞书 API 检查，不调用 Codex，有待生成记录时才调用 `codex_script_package_runner.py`。
 - `scripts/install_script_package_watcher_launch_agent.py`：把 06 watcher 安装成 macOS 用户级 LaunchAgent，登录后自动拉起；睡眠唤醒通常会继续跑，重启后登录会自动恢复。
@@ -134,7 +134,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 
 ## Austin不加班脚本Skill
 
-`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写任何中间 Brief 表。选题确认并补充制作方向后，正式路径由本机轻量 watcher `scripts/watch_script_package_queue.py` 扫描近 5 天待生成队列；空队列不调用 Codex，有待生成记录时才调用 `scripts/codex_script_package_runner.py`，通过本机 `codex exec` 和全局私有 Skill 生成 `06 完整脚本与制作包`。完整内容统一落到项目根目录 `06 完整脚本与制作包/YYYY-MM-DD_选题标题_完整脚本与制作包.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA；飞书 `06` 只保存轻量记录、飞书文档/文件夹入口、本地文档路径和同步报警。
+`Austin不加班脚本Skill` 现在不再生成中间脚本大纲，也不再写任何中间 Brief 表。选题确认并补充制作方向后，正式路径由本机轻量 watcher `scripts/watch_script_package_queue.py` 扫描近 5 天待生成队列；空队列不调用 Codex，有待生成记录时才调用 `scripts/codex_script_package_runner.py`，通过本机 `codex exec` 和全局私有 Skill 生成 `06 完整脚本与制作包`。如果第一轮 QA 是 `revise`，runner 会把上一轮 QA 原因、开头钩子和核心观点传回 Codex 自动重写 1 次；第二轮仍不通过才进入 `待处理与异常`。完整内容统一落到项目根目录 `06 完整脚本与制作包/YYYY-MM-DD_选题标题_完整脚本与制作包.md`，包含口播全文、视频结构、录屏/素材清单、分段执行方案、剪辑交接、发布包草稿和 QA；飞书 `06` 只保存轻量记录、飞书文档/文件夹入口、本地文档路径和同步报警。
 
 运行时规则：
 

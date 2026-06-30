@@ -47,7 +47,8 @@ DEFAULT_OUTPUT_ROOT = (
 )
 LOG_DIR = ROOT / "output" / "logs"
 LOCK_FILE = ROOT / ".runtime" / "codex_script_package_runner.lock"
-RUNNER_VERSION = "codex-local-script-package-runner-v0.1"
+RUNNER_VERSION = "codex-local-script-package-runner-v0.2"
+MAX_REVISE_ATTEMPTS = 2
 DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 TEST_TITLE_PREFIXES = ("【测试】", "【流程测试】", "【部署后测试】", "【模拟测试】", "[测试]", "测试：", "测试:")
 TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(测试|测速)[^\]]*\])")
@@ -263,7 +264,27 @@ def display_path_for(actual_path: Path) -> Path:
         return actual_path
 
 
-def topic_prompt(topic: dict[str, Any]) -> str:
+def qa_status_of(package: dict[str, Any]) -> str:
+    status = str(package.get("qa_status") or "revise").strip().lower()
+    return status if status in {"pass", "revise", "blocked"} else "revise"
+
+
+def topic_prompt(topic: dict[str, Any], previous_package: dict[str, Any] | None = None, attempt: int = 1) -> str:
+    retry_block = ""
+    if previous_package:
+        retry_block = f"""
+
+这是第 {attempt} 轮生成。上一轮 QA 没有通过，必须针对下面问题重写，不要只是换同义词：
+- 上一轮 QA 状态：{qa_status_of(previous_package)}
+- 上一轮 QA 原因：{compact(previous_package.get("qa_result"), 1200)}
+- 上一轮开头钩子：{compact(previous_package.get("opening_hook"), 500)}
+- 上一轮核心观点：{compact(previous_package.get("core_viewpoint"), 1200)}
+
+第二轮硬性修正要求：
+- 如果上一轮是 `revise`，优先重写口播全文、开头钩子和关键判断，让它更像 Austin 的真人实战分享。
+- 不要把普通素材提醒、发布前核验当成 `revise` 原因。
+- 只有缺少关键输入、事实无法成立、或脚本结构本身不可用时，才输出 `revise` 或 `blocked`。
+"""
     return f"""你是 Austin AI账号的本地定时脚本生成器。
 
 请使用本机全局 Skill `$austin-no-overtime-scripting` 和 `$austin-voice-scriptwriter` 的方法，基于下面 Topic Card 生成一份完整的 `06 完整脚本与制作包`。
@@ -276,13 +297,14 @@ def topic_prompt(topic: dict[str, Any]) -> str:
 - 素材、事实核验、发布前回看原文属于提醒；不要因为这些提醒就把可用稿全部判死。
 - 输出必须严格符合 JSON Schema，不要输出 Markdown 代码块，不要输出解释。
 - `full_markdown` 必须是一份完整 Markdown，至少包含：先看结论、核心观点、开头钩子候选、视频结构、口播全文、录屏与素材清单、剪辑交接、发布包草稿、QA 报告。
+{retry_block}
 
 Topic Card JSON：
 {json.dumps(topic, ensure_ascii=False, indent=2)}
 """
 
 
-def run_codex_for_topic(topic: dict[str, Any], timeout_seconds: int) -> dict[str, Any]:
+def run_codex_for_topic(topic: dict[str, Any], timeout_seconds: int, previous_package: dict[str, Any] | None = None, attempt: int = 1) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="austin-codex-script-package-") as tmpdir:
         output_file = Path(tmpdir) / "package.json"
         command = [
@@ -299,10 +321,10 @@ def run_codex_for_topic(topic: dict[str, Any], timeout_seconds: int) -> dict[str
             str(output_file),
             "-",
         ]
-        log(f"starting codex exec for {topic.get('topic_title')}")
+        log(f"starting codex exec attempt {attempt} for {topic.get('topic_title')}")
         result = subprocess.run(
             command,
-            input=topic_prompt(topic),
+            input=topic_prompt(topic, previous_package=previous_package, attempt=attempt),
             text=True,
             cwd=str(ROOT),
             capture_output=True,
@@ -321,6 +343,32 @@ def run_codex_for_topic(topic: dict[str, Any], timeout_seconds: int) -> dict[str
         except json.JSONDecodeError as exc:
             raise RuntimeError(f"codex output was not valid JSON: {exc}") from exc
         return package
+
+
+def generate_package_with_retry(topic: dict[str, Any], timeout_seconds: int) -> tuple[dict[str, Any], int, list[dict[str, str]]]:
+    attempts: list[dict[str, str]] = []
+    previous_package: dict[str, Any] | None = None
+    for attempt in range(1, MAX_REVISE_ATTEMPTS + 1):
+        package = run_codex_for_topic(topic, timeout_seconds, previous_package=previous_package, attempt=attempt)
+        status = qa_status_of(package)
+        attempts.append({
+            "attempt": str(attempt),
+            "qa_status": status,
+            "qa_result": compact(package.get("qa_result"), 1000),
+        })
+        if status != "revise":
+            return package, attempt, attempts
+        if attempt < MAX_REVISE_ATTEMPTS:
+            log(json.dumps({
+                "event": "qa_revise_retry",
+                "topic_title": topic.get("topic_title"),
+                "attempt": attempt,
+                "qa_result": package.get("qa_result"),
+            }, ensure_ascii=False))
+            previous_package = package
+            continue
+        return package, attempt, attempts
+    raise RuntimeError("unreachable retry state")
 
 
 def write_package_markdown(topic: dict[str, Any], package: dict[str, Any]) -> Path:
@@ -436,8 +484,8 @@ def script_status(qa_status: str) -> str:
     return "已生成完整脚本包"
 
 
-def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: Path, doc_sync: FeishuDocSyncResult | None = None) -> dict[str, str]:
-    qa_status = str(package.get("qa_status") or "revise")
+def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: Path, doc_sync: FeishuDocSyncResult | None = None, attempts: int = 1) -> dict[str, str]:
+    qa_status = qa_status_of(package)
     qa_result = str(package.get("qa_result") or "待人工确认")
     doc_sync = doc_sync or FeishuDocSyncResult()
     title = str(topic.get("topic_title") or package.get("topic_title") or "")
@@ -455,7 +503,7 @@ def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: P
         "本地文档": str(document_path),
         "素材提醒": inline_items([str(item) for item in package.get("material_reminders", [])], "无P0素材缺口"),
         "发布前核验": inline_items([str(item) for item in package.get("release_checks", [])], "无额外事实核验点"),
-        "QA结果": f"{qa_status}｜{qa_result}"[:1000],
+        "QA结果": f"{qa_status}｜生成轮次:{attempts}｜{qa_result}"[:1000],
         "是否可拍": str(package.get("can_shoot") or ("是：可拍；按素材提醒和发布前核验处理" if qa_status == "pass" else "否：先人工确认")),
         "版本": RUNNER_VERSION,
     }
@@ -473,12 +521,12 @@ def create_script_package_record(token: str, app_token: str, table_id: str, row:
     return str(record.get("record_id", ""))
 
 
-def mark_topic_generated(token: str, app_token: str, table_id: str, record_id: str) -> None:
+def mark_topic_generated(token: str, app_token: str, table_id: str, record_id: str, marker: str = "是") -> None:
     feishu.request_json(
         "PUT",
         f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
         token=token,
-        body={"fields": {TOPIC_MARK_FIELD: "是"}},
+        body={"fields": {TOPIC_MARK_FIELD: marker}},
     )
 
 
@@ -535,23 +583,28 @@ def main() -> int:
 
     results: list[dict[str, Any]] = []
     for record, topic in zip(records, topic_cards):
-        package = run_codex_for_topic(topic, args.timeout_seconds)
+        package, attempt_count, attempt_history = generate_package_with_retry(topic, args.timeout_seconds)
+        qa_status = qa_status_of(package)
         document_path = write_package_markdown(topic, package)
         title = str(topic.get("topic_title") or package.get("topic_title") or "未命名选题")
         doc_sync = try_create_feishu_document(token, title, package) if args.write_feishu else FeishuDocSyncResult(status="未写入飞书")
-        row = package_row(topic, package, document_path, doc_sync)
+        row = package_row(topic, package, document_path, doc_sync, attempts=attempt_count)
         created_id = ""
+        topic_marker = "是" if qa_status == "pass" else "需人工处理"
         if args.write_feishu:
             created_id = create_script_package_record(token, app_token, table_ids["script_package"], row)
-            mark_topic_generated(token, app_token, table_ids["topic_decision"], str(record["record_id"]))
+            mark_topic_generated(token, app_token, table_ids["topic_decision"], str(record["record_id"]), marker=topic_marker)
         result = {
             "record_id": record.get("record_id"),
             "topic_title": topic.get("topic_title"),
             "document_path": str(document_path),
             "feishu_document_url": doc_sync.url,
             "doc_sync_status": doc_sync.status,
-            "qa_status": package.get("qa_status"),
+            "qa_status": qa_status,
+            "attempts": attempt_count,
+            "attempt_history": attempt_history,
             "created_script_package_id": created_id,
+            "topic_marker": topic_marker if args.write_feishu else "",
             "marked_topic": bool(args.write_feishu),
         }
         results.append(result)

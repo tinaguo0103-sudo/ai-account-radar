@@ -125,7 +125,8 @@ def feishu_ready_topics(token: str, app_token: str) -> tuple[dict[str, str], lis
     ready = []
     for record in records:
         fields = record.get("fields", {})
-        already_generated = str(fields.get(TOPIC_MARK_FIELD, "")) == "是"
+        generated_marker = str(fields.get(TOPIC_MARK_FIELD, "")).strip()
+        already_generated = generated_marker not in {"", "否", "未生成"}
         if ready_status(fields.get("状态")) and not already_generated:
             ready.append(record)
     return table_ids, ready
