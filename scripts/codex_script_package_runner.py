@@ -440,8 +440,10 @@ def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: P
     qa_status = str(package.get("qa_status") or "revise")
     qa_result = str(package.get("qa_result") or "待人工确认")
     doc_sync = doc_sync or FeishuDocSyncResult()
+    title = str(topic.get("topic_title") or package.get("topic_title") or "")
     return {
-        "关联选题": str(topic.get("topic_title") or package.get("topic_title") or ""),
+        "脚本标题": title,
+        "关联选题": title,
         "脚本状态": script_status(qa_status),
         "推荐模板": str(package.get("recommended_template") or ""),
         "核心观点": str(package.get("core_viewpoint") or "")[:5000],

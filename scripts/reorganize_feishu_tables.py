@@ -21,6 +21,7 @@ from feishu_table_registry import TABLES, VIEW_NAMES, resolve_table_name
 ROOT = Path(__file__).resolve().parents[1]
 BASE_INFO = ROOT / "feishu_created_base.json"
 SCRIPT_PACKAGE_FIELDS = [
+    "脚本标题",
     "关联选题",
     "脚本状态",
     "推荐模板",

@@ -18,6 +18,7 @@ REPO_AUSTIN_SKILL_DIR = ROOT / "skills" / "austin-no-overtime-scripting"
 SCRIPT_VERSION = "austin-production-packager-v0.6"
 TOPIC_MARK_FIELD = "是否已生成脚本稿"
 SCRIPT_PACKAGE_FIELDS = [
+    "脚本标题",
     "关联选题",
     "脚本状态",
     "推荐模板",

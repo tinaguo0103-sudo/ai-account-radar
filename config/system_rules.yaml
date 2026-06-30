@@ -254,7 +254,7 @@
       "consumer": "用户本人。",
       "daily_visible": "是，进入制作阶段后查看。",
       "user_editable": "是，可人工修正是否可拍、素材提醒、发布前核验和 QA。",
-      "default_view": "脚本包后台 / 可拍脚本包 / 待修订脚本包",
+      "default_view": "脚本包主视图 / 待处理与异常 / 后台记录",
       "scripts_write": "本机 LaunchAgent 登录自启 watch_script_package_queue.py，默认每5分钟扫描04里推荐日期在近5天内且人工状态已确认的待生成记录，并排除明显测试标题；空队列不调用 Codex，有待生成记录时才调用 codex_script_package_runner.py 和 codex exec 生成06。超过5天的旧记录或测试记录需要显式 --record-id / --include-test-records 补跑。完整 Markdown 从项目根目录 06 完整脚本与制作包 打开，飞书06只保存轻量记录、飞书文档/文件夹入口、本地文档路径和同步报警。",
       "human_edit": "打开06完整脚本或本机 Markdown 后，确认脚本是否可拍、素材提醒是否准确、发布前核验是否完成。"
     },
@@ -1227,7 +1227,7 @@
     {
       "name": "日报定位",
       "rule": "日报如果生成，应围绕今天我该做什么，不写成长报告。",
-      "output": "高分选题、待生成脚本包、待修订脚本包、风险提示、来源失败、资产推进。"
+      "output": "高分选题、待生成脚本包、待处理与异常脚本包、风险提示、来源失败、资产推进。"
     },
     {
       "name": "禁止事项",
