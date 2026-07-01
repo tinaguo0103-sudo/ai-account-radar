@@ -78,6 +78,44 @@ Codex automation 指向生产目录：
 5. 合并回 `main` 后，再让生产目录 `git pull` 到新版本。
 6. 如果生产链路出问题，优先在生产目录做最小紧急修复，并同步回开发分支。
 
+## 测试环境与预合并验证
+
+涉及飞书写入、字段、卡片、状态流转、通知或外部服务的功能，合并前优先使用 staging/test 飞书 Base 或测试表验证。测试数据必须与生产 Base / 生产业务表隔离；不要求单独测试群，如果复用正式通知目标，测试消息必须明确标记为“测试”，且不能触发真实业务动作。
+
+本地环境文件支持三种模式：
+
+```bash
+# 默认生产本机配置，生产目录使用
+python3 scripts/check_feishu_card_cloud_receiver.py --skip-receiver
+
+# 按环境名加载 .env.staging.local / .env.staging
+AI_ACCOUNT_RADAR_ENV=staging python3 scripts/check_feishu_card_cloud_receiver.py --skip-receiver
+
+# 显式加载某个测试配置文件，不回退读取 .env.local
+AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/check_feishu_card_cloud_receiver.py --skip-receiver
+```
+
+合并前在开发目录运行：
+
+```bash
+python3 scripts/pre_merge_check.py
+```
+
+如果已经配置 staging/test 飞书 Base，可加只读飞书检查：
+
+```bash
+python3 scripts/pre_merge_check.py --env-file .env.staging.local --feishu-read
+```
+
+预合并检查会确认：
+
+- 开发目录在 `feature/next-production-flow`；
+- 生产目录在 `main` 且干净；
+- 关键脚本可以通过 Python 编译；
+- 失败 QA 规则能命中典型错误；
+- 10:00 发卡入口在开发目录会被 worktree 守卫拦截；
+- 可选：staging/test 飞书 Base 可读。
+
 ## 自动化入口保护
 
 两个 Codex automation 入口已经加了 worktree 守卫：
