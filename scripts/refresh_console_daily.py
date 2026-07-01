@@ -44,14 +44,7 @@ DAILY_CARD_TYPES = {"今日工作", "预警提醒", "进度统计", "临时入�
 NAV_CARD_TYPES = {"系统导航", "规则说明"}
 DAILY_VIEW_VISIBLE_FIELDS = ["动作", "卡片类型", "优先级", "工作区", "状态", "数量/摘要", "下一步", "入口表", "入口视图", "最后更新时间"]
 NAV_VIEW_VISIBLE_FIELDS = ["动作", "卡片类型", "优先级", "工作区", "状态", "数量/摘要", "下一步", "入口表", "入口视图", "最后更新时间"]
-DEPRECATED_CONSOLE_ACTIONS = {
-    "执行层：06 内容任务主表",
-    "今日必须完成",
-    "明日预警",
-    "本周内容进度",
-    "未来7天发布",
-    "待复盘内容",
-}
+DEPRECATED_CONSOLE_ACTIONS: set[str] = set()
 
 
 def require_env() -> str:

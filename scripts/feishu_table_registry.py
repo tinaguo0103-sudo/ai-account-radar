@@ -20,13 +20,7 @@ TABLES: dict[str, str] = {
     "rules_dictionary": "99 规则与字典",
 }
 
-ALIASES: dict[str, list[str]] = {
-    "url_inbox": ["06 URL投喂入口"],
-    "content_inbox": ["02 内容收件箱"],
-    "topic_decision": ["03 分析与选题"],
-    "script_package": ["06 内容任务主表"],
-    "review_assets": ["05 资产与复盘"],
-}
+ALIASES: dict[str, list[str]] = {}
 
 VIEW_NAMES: dict[str, list[str]] = {
     "console": ["今日工作台", "系统导航"],

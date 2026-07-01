@@ -47,7 +47,7 @@ DEFAULT_UA = (
 
 
 BUSINESS_KEYWORDS = {
-    "内容团队选题到Brief流程": ["内容", "选题", "脚本", "Brief", "写作", "公众号", "小红书", "素材"],
+    "内容团队选题到脚本包流程": ["内容", "选题", "脚本", "Brief", "写作", "公众号", "小红书", "素材"],
     "AI导演工作流与视频交付": ["视频", "镜头", "分镜", "导演", "成片", "画面", "剪辑", "prompt"],
     "非技术Agent处理重复业务任务": ["Agent", "智能体", "Codex", "Claude Code", "MCP", "自动化", "任务"],
     "汽车与内容营销流程": ["汽车", "品牌", "营销", "带货", "素材", "审核", "信任", "增长"],
@@ -55,7 +55,7 @@ BUSINESS_KEYWORDS = {
 }
 
 COLUMN_BY_SCENE = {
-    "内容团队选题到Brief流程": "真实工作流改造",
+    "内容团队选题到脚本包流程": "真实工作流改造",
     "AI导演工作流与视频交付": "AI导演工作流",
     "非技术Agent处理重复业务任务": "真实工作流改造",
     "汽车与内容营销流程": "汽车与内容营销",
@@ -624,13 +624,13 @@ def choose_scene(text: str) -> str:
     if any(k in text for k in ["小云雀", "AI短片", "短剧Agent", "AI短剧", "角色设定", "剧本", "分镜", "成片", "镜头", "导演工作流", "Seedance"]):
         return "AI导演工作流与视频交付"
     if any(k in text for k in ["内容创作方法论", "内容创作", "内部分享"]):
-        return "内容团队选题到Brief流程"
+        return "内容团队选题到脚本包流程"
     if any(k in lower for k in ["miso", "speech", "voice", "asr", "grok imagine", "ppisp", "photometric"]) or any(k in text for k in ["语音模型", "口播", "视频生成", "3D重建", "光度变化"]):
         return "AI导演工作流与视频交付"
     if any(k in text for k in visual_content_terms):
-        return "内容团队选题到Brief流程"
+        return "内容团队选题到脚本包流程"
     if any(k.lower() in lower for k in ["runway", "kling", "luma", "seedance", "视频", "分镜", "镜头", "成片", "短剧", "宣传图", "视觉物料"]):
-        return "AI导演工作流与视频交付" if any(k.lower() in lower for k in ["runway", "kling", "luma", "seedance", "视频", "分镜", "镜头", "成片", "短剧"]) else "内容团队选题到Brief流程"
+        return "AI导演工作流与视频交付" if any(k.lower() in lower for k in ["runway", "kling", "luma", "seedance", "视频", "分镜", "镜头", "成片", "短剧"]) else "内容团队选题到脚本包流程"
     if any(k.lower() in lower for k in ["llamaindex", "openrouter", "codex", "claude code", "agent", "guardrails", "mcp", "自动化", "api", "智能体", "文档自动化"]):
         return "非技术Agent处理重复业务任务"
     if any(k.lower() in lower for k in ["shein", "ai假人", "虚假广告", "带货", "品牌", "营销", "信任", "合规", "审核", "骗子", "汽车"]):
@@ -642,7 +642,7 @@ def choose_scene(text: str) -> str:
         for scene, words in BUSINESS_KEYWORDS.items()
     }
     best = max(scores, key=scores.get)
-    return best if scores[best] > 0 else "内容团队选题到Brief流程"
+    return best if scores[best] > 0 else "内容团队选题到脚本包流程"
 
 
 def detect_hook(item: ContentItem) -> str:
@@ -690,7 +690,7 @@ def commercial_entrance(item: ContentItem) -> str:
 
 def asset_for_scene(scene: str) -> str:
     return {
-        "内容团队选题到Brief流程": "内容选题评分表和Brief模板",
+        "内容团队选题到脚本包流程": "内容选题评分表和脚本包输入模板",
         "AI导演工作流与视频交付": "AI视频Brief与分镜验收清单",
         "非技术Agent处理重复业务任务": "非技术Agent任务拆解模板",
         "汽车与内容营销流程": "品牌AI素材审核清单 / 汽车内容营销SOP",
@@ -700,7 +700,7 @@ def asset_for_scene(scene: str) -> str:
 
 def old_pain(scene: str) -> str:
     return {
-        "内容团队选题到Brief流程": "我现在容易把热点、对标内容和个人判断分开处理，最后选题能写，但缺少业务场景、判断依据和可复盘模板。",
+        "内容团队选题到脚本包流程": "我现在容易把热点、对标内容和个人判断分开处理，最后选题能写，但缺少业务场景、判断依据和可复盘模板。",
         "AI导演工作流与视频交付": "我容易只看AI视频工具效果，真正进入交付时还要补Brief、分镜、素材修改、成片验收和客户能看懂的结果说明。",
         "非技术Agent处理重复业务任务": "我会看到很多Agent/模型更新，但如果不拆成自己的输入、步骤、输出、验收和异常处理，就很难进入真实生产环境。",
         "汽车与内容营销流程": "AI素材、卖点表达和带货内容进入投放前，如果没有真实性、品牌一致性和合规审核，就会变成增长风险。",
@@ -710,7 +710,7 @@ def old_pain(scene: str) -> str:
 
 def ai_entry(scene: str) -> str:
     return {
-        "内容团队选题到Brief流程": "用AI先做资料归并、对标拆解和初筛，我再补业务现场判断，把一条内容推进成Brief而不是停在资讯摘要。",
+        "内容团队选题到脚本包流程": "用AI先做资料归并、对标拆解和初筛，我再补业务现场判断，把一条内容推进成06脚本包输入而不是停在资讯摘要。",
         "AI导演工作流与视频交付": "让AI承担素材生成和版本尝试，我保留Brief、分镜取舍、节奏判断、修改意见和最终验收。",
         "非技术Agent处理重复业务任务": "先把我自己的任务拆成可交接说明，再让Agent处理资料整理、初稿生成、检查清单和异常记录。",
         "汽车与内容营销流程": "用AI辅助识别素材风险、提炼产品卖点、检查品牌调性和生成投放前审核清单，但最终由人确认。",
@@ -720,7 +720,7 @@ def ai_entry(scene: str) -> str:
 
 def show_result(scene: str) -> str:
     return {
-        "内容团队选题到Brief流程": "我的旧选题流程/新选题流程对比 + 一页Brief样例",
+        "内容团队选题到脚本包流程": "我的旧选题流程/新选题流程对比 + 一页脚本包输入样例",
         "AI导演工作流与视频交付": "我的一页Brief + 3个分镜节点 + 修改前后验收截图",
         "非技术Agent处理重复业务任务": "我的任务拆解表 + Agent输入输出样例 + 验收标准",
         "汽车与内容营销流程": "AI素材审核流程图 + 汽车/品牌内容投放前风险清单",
@@ -938,11 +938,11 @@ def own_scenario_angle(topic: dict[str, Any], item: ContentItem) -> str:
     title_lower = (item.title or "").lower()
     title = item.title or topic.get("来源内容", "")
     if "mimo claw" in title_lower or ("小米" in title and "Claw" in title) or ("金山办公" in title):
-        return "我会拿它测试自己的文档生产场景：一堆资料、表格和旧文档，能不能从整理、提纲到Brief初稿少跑几轮。"
+        return "我会拿它测试自己的文档生产场景：一堆资料、表格和旧文档，能不能从整理、提纲到脚本包输入少跑几轮。"
     if "claude code" in lower and any(k in text for k in ["原则", "团队", "工作方式", "项目"]):
         return "我会把它拿来改自己的AI项目生产环境：不是学团队口号，而是把需求确认、阶段交付、失败回滚和结果验收写成一张项目检查表。"
     if any(k in title_lower for k in ["minimax", "1m token", "long context"]) or any(k in title for k in ["100万", "1M token", "长上下文", "200万", "2M token"]):
-        return "我会拿它测试资料到Brief的真实痛点：以前要分多轮整理资料、抽取观点、对齐结构、生成Brief和复核，现在看能不能把前四步压成一次长上下文任务。"
+        return "我会拿它测试资料到脚本包输入的真实痛点：以前要分多轮整理资料、抽取观点、对齐结构、生成脚本包输入和复核，现在看能不能把前四步压成一次长上下文任务。"
     if any(k in title for k in ["AI失调", "公开聊天数据", "失调"]):
         return "这类公共议题我先不硬做成选题；除非能补到和我账号相关的AI系统安全、内容风控或项目异常处理案例。"
     if any(k in text for k in ["小云雀", "短剧Agent", "AI短剧", "AI短片", "Seedance"]):
@@ -1088,9 +1088,9 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
     if "mimo claw" in lower or ("小米" in text and "Claw" in text) or "金山办公" in text:
         return {
             "角度类型": "Agent落地",
-            "我的蹭热点角度": "MiMo Claw接到金山办公这件事，适合拿来测试我的文档生产流程：资料整理、提纲、Brief初稿和人工复核能不能少跑几轮。",
-            "影响对象": "文档生产、办公资料整理、内容Brief、企业知识库和非技术团队办公Agent。",
-            "标题": "小米 MiMo Claw接入金山办公后，我会先测资料到Brief能不能少跑几轮",
+            "我的蹭热点角度": "MiMo Claw接到金山办公这件事，适合拿来测试我的文档生产流程：资料整理、提纲、脚本包输入和人工复核能不能少跑几轮。",
+            "影响对象": "文档生产、办公资料整理、脚本包输入、企业知识库和非技术团队办公Agent。",
+            "标题": "小米 MiMo Claw接入金山办公后，我会先测资料到脚本包输入能不能少跑几轮",
             "标题规则": "mimo_claw_office_brief_workflow",
         }
     if any(k in text for k in ["AI失调", "公开聊天数据", "失调"]) and not any(k in text for k in ["品牌", "内容安全", "风控", "项目复盘"]):
@@ -1246,9 +1246,9 @@ def hotspot_angle(item: ContentItem, scene: str) -> dict[str, str]:
     if any(k in lower for k in ["minimax", "1m token", "long context"]) or any(k in text for k in ["100万", "1M token", "长上下文", "解码加速"]):
         return {
             "角度类型": "Agent落地",
-            "我的蹭热点角度": "我会拿长上下文升级来改造资料到Brief的流程：以前分几轮整理、提炼、结构化和复核，现在看能不能压成一次长资料任务。",
+            "我的蹭热点角度": "我会拿长上下文升级来改造资料到脚本包输入的流程：以前分几轮整理、提炼、结构化和复核，现在看能不能压成一次长资料任务。",
             "影响对象": "Agent工作流、长文档处理、项目资料整理、内容复盘和非技术任务验收。",
-            "标题": f"{event}后，我会先测资料整理到Brief能不能少跑几轮",
+            "标题": f"{event}后，我会先测资料整理到脚本包输入能不能少跑几轮",
             "标题规则": "long_context_agent_workflow",
         }
     if any(k in text for k in ["黄仁勋", "纳德拉", "人物观点", "人物访谈", "共议"]):
@@ -1481,11 +1481,11 @@ def publishable_title_from_topic(topic: dict[str, Any], item: ContentItem, conte
     if "llm-wiki" in lower or "karpathy" in lower:
         return "Karpathy把AI知识做成llm-wiki后，内容团队也该有自己的资料入口"
     if "mimo claw" in lower or ("小米" in text and "Claw" in text) or "金山办公" in text:
-        return "小米 MiMo Claw接入金山办公后，我会先测资料到Brief能不能少跑几轮"
+        return "小米 MiMo Claw接入金山办公后，我会先测资料到脚本包输入能不能少跑几轮"
     if any(k in text for k in ["AI失调", "公开聊天数据", "失调"]):
         return "公开聊天数据预测AI失调可以观察，先别硬改成工作流选题"
     if "minimax" in lower or "长上下文" in text or "100万" in text:
-        return f"{event_short}后，我会先测资料整理到Brief能不能少跑几轮"
+        return f"{event_short}后，我会先测资料整理到脚本包输入能不能少跑几轮"
     if "nemotron" in lower and any(k in text for k in ["种子", "问答", "合成"]):
         return "Nemotron开始合成任务数据后，普通团队也该重看自己的训练材料"
     if "nemotron" in lower and ("ultra" in lower or "nvidia" in lower):
@@ -2452,7 +2452,7 @@ def write_today10_markdown(path: Path, topics: list[dict[str, Any]], logs: list[
             f"- 推荐：{best.get('可发布标题') or best['我的选题标题']}",
             f"- 内部切入角度：{best.get('内部切入角度') or best['我的选题标题']}",
             f"- 动作：{best['推荐动作']}",
-            "- 理由：今天更适合先蹭一个有明确差异化角度的热点，做 30-60 秒短评；不要同时把多条都推进成完整 Brief。",
+            "- 理由：今天更适合先蹭一个有明确差异化角度的热点，做 30-60 秒短评；不要同时把多条都推进成完整脚本包。",
             "",
         ])
     for idx, topic in enumerate(topics, start=1):
@@ -2700,7 +2700,7 @@ def theme_cluster(topic: dict[str, Any]) -> str:
     if any(k in lower for k in ["llamaindex", "openrouter", "codex", "mcp"]) or any(k in text for k in ["Agent", "智能体", "任务验收"]):
         return "Agent任务验收"
     if any(k in text for k in ["选题", "Brief", "对标内容"]):
-        return "内容选题Brief"
+        return "内容选题脚本包"
     return fingerprint(topic.get("来源内容", ""), topic.get("我的选题标题", ""))
 
 
@@ -2709,7 +2709,7 @@ def similar_asset_key(topic: dict[str, Any]) -> str:
     cluster = theme_cluster(topic)
     if topic.get("热点切入方式") == "产品生死线":
         return cluster
-    if cluster in {"视觉物料自动化", "品牌素材风控", "AI视频导演流程", "Agent任务验收", "内容选题Brief"}:
+    if cluster in {"视觉物料自动化", "品牌素材风控", "AI视频导演流程", "Agent任务验收", "内容选题脚本包"}:
         return cluster
     if any(k in asset for k in ["视觉", "首图", "宣传图", "图文", "品牌审核"]):
         return "内容视觉物料人工判断"
@@ -2720,7 +2720,7 @@ def similar_asset_key(topic: dict[str, Any]) -> str:
     if any(k in asset for k in ["视频", "分镜", "导演"]):
         return "AI视频导演工作流"
     if any(k in asset for k in ["Brief", "选题"]):
-        return "内容选题Brief"
+        return "内容选题脚本包"
     return re.sub(r"\s+", "", asset)[:18]
 
 

@@ -97,14 +97,14 @@ python3 scripts/feishu_topic_decision_card.py build --limit 7
 
 ```bash
 python3 scripts/feishu_topic_decision_card.py apply \
-  --form-value-json '{"enter_brief_records":["recxxxx"],"positive_reason_tags":["有真实业务现场"]}'
+  --form-value-json '{"script_package_records":["recxxxx"],"positive_reason_tags":["有真实业务现场"]}'
 ```
 
 默认不会写飞书，只会输出将要更新的字段。确认后再加：
 
 ```bash
 python3 scripts/feishu_topic_decision_card.py apply \
-  --form-value-json '{"enter_brief_records":["recxxxx"],"positive_reason_tags":["有真实业务现场"]}' \
+  --form-value-json '{"script_package_records":["recxxxx"],"positive_reason_tags":["有真实业务现场"]}' \
   --write
 ```
 

@@ -31,7 +31,7 @@ TARGET_TABLE_KEY = "topic_decision"
 DEFAULT_LIMIT = 7
 CARD_EXPIRE_DAYS = 5
 DEFAULT_STATUS_FILTER = {"待判断", ""}
-ENTER_BRIEF_FORM_KEY = "enter_brief_records"
+ENTER_SCRIPT_PACKAGE_FORM_KEY = "script_package_records"
 SCRIPT_PACKAGE_READY_STATUS = "生成脚本包"
 SUBMIT_SELECTION_ACTION = "submit_topic_decisions"
 SUBMIT_NO_SELECTION_ACTION = "submit_no_selection"
@@ -236,7 +236,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
             elements.append({"tag": "hr"})
 
     form_elements: list[dict[str, Any]] = [
-        select_component(ENTER_BRIEF_FORM_KEY, "生成脚本包：只选值得继续写口播稿的编号", options),
+        select_component(ENTER_SCRIPT_PACKAGE_FORM_KEY, "生成脚本包：只选值得继续写口播稿的编号", options),
         select_component("positive_reason_tags", "推进原因标签", tag_options(POSITIVE_REASON_OPTIONS)),
         text_input_component("manual_reason", "手工原因：标签不够用时，写一句真实判断"),
         {
@@ -467,7 +467,7 @@ def decisions_from_form(
             if record_id
         }
 
-    selected_record_ids = set(coerce_list(form_value.get(ENTER_BRIEF_FORM_KEY)))
+    selected_record_ids = set(coerce_list(form_value.get(ENTER_SCRIPT_PACKAGE_FORM_KEY)))
     for record_id in selected_record_ids:
         decisions[record_id] = {"status": SCRIPT_PACKAGE_READY_STATUS, "tags": positive_tags, "manual_reason": manual_reason}
 
@@ -557,7 +557,7 @@ def process_card_submission(
     run_id = str(value.get("run_id") or "")
     if action_name == SUBMIT_NO_SELECTION_ACTION:
         form_value = dict(form_value)
-        form_value[ENTER_BRIEF_FORM_KEY] = []
+        form_value[ENTER_SCRIPT_PACKAGE_FORM_KEY] = []
         form_value["positive_reason_tags"] = []
     mode = "write" if write else "dry-run"
     receipt_key = submission_fingerprint(action_name, run_id, candidate_ids, form_value, mode)

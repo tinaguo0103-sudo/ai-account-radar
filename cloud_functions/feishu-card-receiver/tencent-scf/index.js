@@ -1,8 +1,8 @@
 const crypto = require("crypto");
 
 const DEFAULT_API_HOST = "https://open.feishu.cn";
-const TOPIC_TABLE_NAMES = ["04 分析与选题", "03 分析与选题"];
-const ENTER_BRIEF_FORM_KEY = "enter_brief_records";
+const TOPIC_TABLE_NAMES = ["04 分析与选题"];
+const ENTER_SCRIPT_PACKAGE_FORM_KEY = "script_package_records";
 const PRODUCTION_DIRECTION_FIELD = "我的制作补充";
 const PRODUCTION_DIRECTION_FORM_PREFIX = "production_direction__";
 const PRODUCTION_DIRECTION_CARD_STATUS_FIELD = "制作方向卡状态";
@@ -679,7 +679,7 @@ function decisionsFromForm(formValue, candidateIds, forceNoSelection = false) {
   }
 
   const decisions = {};
-  const selected = new Set(coerceList(formValue[ENTER_BRIEF_FORM_KEY]));
+  const selected = new Set(coerceList(formValue[ENTER_SCRIPT_PACKAGE_FORM_KEY]));
   for (const recordId of selected) {
     decisions[recordId] = { status: SCRIPT_PACKAGE_READY_STATUS, tags: positiveTags, manual_reason: manualReason };
   }
@@ -869,7 +869,7 @@ async function processCardSubmission(value, formValue) {
   const candidateSnapshots = candidateSnapshotsFromValue(value);
   const effectiveFormValue = { ...formValue };
   if (actionName === SUBMIT_NO_SELECTION_ACTION) {
-    effectiveFormValue[ENTER_BRIEF_FORM_KEY] = [];
+    effectiveFormValue[ENTER_SCRIPT_PACKAGE_FORM_KEY] = [];
     effectiveFormValue.positive_reason_tags = [];
   }
 

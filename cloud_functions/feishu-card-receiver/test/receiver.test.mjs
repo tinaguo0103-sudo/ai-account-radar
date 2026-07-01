@@ -74,7 +74,7 @@ test("updates selected and unselected candidate records", async () => {
         action: {
           value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a", "rec_b"] },
           form_value: {
-            enter_brief_records: ["rec_a"],
+            script_package_records: ["rec_a"],
             positive_reason_tags: ["证据够"],
             manual_reason: "测试原因",
           },
@@ -114,7 +114,7 @@ test("queues production direction card after selected topics are written", async
         action: {
           value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a", "rec_b"] },
           form_value: {
-            enter_brief_records: ["rec_a"],
+            script_package_records: ["rec_a"],
             positive_reason_tags: ["证据够"],
             manual_reason: "",
           },
@@ -160,7 +160,7 @@ test("uses candidate snapshots to skip full-table reads on selection submit", as
             },
           },
           form_value: {
-            enter_brief_records: ["rec_a"],
+            script_package_records: ["rec_a"],
             positive_reason_tags: ["证据够"],
             manual_reason: "",
           },
@@ -283,7 +283,7 @@ test("blocks expired cards before writing records", async () => {
             card_expires_at: "2026-06-06T00:00:00.000Z",
           },
           form_value: {
-            enter_brief_records: ["rec_a"],
+            script_package_records: ["rec_a"],
             positive_reason_tags: ["证据够"],
             manual_reason: "",
           },
@@ -351,7 +351,7 @@ test("blocks a selection card after it has already changed record status", async
         action: {
           value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a"] },
           form_value: {
-            enter_brief_records: ["rec_a"],
+            script_package_records: ["rec_a"],
             positive_reason_tags: ["证据够"],
             manual_reason: "测试原因",
           },

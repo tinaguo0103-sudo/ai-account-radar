@@ -52,7 +52,7 @@ DRY_RUN=true
 
 说明：
 
-- 如果不填 `FEISHU_TOPIC_TABLE_ID`，receiver 会自动在 Base 里找 `04 分析与选题`，兼容旧名 `03 分析与选题`。
+- 如果不填 `FEISHU_TOPIC_TABLE_ID`，receiver 会自动在 Base 里找 `04 分析与选题`，不再兼容旧表名。
 - 如果飞书开放平台配置了 Verification Token，腾讯云 SCF 环境变量也要填同一个 `FEISHU_VERIFICATION_TOKEN`；如果平台未配置，则可以不填。
 - `FEISHU_CARD_RECEIVE_TARGETS` 是第一张选题卡和第二张制作方向卡的默认接收目标。
 - `FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS` 可选；如果设置，第二张卡只发到这里。

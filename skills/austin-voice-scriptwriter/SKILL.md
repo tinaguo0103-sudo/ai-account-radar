@@ -5,7 +5,7 @@ description: 将已确认的 AI 账号选题、Topic Card、制作方向补充�
 
 # Austin Voice Scriptwriter
 
-这个 Skill 专门负责“口播全文怎么像 Austin 说出来”，不负责 `04 -> 05 -> 06` 流程调度。
+这个 Skill 专门负责“口播全文怎么像 Austin 说出来”，不负责 `04 -> 06` 流程调度。
 
 ## 何时使用
 
