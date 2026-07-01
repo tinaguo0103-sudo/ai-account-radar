@@ -78,7 +78,7 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 python3 scripts/feishu_user_oauth.py --timeout-seconds 240
 ```
 
-授权成功后脚本会把用户 access token 写入 `.env.local`。这份文件只保存在本机，不提交 Git。当前飞书 OAuth 返回的是短期 access token；若后续自动生成 06 时提示 token 过期，重新运行上面的授权命令即可。长期免打扰刷新需要拿到 refresh token 后再启用。
+授权成功后脚本会把用户 access token 和 refresh token 写入 `.env.local`。这份文件只保存在本机，不提交 Git。首次授权前，开发者后台必须开通 `offline_access`（持续访问已授权的数据）；如果没有开通，飞书授权页会提示错误码 `20027`，脚本也不会保存只有 2 小时有效期的短期 token。
 
 ## 自动化边界
 

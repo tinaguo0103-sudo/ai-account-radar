@@ -33,6 +33,7 @@ DEFAULT_SCOPES = [
     "docx:document.block:convert",
     "docs:document:import",
     "space:document:retrieve",
+    "offline_access",
 ]
 
 
@@ -151,13 +152,19 @@ def build_authorize_url(redirect_uri: str, scopes: list[str], state: str) -> str
     return f"https://open.feishu.cn/open-apis/authen/v1/authorize?{query}"
 
 
-def save_tokens(data: dict[str, Any]) -> dict[str, str]:
+def save_tokens(data: dict[str, Any], require_refresh_token: bool = True) -> dict[str, str]:
     access_token = str(data.get("access_token") or data.get("user_access_token") or "").strip()
     refresh_token = str(data.get("refresh_token") or "").strip()
     expires_in = int(data.get("expires_in") or data.get("access_token_expires_in") or 0)
     refresh_expires_in = int(data.get("refresh_expires_in") or data.get("refresh_token_expires_in") or 0)
     if not access_token:
         raise RuntimeError(f"OAuth token response did not contain access_token: {public_token_summary(data)}")
+    if require_refresh_token and not refresh_token:
+        raise RuntimeError(
+            "OAuth token response did not contain refresh_token. "
+            "Open Feishu Developer Console and enable the offline_access permission "
+            "(持续访问已授权的数据), then run this script again."
+        )
     now = int(time.time())
     values = {
         "FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN": access_token,
@@ -178,6 +185,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--timeout-seconds", type=int, default=180)
     parser.add_argument("--redirect-uri", default="", help="Must match the Feishu app redirect URL if configured explicitly.")
     parser.add_argument("--scope", action="append", default=[], help="OAuth scope. Can be repeated. Defaults to 06 doc sync scopes.")
+    parser.add_argument("--allow-without-refresh-token", action="store_true", help="Save short-lived access token even if Feishu does not return refresh_token.")
     parser.add_argument("--print-url-only", action="store_true")
     parser.add_argument("--no-open", action="store_true", help="Print the URL and wait for callback without opening a browser.")
     return parser.parse_args()
@@ -206,7 +214,7 @@ def main() -> int:
     if callback.get("error"):
         raise RuntimeError(f"Feishu OAuth error: {callback.get('error')} {callback.get('error_description')}")
     data = exchange_code(callback["code"], redirect_uri)
-    saved = save_tokens(data)
+    saved = save_tokens(data, require_refresh_token=not args.allow_without_refresh_token)
     print(json.dumps({
         "ok": True,
         "saved_to": str(LOCAL_ENV_FILE),

@@ -36,7 +36,7 @@ python3 scripts/install_script_package_watcher_launch_agent.py --interval-minute
 python3 scripts/feishu_user_oauth.py --timeout-seconds 240
 ```
 
-授权信息写入 `.env.local`，不进入 Git；如果缺失或过期，runner 仍会生成本地 Markdown 和 06 记录，但 `文档同步状态` 会报警。
+授权信息写入 `.env.local`，不进入 Git。开发者后台需要先开通 `offline_access`（持续访问已授权的数据），否则飞书不会下发 refresh token；如果 token 缺失或过期且无法刷新，runner 仍会生成本地 Markdown 和 06 记录，但 `文档同步状态` 会报警。
 
 之后如果改了 watcher、runner、Skill 镜像或字段映射，要重新运行一次安装命令，或只同步 runtime：
 
