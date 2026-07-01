@@ -11,6 +11,7 @@ from pathlib import Path
 from typing import Any
 
 from local_env import load_local_env
+from feishu_automation_notify import notify
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,12 +49,29 @@ def write_job_log(steps: list[dict[str, Any]]) -> Path:
     return path
 
 
+def failure_summary(steps: list[dict[str, Any]], log_path: Path) -> str:
+    failed = next((step for step in steps if step["returncode"] != 0), steps[-1] if steps else {})
+    stderr = str(failed.get("stderr") or "").strip()
+    stdout = str(failed.get("stdout") or "").strip()
+    detail = stderr or stdout or "没有捕获到详细错误。"
+    if len(detail) > 900:
+        detail = detail[-900:]
+    return (
+        f"任务：08:00 每日全源采集\n"
+        f"失败阶段：{failed.get('name', 'unknown')}\n"
+        f"退出码：{failed.get('returncode', 'unknown')}\n"
+        f"日志：{log_path}\n"
+        f"错误摘要：\n{detail}"
+    )
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run daily full-source collection then write Feishu 04.")
     parser.add_argument("--douyin-account-limit", type=int, default=50)
     parser.add_argument("--douyin-video-limit", type=int, default=3)
     parser.add_argument("--wechat-feed-limit", type=int, default=5)
     parser.add_argument("--wechat-fulltext-provider", default="wewe_rss_local")
+    parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu exception notifications.")
     args = parser.parse_args()
 
     load_local_env()
@@ -68,6 +86,8 @@ def main() -> int:
     ]))
     if steps[-1]["returncode"] != 0:
         log_path = write_job_log(steps)
+        if not args.no_notify:
+            notify("AI账号雷达采集失败", failure_summary(steps, log_path))
         print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return steps[-1]["returncode"]
 
@@ -90,6 +110,8 @@ def main() -> int:
     ]))
     log_path = write_job_log(steps)
     ok = all(step["returncode"] == 0 for step in steps)
+    if not ok and not args.no_notify:
+        notify("AI账号雷达采集失败", failure_summary(steps, log_path))
     print(json.dumps({"ok": ok, "log": str(log_path)}, ensure_ascii=False, indent=2))
     return 0 if ok else 1
 

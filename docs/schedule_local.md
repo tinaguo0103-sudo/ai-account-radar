@@ -105,16 +105,26 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 
 Codex 定时任务只负责触发本仓库脚本；完整逻辑仍在代码和全局 Skill 中，迁移时只需要重新创建同名 Codex automation。
 
+反馈规则：
+
+- 08:00 采集成功：不主动发消息，避免打扰。
+- 08:00 采集失败：通过飞书发送“AI账号雷达采集失败”，包含失败阶段、退出码、日志路径和错误摘要。
+- 10:00 发卡成功：选题卡本身就是反馈。
+- 10:00 因当天采集失败、候选为空或 latest_write 不是当天结果而跳过：通过飞书发送“AI账号雷达今日未发选题卡”。
+- 10:00 发卡命令失败：通过飞书发送“AI账号雷达选题卡发送失败”。
+
+默认通知目标读取 `FEISHU_AUTOMATION_NOTIFY_TARGETS`；如果没有配置，就复用 `FEISHU_CARD_RECEIVE_TARGETS`。手动排障不想发通知时可加 `--no-notify`。
+
 手动只跑 08:00 全源采集任务：
 
 ```bash
-python3 scripts/run_daily_collection_job.py
+python3 scripts/run_daily_collection_job.py --no-notify
 ```
 
 手动只跑 10:00 发卡检查：
 
 ```bash
-python3 scripts/run_topic_card_if_fresh.py
+python3 scripts/run_topic_card_if_fresh.py --no-notify
 ```
 
 在项目目录运行：
