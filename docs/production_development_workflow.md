@@ -101,6 +101,20 @@ AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/check_feishu_card_c
 python3 scripts/pre_merge_check.py
 ```
 
+这只是基础门禁检查。做完整预合并测试时，再加 full-smoke：
+
+```bash
+python3 scripts/pre_merge_check.py --full-smoke
+```
+
+`--full-smoke` 会用本地手动样例跑一条完整 dry-run 链路：
+
+```text
+手动样例 -> 内容拆解 -> 今日候选 -> deterministic 主编层 -> 飞书写入 dry-run
+```
+
+它不会写飞书业务表，也不会发送选题卡。默认使用 deterministic 主编层，是为了让预合并门禁稳定、快速、可重复；需要验证全局私有 Skill / Codex CLI 时，单独运行 `daily_pipeline.py` dry-run 重型测试。
+
 如果已经配置 staging/test 飞书 Base，可加只读飞书检查：
 
 ```bash
@@ -113,6 +127,19 @@ python3 scripts/pre_merge_check.py --env-file .env.staging.local --feishu-read
 python3 scripts/pre_merge_check.py --env-file .env.staging.local --feishu-read --table-key topic_decision --table-key script_package
 ```
 
+需要验证失败 QA 通知链路时，可以发送一条明确标记的测试通知：
+
+```bash
+python3 scripts/pre_merge_check.py --env-file .env.staging.local --notify-smoke
+```
+
+如果暂时没有 staging/test Base，可以用生产 `.env.local` 做只读检查或测试通知，但必须满足：
+
+- 不写 `03 / 04 / 06` 正式业务表；
+- 不发送真实选题卡；
+- 测试通知必须带 `【测试】` 标记；
+- 不触发真实生产采集写入。
+
 预合并检查会确认：
 
 - 开发目录在 `feature/next-production-flow`；
@@ -121,6 +148,8 @@ python3 scripts/pre_merge_check.py --env-file .env.staging.local --feishu-read -
 - 失败 QA 规则能命中典型错误；
 - 10:00 发卡入口在开发目录会被 worktree 守卫拦截；
 - 可选：staging/test 飞书 Base 的关键表可读。
+- 可选：完整 dry-run 链路能跑通且不写飞书。
+- 可选：失败 QA 测试通知能送达。
 
 ## 自动化入口保护
 

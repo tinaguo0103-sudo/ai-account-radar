@@ -26,6 +26,7 @@ PY_COMPILE_TARGETS = (
     "scripts/check_feishu_card_cloud_receiver.py",
 )
 DEFAULT_FEISHU_READ_TABLE_KEYS = ("topic_decision", "script_package")
+SMOKE_MANUAL = "data/manual/content_items.example.jsonl"
 
 
 def run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -123,6 +124,52 @@ def check_feishu_read(env_file: str, table_keys: list[str]) -> dict[str, Any]:
     }
 
 
+def check_daily_pipeline_full_smoke() -> dict[str, Any]:
+    env = os.environ.copy()
+    env["EDITORIAL_SKILL_ENGINE"] = "deterministic"
+    result = run([
+        sys.executable,
+        "scripts/daily_pipeline.py",
+        "--no-fetch-aihot",
+        "--no-fetch-douyin",
+        "--manual",
+        SMOKE_MANUAL,
+    ], env=env)
+    ok = (
+        result["returncode"] == 0
+        and '"ok": true' in result["stdout"]
+        and '"mode": "dry-run"' in result["stdout"]
+        and '"wrote_feishu": false' in result["stdout"]
+    )
+    return {"ok": ok, "name": "full local deterministic pipeline smoke without Feishu writes", **result}
+
+
+def check_qa_notification_smoke(env_file: str) -> dict[str, Any]:
+    env = os.environ.copy()
+    env["AI_ACCOUNT_RADAR_ENV_FILE"] = env_file
+    qa_result = run([
+        sys.executable,
+        "scripts/automation_failure_qa.py",
+        "--reason",
+        "latest_write_not_generated_today",
+        "--run-id",
+        "premerge_smoke",
+    ], env=env)
+    if qa_result["returncode"] != 0:
+        return {"ok": False, "name": "failure QA notification smoke", **qa_result}
+
+    body = "【测试】失败 QA 预合并通知链路测试\n不会写入业务表，不会发送选题卡。\n\n" + qa_result["stdout"]
+    notify_result = run([
+        sys.executable,
+        "scripts/feishu_automation_notify.py",
+        "--title",
+        "【测试】AI账号雷达失败QA预合并测试",
+        "--body",
+        body,
+    ], env=env)
+    return {"ok": notify_result["returncode"] == 0, "name": "failure QA notification smoke", **notify_result}
+
+
 def summarize(checks: list[dict[str, Any]]) -> dict[str, Any]:
     return {
         "ok": all(check.get("ok") for check in checks),
@@ -144,6 +191,8 @@ def main() -> int:
     parser.add_argument("--env-file", default="", help="Optional staging/test env file for read-only Feishu check.")
     parser.add_argument("--feishu-read", action="store_true", help="Run a read-only Feishu check using --env-file or AI_ACCOUNT_RADAR_ENV_FILE.")
     parser.add_argument("--table-key", action="append", default=[], help="Feishu table key to read during --feishu-read. Defaults to 04 and 06.")
+    parser.add_argument("--full-smoke", action="store_true", help="Run a full local dry-run pipeline smoke. This can take a few minutes.")
+    parser.add_argument("--notify-smoke", action="store_true", help="Send a clearly labeled test QA notification using --env-file.")
     args = parser.parse_args()
 
     checks = [
@@ -167,6 +216,21 @@ def main() -> int:
         else:
             table_keys = args.table_key or list(DEFAULT_FEISHU_READ_TABLE_KEYS)
             checks.append(check_feishu_read(env_file, table_keys))
+
+    if args.full_smoke:
+        checks.append(check_daily_pipeline_full_smoke())
+
+    if args.notify_smoke:
+        if not env_file:
+            checks.append({
+                "ok": False,
+                "name": "failure QA notification smoke",
+                "returncode": 2,
+                "stdout": "",
+                "stderr": "Pass --env-file .env.staging.local or set AI_ACCOUNT_RADAR_ENV_FILE.",
+            })
+        else:
+            checks.append(check_qa_notification_smoke(env_file))
 
     summary = summarize(checks)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
