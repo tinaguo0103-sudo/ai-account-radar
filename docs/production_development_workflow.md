@@ -78,6 +78,38 @@ Codex automation 指向生产目录：
 5. 合并回 `main` 后，再让生产目录 `git pull` 到新版本。
 6. 如果生产链路出问题，优先在生产目录做最小紧急修复，并同步回开发分支。
 
+## 自动化入口保护
+
+两个 Codex automation 入口已经加了 worktree 守卫：
+
+```text
+scripts/run_daily_collection_job.py
+scripts/run_topic_card_if_fresh.py
+```
+
+默认规则：
+
+- 只允许在生产目录运行。
+- 只允许在生产分支运行，默认是 `main`。
+- 如果误在 `ai_account_radar_dev/` 或 `feature/next-production-flow` 上触发，会在采集、发卡或写飞书之前停止。
+
+可选配置：
+
+```text
+AI_ACCOUNT_RADAR_PRODUCTION_DIR=/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar
+AI_ACCOUNT_RADAR_DEV_DIR=/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_dev
+AI_ACCOUNT_RADAR_AUTOMATION_BRANCHES=main
+```
+
+开发目录里需要刻意演练这两个入口时，必须显式加：
+
+```bash
+python3 scripts/run_daily_collection_job.py --allow-non-production-worktree --no-notify
+python3 scripts/run_topic_card_if_fresh.py --allow-non-production-worktree --send-dry-run --no-notify
+```
+
+日常开发验证仍优先跑更底层的 dry-run 脚本，不直接跑生产 automation 入口。
+
 ## 新对话建议
 
 建议新开一个 Codex 对话继续开发新功能，并明确使用开发目录：

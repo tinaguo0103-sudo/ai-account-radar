@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from automation_worktree_guard import check_automation_worktree, guard_failure_summary
 from local_env import load_local_env
 from feishu_automation_notify import notify
 
@@ -115,9 +116,27 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=7)
     parser.add_argument("--send-dry-run", action="store_true")
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu skip/failure notifications.")
+    parser.add_argument(
+        "--allow-non-production-worktree",
+        action="store_true",
+        help="Allow this scheduled-production entrypoint to run outside the configured production worktree.",
+    )
     args = parser.parse_args()
 
     load_local_env()
+    guard = check_automation_worktree(ROOT, allow_non_production=args.allow_non_production_worktree)
+    if not guard.ok:
+        summary = guard_failure_summary(guard, "10:00 每日选题卡发送")
+        if not args.no_notify:
+            notify("AI账号雷达选题卡发送失败", summary)
+        print(json.dumps({
+            "ok": False,
+            "sent": False,
+            "reason": guard.reason,
+            "note": "Blocked card sending because the automation entrypoint is not running from the production worktree.",
+        }, ensure_ascii=False, indent=2))
+        return 2
+
     ok, reason, run_id = fresh_collection_status()
     if not ok:
         if not args.no_notify:

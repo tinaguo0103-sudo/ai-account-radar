@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from automation_worktree_guard import check_automation_worktree, guard_failure_summary
 from local_env import load_local_env
 from feishu_automation_notify import notify
 
@@ -72,11 +73,33 @@ def main() -> int:
     parser.add_argument("--wechat-feed-limit", type=int, default=5)
     parser.add_argument("--wechat-fulltext-provider", default="wewe_rss_local")
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu exception notifications.")
+    parser.add_argument(
+        "--allow-non-production-worktree",
+        action="store_true",
+        help="Allow this scheduled-production entrypoint to run outside the configured production worktree.",
+    )
     args = parser.parse_args()
 
     load_local_env()
     py = sys.executable
     steps: list[dict[str, Any]] = []
+
+    guard = check_automation_worktree(ROOT, allow_non_production=args.allow_non_production_worktree)
+    if not guard.ok:
+        summary = guard_failure_summary(guard, "08:00 每日全源采集")
+        steps.append({
+            "name": "automation worktree guard",
+            "command": [py, str(Path(__file__).resolve())],
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+            "returncode": 2,
+            "stdout": "",
+            "stderr": summary,
+        })
+        log_path = write_job_log(steps)
+        if not args.no_notify:
+            notify("AI账号雷达采集失败", f"{summary}\n日志：{log_path}")
+        print(json.dumps({"ok": False, "reason": guard.reason, "log": str(log_path)}, ensure_ascii=False, indent=2))
+        return 2
 
     steps.append(run_step("reconcile Feishu 01 source sampling into local config", [
         py,
