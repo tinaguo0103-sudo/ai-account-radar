@@ -101,10 +101,20 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 在项目目录运行：
 
 ```bash
-python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
+python3 scripts/reconcile_source_sampling_from_feishu.py --write-config --write-feishu
+
+python3 scripts/daily_pipeline.py \
+  --resolve-url-intake \
+  --fetch-wechat-fulltext-provider \
+  --wechat-fulltext-provider wewe_rss_local \
+  --wechat-feed-limit 5 \
+  --douyin-account-limit 50 \
+  --douyin-video-limit 3 \
+  --douyin-verification-action log-only \
+  --write-feishu
 ```
 
-日常使用以飞书为准，不需要先 dry-run。脚本会处理 `02 URL投喂入口` 的新链接，复用当天抖音主页采集缓存，生成今日候选池，写入 `03 内容收件箱`、`04 分析与选题` 并刷新 `00 主控台`。
+日常使用以飞书为准，不需要先 dry-run。第一条命令先把飞书 `01 来源与采样` 的手工修改同步回本地 `config/content_sources.yaml`，避免新增对标账号没有进入采集。第二条命令会把 `02 URL投喂入口`、公众号全文 provider、全部抖音跟踪账号和 AIHOT 一起纳入今日候选池，写入 `03 内容收件箱`、`04 分析与选题` 并刷新 `00 主控台`。AIHOT 是默认参与源，日常命令不要加 `--no-fetch-aihot`。公众号全文采集前会自动运行 `scripts/start_wewe_rss.py`：如果本地 `wewe-rss` 没开，会先启动 Docker Desktop 和 `ai-radar-wewe-rss` 容器，再继续拉取全文。
 
 抖音主页采集默认同一天只跑一次；当天再次运行会复用 `output/source_collection_cache/YYYY-MM-DD/` 里的采集结果，避免反复触发平台风控。只有改采集逻辑、主页链接、登录态或明确复验采集时，才加：
 

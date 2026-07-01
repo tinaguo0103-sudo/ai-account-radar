@@ -269,6 +269,7 @@ def main() -> int:
     parser.add_argument("--wechat-fulltext-provider-config", default=str(DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG), help="Config for explicit WeChat fulltext provider intake.")
     parser.add_argument("--wechat-fulltext-provider", default="", help="Provider id/name to fetch, e.g. wewe-rss. Only used with explicit WeChat fulltext provider mode.")
     parser.add_argument("--wechat-feed-limit", type=int, default=5, help="Max articles to fetch from the explicit WeChat fulltext provider.")
+    parser.add_argument("--no-auto-start-wewe-rss", action="store_true", help="Do not auto-start the local wewe-rss Docker provider before WeChat fulltext fetch.")
     parser.add_argument("--fetch-douyin-cdp-source-watch", action="store_true", help="Compatibility flag: Douyin homepage title/caption sampling is now attempted by default unless --no-fetch-douyin is set.")
     parser.add_argument("--no-fetch-douyin-cdp-source-watch", "--no-fetch-douyin", dest="no_fetch_douyin_cdp_source_watch", action="store_true", help="Skip daily Douyin homepage title/caption sampling.")
     parser.add_argument("--douyin-cdp", default=os.getenv("DOUYIN_CDP_URL", "http://127.0.0.1:9333"), help="Chrome DevTools endpoint for explicit Douyin homepage probe.")
@@ -312,6 +313,19 @@ def main() -> int:
         manual_inputs = [URL_RESOLVED_MANUAL]
 
     if args.fetch_wechat_fulltext_provider or args.wechat_fulltext_provider:
+        provider_hint = str(args.wechat_fulltext_provider or "wewe_rss_local").lower()
+        should_start_wewe = not args.no_auto_start_wewe_rss and ("wewe" in provider_hint or not args.wechat_fulltext_provider)
+        if should_start_wewe:
+            start_wewe_cmd = [
+                py,
+                str(ROOT / "scripts" / "start_wewe_rss.py"),
+            ]
+            steps.append(run_step("start/check local wewe-rss fulltext provider", start_wewe_cmd, env=step_env))
+            if steps[-1]["returncode"] != 0:
+                log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
+                print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
+                return steps[-1]["returncode"]
+
         provider_cmd = [
             py,
             str(ROOT / "scripts" / "wechat_fulltext_provider_probe.py"),
