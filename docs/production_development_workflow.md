@@ -107,6 +107,12 @@ python3 scripts/pre_merge_check.py
 python3 scripts/pre_merge_check.py --env-file .env.staging.local --feishu-read
 ```
 
+`--feishu-read` 默认只读检查 `04 分析与选题` 和 `06 完整脚本与制作包`。需要指定更多表时可重复传：
+
+```bash
+python3 scripts/pre_merge_check.py --env-file .env.staging.local --feishu-read --table-key topic_decision --table-key script_package
+```
+
 预合并检查会确认：
 
 - 开发目录在 `feature/next-production-flow`；
@@ -114,7 +120,7 @@ python3 scripts/pre_merge_check.py --env-file .env.staging.local --feishu-read
 - 关键脚本可以通过 Python 编译；
 - 失败 QA 规则能命中典型错误；
 - 10:00 发卡入口在开发目录会被 worktree 守卫拦截；
-- 可选：staging/test 飞书 Base 可读。
+- 可选：staging/test 飞书 Base 的关键表可读。
 
 ## 自动化入口保护
 

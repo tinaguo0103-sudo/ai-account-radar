@@ -25,6 +25,7 @@ PY_COMPILE_TARGETS = (
     "scripts/local_env.py",
     "scripts/check_feishu_card_cloud_receiver.py",
 )
+DEFAULT_FEISHU_READ_TABLE_KEYS = ("topic_decision", "script_package")
 
 
 def run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = None) -> dict[str, Any]:
@@ -96,17 +97,30 @@ def check_topic_card_guard() -> dict[str, Any]:
     return {"ok": ok, "name": "topic card production guard in dev", **result}
 
 
-def check_feishu_read(env_file: str) -> dict[str, Any]:
+def check_feishu_read(env_file: str, table_keys: list[str]) -> dict[str, Any]:
     env = os.environ.copy()
     env["AI_ACCOUNT_RADAR_ENV_FILE"] = env_file
-    result = run([
-        sys.executable,
-        "scripts/check_feishu_card_cloud_receiver.py",
-        "--skip-receiver",
-        "--table-key",
-        "topic_decision",
-    ], env=env)
-    return {"ok": result["returncode"] == 0, "name": "staging/test Feishu read-only check", **result}
+    results = []
+    ok = True
+    for table_key in table_keys:
+        result = run([
+            sys.executable,
+            "scripts/check_feishu_card_cloud_receiver.py",
+            "--skip-receiver",
+            "--table-key",
+            table_key,
+        ], env=env)
+        results.append({"table_key": table_key, **result})
+        ok = ok and result["returncode"] == 0
+    return {
+        "ok": ok,
+        "name": "staging/test Feishu read-only check",
+        "returncode": 0 if ok else 1,
+        "stdout": json.dumps(results, ensure_ascii=False, indent=2),
+        "stderr": "\n".join(str(result.get("stderr") or "") for result in results if result.get("stderr")),
+        "command": ["check_feishu_card_cloud_receiver.py", "--skip-receiver", "--table-key", ",".join(table_keys)],
+        "cwd": str(ROOT),
+    }
 
 
 def summarize(checks: list[dict[str, Any]]) -> dict[str, Any]:
@@ -129,6 +143,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe pre-merge checks from the dev worktree.")
     parser.add_argument("--env-file", default="", help="Optional staging/test env file for read-only Feishu check.")
     parser.add_argument("--feishu-read", action="store_true", help="Run a read-only Feishu check using --env-file or AI_ACCOUNT_RADAR_ENV_FILE.")
+    parser.add_argument("--table-key", action="append", default=[], help="Feishu table key to read during --feishu-read. Defaults to 04 and 06.")
     args = parser.parse_args()
 
     checks = [
@@ -150,7 +165,8 @@ def main() -> int:
                 "stderr": "Pass --env-file .env.staging.local or set AI_ACCOUNT_RADAR_ENV_FILE.",
             })
         else:
-            checks.append(check_feishu_read(env_file))
+            table_keys = args.table_key or list(DEFAULT_FEISHU_READ_TABLE_KEYS)
+            checks.append(check_feishu_read(env_file, table_keys))
 
     summary = summarize(checks)
     print(json.dumps(summary, ensure_ascii=False, indent=2))
