@@ -12,6 +12,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from automation_failure_qa import qa_for_command_failure, qa_for_topic_skip
 from automation_worktree_guard import check_automation_worktree, guard_failure_summary
 from local_env import load_local_env
 from feishu_automation_notify import notify
@@ -83,32 +84,11 @@ def fresh_collection_status() -> tuple[bool, str, str]:
 
 
 def skip_summary(reason: str, run_id: str) -> str:
-    today = today_key()
-    reason_text = {
-        "today_daily_pipeline_log_not_ok": "今天没有成功的 daily_pipeline 日志，可能是 08:00 采集失败或未运行。",
-        "latest_write_not_generated_today": "latest_write 不是今天生成的正式候选，已阻止发送旧卡片。",
-        "pipeline_and_latest_write_run_id_mismatch": "daily_pipeline 和 latest_write 的运行批次不一致。",
-        "latest_write_is_not_write_feishu_mode": "latest_write 不是正式写飞书模式。",
-        "no_today_candidates_in_sampler_log": "今天候选数量为 0。",
-        "today_10_topics_csv_empty": "today_10_topics.csv 为空。",
-    }.get(reason, reason)
-    return (
-        f"任务：10:00 每日选题卡发送\n"
-        f"日期：{today}\n"
-        f"运行批次：{run_id or '无'}\n"
-        f"结果：未发卡\n"
-        f"原因：{reason_text}"
-    )
+    return qa_for_topic_skip(reason, run_id)
 
 
-def send_failure_summary(run_id: str, returncode: int) -> str:
-    return (
-        f"任务：10:00 每日选题卡发送\n"
-        f"运行批次：{run_id or '无'}\n"
-        f"结果：发卡命令失败\n"
-        f"退出码：{returncode}\n"
-        "建议：检查 FEISHU_CARD_RECEIVE_TARGETS、机器人会话权限和飞书消息 API 权限。"
-    )
+def send_failure_summary(command: list[str], run_id: str, returncode: int, stdout: str = "", stderr: str = "") -> str:
+    return qa_for_command_failure("10:00 每日选题卡发送", command, returncode, stdout=stdout, stderr=stderr, run_id=run_id)
 
 
 def main() -> int:
@@ -128,7 +108,12 @@ def main() -> int:
     if not guard.ok:
         summary = guard_failure_summary(guard, "10:00 每日选题卡发送")
         if not args.no_notify:
-            notify("AI账号雷达选题卡发送失败", summary)
+            notify("AI账号雷达选题卡发送失败", qa_for_command_failure(
+                "10:00 每日选题卡发送",
+                [sys.executable, str(Path(__file__).resolve())],
+                2,
+                stderr=summary,
+            ))
         print(json.dumps({
             "ok": False,
             "sent": False,
@@ -160,9 +145,13 @@ def main() -> int:
     ]
     if args.send_dry_run:
         command.append("--send-dry-run")
-    result = subprocess.run(command, cwd=ROOT, text=True)
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    if result.stdout:
+        print(result.stdout, flush=True)
+    if result.stderr:
+        print(result.stderr, file=sys.stderr, flush=True)
     if result.returncode != 0 and not args.no_notify:
-        notify("AI账号雷达选题卡发送失败", send_failure_summary(run_id, result.returncode))
+        notify("AI账号雷达选题卡发送失败", send_failure_summary(command, run_id, result.returncode, result.stdout, result.stderr))
     print(json.dumps({"ok": result.returncode == 0, "sent": result.returncode == 0, "run_id": run_id}, ensure_ascii=False, indent=2))
     return result.returncode
 

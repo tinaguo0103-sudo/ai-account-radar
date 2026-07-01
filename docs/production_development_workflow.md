@@ -110,6 +110,39 @@ python3 scripts/run_topic_card_if_fresh.py --allow-non-production-worktree --sen
 
 日常开发验证仍优先跑更底层的 dry-run 脚本，不直接跑生产 automation 入口。
 
+## 失败 QA 规则诊断
+
+生产入口失败时会先走规则诊断，不依赖 LLM：
+
+```text
+scripts/automation_failure_qa.py
+```
+
+当前接入范围：
+
+- `08:00 每日全源采集`：采集失败会在飞书通知里给出 QA 结论、影响、可能原因、建议处理和日志证据。
+- `10:00 每日选题卡发送`：新鲜度守卫、发卡失败、worktree 守卫都会输出 QA。
+- `06 完整脚本与制作包 watcher`：runner 失败会输出 QA，并对同一个错误去重，避免每 5 分钟重复通知。
+
+当前规则覆盖：
+
+- worktree / 分支错误；
+- 飞书环境变量缺失；
+- 飞书 Base 权限、token、消息发送、写入一致性；
+- 用户可见飞书文件夹 `1770040 no folder permission`；
+- 网络、DNS、本地服务端口；
+- Docker / `wewe-rss`；
+- 抖音登录验证 / Chrome CDP；
+- AIHOT 抓取异常；
+- Codex CLI / 私有 Skill / 超时；
+- 候选为空、latest_write 过期、run_id 不一致。
+
+开发时可直接诊断某个 JSON 日志：
+
+```bash
+python3 scripts/automation_failure_qa.py --task "08:00 每日全源采集" --log output/logs/scheduled_daily_collection_YYYY-MM-DD.json
+```
+
 ## 新对话建议
 
 建议新开一个 Codex 对话继续开发新功能，并明确使用开发目录：

@@ -19,6 +19,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from automation_failure_qa import qa_for_command_failure
+from feishu_automation_notify import notify
 from local_env import load_local_env
 
 
@@ -84,7 +86,21 @@ def build_command(args: argparse.Namespace) -> list[str]:
     return command
 
 
-def run_once(command: list[str]) -> int:
+def failure_signature(returncode: int, stdout: str, stderr: str) -> str:
+    return f"{returncode}|{compact(stderr or stdout, 500)}"
+
+
+def notify_failure(command: list[str], returncode: int, stdout: str, stderr: str) -> None:
+    try:
+        notify(
+            "AI账号雷达06生成失败",
+            qa_for_command_failure("06 完整脚本与制作包 watcher", command, returncode, stdout=stdout, stderr=stderr),
+        )
+    except Exception as exc:  # noqa: BLE001 - notification must not kill the watcher
+        log("failure_notification_failed", error=compact(str(exc), 800))
+
+
+def run_once(command: list[str], *, notify_failures: bool, last_failure_signature: str = "") -> tuple[int, str]:
     started = time.time()
     result = subprocess.run(
         command,
@@ -101,7 +117,10 @@ def run_once(command: list[str]) -> int:
         stdout=compact(result.stdout),
         stderr=compact(result.stderr),
     )
-    return result.returncode
+    signature = failure_signature(result.returncode, result.stdout, result.stderr) if result.returncode != 0 else ""
+    if notify_failures and signature and signature != last_failure_signature:
+        notify_failure(command, result.returncode, result.stdout, result.stderr)
+    return result.returncode, signature
 
 
 def parse_args() -> argparse.Namespace:
@@ -117,6 +136,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--once", action="store_true", help="Run one polling pass and exit.")
     parser.add_argument("--write-feishu", action="store_true", default=True, help="Write generated 06 package records. Enabled by default.")
     parser.add_argument("--no-write-feishu", dest="write_feishu", action="store_false")
+    parser.add_argument("--no-notify-failures", action="store_true", help="Do not send Feishu QA notifications when the runner fails.")
     return parser.parse_args()
 
 
@@ -145,9 +165,18 @@ def main() -> int:
         write_feishu=args.write_feishu,
         skip_codex=args.skip_codex,
     )
+    last_failure_signature = ""
 
     while not stop["value"]:
-        returncode = run_once(command)
+        returncode, signature = run_once(
+            command,
+            notify_failures=not args.no_notify_failures,
+            last_failure_signature=last_failure_signature,
+        )
+        if signature:
+            last_failure_signature = signature
+        elif returncode == 0:
+            last_failure_signature = ""
         if args.once:
             return returncode
         slept = 0

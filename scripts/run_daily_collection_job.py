@@ -10,6 +10,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from automation_failure_qa import qa_for_steps
 from automation_worktree_guard import check_automation_worktree, guard_failure_summary
 from local_env import load_local_env
 from feishu_automation_notify import notify
@@ -51,19 +52,7 @@ def write_job_log(steps: list[dict[str, Any]]) -> Path:
 
 
 def failure_summary(steps: list[dict[str, Any]], log_path: Path) -> str:
-    failed = next((step for step in steps if step["returncode"] != 0), steps[-1] if steps else {})
-    stderr = str(failed.get("stderr") or "").strip()
-    stdout = str(failed.get("stdout") or "").strip()
-    detail = stderr or stdout or "没有捕获到详细错误。"
-    if len(detail) > 900:
-        detail = detail[-900:]
-    return (
-        f"任务：08:00 每日全源采集\n"
-        f"失败阶段：{failed.get('name', 'unknown')}\n"
-        f"退出码：{failed.get('returncode', 'unknown')}\n"
-        f"日志：{log_path}\n"
-        f"错误摘要：\n{detail}"
-    )
+    return qa_for_steps("08:00 每日全源采集", steps, log_path=str(log_path))
 
 
 def main() -> int:
@@ -97,7 +86,7 @@ def main() -> int:
         })
         log_path = write_job_log(steps)
         if not args.no_notify:
-            notify("AI账号雷达采集失败", f"{summary}\n日志：{log_path}")
+            notify("AI账号雷达采集失败", failure_summary(steps, log_path))
         print(json.dumps({"ok": False, "reason": guard.reason, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return 2
 
