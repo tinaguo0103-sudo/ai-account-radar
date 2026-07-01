@@ -98,6 +98,25 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 
 当前 watcher 只负责生成 `06`，不会生成新选题，也不会发送第一张选题卡。
 
+生产定时由 Codex automation 触发，不再使用本机 LaunchAgent：
+
+- 08:00：同步 `01 来源与采样`，然后跑全源采集和选题。
+- 10:00：发送第一张选题卡。发送前会检查当天 `daily_pipeline` 是否成功、`latest_write` 是否为当天正式运行、候选 CSV 是否非空；不满足就跳过，避免误发旧候选。
+
+Codex 定时任务只负责触发本仓库脚本；完整逻辑仍在代码和全局 Skill 中，迁移时只需要重新创建同名 Codex automation。
+
+手动只跑 08:00 全源采集任务：
+
+```bash
+python3 scripts/run_daily_collection_job.py
+```
+
+手动只跑 10:00 发卡检查：
+
+```bash
+python3 scripts/run_topic_card_if_fresh.py
+```
+
 在项目目录运行：
 
 ```bash
