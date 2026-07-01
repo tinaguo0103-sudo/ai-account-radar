@@ -53,6 +53,8 @@ DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 TEST_TITLE_PREFIXES = ("【测试】", "【流程测试】", "【部署后测试】", "【模拟测试】", "[测试]", "测试：", "测试:")
 TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(测试|测速)[^\]]*\])")
 DOC_SYNC_MAX_PARAGRAPHS = 180
+USER_TOKEN_REFRESH_SAFETY_SECONDS = 300
+LOCAL_ENV_FILE = ROOT / ".env.local"
 
 
 @dataclass
@@ -113,6 +115,105 @@ def script_package_folder_url() -> str:
     return os.getenv("FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_URL", "").strip()
 
 
+def local_env_quote(value: str) -> str:
+    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
+    return f'"{escaped}"'
+
+
+def update_local_env(values: dict[str, str]) -> None:
+    LOCAL_ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
+    lines = LOCAL_ENV_FILE.read_text(encoding="utf-8").splitlines() if LOCAL_ENV_FILE.exists() else []
+    seen: set[str] = set()
+    updated: list[str] = []
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#") or "=" not in line:
+            updated.append(line)
+            continue
+        key = line.split("=", 1)[0].strip()
+        if key in values:
+            updated.append(f"{key}={local_env_quote(values[key])}")
+            seen.add(key)
+        else:
+            updated.append(line)
+    for key, value in values.items():
+        if key not in seen:
+            updated.append(f"{key}={local_env_quote(value)}")
+    LOCAL_ENV_FILE.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
+
+
+def env_int(name: str) -> int:
+    try:
+        return int(float(os.getenv(name, "0").strip() or "0"))
+    except ValueError:
+        return 0
+
+
+def user_refresh_token() -> str:
+    return (
+        os.getenv("FEISHU_SCRIPT_PACKAGE_USER_REFRESH_TOKEN", "").strip()
+        or os.getenv("FEISHU_USER_REFRESH_TOKEN", "").strip()
+    )
+
+
+def exchange_user_refresh_token(refresh_token: str) -> dict[str, Any]:
+    app_id = os.getenv("FEISHU_APP_ID", "").strip()
+    app_secret = os.getenv("FEISHU_APP_SECRET", "").strip()
+    if not app_id or not app_secret:
+        raise RuntimeError("Missing FEISHU_APP_ID or FEISHU_APP_SECRET for user token refresh")
+    payload = feishu.request_json(
+        "POST",
+        "/authen/v2/oauth/token",
+        body={
+            "grant_type": "refresh_token",
+            "client_id": app_id,
+            "client_secret": app_secret,
+            "refresh_token": refresh_token,
+        },
+    )
+    return payload.get("data", payload)
+
+
+def refresh_user_doc_token_if_needed() -> str:
+    access_token = (
+        os.getenv("FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN", "").strip()
+        or os.getenv("FEISHU_USER_ACCESS_TOKEN", "").strip()
+    )
+    refresh_token = user_refresh_token()
+    expires_at = max(
+        env_int("FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN_EXPIRES_AT"),
+        env_int("FEISHU_USER_ACCESS_TOKEN_EXPIRES_AT"),
+    )
+    if access_token and (not expires_at or time.time() < expires_at - USER_TOKEN_REFRESH_SAFETY_SECONDS):
+        return access_token
+    if not refresh_token:
+        return access_token
+
+    data = exchange_user_refresh_token(refresh_token)
+    new_access_token = str(data.get("access_token") or data.get("user_access_token") or "").strip()
+    new_refresh_token = str(data.get("refresh_token") or refresh_token).strip()
+    expires_in = int(data.get("expires_in") or data.get("access_token_expires_in") or 0)
+    refresh_expires_in = int(data.get("refresh_expires_in") or data.get("refresh_token_expires_in") or 0)
+    if not new_access_token:
+        raise RuntimeError(f"Feishu OAuth refresh did not return user access token: {payload_public_keys(data)}")
+    now = int(time.time())
+    values = {
+        "FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN": new_access_token,
+        "FEISHU_SCRIPT_PACKAGE_USER_REFRESH_TOKEN": new_refresh_token,
+    }
+    if expires_in:
+        values["FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN_EXPIRES_AT"] = str(now + expires_in)
+    if refresh_expires_in:
+        values["FEISHU_SCRIPT_PACKAGE_USER_REFRESH_TOKEN_EXPIRES_AT"] = str(now + refresh_expires_in)
+    update_local_env(values)
+    os.environ.update(values)
+    return new_access_token
+
+
+def payload_public_keys(payload: dict[str, Any]) -> dict[str, Any]:
+    return {key: "<set>" if "token" in key.lower() else value for key, value in payload.items()}
+
+
 def feishu_doc_token(default_tenant_token: str) -> str:
     """Prefer user identity for user-visible Drive folders.
 
@@ -120,11 +221,7 @@ def feishu_doc_token(default_tenant_token: str) -> str:
     write into a folder the user can browse in normal Feishu Drive. When a user
     access token is configured, use it only for docx creation.
     """
-    return (
-        os.getenv("FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN", "").strip()
-        or os.getenv("FEISHU_USER_ACCESS_TOKEN", "").strip()
-        or default_tenant_token
-    )
+    return refresh_user_doc_token_if_needed() or default_tenant_token
 
 
 def feishu_docs_enabled() -> bool:
@@ -147,7 +244,11 @@ def doc_sync_preflight_status() -> FeishuDocSyncResult | None:
 
 def doc_sync_success_status() -> str:
     if visible_script_package_folder_token():
-        if os.getenv("FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN", "").strip() or os.getenv("FEISHU_USER_ACCESS_TOKEN", "").strip():
+        if (
+            os.getenv("FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN", "").strip()
+            or os.getenv("FEISHU_USER_ACCESS_TOKEN", "").strip()
+            or user_refresh_token()
+        ):
             return "已同步到用户可见飞书文件夹"
         return "已创建飞书文档，但需确认文件夹对用户可见"
     return "已创建飞书文档：应用空间兼容路径，非正常用户文件夹入口"

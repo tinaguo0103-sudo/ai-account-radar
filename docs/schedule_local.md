@@ -30,6 +30,14 @@ python3 scripts/install_script_package_watcher_launch_agent.py --interval-minute
 
 这个入口是一个指向 runtime 输出目录的软链接。后台真实写入 runtime，文件以 `YYYY-MM-DD_选题标题_完整脚本与制作包.md` 平铺保存；飞书 `06` 里的 `飞书文档` 字段是线上阅读入口，`飞书文件夹` 字段保存用户可见文件夹入口，`文档同步状态 / 文档同步错误` 用来暴露同步异常，`本地文档` 字段显示项目根目录下的备份路径。
 
+写入用户可见飞书文件夹需要本机有用户身份 OAuth token。首次或 token 过期后运行：
+
+```bash
+python3 scripts/feishu_user_oauth.py --timeout-seconds 240
+```
+
+授权信息写入 `.env.local`，不进入 Git；如果缺失或过期，runner 仍会生成本地 Markdown 和 06 记录，但 `文档同步状态` 会报警。
+
 之后如果改了 watcher、runner、Skill 镜像或字段映射，要重新运行一次安装命令，或只同步 runtime：
 
 ```bash

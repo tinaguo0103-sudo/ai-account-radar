@@ -69,8 +69,16 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 
 - `FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_TOKEN`：用户在普通飞书云盘里能看到的 `06完整脚本与制作包` 子文件夹 token。
 - `FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_URL`：同一个子文件夹的浏览器链接，写入 06 的 `飞书文件夹`。
-- `FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN` / `FEISHU_USER_ACCESS_TOKEN`：可选。若 tenant/app token 无法写入用户可见文件夹，需要用用户身份 token 创建文档；否则 runner 会写出 `文档同步状态=飞书文档同步失败` 和具体错误。
+- `FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN` / `FEISHU_USER_ACCESS_TOKEN`：写用户可见云盘文件夹时需要。tenant/app token 已验证会被飞书返回 `1770040 no folder permission`，即使应用 API 权限已经开通，也不能代表用户写入普通云盘文件夹。
 - 旧 `FEISHU_SCRIPT_PACKAGE_FOLDER_TOKEN` 只作为应用空间兼容路径，不视为用户可见正常文件夹入口。
+
+本机授权用户身份：
+
+```bash
+python3 scripts/feishu_user_oauth.py --timeout-seconds 240
+```
+
+授权成功后脚本会把用户 access token 写入 `.env.local`。这份文件只保存在本机，不提交 Git。当前飞书 OAuth 返回的是短期 access token；若后续自动生成 06 时提示 token 过期，重新运行上面的授权命令即可。长期免打扰刷新需要拿到 refresh token 后再启用。
 
 ## 自动化边界
 
