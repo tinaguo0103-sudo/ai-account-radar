@@ -11,6 +11,8 @@ import subprocess
 import sys
 from pathlib import Path
 
+from feishu_user_oauth_store import preserve_latest_user_tokens, sync_user_tokens
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_RUNTIME_DIR = Path.home() / ".codex" / "ai-account-radar-runtime"
@@ -51,6 +53,7 @@ def kickstart() -> None:
 
 
 def sync_runtime(runtime_dir: Path) -> None:
+    latest_tokens, _ = preserve_latest_user_tokens(root=ROOT, runtime_dir=runtime_dir)
     runtime_dir.mkdir(parents=True, exist_ok=True)
     for dirname in RUNTIME_DIRS:
         source = ROOT / dirname
@@ -68,6 +71,8 @@ def sync_runtime(runtime_dir: Path) -> None:
         "This runtime copy is used by the macOS LaunchAgent to avoid Desktop TCC restrictions.\n",
         encoding="utf-8",
     )
+    if latest_tokens:
+        sync_user_tokens(latest_tokens, root=ROOT, runtime_dir=runtime_dir)
 
 
 def create_display_link(runtime_dir: Path, display_root: Path) -> None:

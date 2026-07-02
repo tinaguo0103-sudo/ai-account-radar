@@ -20,12 +20,12 @@ from typing import Any
 from urllib.parse import parse_qs, urlencode, urlparse
 
 from local_env import load_local_env
+from feishu_user_oauth_store import sync_user_tokens
 
 import push_to_feishu as feishu
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LOCAL_ENV_FILE = ROOT / ".env.local"
 DEFAULT_PORT = 8789
 DEFAULT_SCOPES = [
     "docx:document",
@@ -35,33 +35,6 @@ DEFAULT_SCOPES = [
     "space:document:retrieve",
     "offline_access",
 ]
-
-
-def local_env_quote(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
-
-
-def update_local_env(values: dict[str, str]) -> None:
-    LOCAL_ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    lines = LOCAL_ENV_FILE.read_text(encoding="utf-8").splitlines() if LOCAL_ENV_FILE.exists() else []
-    seen: set[str] = set()
-    updated: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in line:
-            updated.append(line)
-            continue
-        key = line.split("=", 1)[0].strip()
-        if key in values:
-            updated.append(f"{key}={local_env_quote(values[key])}")
-            seen.add(key)
-        else:
-            updated.append(line)
-    for key, value in values.items():
-        if key not in seen:
-            updated.append(f"{key}={local_env_quote(value)}")
-    LOCAL_ENV_FILE.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
 
 
 def public_token_summary(data: dict[str, Any]) -> dict[str, Any]:
@@ -152,7 +125,7 @@ def build_authorize_url(redirect_uri: str, scopes: list[str], state: str) -> str
     return f"https://open.feishu.cn/open-apis/authen/v1/authorize?{query}"
 
 
-def save_tokens(data: dict[str, Any], require_refresh_token: bool = True) -> dict[str, str]:
+def save_tokens(data: dict[str, Any], require_refresh_token: bool = True) -> tuple[dict[str, str], list[Path]]:
     access_token = str(data.get("access_token") or data.get("user_access_token") or "").strip()
     refresh_token = str(data.get("refresh_token") or "").strip()
     expires_in = int(data.get("expires_in") or data.get("access_token_expires_in") or 0)
@@ -175,8 +148,8 @@ def save_tokens(data: dict[str, Any], require_refresh_token: bool = True) -> dic
         values["FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN_EXPIRES_AT"] = str(now + expires_in)
     if refresh_expires_in:
         values["FEISHU_SCRIPT_PACKAGE_USER_REFRESH_TOKEN_EXPIRES_AT"] = str(now + refresh_expires_in)
-    update_local_env(values)
-    return values
+    saved_to = sync_user_tokens(values)
+    return values, saved_to
 
 
 def parse_args() -> argparse.Namespace:
@@ -214,10 +187,10 @@ def main() -> int:
     if callback.get("error"):
         raise RuntimeError(f"Feishu OAuth error: {callback.get('error')} {callback.get('error_description')}")
     data = exchange_code(callback["code"], redirect_uri)
-    saved = save_tokens(data, require_refresh_token=not args.allow_without_refresh_token)
+    saved, saved_to = save_tokens(data, require_refresh_token=not args.allow_without_refresh_token)
     print(json.dumps({
         "ok": True,
-        "saved_to": str(LOCAL_ENV_FILE),
+        "saved_to": [str(path) for path in saved_to],
         "token_response": public_token_summary(data),
         "saved": public_token_summary(saved),
     }, ensure_ascii=False, indent=2))
