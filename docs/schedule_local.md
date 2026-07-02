@@ -103,7 +103,11 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 - 08:00：同步 `01 来源与采样`，然后跑全源采集和选题。
 - 10:00：发送第一张选题卡。发送前会检查当天 `daily_pipeline` 是否成功、`latest_write` 是否为当天正式运行、候选 CSV 是否非空；不满足就跳过，避免误发旧候选。
 
-Codex 定时任务只负责触发本仓库脚本；完整逻辑仍在代码和全局 Skill 中，迁移时只需要重新创建同名 Codex automation。
+08:00 采集任务会使用 `--defer-editorial`：仓库脚本只负责同步来源、采集素材、写入 `03 内容收件箱`、生成 raw `today_10_topics.csv`，然后停止在“等待外层 Codex 主编判断”状态。这样避免在 Codex automation 内部再次调用 `codex exec`。当前外层 Codex automation 会直接读取全局 `ai-account-editorial-director` Skill，把 raw 候选补成正式主编字段，再运行 `scripts/finalize_daily_pipeline_after_editorial.py --write-feishu --update-scheduled-log` 写入 `04`、校验并把当天日志标记为成功。
+
+在外层 Codex 完成收尾前，`daily_pipeline_YYYY-MM-DD.json` 会保持 `ok=false`，所以 10:00 守卫不会误发 raw 候选卡。只有收尾脚本成功后，10:00 才会正常发卡。
+
+Codex 定时任务负责触发本仓库脚本和执行外层主编 Skill；迁移时需要重新创建同名 Codex automation，并保留这个“defer editorial -> outer Codex editorial -> finalizer”的边界。
 
 反馈规则：
 
@@ -118,7 +122,7 @@ Codex 定时任务只负责触发本仓库脚本；完整逻辑仍在代码和�
 手动只跑 08:00 全源采集任务：
 
 ```bash
-python3 scripts/run_daily_collection_job.py --no-notify
+python3 scripts/run_daily_collection_job.py --defer-editorial --no-notify
 ```
 
 手动只跑 10:00 发卡检查：
@@ -140,10 +144,11 @@ python3 scripts/daily_pipeline.py \
   --douyin-account-limit 50 \
   --douyin-video-limit 3 \
   --douyin-verification-action log-only \
-  --write-feishu
+  --write-feishu \
+  --defer-editorial
 ```
 
-日常使用以飞书为准，不需要先 dry-run。第一条命令先把飞书 `01 来源与采样` 的手工修改同步回本地 `config/content_sources.yaml`，避免新增对标账号没有进入采集。第二条命令会把 `02 URL投喂入口`、公众号全文 provider、全部抖音跟踪账号和 AIHOT 一起纳入今日候选池，写入 `03 内容收件箱`、`04 分析与选题` 并刷新 `00 主控台`。AIHOT 是默认参与源，日常命令不要加 `--no-fetch-aihot`。公众号全文采集前会自动运行 `scripts/start_wewe_rss.py`：如果本地 `wewe-rss` 没开，会先启动 Docker Desktop 和 `ai-radar-wewe-rss` 容器，再继续拉取全文。
+日常使用以飞书为准，不需要先 dry-run。第一条命令先把飞书 `01 来源与采样` 的手工修改同步回本地 `config/content_sources.yaml`，避免新增对标账号没有进入采集。第二条命令会把 `02 URL投喂入口`、公众号全文 provider、全部抖音跟踪账号和 AIHOT 一起纳入今日候选池，写入 `03 内容收件箱` 并生成 raw `today_10_topics.csv`；`04 分析与选题` 必须等外层 Codex 完成主编字段后，再由 finalizer 写入。AIHOT 是默认参与源，日常命令不要加 `--no-fetch-aihot`。公众号全文采集前会自动运行 `scripts/start_wewe_rss.py`：如果本地 `wewe-rss` 没开，会先启动 Docker Desktop 和 `ai-radar-wewe-rss` 容器，再继续拉取全文。
 
 抖音主页采集默认同一天只跑一次；当天再次运行会复用 `output/source_collection_cache/YYYY-MM-DD/` 里的采集结果，避免反复触发平台风控。只有改采集逻辑、主页链接、登录态或明确复验采集时，才加：
 

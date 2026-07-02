@@ -281,6 +281,11 @@ def main() -> int:
     parser.add_argument("--force-fetch-douyin", action="store_true", help="Force Douyin homepage collection even if today's source cache exists. Use only when testing collection logic or after manually changing links/login.")
     parser.add_argument("--no-reuse-source-cache", action="store_true", help="Disable same-day source cache reuse. Normally do not use this for Douyin to avoid account risk.")
     parser.add_argument("--include-douyin-transcripts", action="store_true", help="Explicit P1 mode: include already transcribed Douyin ContentItems. Does not call ASR.")
+    parser.add_argument(
+        "--defer-editorial",
+        action="store_true",
+        help="Stop after raw candidate generation so the outer Codex automation can apply ai-account-editorial-director without nested codex exec.",
+    )
     args = parser.parse_args()
 
     if args.write_feishu or args.resolve_url_intake or args.include_resolved_url_intake:
@@ -462,6 +467,33 @@ def main() -> int:
             "log": str(log_path),
             "run_output_dir": str(output_dir),
             "note": f"No daily topic candidates generated. Check URL parsing failures in {output_dir / 'content_items.csv'} and {output_dir / 'content_breakdowns.csv'}.",
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.defer_editorial:
+        defer_step = {
+            "name": "defer ai-account-editorial-director fields to outer Codex",
+            "command": ["outer-codex", "apply-ai-account-editorial-director"],
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+            "returncode": 75,
+            "stdout": (
+                "Raw candidates generated. The outer Codex automation must enrich "
+                "today_10_topics.csv, then run finalize_daily_pipeline_after_editorial.py."
+            ),
+            "stderr": "",
+            "deferred": True,
+        }
+        steps.append(defer_step)
+        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
+        print(json.dumps({
+            "ok": False,
+            "deferred_editorial": True,
+            "mode": "write-feishu" if args.write_feishu else "dry-run",
+            "run_id": run_id,
+            "run_output_dir": str(output_dir),
+            "today_10_topics": str(today10_path),
+            "log": str(log_path),
+            "note": "Outer Codex automation must apply ai-account-editorial-director and finalize the run before 10:00 card sending.",
         }, ensure_ascii=False, indent=2))
         return 0
 
