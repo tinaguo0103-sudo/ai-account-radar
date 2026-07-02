@@ -185,8 +185,6 @@ def feedback_input(record_id: str) -> dict[str, Any]:
         "name": f"script_note__{record_id}",
         "required": False,
         "width": "fill",
-        "input_type": "multiline",
-        "rows": 4,
         "placeholder": {
             "tag": "plain_text",
             "content": "写具体修改意见：哪里不像、哪段要改、应该补哪个真实场景或证据。可以写多句。",
