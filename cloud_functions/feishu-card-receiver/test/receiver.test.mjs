@@ -364,7 +364,9 @@ test("submits script package quality feedback to 06 table", async () => {
           form_value: {
             script_quality__pkg_a: "小修可拍",
             script_issues__pkg_a: ["不像我", "旧流程痛点不准"],
-            script_note__pkg_a: "第二段还不够像我的现场判断，要补具体项目里的旧流程卡点；标题也可以更直接一点。",
+            script_note__pkg_a: "第二段还不够像我的现场判断。",
+            script_note__pkg_a__2: "要补具体项目里的旧流程卡点。",
+            script_note__pkg_a__3: "标题也可以更直接一点。",
             script_quality__pkg_b: "",
             script_issues__pkg_b: [],
             script_note__pkg_b: "",
@@ -382,7 +384,7 @@ test("submits script package quality feedback to 06 table", async () => {
   assert.deepEqual(puts[0].body.fields, {
     "人工质量反馈": "小修可拍",
     "质量问题标签": "不像我、旧流程痛点不准",
-    "人工修改意见": "第二段还不够像我的现场判断，要补具体项目里的旧流程卡点；标题也可以更直接一点。",
+    "人工修改意见": "第二段还不够像我的现场判断。 要补具体项目里的旧流程卡点。 标题也可以更直接一点。",
     "反馈时间": "2026-07-02T12:00:00.000Z",
     "反馈来源": "06完成卡",
     "内容学习状态": "待学习",

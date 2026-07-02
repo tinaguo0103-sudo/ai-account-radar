@@ -95,7 +95,8 @@ test("Tencent SCF entry writes script package quality feedback", async () => {
             form_value: {
               script_quality__pkg_a: "需要重写",
               script_issues__pkg_a: ["太泛", "证据不可拍"],
-              script_note__pkg_a: "需要补具体真实场景，不能只写成通用方法论。",
+              script_note__pkg_a: "需要补具体真实场景。",
+              script_note__pkg_a__2: "不能只写成通用方法论。",
             },
           },
         },
@@ -107,7 +108,7 @@ test("Tencent SCF entry writes script package quality feedback", async () => {
     assert.equal(put.path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_script_package/records/pkg_a");
     assert.equal(put.body.fields["人工质量反馈"], "需要重写");
     assert.equal(put.body.fields["质量问题标签"], "太泛、证据不可拍");
-    assert.equal(put.body.fields["人工修改意见"], "需要补具体真实场景，不能只写成通用方法论。");
+    assert.equal(put.body.fields["人工修改意见"], "需要补具体真实场景。 不能只写成通用方法论。");
     assert.equal(put.body.fields["反馈来源"], "06完成卡");
     assert.equal(put.body.fields["内容学习状态"], "待学习");
   } finally {

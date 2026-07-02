@@ -434,6 +434,11 @@ function scriptPackageNoteKey(recordId) {
   return `${SCRIPT_PACKAGE_NOTE_FORM_PREFIX}${recordId}`;
 }
 
+function scriptPackageNoteKeys(recordId) {
+  const base = scriptPackageNoteKey(recordId);
+  return [base, `${base}__2`, `${base}__3`];
+}
+
 function candidateSnapshotsFromValue(value) {
   const raw = value?.candidate_snapshots;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -896,7 +901,7 @@ async function applyScriptPackageQualityFeedback(token, tableId, formValue, { ca
   for (const recordId of candidateIds || []) {
     const quality = compact(formValue[scriptPackageQualityKey(recordId)], 80);
     const issues = coerceList(formValue[scriptPackageIssuesKey(recordId)]);
-    const note = compact(formValue[scriptPackageNoteKey(recordId)], 2000);
+    const note = compact(scriptPackageNoteKeys(recordId).map((key) => normalize(formValue[key])).filter(Boolean).join("\n"), 2000);
     if (!quality && issues.length === 0 && !note) {
       skipped.push({ record_id: recordId, reason: "empty_feedback" });
       continue;

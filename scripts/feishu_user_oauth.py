@@ -33,6 +33,8 @@ DEFAULT_SCOPES = [
     "docx:document.block:convert",
     "docs:document:import",
     "space:document:retrieve",
+    "drive:drive",
+    "space:folder:create",
     "offline_access",
 ]
 

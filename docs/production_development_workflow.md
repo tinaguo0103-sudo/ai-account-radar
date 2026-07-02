@@ -82,6 +82,34 @@ Codex automation 指向生产目录：
 
 涉及飞书写入、字段、卡片、状态流转、通知或外部服务的功能，合并前优先使用 staging/test 飞书 Base 或测试表验证。测试数据必须与生产 Base / 生产业务表隔离；不要求单独测试群，如果复用正式通知目标，测试消息必须明确标记为“测试”，且不能触发真实业务动作。
 
+06 完成卡或脚本包链路测试必须使用独立资源：
+
+- 测试表：`06 完整脚本与制作包__测试`，通过 `FEISHU_SCRIPT_PACKAGE_TABLE_ID` 指向，不写正式 `06 完整脚本与制作包`。
+- 测试文件夹：`06完整脚本与制作包_TEST`，通过 `FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_TOKEN` 指向，不写正式脚本包文件夹。
+- 测试接收人：`FEISHU_SCRIPT_PACKAGE_FEEDBACK_RECEIVE_TARGETS` 指向个人 open_id，不复用正式群。
+- 06 完成卡只允许放飞书文档链接；如果没有 `飞书文档` URL，测试应失败或跳过发卡，不退回本地路径。
+
+首次创建 06 测试环境：
+
+```bash
+AI_ACCOUNT_RADAR_ENV_FILE=../ai_account_radar/.env.local \
+  python3 scripts/setup_script_package_test_env.py
+```
+
+如果飞书授权页提示 `当前应用权限不足` / 错误码 `20027`，需要先在飞书开发者后台给应用开通并发布这些权限，再重新授权：
+
+- `drive:drive`
+- `space:folder:create`
+
+如果已经手动建好了测试文件夹，可以跳过自动建文件夹：
+
+```bash
+AI_ACCOUNT_RADAR_ENV_FILE=../ai_account_radar/.env.local \
+  python3 scripts/setup_script_package_test_env.py \
+  --reuse-folder-token <测试文件夹token> \
+  --reuse-folder-url <测试文件夹URL>
+```
+
 本地环境文件支持三种模式：
 
 ```bash

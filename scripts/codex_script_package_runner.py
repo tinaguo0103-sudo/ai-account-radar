@@ -179,18 +179,24 @@ def issue_select(record_id: str) -> dict[str, Any]:
     }
 
 
-def feedback_input(record_id: str) -> dict[str, Any]:
-    return {
-        "tag": "input",
-        "name": f"script_note__{record_id}",
-        "required": False,
-        "width": "fill",
-        "placeholder": {
-            "tag": "plain_text",
-            "content": "写具体修改意见：哪里不像、哪段要改、应该补哪个真实场景或证据。可以写多句。",
-        },
-        "default_value": "",
-    }
+def feedback_inputs(record_id: str) -> list[dict[str, Any]]:
+    placeholders = [
+        "修改意见 1：哪里不像、哪段要改",
+        "修改意见 2：应该补哪个真实场景或证据",
+        "修改意见 3：其他边界、标题或口播问题",
+    ]
+    names = [f"script_note__{record_id}", f"script_note__{record_id}__2", f"script_note__{record_id}__3"]
+    return [
+        {
+            "tag": "input",
+            "name": name,
+            "required": False,
+            "width": "fill",
+            "placeholder": {"tag": "plain_text", "content": placeholder},
+            "default_value": "",
+        }
+        for name, placeholder in zip(names, placeholders)
+    ]
 
 
 def local_env_quote(value: str) -> str:
@@ -702,16 +708,17 @@ def create_script_package_record(token: str, app_token: str, table_id: str, row:
 
 def result_link_markdown(result: dict[str, Any]) -> str:
     url = str(result.get("feishu_document_url") or "").strip()
-    local_path = str(result.get("document_path") or "").strip()
     if url:
         return f"[打开飞书文档]({url})"
-    if local_path:
-        return f"本地文档：{local_path}"
-    return "未生成文档链接"
+    return "飞书文档未生成"
 
 
 def build_completion_card(results: list[dict[str, Any]]) -> dict[str, Any]:
-    feedback_results = [item for item in results if str(item.get("created_script_package_id") or "").strip()]
+    feedback_results = [
+        item for item in results
+        if str(item.get("created_script_package_id") or "").strip()
+        and str(item.get("feishu_document_url") or "").strip()
+    ]
     issued_at = datetime.utcnow().replace(microsecond=0)
     expires_at = issued_at + timedelta(days=7)
     record_ids = [str(item["created_script_package_id"]) for item in feedback_results]
@@ -741,8 +748,8 @@ def build_completion_card(results: list[dict[str, Any]]) -> dict[str, Any]:
             {"tag": "markdown", "content": "\n".join(lines)},
             quality_select(record_id),
             issue_select(record_id),
-            feedback_input(record_id),
         ])
+        form_elements.extend(feedback_inputs(record_id))
         if index != len(feedback_results):
             form_elements.append({"tag": "hr"})
 
@@ -835,12 +842,19 @@ def send_interactive_card(token: str, card: dict[str, Any], uuid_base: str) -> d
 
 
 def send_completion_card(token: str, results: list[dict[str, Any]]) -> dict[str, Any]:
-    feedback_results = [item for item in results if str(item.get("created_script_package_id") or "").strip()]
+    created_results = [item for item in results if str(item.get("created_script_package_id") or "").strip()]
+    feedback_results = [
+        item for item in created_results
+        if str(item.get("feishu_document_url") or "").strip()
+    ]
+    missing_doc_links = len(created_results) - len(feedback_results)
     if not feedback_results:
-        return {"sent_count": 0, "skipped": "no_script_package_records"}
+        return {"sent_count": 0, "skipped": "missing_feishu_document_urls", "missing_doc_links": missing_doc_links}
     card = build_completion_card(feedback_results)
     uuid_base = "|".join(str(item.get("created_script_package_id") or "") for item in feedback_results)
-    return send_interactive_card(token, card, uuid_base)
+    result = send_interactive_card(token, card, uuid_base)
+    result["missing_doc_links"] = missing_doc_links
+    return result
 
 
 def mark_topic_generated(token: str, app_token: str, table_id: str, record_id: str, marker: str = "是") -> None:
