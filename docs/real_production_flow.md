@@ -26,14 +26,14 @@ AIHOT / 公众号全文 / 抖音主页标题文案 / URL投喂
 ## 当前自动化状态
 
 - 已自动化：第一张选题卡由腾讯云 SCF receiver 接收并写回 `04`，选中记录会写入 `制作方向卡状态=待发送`；腾讯云定时触发器每 5 分钟只扫描最近 5 天内的显式待发送队列并发送第二张制作方向补充卡；第二张卡提交后继续由 receiver 写回 `04 / 我的制作补充`，并把 `制作方向卡状态` 改为 `已提交`。本机轻量 watcher 扫描近 5 天待生成记录，空队列不调用 Codex，有待生成记录时才调用 Codex 生成 `06`。
-- 仍需单独触发或另设定时：运行 `daily_pipeline.py` 生成当天 `03/04` 候选，以及运行 `run_topic_decision_card_session.py` 发送第一张选题卡。
-- 如果要做到真正每天无人值守，下一步应给“生成候选”和“发送选题卡”也安装本机定时任务；否则当前链路从“卡片已发出、用户已选择”之后是自动的。
+- 已自动化：08:00 由 Codex automation 运行 `run_daily_collection_job.py`；10:00 由 Codex automation 运行 `run_topic_card_if_fresh.py`，并通过新鲜度守卫避免误发旧候选。
+- 定时边界：08:00/10:00 不使用本机 LaunchAgent；`06` 生成使用本机 LaunchAgent watcher，因为这一步需要本机 Codex、全局私有 Skill 和用户可见飞书文档权限。
 
 ## 生成脚本包
 
 正式生成：
 
-- 本机轻量 watcher 运行 `scripts/watch_script_package_queue.py`。
+- 本机 LaunchAgent 运行轻量 watcher `scripts/watch_script_package_queue.py`。
 - watcher 调用 runner 先扫描 `04`，只有发现待生成记录时才调用本机 `codex exec`。
 - 只处理人工状态为 `生成脚本包`、`制作方向卡状态=已提交`（或历史记录已填写 `我的制作补充`），且 `是否已生成脚本稿` 为空、`否` 或 `未生成` 的记录；旧状态不再触发脚本包生成，也不再作为 fallback。
 - 第一轮 QA 为 `revise` 时，runner 会把上一轮 QA 原因、开头钩子和核心观点传回 Codex 自动重写 1 次。

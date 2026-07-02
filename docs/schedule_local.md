@@ -100,7 +100,7 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 
 当前 watcher 只负责生成 `06`，不会生成新选题，也不会发送第一张选题卡。
 
-生产定时由 Codex automation 触发，不再使用本机 LaunchAgent：
+每日采集和第一张选题卡发送由 Codex automation 触发，不使用本机 LaunchAgent：
 
 - 08:00：同步 `01 来源与采样`，然后跑全源采集和选题。
 - 10:00：发送第一张选题卡。发送前会检查当天 `daily_pipeline` 是否成功、`latest_write` 是否为当天正式运行、候选 CSV 是否非空；不满足就跳过，避免误发旧候选。
@@ -110,6 +110,8 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 在外层 Codex 完成收尾前，`daily_pipeline_YYYY-MM-DD.json` 会保持 `ok=false`，所以 10:00 守卫不会误发 raw 候选卡。只有收尾脚本成功后，10:00 才会正常发卡。
 
 Codex 定时任务负责触发本仓库脚本和执行外层主编 Skill；迁移时需要重新创建同名 Codex automation，并保留这个“defer editorial -> outer Codex editorial -> finalizer”的边界。
+
+`06 完整脚本与制作包` 是另一条本机生成链路：它由本机 LaunchAgent watcher 负责，只扫描飞书 `04` 中已确认且已提交制作方向的记录。空队列只做飞书 API 检查，不调用 Codex；有待生成记录时才调用本机 `codex exec` 和全局私有 Skill。
 
 反馈规则：
 
