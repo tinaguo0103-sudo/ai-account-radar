@@ -36,13 +36,15 @@ python3 scripts/install_script_package_watcher_launch_agent.py --interval-minute
 python3 scripts/feishu_user_oauth.py --timeout-seconds 240
 ```
 
-授权信息写入 `.env.local`，不进入 Git。开发者后台需要先开通 `offline_access`（持续访问已授权的数据），否则飞书不会下发 refresh token；如果 token 缺失或过期且无法刷新，runner 仍会生成本地 Markdown 和 06 记录，但 `文档同步状态` 会报警。
+授权信息写入 `.env.local`，不进入 Git。生产仓库和 `~/.codex/ai-account-radar-runtime` 会通过 `RUNTIME_SOURCE.txt` 绑定，授权脚本和 runner 自动刷新 token 时会把用户 OAuth token 同步写回两边；如果 dev/test worktree 没有这个绑定，不会误写生产 runtime。开发者后台需要先开通 `offline_access`（持续访问已授权的数据），否则飞书不会下发 refresh token；如果 token 缺失、过期或被飞书判定为 revoked，runner 仍会生成本地 Markdown 和 06 记录，但 `文档同步状态` 会报警，并尝试发送“飞书文档同步授权失效”通知。
 
 之后如果改了 watcher、runner、Skill 镜像或字段映射，要重新运行一次安装命令，或只同步 runtime：
 
 ```bash
 python3 scripts/install_script_package_watcher_launch_agent.py --sync-runtime-only
 ```
+
+同步 runtime 时会先比较生产仓库和 runtime 两边的用户 token 过期时间，保留更新的一份，避免 `.env.local` 被旧 refresh token 覆盖。
 
 查看 LaunchAgent 状态：
 

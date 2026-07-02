@@ -24,6 +24,7 @@ from typing import Any
 from urllib.parse import quote
 
 from local_env import load_local_env
+from feishu_user_oauth_store import sync_user_tokens
 
 import push_to_feishu as feishu
 from script_package_shared import (
@@ -55,7 +56,6 @@ TEST_TITLE_PREFIXES = ("【测试】", "【流程测试】", "【部署后测试
 TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(测试|测速)[^\]]*\])")
 DOC_SYNC_MAX_PARAGRAPHS = 180
 USER_TOKEN_REFRESH_SAFETY_SECONDS = 300
-LOCAL_ENV_FILE = ROOT / ".env.local"
 SCRIPT_PACKAGE_QUALITY_ACTION = "submit_script_package_quality_feedback"
 SCRIPT_PACKAGE_QUALITY_OPTIONS = ["直接可拍", "小修可拍", "需要重写", "暂不采用"]
 SCRIPT_PACKAGE_ISSUE_OPTIONS = [
@@ -199,33 +199,6 @@ def feedback_inputs(record_id: str) -> list[dict[str, Any]]:
     ]
 
 
-def local_env_quote(value: str) -> str:
-    escaped = value.replace("\\", "\\\\").replace('"', '\\"')
-    return f'"{escaped}"'
-
-
-def update_local_env(values: dict[str, str]) -> None:
-    LOCAL_ENV_FILE.parent.mkdir(parents=True, exist_ok=True)
-    lines = LOCAL_ENV_FILE.read_text(encoding="utf-8").splitlines() if LOCAL_ENV_FILE.exists() else []
-    seen: set[str] = set()
-    updated: list[str] = []
-    for line in lines:
-        stripped = line.strip()
-        if not stripped or stripped.startswith("#") or "=" not in line:
-            updated.append(line)
-            continue
-        key = line.split("=", 1)[0].strip()
-        if key in values:
-            updated.append(f"{key}={local_env_quote(values[key])}")
-            seen.add(key)
-        else:
-            updated.append(line)
-    for key, value in values.items():
-        if key not in seen:
-            updated.append(f"{key}={local_env_quote(value)}")
-    LOCAL_ENV_FILE.write_text("\n".join(updated).rstrip() + "\n", encoding="utf-8")
-
-
 def env_int(name: str) -> int:
     try:
         return int(float(os.getenv(name, "0").strip() or "0"))
@@ -289,7 +262,7 @@ def refresh_user_doc_token_if_needed() -> str:
         values["FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN_EXPIRES_AT"] = str(now + expires_in)
     if refresh_expires_in:
         values["FEISHU_SCRIPT_PACKAGE_USER_REFRESH_TOKEN_EXPIRES_AT"] = str(now + refresh_expires_in)
-    update_local_env(values)
+    sync_user_tokens(values)
     os.environ.update(values)
     return new_access_token
 
@@ -336,6 +309,34 @@ def doc_sync_success_status() -> str:
             return "已同步到用户可见飞书文件夹"
         return "已创建飞书文档，但需确认文件夹对用户可见"
     return "已创建飞书文档：应用空间兼容路径，非正常用户文件夹入口"
+
+
+def is_user_oauth_error(message: str) -> bool:
+    lowered = message.lower()
+    needles = (
+        "invalid_grant",
+        "refresh token",
+        "token has been revoked",
+        "offline_access",
+        "user access token",
+    )
+    return any(needle in lowered for needle in needles)
+
+
+def notify_doc_sync_oauth_failure(title: str, message: str) -> None:
+    try:
+        from feishu_automation_notify import notify
+
+        body = (
+            "06 飞书文档同步失败，但本地 Markdown 和 06 记录会继续保留。\n"
+            f"选题：{title}\n"
+            f"原因：{compact(message, 600)}\n"
+            "处理：重新运行 `python3 scripts/feishu_user_oauth.py` 授权用户身份，"
+            "再运行 `python3 scripts/install_script_package_watcher_launch_agent.py --sync-runtime-only` 同步 runtime。"
+        )
+        notify("【AI账号信息雷达】飞书文档同步授权失效", body)
+    except Exception as exc:
+        log("feishu oauth failure notification failed: " + compact(exc, 500))
 
 
 def record_day(value: Any) -> date | None:
@@ -654,6 +655,8 @@ def try_create_feishu_document(token: str, title: str, package: dict[str, Any]) 
     except Exception as exc:
         message = compact(exc, 1000)
         log("feishu document sync failed: " + message)
+        if is_user_oauth_error(message):
+            notify_doc_sync_oauth_failure(title, message)
         return FeishuDocSyncResult(
             folder_url=script_package_folder_url(),
             status="飞书文档同步失败",

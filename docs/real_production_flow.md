@@ -84,6 +84,8 @@ python3 scripts/feishu_user_oauth.py --timeout-seconds 240
 
 授权成功后脚本会把用户 access token 和 refresh token 写入 `.env.local`。这份文件只保存在本机，不提交 Git。首次授权前，开发者后台必须开通 `offline_access`（持续访问已授权的数据）；如果没有开通，飞书授权页会提示错误码 `20027`，脚本也不会保存只有 2 小时有效期的短期 token。
 
+生产运行有两份本地环境文件：生产仓库 `.env.local` 和 `~/.codex/ai-account-radar-runtime/.env.local`。二者通过 runtime 里的 `RUNTIME_SOURCE.txt` 绑定，`feishu_user_oauth.py` 和 `codex_script_package_runner.py` 刷新用户 token 时会同步写回两边；`install_script_package_watcher_launch_agent.py --sync-runtime-only` 同步 runtime 前会先比较两边 token 的过期时间，保留更新的一份，避免旧 refresh token 覆盖新 token。若飞书返回 `invalid_grant`、refresh token revoked 或类似授权错误，runner 会继续保留本地 Markdown 和 06 记录，并尝试发送“飞书文档同步授权失效”通知。
+
 ## 自动化边界
 
 - 腾讯云卡片 receiver 负责两件事：接收第一张/第二张卡片回调并写回 `04`；通过名为 `send-production-direction-cards` 的 5 分钟定时触发器，把 `制作方向卡状态=待发送` 的选中记录发成第二张补充卡。发送前状态为 `发送中`，成功后为 `已发送`，第二张卡提交后为 `已提交`，失败会写入 `制作方向卡错误`。
