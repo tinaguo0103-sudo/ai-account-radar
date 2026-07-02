@@ -1,12 +1,14 @@
 const DEFAULT_API_HOST = "https://open.feishu.cn";
 const TOPIC_TABLE_NAMES = ["04 分析与选题"];
 const SCRIPT_PACKAGE_TABLE_NAMES = ["06 完整脚本与制作包"];
+const LEARNING_RECORD_TABLE_NAMES = ["08 学习记录"];
 const ENTER_SCRIPT_PACKAGE_FORM_KEY = "script_package_records";
 const PRODUCTION_DIRECTION_FIELD = "我的制作补充";
 const PRODUCTION_DIRECTION_FORM_PREFIX = "production_direction__";
 const SCRIPT_PACKAGE_QUALITY_FORM_PREFIX = "script_quality__";
 const SCRIPT_PACKAGE_ISSUES_FORM_PREFIX = "script_issues__";
 const SCRIPT_PACKAGE_NOTE_FORM_PREFIX = "script_note__";
+const LEARNING_CONFIRMATION_NOTE_KEYS = ["learning_confirmation_note", "learning_confirmation_note__2", "learning_confirmation_note__3"];
 const SCRIPT_PACKAGE_QUALITY_FIELDS = [
   "人工质量反馈",
   "质量问题标签",
@@ -15,6 +17,7 @@ const SCRIPT_PACKAGE_QUALITY_FIELDS = [
   "反馈来源",
   "内容学习状态",
 ];
+const LEARNING_CONFIRMATION_FIELDS = ["确认状态", "确认时间", "确认备注", "Skill同步状态"];
 const PRODUCTION_DIRECTION_CARD_STATUS_FIELD = "制作方向卡状态";
 const SELECTION_SUBMISSION_ID_FIELD = "选择提交批次";
 const SELECTION_SUBMITTED_AT_FIELD = "选择提交时间";
@@ -31,12 +34,14 @@ const SUBMIT_SELECTION_ACTION = "submit_topic_decisions";
 const SUBMIT_NO_SELECTION_ACTION = "submit_no_selection";
 const SUBMIT_PRODUCTION_DIRECTIONS_ACTION = "submit_production_directions";
 const SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION = "submit_script_package_quality_feedback";
+const SUBMIT_LEARNING_CONFIRMATION_ACTION = "submit_learning_feedback_confirmation";
 const SEND_PENDING_PRODUCTION_DIRECTION_CARDS_ACTION = "send_pending_production_direction_cards";
 const SUPPORTED_SUBMIT_ACTIONS = new Set([
   SUBMIT_SELECTION_ACTION,
   SUBMIT_NO_SELECTION_ACTION,
   SUBMIT_PRODUCTION_DIRECTIONS_ACTION,
   SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION,
+  SUBMIT_LEARNING_CONFIRMATION_ACTION,
 ]);
 const TOKEN_CACHE_SAFETY_SECONDS = 300;
 const DEFAULT_CARD_EXPIRE_DAYS = 5;
@@ -206,7 +211,7 @@ async function listTables(env, token, options) {
 }
 
 async function topicTableId(env, token, options) {
-  if (env.FEISHU_TOPIC_TABLE_ID) return env.FEISHU_TOPIC_TABLE_ID;
+  if (env.FEISHU_TOPIC_TABLE_ID || env.FEISHU_TOPIC_DECISION_TABLE_ID) return env.FEISHU_TOPIC_TABLE_ID || env.FEISHU_TOPIC_DECISION_TABLE_ID;
   if (!options?.fetchImpl && cachedTopicTableId) return cachedTopicTableId;
   const tables = await listTables(env, token, options);
   const found = tables.find((table) => TOPIC_TABLE_NAMES.includes(table.name));
@@ -220,6 +225,14 @@ async function scriptPackageTableId(env, token, options) {
   const tables = await listTables(env, token, options);
   const found = tables.find((table) => SCRIPT_PACKAGE_TABLE_NAMES.includes(table.name));
   if (!found?.table_id) throw new Error(`Missing script package table. Expected one of: ${SCRIPT_PACKAGE_TABLE_NAMES.join(", ")}`);
+  return found.table_id;
+}
+
+async function learningRecordTableId(env, token, options) {
+  if (env.FEISHU_LEARNING_TABLE_ID) return env.FEISHU_LEARNING_TABLE_ID;
+  const tables = await listTables(env, token, options);
+  const found = tables.find((table) => LEARNING_RECORD_TABLE_NAMES.includes(table.name));
+  if (!found?.table_id) throw new Error(`Missing learning record table. Expected one of: ${LEARNING_RECORD_TABLE_NAMES.join(", ")}`);
   return found.table_id;
 }
 
@@ -847,6 +860,59 @@ async function scriptPackageQualityCardGuard(env, token, tableId, candidateIds, 
   return { blocked: false };
 }
 
+function normalizeLearningDecision(value) {
+  const decision = normalize(value.decision || value.learning_decision);
+  if (["已采纳", "采纳", "accept", "accepted"].includes(decision)) return "已采纳";
+  if (["部分采纳", "partial", "partially_accepted"].includes(decision)) return "部分采纳";
+  if (["暂不采纳", "不采纳", "reject", "rejected"].includes(decision)) return "暂不采纳";
+  return "";
+}
+
+function learningConfirmationNote(formValue) {
+  return compact(LEARNING_CONFIRMATION_NOTE_KEYS.map((key) => normalize(formValue[key])).filter(Boolean).join("\n"), 2000);
+}
+
+function learningSkillSyncStatus(decision) {
+  return decision === "暂不采纳" ? "不同步" : "待同步";
+}
+
+function sourceLearningStatus(decision) {
+  return decision === "暂不采纳" ? "忽略" : "已学习";
+}
+
+function learningCardRequiresExplicitTables(value) {
+  const environment = normalize(value.environment).toLowerCase();
+  return environment && !["prod", "production"].includes(environment);
+}
+
+function learningExplicitTableGuard(env, value) {
+  if (!learningCardRequiresExplicitTables(value)) return { blocked: false };
+  const missing = [];
+  if (!env.FEISHU_LEARNING_TABLE_ID) missing.push("FEISHU_LEARNING_TABLE_ID");
+  if (coerceList(value.topic_record_ids).length && !(env.FEISHU_TOPIC_TABLE_ID || env.FEISHU_TOPIC_DECISION_TABLE_ID)) {
+    missing.push("FEISHU_TOPIC_TABLE_ID/FEISHU_TOPIC_DECISION_TABLE_ID");
+  }
+  if (coerceList(value.script_record_ids).length && !env.FEISHU_SCRIPT_PACKAGE_TABLE_ID) {
+    missing.push("FEISHU_SCRIPT_PACKAGE_TABLE_ID");
+  }
+  return missing.length ? { blocked: true, reason: "learning_test_tables_not_explicit", missing } : { blocked: false };
+}
+
+async function learningConfirmationCardGuard(env, token, tableId, learningRecordId, learningBatchId, options) {
+  const record = learningRecordId ? await getRecord(env, token, tableId, learningRecordId, options) : null;
+  if (!record) return { blocked: true, reason: "card_records_missing", missing: learningRecordId ? [learningRecordId] : [] };
+  const fields = record.fields || {};
+  const actualBatchId = normalize(fields["学习批次"]);
+  if (learningBatchId && actualBatchId && actualBatchId !== learningBatchId) {
+    return { blocked: true, reason: "card_run_mismatch", record_ids: [learningRecordId] };
+  }
+  const status = normalize(fields["确认状态"]);
+  if (status && status !== "待确认") {
+    return { blocked: true, reason: "learning_record_already_confirmed", record_ids: [learningRecordId] };
+  }
+  return { blocked: false, record };
+}
+
 async function fieldsByName(env, token, tableId, options) {
   const payload = await requestJson(
     env,
@@ -1095,6 +1161,111 @@ async function applyScriptPackageQualityFeedback(env, token, tableId, formValue,
   };
 }
 
+async function applyLearningFeedbackConfirmation(env, token, formValue, { value, options }) {
+  const dryRun = String(env.DRY_RUN || "").toLowerCase() === "true";
+  const learningRecordId = normalize(value.learning_record_id);
+  const learningBatchId = normalize(value.learning_batch_id);
+  const decision = normalizeLearningDecision(value);
+  if (!decision) {
+    return {
+      ok: false,
+      blocked: true,
+      reason: "missing_learning_decision",
+      action: SUBMIT_LEARNING_CONFIRMATION_ACTION,
+      updated_count: 0,
+      candidate_update_count: 0,
+    };
+  }
+  const explicitGuard = learningExplicitTableGuard(env, value);
+  if (explicitGuard.blocked) {
+    return {
+      ok: false,
+      ...explicitGuard,
+      action: SUBMIT_LEARNING_CONFIRMATION_ACTION,
+      updated_count: 0,
+      candidate_update_count: 0,
+    };
+  }
+
+  const learningTableId = await learningRecordTableId(env, token, options);
+  const guard = await learningConfirmationCardGuard(env, token, learningTableId, learningRecordId, learningBatchId, options);
+  if (guard.blocked) {
+    return {
+      ok: false,
+      ...guard,
+      action: SUBMIT_LEARNING_CONFIRMATION_ACTION,
+      updated_count: 0,
+      candidate_update_count: 0,
+    };
+  }
+
+  const topicIds = coerceList(value.topic_record_ids);
+  const scriptIds = coerceList(value.script_record_ids);
+  const topicTable = topicIds.length ? await topicTableId(env, token, options) : "";
+  const scriptTable = scriptIds.length ? await scriptPackageTableId(env, token, options) : "";
+  const topicRecords = topicIds.length ? await recordsById(env, token, topicTable, topicIds, options) : {};
+  const scriptRecords = scriptIds.length ? await recordsById(env, token, scriptTable, scriptIds, options) : {};
+  const missingSources = [
+    ...topicIds.filter((recordId) => !topicRecords[recordId]),
+    ...scriptIds.filter((recordId) => !scriptRecords[recordId]),
+  ];
+  if (missingSources.length) {
+    return {
+      ok: false,
+      blocked: true,
+      reason: "card_records_missing",
+      action: SUBMIT_LEARNING_CONFIRMATION_ACTION,
+      updated_count: 0,
+      candidate_update_count: 0,
+      missing: missingSources,
+    };
+  }
+  const confirmedAt = new Date(currentTimeMs(options)).toISOString();
+  const note = learningConfirmationNote(formValue);
+  const summaryText = compact(value.learning_summary, 1000);
+  const learningFields = {
+    "确认状态": decision,
+    "确认时间": confirmedAt,
+    "确认备注": note,
+    "Skill同步状态": learningSkillSyncStatus(decision),
+  };
+  const sourceStatus = sourceLearningStatus(decision);
+  const topicFields = {
+    "学习状态": sourceStatus,
+    "选择学习批次": learningBatchId,
+    "选择学习摘要": summaryText,
+  };
+  const scriptFields = {
+    "内容学习状态": sourceStatus,
+    "内容学习批次": learningBatchId,
+    "内容学习摘要": summaryText,
+  };
+  const updates = [
+    { table: "learning", table_id: learningTableId, record_id: learningRecordId, fields: learningFields },
+    ...topicIds.map((recordId) => ({ table: "topic", table_id: topicTable, record_id: recordId, fields: topicFields })),
+    ...scriptIds.map((recordId) => ({ table: "script", table_id: scriptTable, record_id: recordId, fields: scriptFields })),
+  ];
+
+  if (!dryRun) {
+    await ensureTextFields(env, token, learningTableId, LEARNING_CONFIRMATION_FIELDS, options);
+    if (topicIds.length) await ensureTextFields(env, token, topicTable, ["学习状态", "选择学习批次", "选择学习摘要"], options);
+    if (scriptIds.length) await ensureTextFields(env, token, scriptTable, ["内容学习状态", "内容学习批次", "内容学习摘要"], options);
+    await Promise.all(updates.map((update) => updateRecordFields(env, token, update.table_id, update.record_id, update.fields, options)));
+  }
+
+  return {
+    ok: true,
+    mode: dryRun ? "dry-run" : "write",
+    action: SUBMIT_LEARNING_CONFIRMATION_ACTION,
+    decision,
+    learning_batch_id: learningBatchId,
+    learning_record_id: learningRecordId,
+    updated_count: dryRun ? 0 : updates.length,
+    candidate_update_count: topicIds.length + scriptIds.length,
+    updates,
+  };
+}
+
 export async function processCardSubmission(env, value, formValue, options = {}) {
   const actionName = String(value.action || "");
   if (!SUPPORTED_SUBMIT_ACTIONS.has(actionName)) {
@@ -1125,6 +1296,18 @@ export async function processCardSubmission(env, value, formValue, options = {})
   }
 
   const token = await tenantToken(env, options);
+  if (actionName === SUBMIT_LEARNING_CONFIRMATION_ACTION) {
+    const learningSummary = await applyLearningFeedbackConfirmation(env, token, effectiveFormValue, {
+      value,
+      options,
+    });
+    learningSummary.receipt_key = await submissionFingerprint(actionName, runId, [
+      value.learning_record_id,
+      ...coerceList(value.topic_record_ids),
+      ...coerceList(value.script_record_ids),
+    ], effectiveFormValue);
+    return learningSummary;
+  }
   if (actionName === SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION) {
     const tableId = await scriptPackageTableId(env, token, options);
     const guard = await scriptPackageQualityCardGuard(env, token, tableId, candidateIds, options);
@@ -1252,6 +1435,9 @@ export async function handlePayload(payload, env, options = {}) {
       if (summary.reason === "card_expired") return toast("warning", "这张卡已超过 5 天，不再处理，请使用最新卡片");
       if (summary.reason === "selection_card_already_submitted") return toast("warning", "这张选题卡已经提交过，不再重复处理");
       if (summary.reason === "production_direction_card_already_submitted") return toast("warning", "这张制作方向卡已经保存过，不再重复处理");
+      if (summary.reason === "learning_record_already_confirmed") return toast("warning", "这条学习日结已经确认过，不再重复处理");
+      if (summary.reason === "missing_learning_decision") return toast("warning", "没有识别到学习确认结论，请使用卡片按钮提交");
+      if (summary.reason === "learning_test_tables_not_explicit") return toast("warning", "测试学习卡缺少显式测试表配置，已拒绝回写");
       if (summary.reason === "card_run_mismatch") return toast("warning", "这张卡对应的记录批次已变化，请使用最新卡片");
       if (summary.reason === "card_records_missing") return toast("warning", "这张卡对应的记录不存在，请使用最新卡片");
       return toast("warning", "这张卡当前不能提交，请使用最新卡片");
@@ -1265,6 +1451,9 @@ export async function handlePayload(payload, env, options = {}) {
       const count = summary.updated_count;
       if (count === 0) return toast("warning", "没有保存新的质量反馈");
       return toast("success", `已保存 ${count} 条质量反馈`);
+    }
+    if (summary.action === SUBMIT_LEARNING_CONFIRMATION_ACTION) {
+      return toast("success", `已确认学习日结：${summary.decision}`);
     }
     const count = summary.updated_count;
     const skippedNoChange = (summary.skipped || []).filter((item) => item.reason === "no_change").length;

@@ -12,6 +12,7 @@ from typing import Any
 
 from local_env import load_local_env
 import push_to_feishu as feishu
+from codex_script_package_runner import refresh_user_doc_token_if_needed
 from learn_from_daily_feedback import (
     LEARNING_RECORD_FIELDS,
     LEARNING_TEST_TABLE_NAME,
@@ -136,6 +137,13 @@ def required_env(keys: list[str]) -> dict[str, str]:
     return values
 
 
+def user_open_id() -> str:
+    token = refresh_user_doc_token_if_needed()
+    payload = feishu.request_json("GET", "/authen/v1/user_info", token=token)
+    data = payload.get("data", payload)
+    return str(data.get("open_id") or "").strip()
+
+
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Create isolated Feishu test tables for learning feedback loop.")
     parser.add_argument("--env-out", default=str(DEFAULT_ENV_OUT))
@@ -156,16 +164,29 @@ def main() -> int:
 
     token_values = {
         key: os.getenv(key, "").strip()
-        for key in ["FEISHU_API_BASE_URL", "FEISHU_VERIFICATION_TOKEN"]
+        for key in [
+            "FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN",
+            "FEISHU_SCRIPT_PACKAGE_USER_REFRESH_TOKEN",
+            "FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN_EXPIRES_AT",
+            "FEISHU_SCRIPT_PACKAGE_USER_REFRESH_TOKEN_EXPIRES_AT",
+            "FEISHU_API_BASE_URL",
+            "FEISHU_VERIFICATION_TOKEN",
+        ]
         if os.getenv(key, "").strip()
     }
+    open_id = user_open_id()
+    if not open_id:
+        raise SystemExit("Could not resolve current Feishu user open_id for personal learning card target.")
     env_out = Path(args.env_out).expanduser()
     write_env_file(env_out, {
         **base_values,
         **token_values,
+        "AI_ACCOUNT_RADAR_ENV": "staging",
         "FEISHU_TOPIC_DECISION_TABLE_ID": topic_table_id,
+        "FEISHU_TOPIC_TABLE_ID": topic_table_id,
         "FEISHU_SCRIPT_PACKAGE_TABLE_ID": script_table_id,
         "FEISHU_LEARNING_TABLE_ID": learning_table_id,
+        "FEISHU_LEARNING_FEEDBACK_RECEIVE_TARGETS": f"open_id:{open_id}",
     })
 
     seeded = seed_samples(token, app_token, topic_table_id, script_table_id) if args.seed_smoke_samples else {}
@@ -178,6 +199,7 @@ def main() -> int:
         "script_test_table_id": script_table_id,
         "learning_test_table_name": LEARNING_TEST_TABLE_NAME,
         "learning_test_table_id": learning_table_id,
+        "feedback_target": "self_open_id",
         "seeded": seeded,
     }, ensure_ascii=False, indent=2))
     return 0

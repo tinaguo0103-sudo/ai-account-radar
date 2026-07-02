@@ -8,13 +8,15 @@ tables.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import time
 from collections import Counter
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
+from urllib.parse import quote
 
 from local_env import load_local_env
 import push_to_feishu as feishu
@@ -30,6 +32,10 @@ LATEST_MD = OUT / "latest_daily_feedback_learning.md"
 TOPIC_TABLE_ENV = "FEISHU_TOPIC_DECISION_TABLE_ID"
 SCRIPT_TABLE_ENV = "FEISHU_SCRIPT_PACKAGE_TABLE_ID"
 LEARNING_TABLE_ENV = "FEISHU_LEARNING_TABLE_ID"
+LEARNING_CONFIRM_ACTION = "submit_learning_feedback_confirmation"
+LEARNING_FEEDBACK_TARGETS_ENV = "FEISHU_LEARNING_FEEDBACK_RECEIVE_TARGETS"
+LEARNING_CONFIRM_NOTE_KEYS = ["learning_confirmation_note", "learning_confirmation_note__2", "learning_confirmation_note__3"]
+LEARNING_CONFIRM_DECISIONS = ["已采纳", "部分采纳", "暂不采纳"]
 
 TOPIC_TEST_TABLE_NAME = "04 分析与选题__测试"
 SCRIPT_TEST_TABLE_NAME = "06 完整脚本与制作包__测试"
@@ -115,6 +121,12 @@ def compact(value: Any, limit: int = 500) -> str:
     return text if len(text) <= limit else text[:limit].rstrip() + "..."
 
 
+def card_uuid(prefix: str, *parts: str) -> str:
+    seed = "|".join(str(part) for part in parts if str(part))
+    digest = hashlib.sha1((seed or prefix).encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"[:50]
+
+
 def normalize(value: Any) -> str:
     if value is None:
         return ""
@@ -128,6 +140,21 @@ def normalize_tags(value: Any) -> list[str]:
     if not text:
         return []
     return [part.strip() for part in text.replace("；", "、").replace(",", "、").split("、") if part.strip()]
+
+
+def parse_learning_card_targets() -> list[tuple[str, str]]:
+    raw = os.getenv(LEARNING_FEEDBACK_TARGETS_ENV, "").strip()
+    targets: list[tuple[str, str]] = []
+    for part in raw.split(","):
+        item = part.strip()
+        if not item or ":" not in item:
+            continue
+        receive_id_type, receive_id = item.split(":", 1)
+        receive_id_type = receive_id_type.strip()
+        receive_id = receive_id.strip()
+        if receive_id_type and receive_id:
+            targets.append((receive_id_type, receive_id))
+    return targets
 
 
 def env_label() -> str:
@@ -371,6 +398,131 @@ def learning_record_fields(summary: dict[str, Any], markdown: str) -> dict[str, 
     }
 
 
+def learning_confirmation_note_inputs() -> list[dict[str, Any]]:
+    placeholders = [
+        "确认备注 1：哪些规则可以沉淀，哪些先别动",
+        "确认备注 2：如果只是部分采纳，写清楚边界",
+        "确认备注 3：后续希望补看的样本或判断口径",
+    ]
+    return [
+        {
+            "tag": "input",
+            "name": name,
+            "required": False,
+            "width": "fill",
+            "placeholder": {"tag": "plain_text", "content": placeholder},
+            "default_value": "",
+        }
+        for name, placeholder in zip(LEARNING_CONFIRM_NOTE_KEYS, placeholders)
+    ]
+
+
+def build_learning_confirmation_card(summary: dict[str, Any], learning_record_id: str, ttl_days: int = 5) -> dict[str, Any]:
+    issued_at = datetime.utcnow()
+    expires_at = issued_at + timedelta(days=ttl_days)
+    topic_ids = [sample["record_id"] for sample in summary["topic_samples"] if sample.get("record_id")]
+    script_ids = [sample["record_id"] for sample in summary["script_feedback_samples"] if sample.get("record_id")]
+    conclusion = compact(learning_conclusion(summary), 900)
+    rules = list(summary["durable_rules"]) + list(summary["preference_rules"])
+    rule_lines = "\n".join(f"- {compact(rule, 220)}" for rule in (rules[:6] or ["暂无足够稳定规则，继续观察。"]))
+    reject_lines = "\n".join(f"- {compact(note, 180)}" for note in (summary["one_off_notes"][:4] or ["暂无。"]))
+    base_value = {
+        "action": LEARNING_CONFIRM_ACTION,
+        "learning_record_id": learning_record_id,
+        "learning_batch_id": summary["learning_batch_id"],
+        "environment": summary["environment"],
+        "topic_record_ids": topic_ids,
+        "script_record_ids": script_ids,
+        "learning_summary": conclusion,
+        "card_issued_at": issued_at.isoformat(timespec="seconds") + "Z",
+        "card_expires_at": expires_at.isoformat(timespec="seconds") + "Z",
+        "card_ttl_days": ttl_days,
+    }
+    decision_buttons = []
+    for decision in LEARNING_CONFIRM_DECISIONS:
+        decision_buttons.append({
+            "tag": "column",
+            "width": "auto",
+            "elements": [
+                {
+                    "tag": "button",
+                    "type": "primary" if decision == "已采纳" else "default",
+                    "width": "default",
+                    "text": {"tag": "plain_text", "content": decision},
+                    "form_action_type": "submit",
+                    "name": f"learning_feedback_{decision}",
+                    "behaviors": [{"type": "callback", "value": {**base_value, "decision": decision}}],
+                },
+            ],
+        })
+    form_elements: list[dict[str, Any]] = [
+        {"tag": "markdown", "content": "**确认备注（可选）**"},
+        *learning_confirmation_note_inputs(),
+        {"tag": "column_set", "columns": decision_buttons},
+    ]
+    return {
+        "schema": "2.0",
+        "config": {
+            "update_multi": True,
+            "enable_forward": False,
+            "width_mode": "fill",
+        },
+        "header": {
+            "template": "green",
+            "title": {"tag": "plain_text", "content": "学习反馈日结待确认"},
+        },
+        "body": {
+            "elements": [
+                {
+                    "tag": "markdown",
+                    "content": (
+                        f"学习批次：{summary['learning_batch_id']}\n"
+                        f"环境：{summary['environment']}\n"
+                        f"样本：选题 {summary['topic_sample_count']} 条，06 反馈 {summary['script_feedback_count']} 条。\n\n"
+                        f"**结论**\n{conclusion}\n\n"
+                        f"**建议沉淀规则**\n{rule_lines}\n\n"
+                        f"**不应沉淀的个案**\n{reject_lines}\n\n"
+                        f"这张卡只回写学习确认状态，不直接修改 Skill 文件；{ttl_days} 天后提交无效。"
+                    ),
+                },
+                {
+                    "tag": "form",
+                    "name": "learning_feedback_confirmation",
+                    "padding": "8px 0px 0px 0px",
+                    "vertical_spacing": "8px",
+                    "elements": form_elements,
+                },
+            ],
+        },
+    }
+
+
+def send_interactive_card(token: str, card: dict[str, Any], uuid_base: str) -> dict[str, Any]:
+    targets = parse_learning_card_targets()
+    if not targets:
+        return {"sent_count": 0, "skipped": "missing_learning_receive_targets"}
+    sends = []
+    for receive_id_type, receive_id in targets:
+        payload = feishu.request_json(
+            "POST",
+            f"/im/v1/messages?receive_id_type={quote(receive_id_type)}",
+            token=token,
+            body={
+                "receive_id": receive_id,
+                "msg_type": "interactive",
+                "content": json.dumps(card, ensure_ascii=False),
+                "uuid": card_uuid("learning-card", uuid_base, receive_id_type, receive_id),
+            },
+        )
+        sends.append({"receive_id_type": receive_id_type, "receive_id": receive_id, "message_id": payload.get("data", {}).get("message_id", "")})
+    return {"sent_count": len(sends), "sends": sends}
+
+
+def send_learning_confirmation_card(token: str, summary: dict[str, Any], learning_record_id: str) -> dict[str, Any]:
+    card = build_learning_confirmation_card(summary, learning_record_id)
+    return send_interactive_card(token, card, f"{summary['learning_batch_id']}|{learning_record_id}")
+
+
 def ensure_or_create_table(token: str, app_token: str, tables_by_name: dict[str, str], table_name: str, fields: list[str], ensure_create: bool) -> str:
     table_id = tables_by_name.get(table_name, "")
     if not table_id:
@@ -440,6 +592,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--write-feishu", action="store_true", help="Write a learning record to Feishu 08. Protected by environment safety checks.")
     parser.add_argument("--ensure-learning-table", action="store_true", help="Create the learning table if missing.")
     parser.add_argument("--mark-pending-confirm", action="store_true", help="After writing Feishu, mark source 04/06 samples as pending confirmation.")
+    parser.add_argument("--send-card", action="store_true", help="Send a learning confirmation card to FEISHU_LEARNING_FEEDBACK_RECEIVE_TARGETS.")
     parser.add_argument("--allow-production-write", action="store_true", help="Allow writing production 08/source learning status.")
     parser.add_argument("--learning-table-name", default="", help="Override learning table name. Defaults to 08 学习记录 or 08 学习记录__测试 by env.")
     return parser.parse_args()
@@ -492,6 +645,9 @@ def main() -> int:
     LATEST_MD.write_text(markdown, encoding="utf-8")
 
     write_result: dict[str, Any] = {"written": False}
+    if args.send_card and not args.write_feishu:
+        raise SystemExit("--send-card requires --write-feishu so the card has a learning record to confirm.")
+
     if args.write_feishu:
         learning_table_name = args.learning_table_name.strip() or (TABLES["learning_record"] if environment == "production" else LEARNING_TEST_TABLE_NAME)
         learning_table_id = os.getenv(LEARNING_TABLE_ENV, "").strip() or tables_by_name.get(learning_table_name, "")
@@ -535,6 +691,8 @@ def main() -> int:
                 "内容学习批次": learning_batch_id,
                 "内容学习摘要": learning_conclusion(summary)[:1000],
             })
+        if args.send_card:
+            write_result["card_result"] = send_learning_confirmation_card(token, summary, learning_record_id)
 
     print(json.dumps({
         "ok": True,

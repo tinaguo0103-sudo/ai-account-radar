@@ -29,6 +29,7 @@ function makeMockFetch(records, calls) {
           items: [
             { name: "04 分析与选题", table_id: "tbl_topic" },
             { name: "06 完整脚本与制作包", table_id: "tbl_script_package" },
+            { name: "08 学习记录", table_id: "tbl_learning" },
           ],
         },
       });
@@ -434,6 +435,168 @@ test("submits script package quality feedback to 06 table", async () => {
     "反馈来源": "06完成卡",
     "内容学习状态": "待学习",
   });
+});
+
+test("confirms learning feedback and marks source records learned", async () => {
+  const records = [
+    { record_id: "learn_a", fields: { "学习批次": "learn_1", "确认状态": "待确认" } },
+    { record_id: "topic_a", fields: { "选题标题": "A", "学习状态": "待确认学习" } },
+    { record_id: "pkg_a", fields: { "脚本标题": "A 脚本包", "内容学习状态": "待确认学习" } },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: {
+            action: "submit_learning_feedback_confirmation",
+            decision: "部分采纳",
+            learning_record_id: "learn_a",
+            learning_batch_id: "learn_1",
+            topic_record_ids: ["topic_a"],
+            script_record_ids: ["pkg_a"],
+            learning_summary: "选题偏好需要保留，06 问题先人工复核。",
+          },
+          form_value: {
+            learning_confirmation_note: "采纳选题规则。",
+            learning_confirmation_note__2: "06 规则先别自动同步。",
+          },
+        },
+      },
+    },
+    {
+      ...env,
+      FEISHU_TOPIC_DECISION_TABLE_ID: "tbl_topic",
+      FEISHU_SCRIPT_PACKAGE_TABLE_ID: "tbl_script_package",
+      FEISHU_LEARNING_TABLE_ID: "tbl_learning",
+    },
+    { fetchImpl: makeMockFetch(records, calls), nowMs: Date.parse("2026-07-02T13:00:00.000Z") },
+  );
+  assert.deepEqual(await response.json(), toastBody("success", "已确认学习日结：部分采纳"));
+  const puts = calls.filter((call) => call.method === "PUT");
+  assert.equal(puts.length, 3);
+  assert.equal(puts[0].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_learning/records/learn_a");
+  assert.deepEqual(puts[0].body.fields, {
+    "确认状态": "部分采纳",
+    "确认时间": "2026-07-02T13:00:00.000Z",
+    "确认备注": "采纳选题规则。 06 规则先别自动同步。",
+    "Skill同步状态": "待同步",
+  });
+  assert.deepEqual(puts[1].body.fields, {
+    "学习状态": "已学习",
+    "选择学习批次": "learn_1",
+    "选择学习摘要": "选题偏好需要保留，06 问题先人工复核。",
+  });
+  assert.deepEqual(puts[2].body.fields, {
+    "内容学习状态": "已学习",
+    "内容学习批次": "learn_1",
+    "内容学习摘要": "选题偏好需要保留，06 问题先人工复核。",
+  });
+});
+
+test("rejected learning feedback is ignored without marking sources learned", async () => {
+  const records = [
+    { record_id: "learn_a", fields: { "学习批次": "learn_1", "确认状态": "待确认" } },
+    { record_id: "topic_a", fields: { "选题标题": "A", "学习状态": "待确认学习" } },
+    { record_id: "pkg_a", fields: { "脚本标题": "A 脚本包", "内容学习状态": "待确认学习" } },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: {
+            action: "submit_learning_feedback_confirmation",
+            decision: "暂不采纳",
+            learning_record_id: "learn_a",
+            learning_batch_id: "learn_1",
+            topic_record_ids: ["topic_a"],
+            script_record_ids: ["pkg_a"],
+            learning_summary: "样本不足。",
+          },
+          form_value: {},
+        },
+      },
+    },
+    {
+      ...env,
+      FEISHU_TOPIC_DECISION_TABLE_ID: "tbl_topic",
+      FEISHU_SCRIPT_PACKAGE_TABLE_ID: "tbl_script_package",
+      FEISHU_LEARNING_TABLE_ID: "tbl_learning",
+    },
+    { fetchImpl: makeMockFetch(records, calls), nowMs: Date.parse("2026-07-02T13:00:00.000Z") },
+  );
+  assert.deepEqual(await response.json(), toastBody("success", "已确认学习日结：暂不采纳"));
+  const puts = calls.filter((call) => call.method === "PUT");
+  assert.equal(puts.length, 3);
+  assert.equal(puts[0].body.fields["Skill同步状态"], "不同步");
+  assert.equal(puts[1].body.fields["学习状态"], "忽略");
+  assert.equal(puts[2].body.fields["内容学习状态"], "忽略");
+});
+
+test("blocks learning feedback after it has already been confirmed", async () => {
+  const records = [
+    { record_id: "learn_a", fields: { "学习批次": "learn_1", "确认状态": "已采纳" } },
+    { record_id: "topic_a", fields: { "选题标题": "A", "学习状态": "待确认学习" } },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: {
+            action: "submit_learning_feedback_confirmation",
+            decision: "已采纳",
+            learning_record_id: "learn_a",
+            learning_batch_id: "learn_1",
+            topic_record_ids: ["topic_a"],
+          },
+          form_value: {},
+        },
+      },
+    },
+    {
+      ...env,
+      FEISHU_TOPIC_DECISION_TABLE_ID: "tbl_topic",
+      FEISHU_LEARNING_TABLE_ID: "tbl_learning",
+    },
+    { fetchImpl: makeMockFetch(records, calls) },
+  );
+  assert.deepEqual(await response.json(), toastBody("warning", "这条学习日结已经确认过，不再重复处理"));
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
+});
+
+test("blocks staging learning feedback without explicit test table ids", async () => {
+  const records = [
+    { record_id: "learn_a", fields: { "学习批次": "learn_1", "确认状态": "待确认" } },
+    { record_id: "topic_a", fields: { "选题标题": "A", "学习状态": "待确认学习" } },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: {
+            action: "submit_learning_feedback_confirmation",
+            decision: "已采纳",
+            environment: "staging",
+            learning_record_id: "learn_a",
+            learning_batch_id: "learn_1",
+            topic_record_ids: ["topic_a"],
+          },
+          form_value: {},
+        },
+      },
+    },
+    env,
+    { fetchImpl: makeMockFetch(records, calls) },
+  );
+  assert.deepEqual(await response.json(), toastBody("warning", "测试学习卡缺少显式测试表配置，已拒绝回写"));
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
 });
 
 test("blocks expired cards before writing records", async () => {

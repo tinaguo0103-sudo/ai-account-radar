@@ -4,8 +4,11 @@ from __future__ import annotations
 import unittest
 
 from learn_from_daily_feedback import (
+    LEARNING_CONFIRM_ACTION,
+    build_learning_confirmation_card,
     is_test_table_name,
     markdown_report,
+    parse_learning_card_targets,
     script_feedback_sample,
     select_script_feedback,
     select_topic_samples,
@@ -54,6 +57,37 @@ class LearnFromDailyFeedbackTest(unittest.TestCase):
         self.assertTrue(is_test_table_name("08 学习记录__测试"))
         self.assertTrue(is_test_table_name("08_learning_TEST"))
         self.assertFalse(is_test_table_name("08 学习记录"))
+
+    def test_learning_confirmation_card_contains_three_decisions(self) -> None:
+        topics = [
+            {"record_id": "t1", "title": "A", "status": "生成脚本包", "is_positive": True, "selection_tags": ["真实痛点"], "direction": "AI业务", "reject_reason": "", "human_note": ""},
+        ]
+        scripts = [
+            {"record_id": "s1", "title": "S", "quality": "小修可拍", "issue_tags": ["不像我"], "note": "补真实场景。"},
+        ]
+        summary = summarize(topics, scripts, "learn_test", "staging")
+        card = build_learning_confirmation_card(summary, "rec_learning")
+        card_text = str(card)
+        for decision in ["已采纳", "部分采纳", "暂不采纳"]:
+            self.assertIn(decision, card_text)
+        self.assertIn(LEARNING_CONFIRM_ACTION, card_text)
+        self.assertIn("learning_confirmation_note__3", card_text)
+        self.assertIn("rec_learning", card_text)
+
+    def test_parse_learning_card_targets_requires_explicit_learning_target(self) -> None:
+        import os
+
+        old = os.environ.get("FEISHU_LEARNING_FEEDBACK_RECEIVE_TARGETS")
+        try:
+            os.environ["FEISHU_LEARNING_FEEDBACK_RECEIVE_TARGETS"] = "open_id:ou_self, chat_id:oc_test"
+            self.assertEqual(parse_learning_card_targets(), [("open_id", "ou_self"), ("chat_id", "oc_test")])
+            os.environ.pop("FEISHU_LEARNING_FEEDBACK_RECEIVE_TARGETS", None)
+            self.assertEqual(parse_learning_card_targets(), [])
+        finally:
+            if old is None:
+                os.environ.pop("FEISHU_LEARNING_FEEDBACK_RECEIVE_TARGETS", None)
+            else:
+                os.environ["FEISHU_LEARNING_FEEDBACK_RECEIVE_TARGETS"] = old
 
 
 if __name__ == "__main__":
