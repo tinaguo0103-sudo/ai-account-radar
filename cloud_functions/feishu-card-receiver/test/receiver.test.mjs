@@ -58,6 +58,36 @@ function makeMockFetch(records, calls) {
   };
 }
 
+function makeFilterRejectingFetch(records, calls) {
+  return async (url, init = {}) => {
+    const parsed = new URL(url);
+    const path = parsed.pathname + parsed.search;
+    calls.push({ method: init.method || "GET", path, body: init.body ? JSON.parse(init.body) : undefined });
+    if (path.endsWith("/auth/v3/tenant_access_token/internal")) {
+      return Response.json({ code: 0, tenant_access_token: "tenant_test" });
+    }
+    if (path.includes("/bitable/v1/apps/base_test/tables") && !path.includes("/records") && !path.includes("/fields")) {
+      return Response.json({ code: 0, data: { items: [{ name: "04 分析与选题", table_id: "tbl_topic" }] } });
+    }
+    if (path.includes("/records?") && path.includes("filter=")) {
+      return Response.json({ code: 1254018, msg: "InvalidFilter" }, { status: 400 });
+    }
+    if (path.includes("/records?")) {
+      return Response.json({ code: 0, data: { has_more: false, items: records } });
+    }
+    if (path.includes("/fields")) {
+      return Response.json({ code: 0, data: {} });
+    }
+    if (path.includes("/records/")) {
+      return Response.json({ code: 0, data: {} });
+    }
+    if (path.includes("/im/v1/messages")) {
+      return Response.json({ code: 0, data: { message_id: "om_test" } });
+    }
+    return Response.json({ code: 999, msg: `unexpected path ${path}` }, { status: 500 });
+  };
+}
+
 test("returns Feishu challenge", async () => {
   const response = await handlePayload({ challenge: "abc123" }, env);
   assert.equal(response.status, 200);
@@ -235,6 +265,49 @@ test("sends queued production direction cards from explicit queue", async () => 
   const puts = calls.filter((call) => call.method === "PUT");
   assert.equal(puts.filter((call) => call.body.fields["制作方向卡状态"] === "发送中").length, 1);
   assert.equal(puts.filter((call) => call.body.fields["制作方向卡状态"] === "已发送").length, 1);
+});
+
+test("falls back to local queue filtering when Feishu rejects record filters", async () => {
+  const records = [
+    {
+      record_id: "rec_a",
+      fields: {
+        "选题标题": "A",
+        "一句话Brief": "A brief",
+        "我要做的实验": "A experiment",
+        "运行批次": "run_1",
+        "状态": "生成脚本包",
+        "制作方向卡状态": "待发送",
+        "选择提交批次": "run_1:abc",
+        "选择提交时间": "2026-06-29T01:00:00.000Z",
+      },
+    },
+    {
+      record_id: "rec_b",
+      fields: {
+        "选题标题": "B",
+        "运行批次": "run_1",
+        "状态": "生成脚本包",
+        "制作方向卡状态": "已发送",
+        "选择提交批次": "run_1:abc",
+        "选择提交时间": "2026-06-29T01:00:00.000Z",
+      },
+    },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    { action: "send_pending_production_direction_cards" },
+    { ...env, SEND_PRODUCTION_DIRECTION_CARD: "true", FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow" },
+    { fetchImpl: makeFilterRejectingFetch(records, calls), nowMs: Date.parse("2026-06-29T02:00:00.000Z") },
+  );
+  const body = await response.json();
+  assert.equal(body.ok, true);
+  assert.equal(body.sent.length, 1);
+  assert.equal(body.sent[0].record_count, 1);
+  assert.ok(calls.some((call) => call.path.includes("filter=")));
+  assert.ok(calls.some((call) => call.path.includes("/records?page_size=500") && !call.path.includes("filter=")));
+  const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
+  assert.equal(sends.length, 1);
 });
 
 test("submits production direction cards and marks empty directions as reviewed", async () => {

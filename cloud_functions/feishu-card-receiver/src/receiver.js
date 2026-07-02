@@ -324,9 +324,7 @@ async function queueRecords(env, token, tableId, options) {
       filter: productionDirectionQueueFilter(cutoffIso, "isGreaterEqual"),
     });
   } catch (error) {
-    const records = await allRecords(env, token, tableId, options, {
-      filter: productionDirectionQueueFilter(),
-    });
+    const records = await allRecords(env, token, tableId, options);
     records.filter_fallback_error = errorText(error);
     return records;
   }
