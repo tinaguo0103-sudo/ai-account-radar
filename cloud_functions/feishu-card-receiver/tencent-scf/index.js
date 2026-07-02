@@ -226,36 +226,59 @@ function queueCutoffIso() {
   return new Date(Date.now() - cardExpireDays() * 24 * 60 * 60 * 1000).toISOString();
 }
 
-function recordFilterCondition(fieldName, operator, value = []) {
-  const condition = { field_name: fieldName, operator };
-  if (!["isEmpty", "isNotEmpty"].includes(operator)) {
-    condition.value = Array.isArray(value) ? value : [value];
-  }
-  return condition;
+function fallbackScanPageLimit() {
+  const raw = Number(envValue("FEISHU_DIRECTION_CARD_FALLBACK_SCAN_PAGES") || 2);
+  return Number.isFinite(raw) && raw > 0 ? raw : 2;
+}
+
+function escapeFormulaString(value) {
+  return normalize(value).replace(/\\/g, "\\\\").replace(/"/g, '\\"');
+}
+
+function formulaField(fieldName) {
+  return `CurrentValue.[${normalize(fieldName).replace(/\]/g, "\\]")}]`;
+}
+
+function formulaEquals(fieldName, value) {
+  return `${formulaField(fieldName)} = "${escapeFormulaString(value)}"`;
+}
+
+function formulaEmpty(fieldName) {
+  return `${formulaField(fieldName)} = ""`;
+}
+
+function formulaTextCompare(fieldName, operator, value) {
+  const symbol = operator === "isLess" ? "<" : operator === "isGreaterEqual" ? ">=" : "";
+  return symbol ? `${formulaField(fieldName)} ${symbol} "${escapeFormulaString(value)}"` : "";
+}
+
+function andFormula(conditions) {
+  const clean = conditions.filter(Boolean);
+  return clean.length === 1 ? clean[0] : `AND(${clean.join(", ")})`;
 }
 
 function productionDirectionQueueFilter(cutoffIso = "", cutoffOperator = "") {
   const conditions = [
-    recordFilterCondition(PRODUCTION_DIRECTION_CARD_STATUS_FIELD, "is", [PRODUCTION_DIRECTION_CARD_PENDING]),
-    recordFilterCondition("状态", "is", [SCRIPT_PACKAGE_READY_STATUS]),
-    recordFilterCondition(PRODUCTION_DIRECTION_FIELD, "isEmpty"),
+    formulaEquals(PRODUCTION_DIRECTION_CARD_STATUS_FIELD, PRODUCTION_DIRECTION_CARD_PENDING),
+    formulaEquals("状态", SCRIPT_PACKAGE_READY_STATUS),
+    formulaEmpty(PRODUCTION_DIRECTION_FIELD),
   ];
   if (cutoffIso && cutoffOperator) {
-    conditions.push(recordFilterCondition(SELECTION_SUBMITTED_AT_FIELD, cutoffOperator, [cutoffIso]));
+    conditions.push(formulaTextCompare(SELECTION_SUBMITTED_AT_FIELD, cutoffOperator, cutoffIso));
   }
-  return { conjunction: "and", conditions };
+  return andFormula(conditions);
 }
 
 function productionDirectionStatusFilter(status, cutoffIso = "", cutoffOperator = "") {
   const conditions = [
-    recordFilterCondition(PRODUCTION_DIRECTION_CARD_STATUS_FIELD, "is", [status]),
-    recordFilterCondition("状态", "is", [SCRIPT_PACKAGE_READY_STATUS]),
-    recordFilterCondition(PRODUCTION_DIRECTION_FIELD, "isEmpty"),
+    formulaEquals(PRODUCTION_DIRECTION_CARD_STATUS_FIELD, status),
+    formulaEquals("状态", SCRIPT_PACKAGE_READY_STATUS),
+    formulaEmpty(PRODUCTION_DIRECTION_FIELD),
   ];
   if (cutoffIso && cutoffOperator) {
-    conditions.push(recordFilterCondition(SELECTION_SUBMITTED_AT_FIELD, cutoffOperator, [cutoffIso]));
+    conditions.push(formulaTextCompare(SELECTION_SUBMITTED_AT_FIELD, cutoffOperator, cutoffIso));
   }
-  return { conjunction: "and", conditions };
+  return andFormula(conditions);
 }
 
 function pendingQueueRecords(records) {
@@ -326,7 +349,7 @@ async function queueRecords(token, tableId) {
       filter: productionDirectionQueueFilter(cutoffIso, "isGreaterEqual"),
     });
   } catch (error) {
-    const records = await allRecords(token, tableId);
+    const records = await allRecords(token, tableId, { maxPages: fallbackScanPageLimit() });
     records.filter_fallback_error = errorText(error);
     return records;
   }
@@ -704,10 +727,14 @@ async function sendInteractiveCard(token, card, uuidBase) {
 async function allRecords(token, tableId, queryOptions = {}) {
   const records = [];
   let pageToken = "";
+  let pageCount = 0;
+  const maxPages = Math.max(0, Number(queryOptions.maxPages || 0));
   while (true) {
     const query = new URLSearchParams({ page_size: "500" });
     if (pageToken) query.set("page_token", pageToken);
-    if (queryOptions.filter) query.set("filter", JSON.stringify(queryOptions.filter));
+    if (queryOptions.filter) {
+      query.set("filter", typeof queryOptions.filter === "string" ? queryOptions.filter : JSON.stringify(queryOptions.filter));
+    }
     const payload = await requestJson(
       "GET",
       `/bitable/v1/apps/${envValue("FEISHU_BASE_APP_TOKEN")}/tables/${tableId}/records?${query}`,
@@ -715,6 +742,11 @@ async function allRecords(token, tableId, queryOptions = {}) {
     );
     const data = payload.data || {};
     records.push(...(data.items || []));
+    pageCount += 1;
+    if (maxPages && pageCount >= maxPages) {
+      records.truncated = Boolean(data.has_more);
+      return records;
+    }
     if (!data.has_more) return records;
     pageToken = String(data.page_token || "");
   }
