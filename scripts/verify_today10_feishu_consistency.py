@@ -13,7 +13,14 @@ from typing import Any
 
 import push_to_feishu as feishu
 from feishu_table_registry import TABLES, resolve_table_id
-from push_today10_to_feishu import FALLBACK_EXPERIMENT_PROMPT, default_today10_path, map_row, today_slug
+from local_env import load_local_env
+from push_today10_to_feishu import (
+    FALLBACK_EXPERIMENT_PROMPT,
+    default_today10_path,
+    feishu_visible_rows,
+    map_row,
+    today_slug,
+)
 from topic_decision_fields import DAILY_WRITE_FIELDS, DETAIL_VISIBLE_FIELDS
 
 
@@ -96,11 +103,17 @@ GENERIC_ASSET_VALUES = {
 ASSET_NOISE_PHRASES = ["输入一条", "再跑一条", "按五段", "能不能", "是否", "如果", "若", "检查结果", "跑完后", "就进入", "不进入", "就判定"]
 
 
-def read_local(run_id: str, path: Path) -> list[dict[str, str]]:
+def read_csv_rows(path: Path) -> list[dict[str, str]]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
+        return list(csv.DictReader(handle))
+
+
+def read_local(run_id: str, path: Path) -> tuple[list[dict[str, str]], int]:
+    rows = read_csv_rows(path)
+    visible_rows, omitted_rows = feishu_visible_rows(rows)
     date = today_slug()
-    return [map_row(row, idx, date, run_id) for idx, row in enumerate(rows, start=1)]
+    mapped = [map_row(row, idx, date, run_id) for idx, row in enumerate(visible_rows, start=1)]
+    return mapped, omitted_rows
 
 
 def is_visible_candidate(row: dict[str, str]) -> bool:
@@ -179,6 +192,7 @@ def main() -> int:
     parser.add_argument("--run-id", required=True, help="Run id that was just written to Feishu.")
     parser.add_argument("--input", default="", help="Path to the local today candidate CSV that was written.")
     args = parser.parse_args()
+    load_local_env()
     input_path = Path(args.input) if args.input else default_today10_path()
 
     app_token = os.getenv("FEISHU_BASE_APP_TOKEN")
@@ -191,8 +205,7 @@ def main() -> int:
     if not table_id:
         raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
 
-    all_local_rows = read_local(args.run_id, input_path)
-    local_rows = [row for row in all_local_rows if is_visible_candidate(row)]
+    local_rows, omitted_rows = read_local(args.run_id, input_path)
     records = all_records(token, app_token, table_id)
     run_records = [record for record in records if normalize(record.get("fields", {}).get("运行批次")) == args.run_id]
     feishu_by_key = {feishu_key(record.get("fields", {})): record for record in run_records}
@@ -255,8 +268,9 @@ def main() -> int:
         "ok": not failures,
         "run_id": args.run_id,
         "input": str(input_path),
-        "local_rows_all": len(all_local_rows),
+        "local_rows_all": len(local_rows) + omitted_rows,
         "local_rows": len(local_rows),
+        "omitted_rows": omitted_rows,
         "feishu_rows": len(run_records),
         "level_counts": dict(level_counts),
         "duplicates": [list(key) for key in duplicates],

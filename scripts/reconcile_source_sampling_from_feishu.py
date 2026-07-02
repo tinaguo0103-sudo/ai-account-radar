@@ -152,7 +152,7 @@ def update_common_from_feishu(source: dict[str, Any], fields: dict[str, Any], co
     source["source_type"] = text(source.get("source_type")) or infer_source_type(platform)
     source["content_shape"] = text(source.get("content_shape")) or infer_content_shape(platform)
     source["fetch_method"] = text(fields.get("抓取方式")) or text(source.get("fetch_method")) or infer_fetch_method(platform, role)
-    source["sample_frequency"] = "daily_or_when_updated"
+    source["sample_frequency"] = "paused" if text(source.get("fetch_method")).startswith("paused_") else "daily_or_when_updated"
     if text(fields.get("关注重点")):
         source["learn_focus"] = text(fields.get("关注重点"))
     elif not text(source.get("learn_focus")):
