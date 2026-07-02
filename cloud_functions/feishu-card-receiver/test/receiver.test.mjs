@@ -266,6 +266,11 @@ test("sends queued production direction cards from explicit queue", async () => 
   const puts = calls.filter((call) => call.method === "PUT");
   assert.equal(puts.filter((call) => call.body.fields["制作方向卡状态"] === "发送中").length, 1);
   assert.equal(puts.filter((call) => call.body.fields["制作方向卡状态"] === "已发送").length, 1);
+  const filteredRead = calls.find((call) => call.path.includes("/records?") && call.path.includes("filter="));
+  assert.ok(filteredRead);
+  const filter = new URLSearchParams(filteredRead.path.split("?")[1]).get("filter");
+  assert.match(filter, /CurrentValue\.\[制作方向卡状态\] = "待发送"/);
+  assert.match(filter, /CurrentValue\.\[状态\] = "生成脚本包"/);
 });
 
 test("falls back to local queue filtering when Feishu rejects record filters", async () => {
@@ -307,6 +312,8 @@ test("falls back to local queue filtering when Feishu rejects record filters", a
   assert.equal(body.sent[0].record_count, 1);
   assert.ok(calls.some((call) => call.path.includes("filter=")));
   assert.ok(calls.some((call) => call.path.includes("/records?page_size=500") && !call.path.includes("filter=")));
+  const fallbackReads = calls.filter((call) => call.path.includes("/records?page_size=500") && !call.path.includes("filter="));
+  assert.equal(fallbackReads.length, 1);
   const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
   assert.equal(sends.length, 1);
 });
