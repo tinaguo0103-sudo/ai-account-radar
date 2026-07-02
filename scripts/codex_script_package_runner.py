@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -55,6 +56,22 @@ TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(
 DOC_SYNC_MAX_PARAGRAPHS = 180
 USER_TOKEN_REFRESH_SAFETY_SECONDS = 300
 LOCAL_ENV_FILE = ROOT / ".env.local"
+SCRIPT_PACKAGE_QUALITY_ACTION = "submit_script_package_quality_feedback"
+SCRIPT_PACKAGE_QUALITY_OPTIONS = ["直接可拍", "小修可拍", "需要重写", "暂不采用"]
+SCRIPT_PACKAGE_ISSUE_OPTIONS = [
+    "不像我",
+    "太 AI 味",
+    "太泛",
+    "旧流程痛点不准",
+    "AI 介入点不清",
+    "结构散",
+    "标题弱",
+    "证据不可拍",
+    "口播不顺",
+    "太长",
+    "过度承诺",
+    "需要补真实案例",
+]
 
 
 @dataclass
@@ -113,6 +130,69 @@ def script_package_folder_token() -> str:
 
 def script_package_folder_url() -> str:
     return os.getenv("FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_URL", "").strip()
+
+
+def parse_card_targets() -> list[tuple[str, str]]:
+    raw = os.getenv("FEISHU_SCRIPT_PACKAGE_FEEDBACK_RECEIVE_TARGETS", "").strip()
+    targets: list[tuple[str, str]] = []
+    for part in raw.split(","):
+        item = part.strip()
+        if not item or ":" not in item:
+            continue
+        receive_id_type, receive_id = item.split(":", 1)
+        receive_id_type = receive_id_type.strip()
+        receive_id = receive_id.strip()
+        if receive_id_type and receive_id:
+            targets.append((receive_id_type, receive_id))
+    return targets
+
+
+def card_uuid(prefix: str, *parts: str) -> str:
+    seed = "|".join(str(part) for part in parts if str(part))
+    digest = hashlib.sha1((seed or prefix).encode("utf-8")).hexdigest()[:16]
+    return f"{prefix}-{digest}"[:50]
+
+
+def card_option(value: str) -> dict[str, Any]:
+    return {"text": {"tag": "plain_text", "content": value}, "value": value}
+
+
+def quality_select(record_id: str) -> dict[str, Any]:
+    return {
+        "tag": "select_static",
+        "name": f"script_quality__{record_id}",
+        "required": False,
+        "width": "fill",
+        "placeholder": {"tag": "plain_text", "content": "选择质量结论"},
+        "options": [card_option(value) for value in SCRIPT_PACKAGE_QUALITY_OPTIONS],
+    }
+
+
+def issue_select(record_id: str) -> dict[str, Any]:
+    return {
+        "tag": "multi_select_static",
+        "name": f"script_issues__{record_id}",
+        "required": False,
+        "width": "fill",
+        "placeholder": {"tag": "plain_text", "content": "选择主要问题，可多选"},
+        "options": [card_option(value) for value in SCRIPT_PACKAGE_ISSUE_OPTIONS],
+    }
+
+
+def feedback_input(record_id: str) -> dict[str, Any]:
+    return {
+        "tag": "input",
+        "name": f"script_note__{record_id}",
+        "required": False,
+        "width": "fill",
+        "input_type": "multiline",
+        "rows": 4,
+        "placeholder": {
+            "tag": "plain_text",
+            "content": "写具体修改意见：哪里不像、哪段要改、应该补哪个真实场景或证据。可以写多句。",
+        },
+        "default_value": "",
+    }
 
 
 def local_env_quote(value: str) -> str:
@@ -622,6 +702,149 @@ def create_script_package_record(token: str, app_token: str, table_id: str, row:
     return str(record.get("record_id", ""))
 
 
+def result_link_markdown(result: dict[str, Any]) -> str:
+    url = str(result.get("feishu_document_url") or "").strip()
+    local_path = str(result.get("document_path") or "").strip()
+    if url:
+        return f"[打开飞书文档]({url})"
+    if local_path:
+        return f"本地文档：{local_path}"
+    return "未生成文档链接"
+
+
+def build_completion_card(results: list[dict[str, Any]]) -> dict[str, Any]:
+    feedback_results = [item for item in results if str(item.get("created_script_package_id") or "").strip()]
+    issued_at = datetime.utcnow().replace(microsecond=0)
+    expires_at = issued_at + timedelta(days=7)
+    record_ids = [str(item["created_script_package_id"]) for item in feedback_results]
+    elements: list[dict[str, Any]] = [
+        {
+            "tag": "markdown",
+            "content": (
+                f"本轮已生成 {len(feedback_results)} 份 `06 完整脚本与制作包`。"
+                "所有交付文档集中在这张卡里；可以先打开文档阅读，再在下方留下质量反馈。"
+            ),
+        }
+    ]
+    form_elements: list[dict[str, Any]] = []
+    for index, result in enumerate(feedback_results, start=1):
+        record_id = str(result["created_script_package_id"])
+        title = compact(result.get("topic_title"), 60) or f"脚本包 {index}"
+        core = compact(result.get("core_viewpoint"), 140)
+        qa_status = compact(result.get("qa_status"), 16)
+        can_shoot = compact(result.get("can_shoot"), 80)
+        lines = [f"**{index}. {title}**", result_link_markdown(result)]
+        meta = "｜".join(part for part in [f"QA：{qa_status}" if qa_status else "", f"可拍：{can_shoot}" if can_shoot else ""] if part)
+        if meta:
+            lines.append(meta)
+        if core:
+            lines.append(f"核心观点：{core}")
+        form_elements.extend([
+            {"tag": "markdown", "content": "\n".join(lines)},
+            quality_select(record_id),
+            issue_select(record_id),
+            feedback_input(record_id),
+        ])
+        if index != len(feedback_results):
+            form_elements.append({"tag": "hr"})
+
+    form_elements.append({
+        "tag": "column_set",
+        "columns": [
+            {
+                "tag": "column",
+                "width": "auto",
+                "elements": [
+                    {
+                        "tag": "button",
+                        "type": "primary",
+                        "width": "default",
+                        "text": {"tag": "plain_text", "content": "保存质量反馈"},
+                        "form_action_type": "submit",
+                        "name": "submit_script_package_quality_feedback",
+                        "behaviors": [
+                            {
+                                "type": "callback",
+                                "value": {
+                                    "action": SCRIPT_PACKAGE_QUALITY_ACTION,
+                                    "candidate_ids": record_ids,
+                                    "card_issued_at": issued_at.isoformat() + "Z",
+                                    "card_expires_at": expires_at.isoformat() + "Z",
+                                    "card_ttl_days": 7,
+                                },
+                            },
+                        ],
+                    },
+                ],
+            },
+            {
+                "tag": "column",
+                "width": "auto",
+                "elements": [
+                    {
+                        "tag": "button",
+                        "type": "default",
+                        "width": "default",
+                        "text": {"tag": "plain_text", "content": "重置"},
+                        "form_action_type": "reset",
+                        "name": "reset_script_package_quality_feedback",
+                    },
+                ],
+            },
+        ],
+    })
+    elements.append({
+        "tag": "form",
+        "name": "script_package_quality_batch",
+        "padding": "8px 0px 0px 0px",
+        "vertical_spacing": "8px",
+        "elements": form_elements,
+    })
+    return {
+        "schema": "2.0",
+        "config": {
+            "update_multi": True,
+            "enable_forward": False,
+            "width_mode": "fill",
+        },
+        "header": {
+            "template": "blue",
+            "title": {"tag": "plain_text", "content": "06 完整脚本与制作包已生成"},
+        },
+        "body": {"elements": elements},
+    }
+
+
+def send_interactive_card(token: str, card: dict[str, Any], uuid_base: str) -> dict[str, Any]:
+    targets = parse_card_targets()
+    if not targets:
+        return {"sent_count": 0, "skipped": "missing_receive_targets"}
+    sends = []
+    for receive_id_type, receive_id in targets:
+        payload = feishu.request_json(
+            "POST",
+            f"/im/v1/messages?receive_id_type={quote(receive_id_type)}",
+            token=token,
+            body={
+                "receive_id": receive_id,
+                "msg_type": "interactive",
+                "content": json.dumps(card, ensure_ascii=False),
+                "uuid": card_uuid("script-package-card", uuid_base, receive_id_type, receive_id),
+            },
+        )
+        sends.append({"receive_id_type": receive_id_type, "receive_id": receive_id, "message_id": payload.get("data", {}).get("message_id", "")})
+    return {"sent_count": len(sends), "sends": sends}
+
+
+def send_completion_card(token: str, results: list[dict[str, Any]]) -> dict[str, Any]:
+    feedback_results = [item for item in results if str(item.get("created_script_package_id") or "").strip()]
+    if not feedback_results:
+        return {"sent_count": 0, "skipped": "no_script_package_records"}
+    card = build_completion_card(feedback_results)
+    uuid_base = "|".join(str(item.get("created_script_package_id") or "") for item in feedback_results)
+    return send_interactive_card(token, card, uuid_base)
+
+
 def mark_topic_generated(token: str, app_token: str, table_id: str, record_id: str, marker: str = "是") -> None:
     feishu.request_json(
         "PUT",
@@ -651,6 +874,7 @@ def main() -> int:
     parser.add_argument("--max-age-days", type=int, default=int(os.getenv("CODEX_SCRIPT_PACKAGE_MAX_AGE_DAYS", "0")), help="Only auto-process records whose 推荐日期 is within this many days. 0 means no date filter.")
     parser.add_argument("--include-test-records", action="store_true", help="Allow obvious test-titled topics to be processed.")
     parser.add_argument("--skip-codex", action="store_true", help="Only list ready topics. Useful for scheduler health checks.")
+    parser.add_argument("--no-completion-card", action="store_true", help="Do not send the 06 completion feedback card after writing Feishu records.")
     args = parser.parse_args()
 
     _lock = acquire_lock()
@@ -702,6 +926,10 @@ def main() -> int:
             "feishu_document_url": doc_sync.url,
             "doc_sync_status": doc_sync.status,
             "qa_status": qa_status,
+            "qa_result": str(package.get("qa_result") or ""),
+            "core_viewpoint": str(package.get("core_viewpoint") or ""),
+            "opening_hook": str(package.get("opening_hook") or ""),
+            "can_shoot": str(package.get("can_shoot") or ""),
             "attempts": attempt_count,
             "attempt_history": attempt_history,
             "created_script_package_id": created_id,
@@ -712,7 +940,15 @@ def main() -> int:
         log(json.dumps({"event": "topic_done", **result}, ensure_ascii=False))
         time.sleep(0.2)
 
-    print(json.dumps({"ok": True, "version": RUNNER_VERSION, "results": results}, ensure_ascii=False, indent=2))
+    completion_card: dict[str, Any] = {"sent_count": 0, "skipped": "disabled_or_not_write_feishu"}
+    if args.write_feishu and not args.no_completion_card:
+        try:
+            completion_card = send_completion_card(token, results)
+        except Exception as exc:  # noqa: BLE001 - docs are already generated; surface card failure without rollback.
+            completion_card = {"sent_count": 0, "error": compact(exc, 1000)}
+        log(json.dumps({"event": "completion_card", **completion_card}, ensure_ascii=False))
+
+    print(json.dumps({"ok": True, "version": RUNNER_VERSION, "results": results, "completion_card": completion_card}, ensure_ascii=False, indent=2))
     return 0
 
 

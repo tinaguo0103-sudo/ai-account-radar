@@ -1,8 +1,20 @@
 const DEFAULT_API_HOST = "https://open.feishu.cn";
 const TOPIC_TABLE_NAMES = ["04 分析与选题"];
+const SCRIPT_PACKAGE_TABLE_NAMES = ["06 完整脚本与制作包"];
 const ENTER_SCRIPT_PACKAGE_FORM_KEY = "script_package_records";
 const PRODUCTION_DIRECTION_FIELD = "我的制作补充";
 const PRODUCTION_DIRECTION_FORM_PREFIX = "production_direction__";
+const SCRIPT_PACKAGE_QUALITY_FORM_PREFIX = "script_quality__";
+const SCRIPT_PACKAGE_ISSUES_FORM_PREFIX = "script_issues__";
+const SCRIPT_PACKAGE_NOTE_FORM_PREFIX = "script_note__";
+const SCRIPT_PACKAGE_QUALITY_FIELDS = [
+  "人工质量反馈",
+  "质量问题标签",
+  "人工修改意见",
+  "反馈时间",
+  "反馈来源",
+  "内容学习状态",
+];
 const PRODUCTION_DIRECTION_CARD_STATUS_FIELD = "制作方向卡状态";
 const SELECTION_SUBMISSION_ID_FIELD = "选择提交批次";
 const SELECTION_SUBMITTED_AT_FIELD = "选择提交时间";
@@ -18,11 +30,13 @@ const SCRIPT_PACKAGE_READY_STATUS = "生成脚本包";
 const SUBMIT_SELECTION_ACTION = "submit_topic_decisions";
 const SUBMIT_NO_SELECTION_ACTION = "submit_no_selection";
 const SUBMIT_PRODUCTION_DIRECTIONS_ACTION = "submit_production_directions";
+const SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION = "submit_script_package_quality_feedback";
 const SEND_PENDING_PRODUCTION_DIRECTION_CARDS_ACTION = "send_pending_production_direction_cards";
 const SUPPORTED_SUBMIT_ACTIONS = new Set([
   SUBMIT_SELECTION_ACTION,
   SUBMIT_NO_SELECTION_ACTION,
   SUBMIT_PRODUCTION_DIRECTIONS_ACTION,
+  SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION,
 ]);
 const TOKEN_CACHE_SAFETY_SECONDS = 300;
 const DEFAULT_CARD_EXPIRE_DAYS = 5;
@@ -192,6 +206,14 @@ async function topicTableId(env, token, options) {
   const found = tables.find((table) => TOPIC_TABLE_NAMES.includes(table.name));
   if (!found?.table_id) throw new Error(`Missing topic table. Expected one of: ${TOPIC_TABLE_NAMES.join(", ")}`);
   if (!options?.fetchImpl) cachedTopicTableId = found.table_id;
+  return found.table_id;
+}
+
+async function scriptPackageTableId(env, token, options) {
+  if (env.FEISHU_SCRIPT_PACKAGE_TABLE_ID) return env.FEISHU_SCRIPT_PACKAGE_TABLE_ID;
+  const tables = await listTables(env, token, options);
+  const found = tables.find((table) => SCRIPT_PACKAGE_TABLE_NAMES.includes(table.name));
+  if (!found?.table_id) throw new Error(`Missing script package table. Expected one of: ${SCRIPT_PACKAGE_TABLE_NAMES.join(", ")}`);
   return found.table_id;
 }
 
@@ -407,6 +429,18 @@ function parseReceiveTargets(env) {
 
 function productionDirectionKey(recordId) {
   return `${PRODUCTION_DIRECTION_FORM_PREFIX}${recordId}`;
+}
+
+function scriptPackageQualityKey(recordId) {
+  return `${SCRIPT_PACKAGE_QUALITY_FORM_PREFIX}${recordId}`;
+}
+
+function scriptPackageIssuesKey(recordId) {
+  return `${SCRIPT_PACKAGE_ISSUES_FORM_PREFIX}${recordId}`;
+}
+
+function scriptPackageNoteKey(recordId) {
+  return `${SCRIPT_PACKAGE_NOTE_FORM_PREFIX}${recordId}`;
 }
 
 function candidateSnapshotsFromValue(value) {
@@ -655,6 +689,13 @@ async function productionDirectionCardGuard(env, token, tableId, candidateIds, r
   return { blocked: false };
 }
 
+async function scriptPackageQualityCardGuard(env, token, tableId, candidateIds, options) {
+  const records = await recordsById(env, token, tableId, candidateIds, options);
+  const missing = candidateIds.filter((recordId) => recordId && !records[recordId]);
+  if (missing.length) return { blocked: true, reason: "card_records_missing", missing };
+  return { blocked: false };
+}
+
 async function fieldsByName(env, token, tableId, options) {
   const payload = await requestJson(
     env,
@@ -858,6 +899,51 @@ async function applyProductionDirections(env, token, tableId, formValue, { candi
   };
 }
 
+async function applyScriptPackageQualityFeedback(env, token, tableId, formValue, { candidateIds, options }) {
+  const dryRun = String(env.DRY_RUN || "").toLowerCase() === "true";
+  const updates = [];
+  const skipped = [];
+  const feedbackAt = new Date(currentTimeMs(options)).toISOString();
+
+  if (!dryRun && String(env.ENSURE_SCRIPT_PACKAGE_QUALITY_FIELDS || "true").toLowerCase() !== "false") {
+    await ensureTextFields(env, token, tableId, SCRIPT_PACKAGE_QUALITY_FIELDS, options);
+  }
+
+  for (const recordId of candidateIds || []) {
+    const quality = compact(formValue[scriptPackageQualityKey(recordId)], 80);
+    const issues = coerceList(formValue[scriptPackageIssuesKey(recordId)]);
+    const note = compact(formValue[scriptPackageNoteKey(recordId)], 2000);
+    if (!quality && issues.length === 0 && !note) {
+      skipped.push({ record_id: recordId, reason: "empty_feedback" });
+      continue;
+    }
+    updates.push({
+      record_id: recordId,
+      fields: {
+        "人工质量反馈": quality,
+        "质量问题标签": issues.join("、"),
+        "人工修改意见": note,
+        "反馈时间": feedbackAt,
+        "反馈来源": "06完成卡",
+        "内容学习状态": "待学习",
+      },
+    });
+  }
+
+  if (!dryRun) {
+    await Promise.all(updates.map((update) => updateRecordFields(env, token, tableId, update.record_id, update.fields, options)));
+  }
+
+  return {
+    ok: true,
+    mode: dryRun ? "dry-run" : "write",
+    updated_count: dryRun ? 0 : updates.length,
+    candidate_update_count: updates.length,
+    updates,
+    skipped,
+  };
+}
+
 export async function processCardSubmission(env, value, formValue, options = {}) {
   const actionName = String(value.action || "");
   if (!SUPPORTED_SUBMIT_ACTIONS.has(actionName)) {
@@ -888,6 +974,27 @@ export async function processCardSubmission(env, value, formValue, options = {})
   }
 
   const token = await tenantToken(env, options);
+  if (actionName === SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION) {
+    const tableId = await scriptPackageTableId(env, token, options);
+    const guard = await scriptPackageQualityCardGuard(env, token, tableId, candidateIds, options);
+    if (guard.blocked) {
+      return {
+        ok: false,
+        ...guard,
+        action: actionName,
+        updated_count: 0,
+        candidate_update_count: 0,
+      };
+    }
+    const feedbackSummary = await applyScriptPackageQualityFeedback(env, token, tableId, effectiveFormValue, {
+      candidateIds,
+      options,
+    });
+    feedbackSummary.action = actionName;
+    feedbackSummary.receipt_key = await submissionFingerprint(actionName, runId, candidateIds, effectiveFormValue);
+    return feedbackSummary;
+  }
+
   const tableId = await topicTableId(env, token, options);
   if (actionName === SUBMIT_PRODUCTION_DIRECTIONS_ACTION) {
     const guard = await productionDirectionCardGuard(env, token, tableId, candidateIds, runId, options);
@@ -1002,6 +1109,11 @@ export async function handlePayload(payload, env, options = {}) {
       const count = summary.updated_count;
       if (count === 0) return toast("warning", "没有保存新的制作方向");
       return toast("success", `已保存 ${count} 条制作方向`);
+    }
+    if (summary.action === SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION) {
+      const count = summary.updated_count;
+      if (count === 0) return toast("warning", "没有保存新的质量反馈");
+      return toast("success", `已保存 ${count} 条质量反馈`);
     }
     const count = summary.updated_count;
     const skippedNoChange = (summary.skipped || []).filter((item) => item.reason === "no_change").length;

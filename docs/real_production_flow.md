@@ -63,12 +63,14 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 
 - 本地生成 `06 完整脚本与制作包/YYYY-MM-DD_选题标题_完整脚本与制作包.md`。
 - 飞书文档优先生成到用户可见的 `AI账号信息雷达 / 06完整脚本与制作包` 子文件夹，并在飞书 `06 完整脚本与制作包` 新增一条轻量记录；如果当前 token 无权写入用户可见文件夹，06 会保留本地文档并写出同步报警。
+- 如果显式配置了 `FEISHU_SCRIPT_PACKAGE_FEEDBACK_RECEIVE_TARGETS`，runner 会把本轮所有 `06` 交付文档汇总成一张飞书完成卡。卡片里可以直接提交质量反馈，回写 `06 / 人工质量反馈、质量问题标签、人工修改意见、反馈时间、反馈来源、内容学习状态`。测试时该目标必须指向个人，不复用正式群目标。
 - 飞书 `04 分析与选题` 的 `是否已生成脚本稿` 标记为 `是` 或 `需人工处理`，避免重复生成。
 
 用户可见飞书文件夹配置：
 
 - `FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_TOKEN`：用户在普通飞书云盘里能看到的 `06完整脚本与制作包` 子文件夹 token。
 - `FEISHU_SCRIPT_PACKAGE_VISIBLE_FOLDER_URL`：同一个子文件夹的浏览器链接，写入 06 的 `飞书文件夹`。
+- `FEISHU_SCRIPT_PACKAGE_FEEDBACK_RECEIVE_TARGETS`：06 完成反馈卡接收目标，格式如 `open_id:xxx` 或 `chat_id:xxx`，多个用英文逗号分隔。预合并/测试环境应指向个人，不要指向正式群。
 - `FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN` / `FEISHU_USER_ACCESS_TOKEN`：写用户可见云盘文件夹时需要。tenant/app token 已验证会被飞书返回 `1770040 no folder permission`，即使应用 API 权限已经开通，也不能代表用户写入普通云盘文件夹。
 - 旧 `FEISHU_SCRIPT_PACKAGE_FOLDER_TOKEN` 只作为应用空间兼容路径，不视为用户可见正常文件夹入口。
 

@@ -23,7 +23,15 @@ function makeMockFetch(records, calls) {
       return Response.json({ code: 0, tenant_access_token: "tenant_test" });
     }
     if (path.includes("/bitable/v1/apps/base_test/tables") && !path.includes("/records") && !path.includes("/fields")) {
-      return Response.json({ code: 0, data: { items: [{ name: "04 分析与选题", table_id: "tbl_topic" }] } });
+      return Response.json({
+        code: 0,
+        data: {
+          items: [
+            { name: "04 分析与选题", table_id: "tbl_topic" },
+            { name: "06 完整脚本与制作包", table_id: "tbl_script_package" },
+          ],
+        },
+      });
     }
     if (path.includes("/records?")) {
       return Response.json({ code: 0, data: { has_more: false, items: records } });
@@ -262,6 +270,49 @@ test("submits production direction cards and marks empty directions as reviewed"
   assert.deepEqual(puts[1].body.fields, {
     "制作方向卡状态": "已提交",
     "制作方向卡错误": "",
+  });
+});
+
+test("submits script package quality feedback to 06 table", async () => {
+  const records = [
+    { record_id: "pkg_a", fields: { "脚本标题": "A 脚本包" } },
+    { record_id: "pkg_b", fields: { "脚本标题": "B 脚本包" } },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: {
+            action: "submit_script_package_quality_feedback",
+            candidate_ids: ["pkg_a", "pkg_b"],
+          },
+          form_value: {
+            script_quality__pkg_a: "小修可拍",
+            script_issues__pkg_a: ["不像我", "旧流程痛点不准"],
+            script_note__pkg_a: "第二段还不够像我的现场判断，要补具体项目里的旧流程卡点；标题也可以更直接一点。",
+            script_quality__pkg_b: "",
+            script_issues__pkg_b: [],
+            script_note__pkg_b: "",
+          },
+        },
+      },
+    },
+    env,
+    { fetchImpl: makeMockFetch(records, calls), nowMs: Date.parse("2026-07-02T12:00:00.000Z") },
+  );
+  assert.deepEqual(await response.json(), toastBody("success", "已保存 1 条质量反馈"));
+  const puts = calls.filter((call) => call.method === "PUT");
+  assert.equal(puts.length, 1);
+  assert.equal(puts[0].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_script_package/records/pkg_a");
+  assert.deepEqual(puts[0].body.fields, {
+    "人工质量反馈": "小修可拍",
+    "质量问题标签": "不像我、旧流程痛点不准",
+    "人工修改意见": "第二段还不够像我的现场判断，要补具体项目里的旧流程卡点；标题也可以更直接一点。",
+    "反馈时间": "2026-07-02T12:00:00.000Z",
+    "反馈来源": "06完成卡",
+    "内容学习状态": "待学习",
   });
 });
 

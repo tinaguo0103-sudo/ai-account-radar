@@ -116,6 +116,7 @@ Codex 定时任务负责触发本仓库脚本和执行外层主编 Skill；迁�
 - 10:00 发卡成功：选题卡本身就是反馈。
 - 10:00 因当天采集失败、候选为空或 latest_write 不是当天结果而跳过：通过飞书发送“AI账号雷达今日未发选题卡”。
 - 10:00 发卡命令失败：通过飞书发送“AI账号雷达选题卡发送失败”。
+- 06 生成成功：如果配置了 `FEISHU_SCRIPT_PACKAGE_FEEDBACK_RECEIVE_TARGETS`，生成器只发送一张“06 完整脚本与制作包已生成”汇总卡，集中列出本轮所有交付文档，并把质量反馈写回 06。预合并/测试时该目标只允许指向个人，避免打扰正式群。
 
 默认通知目标读取 `FEISHU_AUTOMATION_NOTIFY_TARGETS`；如果没有配置，就复用 `FEISHU_CARD_RECEIVE_TARGETS`。手动排障不想发通知时可加 `--no-notify`。
 
