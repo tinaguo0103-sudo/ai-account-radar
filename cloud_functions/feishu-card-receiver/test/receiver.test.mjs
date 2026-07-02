@@ -310,6 +310,51 @@ test("falls back to local queue filtering when Feishu rejects record filters", a
   assert.equal(sends.length, 1);
 });
 
+test("marks stale sending direction cards as failed and sends alert", async () => {
+  const records = [
+    {
+      record_id: "rec_stuck",
+      fields: {
+        "选题标题": "卡住的选题",
+        "运行批次": "run_1",
+        "状态": "生成脚本包",
+        "制作方向卡状态": "发送中",
+        "选择提交批次": "run_1:abc",
+        "选择提交时间": "2026-06-29T01:00:00.000Z",
+      },
+    },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    { action: "send_pending_production_direction_cards" },
+    {
+      ...env,
+      SEND_PRODUCTION_DIRECTION_CARD: "true",
+      FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow",
+      FEISHU_AUTOMATION_NOTIFY_TARGETS: "open_id:ou_alert",
+      FEISHU_DIRECTION_CARD_STUCK_MINUTES: "15",
+    },
+    { fetchImpl: makeMockFetch(records, calls), nowMs: Date.parse("2026-06-29T01:20:00.000Z") },
+  );
+  const body = await response.json();
+  assert.equal(body.ok, false);
+  assert.equal(body.stuck_count, 1);
+  assert.equal(body.notification.sent_count, 1);
+  const puts = calls.filter((call) => call.method === "PUT");
+  assert.equal(puts.length, 1);
+  assert.deepEqual(puts[0].body.fields, {
+    "制作方向卡状态": "发送失败",
+    "制作方向卡错误": "停留在发送中超过 15 分钟，可能上次定时发送中断",
+  });
+  const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
+  assert.equal(sends.length, 1);
+  assert.equal(sends[0].body.receive_id, "ou_alert");
+  assert.equal(sends[0].body.msg_type, "text");
+  const alertText = JSON.parse(sends[0].body.content).text;
+  assert.match(alertText, /制作方向卡发送异常/);
+  assert.match(alertText, /卡住的选题/);
+});
+
 test("submits production direction cards and marks empty directions as reviewed", async () => {
   const records = [
     { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "生成脚本包" } },

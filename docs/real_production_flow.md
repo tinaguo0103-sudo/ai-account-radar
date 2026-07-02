@@ -88,7 +88,7 @@ python3 scripts/feishu_user_oauth.py --timeout-seconds 240
 
 ## 自动化边界
 
-- 腾讯云卡片 receiver 负责两件事：接收第一张/第二张卡片回调并写回 `04`；通过名为 `send-production-direction-cards` 的 5 分钟定时触发器，把 `制作方向卡状态=待发送` 的选中记录发成第二张补充卡。发送前状态为 `发送中`，成功后为 `已发送`，第二张卡提交后为 `已提交`，失败会写入 `制作方向卡错误`。
+- 腾讯云卡片 receiver 负责两件事：接收第一张/第二张卡片回调并写回 `04`；通过名为 `send-production-direction-cards` 的 5 分钟定时触发器，把 `制作方向卡状态=待发送` 的选中记录发成第二张补充卡。发送前状态为 `发送中`，成功后为 `已发送`，第二张卡提交后为 `已提交`，失败会写入 `制作方向卡错误`。如果发送失败、接收人缺失、记录停留在 `发送中` 超过 `FEISHU_DIRECTION_CARD_STUCK_MINUTES`（默认 15 分钟），或超过 5 天被忽略，云函数会把记录改为异常状态并发送“制作方向卡发送异常”通知；通知目标优先读取 `FEISHU_PRODUCTION_DIRECTION_ALERT_TARGETS`，其次读取 `FEISHU_AUTOMATION_NOTIFY_TARGETS`，最后复用 `FEISHU_CARD_RECEIVE_TARGETS`。
 - 本机轻量 watcher 只负责按需运行 `codex_script_package_runner.py`；真正写作由本机已登录的 Codex CLI 和全局私有 Skill 完成。
 - 锁屏但不睡眠、不断网时可以运行；睡眠唤醒后通常会继续运行；重启后登录系统会自动拉起。关机、睡眠、断网期间不会生成，但腾讯云已写回的选择会留在 `04`，恢复后补生成。
 - 本轮不做任务拆分、自动剪辑或自动发布；这些能力以后单独设计，不再恢复 `05` 中间层。

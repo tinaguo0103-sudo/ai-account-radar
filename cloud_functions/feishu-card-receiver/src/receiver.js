@@ -40,6 +40,7 @@ const SUPPORTED_SUBMIT_ACTIONS = new Set([
 ]);
 const TOKEN_CACHE_SAFETY_SECONDS = 300;
 const DEFAULT_CARD_EXPIRE_DAYS = 5;
+const DEFAULT_DIRECTION_CARD_STUCK_MINUTES = 15;
 const OPEN_SELECTION_STATUSES = new Set(["", "待判断"]);
 
 let cachedTenantToken = { value: "", expiresAt: 0 };
@@ -71,6 +72,11 @@ function compact(value, limit = 240) {
 function cardExpireDays(env) {
   const raw = Number(env.FEISHU_CARD_EXPIRE_DAYS || env.CARD_EXPIRE_DAYS || DEFAULT_CARD_EXPIRE_DAYS);
   return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_CARD_EXPIRE_DAYS;
+}
+
+function directionCardStuckMinutes(env) {
+  const raw = Number(env.FEISHU_DIRECTION_CARD_STUCK_MINUTES || DEFAULT_DIRECTION_CARD_STUCK_MINUTES);
+  return Number.isFinite(raw) && raw > 0 ? raw : DEFAULT_DIRECTION_CARD_STUCK_MINUTES;
 }
 
 function parseTimeMs(value) {
@@ -269,6 +275,18 @@ function productionDirectionQueueFilter(cutoffIso = "", cutoffOperator = "") {
   return { conjunction: "and", conditions };
 }
 
+function productionDirectionStatusFilter(status, cutoffIso = "", cutoffOperator = "") {
+  const conditions = [
+    recordFilterCondition(PRODUCTION_DIRECTION_CARD_STATUS_FIELD, "is", [status]),
+    recordFilterCondition("状态", "is", [SCRIPT_PACKAGE_READY_STATUS]),
+    recordFilterCondition(PRODUCTION_DIRECTION_FIELD, "isEmpty"),
+  ];
+  if (cutoffIso && cutoffOperator) {
+    conditions.push(recordFilterCondition(SELECTION_SUBMITTED_AT_FIELD, cutoffOperator, [cutoffIso]));
+  }
+  return { conjunction: "and", conditions };
+}
+
 function pendingQueueRecords(records, env, options) {
   const nowMs = currentTimeMs(options);
   const expiresAfterMs = cardExpireDays(env) * 24 * 60 * 60 * 1000;
@@ -287,6 +305,19 @@ function pendingQueueRecords(records, env, options) {
     pending.push(record);
   }
   return { pending, expired };
+}
+
+function staleSendingRecords(records, env, options) {
+  const nowMs = currentTimeMs(options);
+  const staleAfterMs = directionCardStuckMinutes(env) * 60 * 1000;
+  return records.filter((record) => {
+    const fields = record.fields || {};
+    if (normalize(fields[PRODUCTION_DIRECTION_CARD_STATUS_FIELD]) !== PRODUCTION_DIRECTION_CARD_SENDING) return false;
+    if (normalize(fields["状态"]) !== SCRIPT_PACKAGE_READY_STATUS) return false;
+    if (normalize(fields[PRODUCTION_DIRECTION_FIELD])) return false;
+    const submittedAtMs = selectionSubmittedAt(record);
+    return Boolean(submittedAtMs && nowMs - submittedAtMs > staleAfterMs);
+  });
 }
 
 function groupPendingRecords(records) {
@@ -340,6 +371,17 @@ async function expiredQueueRecords(env, token, tableId, options) {
   }
 }
 
+async function sendingQueueRecords(env, token, tableId, options) {
+  const cutoffIso = new Date(currentTimeMs(options) - directionCardStuckMinutes(env) * 60 * 1000).toISOString();
+  try {
+    return await allRecords(env, token, tableId, options, {
+      filter: productionDirectionStatusFilter(PRODUCTION_DIRECTION_CARD_SENDING, cutoffIso, "isLess"),
+    });
+  } catch (_error) {
+    return [];
+  }
+}
+
 function uniqueRecords(records) {
   const byId = new Map();
   for (const record of records) {
@@ -349,13 +391,95 @@ function uniqueRecords(records) {
   return [...byId.values()];
 }
 
+function parseNotifyTargets(env) {
+  const raw =
+    env.FEISHU_PRODUCTION_DIRECTION_ALERT_TARGETS ||
+    env.FEISHU_AUTOMATION_NOTIFY_TARGETS ||
+    env.FEISHU_CARD_RECEIVE_TARGETS ||
+    "";
+  return String(raw)
+    .split(",")
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => {
+      const [receive_id_type, ...rest] = part.split(":");
+      return { receive_id_type: normalize(receive_id_type), receive_id: normalize(rest.join(":")) };
+    })
+    .filter((target) => target.receive_id_type && target.receive_id);
+}
+
+function queueIssueAlertText(summary) {
+  const lines = [
+    "【AI账号信息雷达】制作方向卡发送异常",
+    `时间：${summary.checked_at}`,
+    `待发送：${summary.pending_count}｜已发送批次：${summary.sent.length}｜失败批次：${summary.failed.length}｜卡死：${summary.stuck_count}｜过期忽略：${summary.expired_count}`,
+  ];
+  if (summary.failed.length) {
+    lines.push("失败：");
+    for (const item of summary.failed.slice(0, 5)) {
+      lines.push(`- ${item.submission_id || item.run_id || "unknown"}｜${item.record_count}条｜${item.error}`);
+    }
+  }
+  if (summary.stuck.length) {
+    lines.push("卡在发送中：");
+    for (const item of summary.stuck.slice(0, 5)) {
+      lines.push(`- ${item.record_id}｜${item.title || "未命名"}｜${item.error}`);
+    }
+  }
+  if (summary.expired_count) {
+    lines.push(`过期忽略：${summary.expired_count} 条超过 ${summary.expire_days} 天未发送的制作方向卡队列。`);
+  }
+  lines.push("处理：查看飞书 04 的「制作方向卡状态 / 制作方向卡错误」，必要时把状态改回「待发送」后等待下一次定时扫描。");
+  return lines.join("\n");
+}
+
+async function sendTextMessage(env, token, target, text, uuidBase, options) {
+  return requestJson(
+    env,
+    "POST",
+    `/im/v1/messages?receive_id_type=${encodeURIComponent(target.receive_id_type)}`,
+    {
+      token,
+      fetchImpl: options?.fetchImpl,
+      body: {
+        receive_id: target.receive_id,
+        msg_type: "text",
+        content: JSON.stringify({ text }),
+        uuid: `direction-card-alert-${(await sha256(uuidBase)).slice(0, 16)}`,
+      },
+    },
+    options,
+  );
+}
+
+async function notifyProductionDirectionQueueIssue(env, token, summary, options) {
+  const targets = parseNotifyTargets(env);
+  if (!targets.length) return { sent_count: 0, skipped: "missing_notify_targets" };
+  const text = queueIssueAlertText(summary);
+  const sent = [];
+  for (const target of targets) {
+    const payload = await sendTextMessage(
+      env,
+      token,
+      target,
+      text,
+      `${summary.action}|${summary.checked_at}|${target.receive_id_type}|${target.receive_id}`,
+      options,
+    );
+    sent.push({ target, message_id: payload.data?.message_id || "" });
+  }
+  return { sent_count: sent.length, sent };
+}
+
 export async function sendPendingProductionDirectionCards(env, options = {}) {
   if (!env.FEISHU_BASE_APP_TOKEN) throw new Error("Missing FEISHU_BASE_APP_TOKEN");
   const token = await tenantToken(env, options);
   const tableId = await topicTableId(env, token, options);
   const records = await queueRecords(env, token, tableId, options);
   const expiredRecords = await expiredQueueRecords(env, token, tableId, options);
+  const sendingRecords = await sendingQueueRecords(env, token, tableId, options);
   const { pending, expired } = pendingQueueRecords(uniqueRecords([...records, ...expiredRecords]), env, options);
+  const stuck = staleSendingRecords(sendingRecords, env, options);
   const nowIso = new Date(currentTimeMs(options)).toISOString();
   const limit = Math.max(1, Number(options.limit || env.PRODUCTION_DIRECTION_SEND_GROUP_LIMIT || 1));
   const groups = groupPendingRecords(pending).slice(0, limit);
@@ -365,6 +489,12 @@ export async function sendPendingProductionDirectionCards(env, options = {}) {
   await markRecords(env, token, tableId, expired, {
     [PRODUCTION_DIRECTION_CARD_STATUS_FIELD]: PRODUCTION_DIRECTION_CARD_IGNORED,
     [PRODUCTION_DIRECTION_CARD_ERROR_FIELD]: `超过 ${cardExpireDays(env)} 天未发送，已忽略`,
+  }, options);
+
+  const stuckMessage = `停留在发送中超过 ${directionCardStuckMinutes(env)} 分钟，可能上次定时发送中断`;
+  await markRecords(env, token, tableId, stuck, {
+    [PRODUCTION_DIRECTION_CARD_STATUS_FIELD]: PRODUCTION_DIRECTION_CARD_FAILED,
+    [PRODUCTION_DIRECTION_CARD_ERROR_FIELD]: stuckMessage,
   }, options);
 
   for (const group of groups) {
@@ -393,18 +523,36 @@ export async function sendPendingProductionDirectionCards(env, options = {}) {
     }
   }
 
-  return {
-    ok: failed.length === 0,
+  const summary = {
+    ok: failed.length === 0 && stuck.length === 0 && expired.length === 0,
     action: SEND_PENDING_PRODUCTION_DIRECTION_CARDS_ACTION,
+    checked_at: nowIso,
     scanned_count: records.length,
     expired_scanned_count: expiredRecords.length,
+    sending_scanned_count: sendingRecords.length,
     filter_fallback_error: records.filter_fallback_error || "",
     pending_count: pending.length,
     expired_count: expired.length,
+    stuck_count: stuck.length,
     group_count: groups.length,
     sent,
     failed,
+    stuck: stuck.map((record) => ({
+      record_id: record.record_id,
+      title: compact(record.fields?.["选题标题"], 80),
+      error: stuckMessage,
+    })),
+    expire_days: cardExpireDays(env),
   };
+  const shouldNotify = summary.failed.length > 0 || summary.stuck_count > 0 || summary.expired_count > 0;
+  if (shouldNotify && String(env.FEISHU_PRODUCTION_DIRECTION_ALERTS || "true").toLowerCase() !== "false") {
+    try {
+      summary.notification = await notifyProductionDirectionQueueIssue(env, token, summary, options);
+    } catch (error) {
+      summary.notification = { sent_count: 0, error: errorText(error) };
+    }
+  }
+  return summary;
 }
 
 function parseReceiveTargets(env) {

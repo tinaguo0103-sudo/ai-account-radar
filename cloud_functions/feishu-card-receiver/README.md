@@ -56,6 +56,8 @@ DRY_RUN=true
 - 如果飞书开放平台配置了 Verification Token，腾讯云 SCF 环境变量也要填同一个 `FEISHU_VERIFICATION_TOKEN`；如果平台未配置，则可以不填。
 - `FEISHU_CARD_RECEIVE_TARGETS` 是第一张选题卡和第二张制作方向卡的默认接收目标。
 - `FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS` 可选；如果设置，第二张卡只发到这里。
+- `FEISHU_PRODUCTION_DIRECTION_ALERT_TARGETS` 可选，是第二张制作方向卡发送异常的通知目标；未配置时依次回退 `FEISHU_AUTOMATION_NOTIFY_TARGETS` 和 `FEISHU_CARD_RECEIVE_TARGETS`。
+- `FEISHU_DIRECTION_CARD_STUCK_MINUTES` 可选，默认 `15`。记录停留在 `制作方向卡状态=发送中` 超过这个时间，会被改为 `发送失败` 并发送异常通知。
 - `SEND_PRODUCTION_DIRECTION_CARD=false` 可临时关闭第二张卡。
 - `FEISHU_QUEUE_RUNNER_TOKEN` 可选；如果设置，外部触发 `send_pending_production_direction_cards` 时必须带同一个 `runner_token`。
 - `PRODUCTION_DIRECTION_SEND_GROUP_LIMIT` 控制每次独立发送任务最多处理多少个 `选择提交批次`，默认 1；建议保持轻量，多次定时触发比单次处理过重更稳。
@@ -93,7 +95,7 @@ DRY_RUN=true
 - `我的制作补充` 为空
 - `选择提交时间` 未超过 `FEISHU_CARD_EXPIRE_DAYS`
 
-发送任务会优先通过飞书记录查询的 `filter` 参数只读取最近 `FEISHU_CARD_EXPIRE_DAYS` 天内的待发送队列；如果飞书过滤临时不可用，会降级为只读取 `待发送 + 生成脚本包 + 我的制作补充为空` 的队列，再在函数内按 5 天窗口过滤。发送前会改为 `发送中`，发送成功后改为 `已发送` 并写入 `制作方向卡发送时间`。发送失败会改为 `发送失败` 并写入 `制作方向卡错误`。超过有效期仍未发送的记录会改为 `已忽略`。这能避免独立扫描任务扫到历史记录或手动修改记录。
+发送任务会优先通过飞书记录查询的 `filter` 参数只读取最近 `FEISHU_CARD_EXPIRE_DAYS` 天内的待发送队列；如果飞书过滤临时不可用，会降级为只读取 `待发送 + 生成脚本包 + 我的制作补充为空` 的队列，再在函数内按 5 天窗口过滤。发送前会改为 `发送中`，发送成功后改为 `已发送` 并写入 `制作方向卡发送时间`。发送失败会改为 `发送失败` 并写入 `制作方向卡错误`。超过有效期仍未发送的记录会改为 `已忽略`。如果记录停留在 `发送中` 超过 `FEISHU_DIRECTION_CARD_STUCK_MINUTES`，说明上次定时发送可能中断，也会改为 `发送失败`。发送失败、发送中卡死、过期忽略都会触发“制作方向卡发送异常”通知。这能避免独立扫描任务扫到历史记录或手动修改记录，也避免第二张卡未发出但无人知道。
 
 ## 本地测试
 
