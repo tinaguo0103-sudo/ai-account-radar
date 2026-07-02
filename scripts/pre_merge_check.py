@@ -24,6 +24,8 @@ PY_COMPILE_TARGETS = (
     "scripts/watch_script_package_queue.py",
     "scripts/local_env.py",
     "scripts/check_feishu_card_cloud_receiver.py",
+    "scripts/learn_from_daily_feedback.py",
+    "scripts/draft_learning_skill_sync.py",
 )
 DEFAULT_FEISHU_READ_TABLE_KEYS = ("topic_decision", "script_package")
 SMOKE_MANUAL = "data/manual/content_items.example.jsonl"

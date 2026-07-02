@@ -36,6 +36,7 @@
 - `scripts/learn_from_daily_feedback.py --send-card` 已能把学习日结卡发给 `FEISHU_LEARNING_FEEDBACK_RECEIVE_TARGETS`，卡片支持 `已采纳 / 部分采纳 / 暂不采纳`。
 - `scripts/setup_learning_test_env.py` 已能创建/复用 `04 分析与选题__测试`、`06 完整脚本与制作包__测试` 和 `08 学习记录__测试`，写入 `.env.staging.local`，并把学习卡接收目标配置为当前用户个人 open_id。
 - `cloud_functions/feishu-card-receiver` 已支持学习日结确认回调：回写 `08` 确认状态，并按确认结果更新关联 `04/06` 学习状态。
+- `scripts/draft_learning_skill_sync.py` 已能从 `08` 里 `已采纳/部分采纳 + 待同步` 的记录生成本地 Skill 同步草稿，不直接修改全局私有 Skill。
 - `06 完整脚本与制作包` 已有质量反馈字段：`人工质量反馈`、`质量问题标签`、`人工修改意见`、`反馈时间`、`反馈来源`、`内容学习状态`。
 - dev/staging 已验证 06 完成卡可以把三段反馈写回测试 `06` 表，并标记 `内容学习状态=待学习`。
 - dev/staging 已验证学习日结卡可以发送到个人 open_id，本地接收器模拟点击后真实回写测试 `08/04/06` 表，并能拦截重复提交。
@@ -44,7 +45,7 @@
 
 - 生产 `08 学习记录` 还没有正式启用；当前只验证了测试 `08 学习记录__测试`。
 - 生产 receiver 还没有部署学习日结确认动作；生产启用前必须先部署接收器并做最小 production smoke。
-- 还没有把已确认学习结果同步到私有 Skill 的流程。
+- 还没有把 Skill 同步草稿人工审查后写入私有 Skill reference 的流程。
 
 ## 数据模型
 
@@ -97,7 +98,7 @@
 - `确认状态`：`待确认 / 已采纳 / 部分采纳 / 暂不采纳`
 - `确认时间`
 - `确认备注`
-- `Skill同步状态`：`未同步 / 待同步 / 已同步 / 不同步`
+- `Skill同步状态`：`未同步 / 待同步 / 草稿已生成 / 已同步 / 不同步`
 
 ## 每日学习日结
 
@@ -191,6 +192,8 @@
 - 从已采纳学习记录里提取稳定规则。
 - 写入本地草稿文件。
 - 人工确认后同步到全局私有 Skill reference。
+
+当前状态：草稿生成已完成。`scripts/draft_learning_skill_sync.py` 会读取 `08` 中 `已采纳/部分采纳 + 待同步` 的记录，生成 `output/skill_sync_drafts/` 下的 Markdown/JSON 草稿；`--mark-drafted` 可显式把选中的学习记录标为 `草稿已生成`。没有待同步记录时默认不覆盖 `latest` 草稿，除非显式传入 `--write-empty-draft`。默认不改全局 Skill，也不回写生产。
 
 ## 对抗性审查
 
