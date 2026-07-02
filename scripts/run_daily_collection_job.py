@@ -61,6 +61,11 @@ def main() -> int:
     parser.add_argument("--douyin-video-limit", type=int, default=3)
     parser.add_argument("--wechat-feed-limit", type=int, default=5)
     parser.add_argument("--wechat-fulltext-provider", default="wewe_rss_local")
+    parser.add_argument(
+        "--defer-editorial",
+        action="store_true",
+        help="Generate raw candidates only; the outer Codex automation must apply the editorial Skill and finalize.",
+    )
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu exception notifications.")
     parser.add_argument(
         "--allow-non-production-worktree",
@@ -119,7 +124,7 @@ def main() -> int:
         "--douyin-verification-action",
         "log-only",
         "--write-feishu",
-    ]))
+    ] + (["--defer-editorial"] if args.defer_editorial else [])))
     log_path = write_job_log(steps)
     ok = all(step["returncode"] == 0 for step in steps)
     if not ok and not args.no_notify:
