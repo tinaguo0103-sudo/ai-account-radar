@@ -25,6 +25,11 @@ def clip(value: Any, limit: int = 72, fallback: str = "") -> str:
     return cleaned[: max(1, limit - 1)].rstrip("，,；;、 ") + "…"
 
 
+def spoken_title(value: Any, fallback: str = "这条选题") -> str:
+    title = text(value, fallback)
+    return title.replace("沉淀资产", "后面能用的东西")
+
+
 def blob(topic: dict[str, Any]) -> str:
     keys = [
         "topic_title",
@@ -145,7 +150,7 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
     context = context or {}
     obj = workflow_object(topic)
     activity = audience_activity(obj)
-    title = text(topic.get("topic_title"), "这条选题")
+    title = spoken_title(topic.get("topic_title"), "这条选题")
     core = text(topic.get("core_thesis"), title)
     judgment = text(topic.get("unique_judgment"), core)
     pain = text(topic.get("pain_point") or topic.get("old_workflow"), core_pain(obj))

@@ -166,6 +166,7 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         self.assertIn("知识库不是一个大仓库", markdown_section(document, "### 搜索与表达融合"))
         self.assertIn("给每条素材贴一张流转单", markdown_section(document, "### 搜索与表达融合"))
         self.assertIn("能转成我自己的内容系统复盘", text)
+        self.assertNotIn("沉淀资产", text)
         for phrase in FORBIDDEN_VOICE_PHRASES:
             self.assertNotIn(phrase, text)
         self.assertNotIn("如果当天还没生成06", text)
@@ -222,6 +223,7 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         for phrase in FORBIDDEN_VOICE_PHRASES:
             self.assertNotIn(phrase, voice_agent_text)
             self.assertNotIn(phrase, knowledge_text)
+        self.assertNotIn("沉淀资产", knowledge_text)
 
         voice_agent_lines = spoken_lines(voice_agent_text)
         knowledge_lines = spoken_lines(knowledge_text)

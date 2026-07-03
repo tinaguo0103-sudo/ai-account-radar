@@ -47,6 +47,8 @@ DEFAULT_OUTPUT_ROOT = (
     if PROJECT_SCRIPT_PACKAGE_ROOT.exists() or PROJECT_SCRIPT_PACKAGE_ROOT.is_symlink()
     else ROOT / "output" / "script_execution_packages"
 )
+DEFAULT_SCRIPT_PACKAGE_SKILL_NAME = "austin-no-overtime-scripting"
+DEFAULT_SCRIPT_PACKAGE_VOICE_SKILL_NAME = "austin-voice-scriptwriter"
 LOG_DIR = ROOT / "output" / "logs"
 LOCK_FILE = ROOT / ".runtime" / "codex_script_package_runner.lock"
 RUNNER_VERSION = "codex-local-script-package-runner-v0.2"
@@ -430,6 +432,14 @@ def codex_bin() -> str:
     return os.getenv("CODEX_BIN", DEFAULT_CODEX_BIN)
 
 
+def script_package_skill_name() -> str:
+    return os.getenv("SCRIPT_PACKAGE_SKILL_NAME", DEFAULT_SCRIPT_PACKAGE_SKILL_NAME).strip() or DEFAULT_SCRIPT_PACKAGE_SKILL_NAME
+
+
+def script_package_voice_skill_name() -> str:
+    return os.getenv("SCRIPT_PACKAGE_VOICE_SKILL_NAME", DEFAULT_SCRIPT_PACKAGE_VOICE_SKILL_NAME).strip() or DEFAULT_SCRIPT_PACKAGE_VOICE_SKILL_NAME
+
+
 def configured_path(env_name: str, default: Path) -> Path:
     return Path(os.getenv(env_name, str(default))).expanduser()
 
@@ -456,6 +466,8 @@ def qa_status_of(package: dict[str, Any]) -> str:
 
 
 def topic_prompt(topic: dict[str, Any], previous_package: dict[str, Any] | None = None, attempt: int = 1) -> str:
+    script_skill = script_package_skill_name()
+    voice_skill = script_package_voice_skill_name()
     retry_block = ""
     if previous_package:
         retry_block = f"""
@@ -473,7 +485,7 @@ def topic_prompt(topic: dict[str, Any], previous_package: dict[str, Any] | None 
 """
     return f"""你是 Austin AI账号的本地定时脚本生成器。
 
-请使用本机全局 Skill `$austin-no-overtime-scripting` 和 `$austin-voice-scriptwriter` 的方法，基于下面 Topic Card 生成一份完整的 `06 完整脚本与制作包`。
+请使用本机全局 Skill `${script_skill}` 和 `${voice_skill}` 的方法，基于下面 Topic Card 生成一份完整的 `06 完整脚本与制作包`。
 
 硬性要求：
 - 只生成内容，不修改代码、不提交 Git、不调用外部采集。
