@@ -37,18 +37,37 @@ def run_step(name: str, command: list[str]) -> dict[str, Any]:
     started_at = datetime.now().isoformat(timespec="seconds")
     print(f"\n== {name} ==")
     print(" ".join(command))
-    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
-    if result.stdout:
-        print(result.stdout)
-    if result.stderr:
-        print(result.stderr, file=sys.stderr)
+    output_lines: list[str] = []
+    process = subprocess.Popen(
+        command,
+        cwd=ROOT,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        bufsize=1,
+    )
+    assert process.stdout is not None
+    try:
+        for line in process.stdout:
+            print(line, end="")
+            output_lines.append(line)
+    except KeyboardInterrupt:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        raise
+    returncode = process.wait()
+    output = "".join(output_lines)
     return {
         "name": name,
         "command": command,
         "started_at": started_at,
-        "returncode": result.returncode,
-        "stdout": result.stdout[-4000:],
-        "stderr": result.stderr[-4000:],
+        "returncode": returncode,
+        "stdout": output[-4000:],
+        "stderr": "",
     }
 
 
