@@ -40,6 +40,7 @@ TARGET_SKILL = "ai-account-editorial-director"
 SYNC_READY_STATUSES = {"待同步"}
 CONFIRMED_STATUSES = {"已采纳", "部分采纳"}
 DRAFTED_STATUS = "草稿已生成"
+SYNCED_STATUS = "已同步"
 
 HARD_RULE_HINTS = ("必须", "不得", "不应", "禁止", "必须先", "不能", "先人工复核")
 PREFERENCE_HINTS = ("更应", "更愿意", "优先", "关注", "警惕", "倾向", "建议")
@@ -100,8 +101,12 @@ def learning_record(record: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def select_ready_records(records: list[dict[str, Any]], include_drafted: bool = False) -> list[dict[str, Any]]:
-    allowed_sync_statuses = set(SYNC_READY_STATUSES)
+def select_ready_records(
+    records: list[dict[str, Any]],
+    include_drafted: bool = False,
+    sync_statuses: set[str] | None = None,
+) -> list[dict[str, Any]]:
+    allowed_sync_statuses = set(sync_statuses or SYNC_READY_STATUSES)
     if include_drafted:
         allowed_sync_statuses.add(DRAFTED_STATUS)
     selected = []
@@ -216,14 +221,14 @@ def assert_read_safety(environment: str, table_name: str, explicit: bool) -> Non
             raise SystemExit(f"Refusing staging/test read from non-test learning table: {table_name}")
 
 
-def mark_drafted(token: str, app_token: str, table_id: str, record_ids: list[str], draft_id: str) -> int:
+def mark_skill_sync_status(token: str, app_token: str, table_id: str, record_ids: list[str], status: str) -> int:
     updated = 0
     for record_id in record_ids:
         feishu.request_json(
             "PUT",
             f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
             token=token,
-            body={"fields": {"Skill同步状态": DRAFTED_STATUS}},
+            body={"fields": {"Skill同步状态": status}},
         )
         updated += 1
         time.sleep(0.08)
@@ -235,7 +240,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--include-drafted", action="store_true", help="Also include records already marked 草稿已生成.")
     parser.add_argument("--write-empty-draft", action="store_true", help="Write an empty draft even when no records are selected.")
     parser.add_argument("--mark-drafted", action="store_true", help="After drafting, mark selected Feishu learning records as 草稿已生成.")
-    parser.add_argument("--allow-production-write", action="store_true", help="Allow --mark-drafted against production 08.")
+    parser.add_argument("--mark-synced", action="store_true", help="Mark 草稿已生成 records as 已同步 after manual private Skill update.")
+    parser.add_argument("--allow-production-write", action="store_true", help="Allow --mark-drafted/--mark-synced against production 08.")
     parser.add_argument("--target-skill", default=TARGET_SKILL)
     return parser.parse_args()
 
@@ -247,7 +253,9 @@ def main() -> int:
     app_token = os.getenv("FEISHU_BASE_APP_TOKEN", "").strip()
     if not app_token:
         raise SystemExit("FEISHU_BASE_APP_TOKEN is required")
-    if environment == "production" and args.mark_drafted and not args.allow_production_write:
+    if args.mark_drafted and args.mark_synced:
+        raise SystemExit("Use only one of --mark-drafted or --mark-synced.")
+    if environment == "production" and (args.mark_drafted or args.mark_synced) and not args.allow_production_write:
         raise SystemExit("Refusing to mark production learning records without --allow-production-write.")
 
     token = feishu.tenant_token()
@@ -263,16 +271,24 @@ def main() -> int:
     assert_read_safety(environment, table_name, explicit)
 
     records = all_records(token, app_token, table_id)
-    selected = select_ready_records(records, include_drafted=args.include_drafted)
+    sync_statuses = {DRAFTED_STATUS} if args.mark_synced else None
+    selected = select_ready_records(records, include_drafted=args.include_drafted, sync_statuses=sync_statuses)
     summary = summarize_for_draft(selected, args.target_skill, environment)
     summary["source_table"] = {"table_id": table_id, "table_name": table_name, "explicit": explicit}
-    paths = write_outputs(summary) if selected or args.write_empty_draft else {}
+    should_write_draft = not args.mark_synced and (selected or args.write_empty_draft)
+    paths = write_outputs(summary) if should_write_draft else {}
     write_result: dict[str, Any] = {"marked": False}
     if args.mark_drafted and selected:
         write_result = {
             "marked": True,
-            "updated_count": mark_drafted(token, app_token, table_id, summary["record_ids"], summary["draft_id"]),
+            "updated_count": mark_skill_sync_status(token, app_token, table_id, summary["record_ids"], DRAFTED_STATUS),
             "status": DRAFTED_STATUS,
+        }
+    elif args.mark_synced and selected:
+        write_result = {
+            "marked": True,
+            "updated_count": mark_skill_sync_status(token, app_token, table_id, summary["record_ids"], SYNCED_STATUS),
+            "status": SYNCED_STATUS,
         }
 
     print(json.dumps({

@@ -398,6 +398,10 @@ def learning_record_fields(summary: dict[str, Any], markdown: str) -> dict[str, 
     }
 
 
+def should_write_learning_record(sample_count: int, write_empty_learning: bool) -> bool:
+    return sample_count > 0 or write_empty_learning
+
+
 def learning_confirmation_note_inputs() -> list[dict[str, Any]]:
     placeholders = [
         "确认备注 1：哪些规则可以沉淀，哪些先别动",
@@ -593,6 +597,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--ensure-learning-table", action="store_true", help="Create the learning table if missing.")
     parser.add_argument("--mark-pending-confirm", action="store_true", help="After writing Feishu, mark source 04/06 samples as pending confirmation.")
     parser.add_argument("--send-card", action="store_true", help="Send a learning confirmation card to FEISHU_LEARNING_FEEDBACK_RECEIVE_TARGETS.")
+    parser.add_argument("--write-empty-learning", action="store_true", help="Write/send a learning record even when no feedback samples are selected.")
     parser.add_argument("--allow-production-write", action="store_true", help="Allow writing production 08/source learning status.")
     parser.add_argument("--learning-table-name", default="", help="Override learning table name. Defaults to 08 学习记录 or 08 学习记录__测试 by env.")
     return parser.parse_args()
@@ -649,50 +654,57 @@ def main() -> int:
         raise SystemExit("--send-card requires --write-feishu so the card has a learning record to confirm.")
 
     if args.write_feishu:
-        learning_table_name = args.learning_table_name.strip() or (TABLES["learning_record"] if environment == "production" else LEARNING_TEST_TABLE_NAME)
-        learning_table_id = os.getenv(LEARNING_TABLE_ENV, "").strip() or tables_by_name.get(learning_table_name, "")
-        resolved_learning_name = table_name_by_id(tables_by_name, learning_table_id) or learning_table_name
-        assert_write_safety(
-            args,
-            environment,
-            {"topic": topic_table_name, "script": script_table_name, "learning": resolved_learning_name},
-            {"topic": topic_explicit, "script": script_explicit},
-        )
-        if not learning_table_id:
-            learning_table_id = ensure_or_create_table(
-                token,
-                app_token,
-                tables_by_name,
-                learning_table_name,
-                LEARNING_RECORD_FIELDS,
-                args.ensure_learning_table,
-            )
+        if not should_write_learning_record(int(summary["sample_count"] or 0), args.write_empty_learning):
+            write_result = {
+                "written": False,
+                "skipped": "no_learning_samples",
+                "note": "No 04/06 feedback samples selected; skipped Feishu 08 write and learning card.",
+            }
         else:
-            ensure_text_fields(token, app_token, learning_table_id, LEARNING_RECORD_FIELDS)
-        learning_record_id = create_learning_record(token, app_token, learning_table_id, learning_record_fields(summary, markdown))
-        write_result = {
-            "written": True,
-            "learning_table_name": resolved_learning_name,
-            "learning_table_id": learning_table_id,
-            "learning_record_id": learning_record_id,
-        }
-        if args.mark_pending_confirm:
-            topic_ids = [sample["record_id"] for sample in topic_samples if sample.get("record_id")]
-            script_ids = [sample["record_id"] for sample in script_samples if sample.get("record_id")]
-            ensure_text_fields(token, app_token, topic_table_id, ["学习状态", "选择学习批次", "选择学习摘要"])
-            ensure_text_fields(token, app_token, script_table_id, ["内容学习状态", "内容学习批次", "内容学习摘要"])
-            write_result["marked_topic_pending"] = mark_source_records(token, app_token, topic_table_id, topic_ids, {
-                "学习状态": "待确认学习",
-                "选择学习批次": learning_batch_id,
-                "选择学习摘要": learning_conclusion(summary)[:1000],
-            })
-            write_result["marked_script_pending"] = mark_source_records(token, app_token, script_table_id, script_ids, {
-                "内容学习状态": "待确认学习",
-                "内容学习批次": learning_batch_id,
-                "内容学习摘要": learning_conclusion(summary)[:1000],
-            })
-        if args.send_card:
-            write_result["card_result"] = send_learning_confirmation_card(token, summary, learning_record_id)
+            learning_table_name = args.learning_table_name.strip() or (TABLES["learning_record"] if environment == "production" else LEARNING_TEST_TABLE_NAME)
+            learning_table_id = os.getenv(LEARNING_TABLE_ENV, "").strip() or tables_by_name.get(learning_table_name, "")
+            resolved_learning_name = table_name_by_id(tables_by_name, learning_table_id) or learning_table_name
+            assert_write_safety(
+                args,
+                environment,
+                {"topic": topic_table_name, "script": script_table_name, "learning": resolved_learning_name},
+                {"topic": topic_explicit, "script": script_explicit},
+            )
+            if not learning_table_id:
+                learning_table_id = ensure_or_create_table(
+                    token,
+                    app_token,
+                    tables_by_name,
+                    learning_table_name,
+                    LEARNING_RECORD_FIELDS,
+                    args.ensure_learning_table,
+                )
+            else:
+                ensure_text_fields(token, app_token, learning_table_id, LEARNING_RECORD_FIELDS)
+            learning_record_id = create_learning_record(token, app_token, learning_table_id, learning_record_fields(summary, markdown))
+            write_result = {
+                "written": True,
+                "learning_table_name": resolved_learning_name,
+                "learning_table_id": learning_table_id,
+                "learning_record_id": learning_record_id,
+            }
+            if args.mark_pending_confirm:
+                topic_ids = [sample["record_id"] for sample in topic_samples if sample.get("record_id")]
+                script_ids = [sample["record_id"] for sample in script_samples if sample.get("record_id")]
+                ensure_text_fields(token, app_token, topic_table_id, ["学习状态", "选择学习批次", "选择学习摘要"])
+                ensure_text_fields(token, app_token, script_table_id, ["内容学习状态", "内容学习批次", "内容学习摘要"])
+                write_result["marked_topic_pending"] = mark_source_records(token, app_token, topic_table_id, topic_ids, {
+                    "学习状态": "待确认学习",
+                    "选择学习批次": learning_batch_id,
+                    "选择学习摘要": learning_conclusion(summary)[:1000],
+                })
+                write_result["marked_script_pending"] = mark_source_records(token, app_token, script_table_id, script_ids, {
+                    "内容学习状态": "待确认学习",
+                    "内容学习批次": learning_batch_id,
+                    "内容学习摘要": learning_conclusion(summary)[:1000],
+                })
+            if args.send_card:
+                write_result["card_result"] = send_learning_confirmation_card(token, summary, learning_record_id)
 
     print(json.dumps({
         "ok": True,

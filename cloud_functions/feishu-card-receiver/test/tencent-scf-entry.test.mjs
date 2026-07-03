@@ -28,6 +28,7 @@ function makeScfMockFetch(records, calls) {
           items: [
             { name: "04 分析与选题", table_id: "tbl_topic" },
             { name: "06 完整脚本与制作包", table_id: "tbl_script_package" },
+            { name: "08 学习记录", table_id: "tbl_learning" },
           ],
         },
       });
@@ -58,6 +59,59 @@ test("Tencent SCF entry returns Feishu challenge", async () => {
   });
   assert.equal(response.statusCode, 200);
   assert.deepEqual(bodyJson(response), { challenge: "hello" });
+});
+
+test("Tencent SCF entry writes learning confirmation feedback", async () => {
+  const originalEnv = { ...process.env };
+  const originalFetch = global.fetch;
+  const calls = [];
+  process.env.FEISHU_APP_ID = "cli_test_app";
+  process.env.FEISHU_APP_SECRET = "cli_test_secret";
+  process.env.FEISHU_BASE_APP_TOKEN = "base_test";
+  process.env.FEISHU_VERIFICATION_TOKEN = "verify_test";
+  process.env.FEISHU_TOPIC_DECISION_TABLE_ID = "tbl_topic";
+  process.env.FEISHU_SCRIPT_PACKAGE_TABLE_ID = "tbl_script_package";
+  process.env.FEISHU_LEARNING_TABLE_ID = "tbl_learning";
+  global.fetch = makeScfMockFetch([
+    { record_id: "learn_a", fields: { "学习批次": "learn_1", "确认状态": "待确认" } },
+    { record_id: "topic_a", fields: { "选题标题": "A", "学习状态": "待确认学习" } },
+    { record_id: "pkg_a", fields: { "脚本标题": "A 脚本包", "内容学习状态": "待确认学习" } },
+  ], calls);
+  try {
+    const response = await main_handler({
+      httpMethod: "POST",
+      body: JSON.stringify({
+        header: { token: "verify_test" },
+        event: {
+          action: {
+            value: {
+              action: "submit_learning_feedback_confirmation",
+              decision: "已采纳",
+              environment: "staging",
+              learning_record_id: "learn_a",
+              learning_batch_id: "learn_1",
+              topic_record_ids: ["topic_a"],
+              script_record_ids: ["pkg_a"],
+              learning_summary: "学习确认 SCF 入口测试。",
+            },
+            form_value: {
+              learning_confirmation_note: "入口测试通过。",
+            },
+          },
+        },
+      }),
+    });
+    assert.deepEqual(bodyJson(response), toastBody("success", "已确认学习日结：已采纳"));
+    const puts = calls.filter((call) => call.method === "PUT");
+    assert.equal(puts.length, 3);
+    assert.equal(puts[0].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_learning/records/learn_a");
+    assert.equal(puts[0].body.fields["Skill同步状态"], "待同步");
+    assert.equal(puts[1].body.fields["学习状态"], "已学习");
+    assert.equal(puts[2].body.fields["内容学习状态"], "已学习");
+  } finally {
+    process.env = originalEnv;
+    global.fetch = originalFetch;
+  }
 });
 
 test("Tencent SCF entry rejects non-POST requests", async () => {

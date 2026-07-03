@@ -136,6 +136,7 @@ def main() -> int:
     parser.add_argument("--wake-time", default=DEFAULT_WAKE_TIME, help="pmset repeat wake time, HH:MM:SS.")
     parser.add_argument("--duration-seconds", type=int, default=DEFAULT_DURATION_SECONDS)
     parser.add_argument("--days", default="MTWRFSU", help="pmset repeat days. Default means every day.")
+    parser.add_argument("--install", action="store_true", help="Install the keep-awake LaunchAgent.")
     parser.add_argument("--configure-wake", action="store_true", help="Also configure pmset repeat wakeorpoweron.")
     parser.add_argument("--launch-agent-only", action="store_true", help="Only install the LaunchAgent.")
     parser.add_argument("--status", action="store_true")
@@ -149,6 +150,9 @@ def main() -> int:
         return status()
     if args.uninstall:
         return uninstall(args)
+    if not args.install and not args.launch_agent_only:
+        parser.print_help()
+        return 2
     install_launch_agent(args)
     if args.configure_wake and not args.launch_agent_only:
         return configure_wake(args)

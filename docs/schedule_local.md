@@ -15,7 +15,7 @@
 每日生产链路依赖本机 Codex 和网络环境。为了降低“不插电、屏幕熄灭、系统空闲睡眠”导致 08:00 任务延迟的风险，生产机应安装一个本机唤醒/保活窗口：
 
 ```bash
-python3 scripts/install_production_keepawake.py --configure-wake
+python3 scripts/install_production_keepawake.py --install --configure-wake
 ```
 
 默认行为：

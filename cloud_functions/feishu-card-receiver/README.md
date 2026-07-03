@@ -158,6 +158,21 @@ cp tencent-scf/index.js /tmp/tencent-scf-index.js
 node -e "const h=require('/tmp/tencent-scf-index.js'); h.main_handler({httpMethod:'POST',body:JSON.stringify({challenge:'hello'})}).then(r=>console.log(JSON.stringify(r)))"
 ```
 
+部署前完整入口测试：
+
+```bash
+cd ai_account_radar
+node --test cloud_functions/feishu-card-receiver/test/receiver.test.mjs cloud_functions/feishu-card-receiver/test/tencent-scf-entry.test.mjs
+```
+
+这组测试必须同时覆盖：
+
+- 第一张选题卡回写。
+- 第二张制作方向卡回写与队列发送。
+- `06` 完成卡质量反馈回写。
+- 学习日结确认卡回写。
+- 腾讯云 SCF 专用入口 `tencent-scf/index.js`。
+
 预期返回：
 
 ```json
@@ -218,6 +233,8 @@ FEISHU_TENCENT_SCF_URL=https://你的腾讯云SCF函数URL
 ```bash
 .venv/bin/python scripts/check_feishu_card_cloud_receiver.py
 ```
+
+注意：健康检查只证明 URL 和读权限可用，不能证明刚部署的卡片 action 都可写。涉及学习日结确认、`06` 完成卡或制作方向卡逻辑变更时，必须先通过上面的 Node 入口测试，再部署腾讯云 SCF，最后做一次最小 production smoke。
 
 ## 和本机 receiver / 本机脚本的关系
 

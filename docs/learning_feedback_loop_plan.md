@@ -45,7 +45,7 @@
 
 - 生产 `08 学习记录` 还没有正式启用；当前只验证了测试 `08 学习记录__测试`。
 - 生产 receiver 还没有部署学习日结确认动作；生产启用前必须先部署接收器并做最小 production smoke。
-- 还没有把 Skill 同步草稿人工审查后写入私有 Skill reference 的流程。
+- 还没有自动把 Skill 同步草稿写入私有 Skill reference；当前只支持人工写入后，把学习记录标记为 `已同步`。
 
 ## 数据模型
 
@@ -120,6 +120,7 @@
 
 - `已采纳 / 部分采纳`：`08.Skill同步状态=待同步`，关联 `04/06` 标记为 `已学习`。
 - `暂不采纳`：`08.Skill同步状态=不同步`，关联 `04/06` 标记为 `忽略`，避免重复进入下一轮学习，但不会伪装成已学习。
+- 无待学习样本时，默认只生成本地摘要，不写 `08`、不发学习卡；只有显式传入 `--write-empty-learning` 才写空学习记录。
 
 学习日结内容：
 
@@ -177,6 +178,7 @@
 - staging 已验证 04/06/08 三表写入。
 - staging 已验证学习日结卡只发个人。
 - receiver 支持学习日结确认动作并已通过单测。
+- 腾讯云 SCF 专用入口 `tencent-scf/index.js` 已通过学习确认回调单测；生产部署包仍需发布到腾讯云后再 smoke。
 - 生产部署 receiver 后，再启用生产学习卡。
 
 生产运行策略：
@@ -193,7 +195,7 @@
 - 写入本地草稿文件。
 - 人工确认后同步到全局私有 Skill reference。
 
-当前状态：草稿生成已完成。`scripts/draft_learning_skill_sync.py` 会读取 `08` 中 `已采纳/部分采纳 + 待同步` 的记录，生成 `output/skill_sync_drafts/` 下的 Markdown/JSON 草稿；`--mark-drafted` 可显式把选中的学习记录标为 `草稿已生成`。没有待同步记录时默认不覆盖 `latest` 草稿，除非显式传入 `--write-empty-draft`。默认不改全局 Skill，也不回写生产。
+当前状态：草稿生成已完成。`scripts/draft_learning_skill_sync.py` 会读取 `08` 中 `已采纳/部分采纳 + 待同步` 的记录，生成 `output/skill_sync_drafts/` 下的 Markdown/JSON 草稿；`--mark-drafted` 可显式把选中的学习记录标为 `草稿已生成`。人工把草稿写入私有 Skill reference 后，可运行 `--mark-synced` 把 `草稿已生成` 的学习记录标为 `已同步`。没有待同步记录时默认不覆盖 `latest` 草稿，除非显式传入 `--write-empty-draft`。默认不改全局 Skill，也不回写生产。
 
 ## 对抗性审查
 

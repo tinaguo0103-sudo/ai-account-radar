@@ -4,6 +4,7 @@ from __future__ import annotations
 import unittest
 
 from draft_learning_skill_sync import (
+    DRAFTED_STATUS,
     classify_rule,
     markdown_draft,
     select_ready_records,
@@ -21,6 +22,14 @@ class DraftLearningSkillSyncTest(unittest.TestCase):
         ]
         selected = select_ready_records(records)
         self.assertEqual([item["record_id"] for item in selected], ["r1", "r2"])
+
+    def test_selects_drafted_records_for_sync_marking(self) -> None:
+        records = [
+            {"record_id": "r1", "fields": {"确认状态": "已采纳", "Skill同步状态": "待同步", "学习批次": "b1"}},
+            {"record_id": "r2", "fields": {"确认状态": "部分采纳", "Skill同步状态": "草稿已生成", "学习批次": "b2"}},
+        ]
+        selected = select_ready_records(records, sync_statuses={DRAFTED_STATUS})
+        self.assertEqual([item["record_id"] for item in selected], ["r2"])
 
     def test_classifies_rules_conservatively(self) -> None:
         self.assertEqual(classify_rule("当反馈为需要重写时，必须先人工复核。"), "hard")

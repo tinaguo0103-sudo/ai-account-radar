@@ -12,6 +12,7 @@ from learn_from_daily_feedback import (
     script_feedback_sample,
     select_script_feedback,
     select_topic_samples,
+    should_write_learning_record,
     summarize,
     topic_sample,
 )
@@ -57,6 +58,11 @@ class LearnFromDailyFeedbackTest(unittest.TestCase):
         self.assertTrue(is_test_table_name("08 学习记录__测试"))
         self.assertTrue(is_test_table_name("08_learning_TEST"))
         self.assertFalse(is_test_table_name("08 学习记录"))
+
+    def test_empty_learning_write_is_opt_in(self) -> None:
+        self.assertFalse(should_write_learning_record(0, write_empty_learning=False))
+        self.assertTrue(should_write_learning_record(0, write_empty_learning=True))
+        self.assertTrue(should_write_learning_record(1, write_empty_learning=False))
 
     def test_learning_confirmation_card_contains_three_decisions(self) -> None:
         topics = [

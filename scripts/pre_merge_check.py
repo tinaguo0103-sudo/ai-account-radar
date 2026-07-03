@@ -26,6 +26,7 @@ PY_COMPILE_TARGETS = (
     "scripts/check_feishu_card_cloud_receiver.py",
     "scripts/learn_from_daily_feedback.py",
     "scripts/draft_learning_skill_sync.py",
+    "scripts/install_production_keepawake.py",
 )
 DEFAULT_FEISHU_READ_TABLE_KEYS = ("topic_decision", "script_package")
 SMOKE_MANUAL = "data/manual/content_items.example.jsonl"
@@ -92,6 +93,11 @@ def check_failure_qa_rules() -> dict[str, Any]:
         "stdout": "all synthetic QA cases passed" if not failures else "\n".join(failures),
         "stderr": "",
     }
+
+
+def check_feishu_receiver_node_tests() -> dict[str, Any]:
+    result = run(["node", "--test", "cloud_functions/feishu-card-receiver/test/receiver.test.mjs", "cloud_functions/feishu-card-receiver/test/tencent-scf-entry.test.mjs"])
+    return {"ok": result["returncode"] == 0, "name": "Feishu card receiver Node tests", **result}
 
 
 def check_topic_card_guard() -> dict[str, Any]:
@@ -202,6 +208,7 @@ def main() -> int:
         check_git_production(),
         check_py_compile(),
         check_failure_qa_rules(),
+        check_feishu_receiver_node_tests(),
         check_topic_card_guard(),
     ]
 
