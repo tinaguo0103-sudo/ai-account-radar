@@ -673,6 +673,7 @@ def readable_evidence_item(value: str) -> str:
     replacements = [
         ("需要实际跑10条候选，补回填截图", "10条候选的回填截图"),
         ("需要跑一次固定样张，补导出对比截图", "固定样张的导出对比截图"),
+        ("一张从03到04再到06的路径截图", "03 收件箱、04 选题字段、06 文档路径和脚本包路径截图"),
     ]
     for old, new in replacements:
         text = text.replace(old, new)
@@ -716,8 +717,15 @@ def opening_hook_options(topic: dict[str, Any], validation: ValidationResult) ->
     ])
 
 
+def natural_judgment_text(topic: dict[str, Any], fallback: str = "AI不能只看生成结果，必须回到业务验收") -> str:
+    raw = trim_end_punctuation(topic.get("unique_judgment"), "")
+    if workflow_object(topic) == "内容资产沉淀" and any(term in raw for term in ["对标视频", "对标内容", "同类内容", "同类资料", "讲法偏浅"]):
+        return "借这个选题回头检查自己的内容系统：资料进来以后，有没有真的沉淀成后面能用的资产"
+    return raw or fallback
+
+
 def key_judgment_lines(topic: dict[str, Any]) -> list[str]:
-    judgment = clip_text(topic.get("unique_judgment"), 54, "AI不能只看生成结果，必须回到业务验收")
+    judgment = clip_text(natural_judgment_text(topic), 54, "AI不能只看生成结果，必须回到业务验收")
     return unique_items([judgment] + key_judgment_extras(topic))
 
 
@@ -746,7 +754,7 @@ def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     core = clip_text(topic.get("core_thesis"), 72, title)
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 72, "旧流程里有一个真实低效或高风险环节")
     ai_action = clip_text(topic.get("ai_intervention"), 72, "用AI介入一个可验证的小环节")
-    judgment = clip_text(topic.get("unique_judgment"), 72, "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
+    judgment = clip_text(natural_judgment_text(topic, "AI只能辅助判断，最终取舍仍然要回到人的业务标准"), 72, "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
     evidence_text = clip_text(evidence_phrase(topic, validation), 60, "输入、输出和人工验收画面")
     hook = opening_hook_options(topic, validation)[0]
     if validation.status == "blocked":
@@ -785,7 +793,7 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
     validation = validation or ValidationResult("revise", [], [], [], [])
     obj = workflow_object(topic)
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 58, "旧流程里的真实痛点")
-    judgment = clip_text(topic.get("unique_judgment"), 58, "我的判断和边界")
+    judgment = clip_text(natural_judgment_text(topic, "我的判断和边界"), 58, "我的判断和边界")
     ai_action = clip_text(topic.get("ai_intervention"), 58, "AI介入动作")
     evidence_text = clip_text(evidence_phrase(topic, validation), 48, "关键截图、录屏或前后对比")
     hook = opening_hook_options(topic, validation)[0]
@@ -939,7 +947,7 @@ def execution_rows(topic: dict[str, Any], template: str) -> list[dict[str, str]]
             "#": "03",
             "时间段": "00:30-01:00",
             "段落目的": "奥斯汀判断",
-            "口播轨": topic.get("unique_judgment") or "这里补我的主观判断和取舍标准。",
+            "口播轨": natural_judgment_text(topic, "这里补我的主观判断和取舍标准。"),
             "画面/录屏轨": "方法卡、流程图或字段变化截图。",
             "字幕重点": "不是工具演示，是工作流验收。",
             "后期提示": "切回真人大画面强调判断。",
@@ -991,11 +999,16 @@ def qa_rows(validation: ValidationResult) -> list[dict[str, str]]:
         item for item in validation.evidence_gaps
         if "缺少可展示证据" in item or "至少补一组截图" in item
     ]
+    production_evidence = [
+        item for item in validation.evidence_gaps
+        if not is_release_reminder_item(readable_evidence_item(item))
+    ]
+    release_items = release_reminder_items(validation)
     return [
         {"检查项": "必填字段", "结果": "blocked" if validation.missing_required else "pass", "说明": md_list(validation.missing_required, "完整")},
-        {"检查项": "实操证据", "结果": "revise" if generic_evidence_gaps else "pass", "说明": md_list(validation.evidence_gaps, "已有证据")},
+        {"检查项": "实操证据", "结果": "revise" if generic_evidence_gaps else "pass", "说明": md_list(production_evidence, "已有证据")},
         {"检查项": "真人判断", "结果": "revise" if validation.notes else "pass", "说明": md_list(validation.notes, "已有人工判断")},
-        {"检查项": "事实核验", "结果": "reminder" if validation.fact_check_points else "pass", "说明": md_list(validation.fact_check_points, "无额外核验点")},
+        {"检查项": "事实核验", "结果": "reminder" if release_items else "pass", "说明": md_list(release_items, "无额外核验点")},
         {"检查项": "是否继续制作", "结果": "blocked" if validation.missing_required else ("revise" if blocking_issues else "pass"), "说明": "已生成完整执行包；具体拍摄和事实核验按提醒执行，是否拆任务仍需人工确认。"},
     ]
 
@@ -1004,18 +1017,11 @@ def demo_rows(topic: dict[str, Any], private_cases: list[dict[str, Any]] | None 
     rows: list[dict[str, str]] = []
     for item in topic.get("demo_materials", []):
         rows.append({"素材类型": "已有/计划证据", "需要内容": item, "用途": "证明流程可复现或结果可用", "优先级": "高", "状态": "待确认"})
-    for item in topic.get("missing_evidence", []):
+    for item in production_todo_items(validate_topic(topic)):
         readable_item = readable_evidence_item(item)
         if is_release_reminder_item(readable_item):
-            rows.append({
-                "素材类型": "发布前核验",
-                "需要内容": readable_item,
-                "用途": "避免事实错误、误读原文或扩大声称",
-                "优先级": "高",
-                "状态": "发布前处理",
-            })
             continue
-        rows.append({"素材类型": "待补证据", "需要内容": item, "用途": "补足可信度和可拍摄性", "优先级": "高", "状态": "待补"})
+        rows.append({"素材类型": "待补证据", "需要内容": readable_item, "用途": "补足可信度和可拍摄性", "优先级": "高", "状态": "待补"})
     for case in private_cases or []:
         for item in case.get("shootable_evidence", [])[:3]:
             rows.append({
@@ -1159,7 +1165,7 @@ def voice_skill_context(topic: dict[str, Any], validation: ValidationResult) -> 
         "opening": full_script_opening(topic, validation),
         "evidence_text": inline_items(script_evidence_items(topic, validation), "输入、输出、错误点和人工修改记录", limit=3, item_limit=42),
         "todo_text": inline_items(shooting_reminder_items(validation), "一段真实录屏和一个失败样例", limit=2, item_limit=42),
-        "fact_text": inline_items(release_reminder_items(validation), "", limit=2, item_limit=48),
+        "fact_text": inline_items(voice_fact_check_items(validation), "", limit=2, item_limit=48),
         "research_source_text": inline_items(topic.get("research_sources", []), "", limit=3, item_limit=86),
         "expression_pattern_text": inline_items(topic.get("expression_patterns", []), "", limit=2, item_limit=86),
         "fusion_note_text": inline_items(topic.get("fusion_notes", []), "", limit=3, item_limit=86),
@@ -1199,7 +1205,7 @@ def teleprompter_sections(topic: dict[str, Any], validation: ValidationResult) -
     pain = trim_end_punctuation(topic.get("pain_point") or topic.get("old_workflow"), "旧流程里有一个真实卡点")
     old = trim_end_punctuation(topic.get("old_workflow"), pain)
     ai_action = trim_end_punctuation(topic.get("ai_intervention"), "让 AI 介入一个可以验收的小环节")
-    judgment = trim_end_punctuation(topic.get("unique_judgment"), "AI 真正要进入业务流程，必须留下可验收的证据")
+    judgment = trim_end_punctuation(natural_judgment_text(topic, "AI 真正要进入业务流程，必须留下可验收的证据"), "AI 真正要进入业务流程，必须留下可验收的证据")
     asset = trim_end_punctuation(topic.get("takeaway_asset"), "一份可复用的流程清单")
     evidence = inline_items(script_evidence_items(topic, validation), "输入、输出、异常和人工验收画面", limit=3, item_limit=44)
     todos = inline_items(shooting_reminder_items(validation), "拍摄前不额外补P0素材", limit=2, item_limit=42)
@@ -1248,7 +1254,7 @@ def readable_todo_items(validation: ValidationResult) -> list[str]:
 
 def full_package_outline(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 70, "旧流程缺少验收字段")
-    judgment = clip_text(topic.get("unique_judgment"), 70, "AI任务必须留下状态、异常和验收记录")
+    judgment = clip_text(natural_judgment_text(topic, "AI任务必须留下状态、异常和验收记录"), 70, "AI任务必须留下状态、异常和验收记录")
     ai_action = clip_text(topic.get("ai_intervention"), 76, "按验收表跑一次真实任务")
     evidence = inline_items(script_evidence_items(topic, validation), "任务跑表、输入输出、失败样例", limit=3, item_limit=34)
     todos = inline_items(shooting_reminder_items(validation), "无P0素材缺口", limit=2, item_limit=34)
@@ -1363,7 +1369,21 @@ def blocking_quality_issues(validation: ValidationResult) -> list[str]:
     return issues
 
 
-RELEASE_REMINDER_TERMS = ["发布前", "核验", "原文", "避免说错", "事实", "不能声称"]
+INTERNAL_BOUNDARY_TERMS = [
+    "不需要证明",
+    "如果当天还没生成06",
+    "只作为选题系统复盘",
+]
+
+RELEASE_REMINDER_TERMS = [
+    "发布前",
+    "核验",
+    "原文",
+    "避免说错",
+    "事实",
+    "不能声称",
+    *INTERNAL_BOUNDARY_TERMS,
+]
 
 
 def concrete_todo_items(validation: ValidationResult) -> list[str]:
@@ -1377,10 +1397,14 @@ def is_release_reminder_item(item: str) -> bool:
     return any(term in item for term in RELEASE_REMINDER_TERMS)
 
 
+def is_internal_boundary_item(item: str) -> bool:
+    return any(term in item for term in INTERNAL_BOUNDARY_TERMS)
+
+
 def shooting_reminder_items(validation: ValidationResult) -> list[str]:
     return [
         item for item in concrete_todo_items(validation)
-        if not is_release_reminder_item(item) and not str(item).startswith("不需要证明")
+        if not is_release_reminder_item(item) and not is_internal_boundary_item(item)
     ]
 
 
@@ -1393,6 +1417,13 @@ def release_reminder_items(validation: ValidationResult) -> list[str]:
         ],
         *validation.fact_check_points,
     ])
+
+
+def voice_fact_check_items(validation: ValidationResult) -> list[str]:
+    return [
+        item for item in release_reminder_items(validation)
+        if not is_internal_boundary_item(item)
+    ]
 
 
 def production_reminders(validation: ValidationResult) -> list[str]:

@@ -135,8 +135,8 @@ def research_spoken_lines(topic: dict[str, Any], obj: str) -> list[str]:
 def spoken_judgment(topic: dict[str, Any], obj: str, raw: str) -> str:
     if obj == "AI口播交付":
         return "把这个热点放进我熟悉的 AI导演工作流里，看它离真正成片还差哪一步"
-    if obj == "内容资产沉淀" and any(term in raw for term in ["对标视频", "对标内容", "同类内容"]):
-        return "把这条外部灵感，拉回到我自己的内容系统复盘里"
+    if obj == "内容资产沉淀" and any(term in raw for term in ["对标视频", "对标内容", "同类内容", "同类资料", "讲法偏浅"]):
+        return "借这个选题回头检查自己的内容系统：资料进来以后，有没有真的沉淀成后面能用的资产"
     return raw
 
 
@@ -196,7 +196,7 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
             "\n\n".join(
                 [
                     f"所以这条我不想把「{title}」讲成工具教程。",
-                    f"我真正想做的是：{judgment}。",
+                    f"我真正想做的是，{judgment}。",
                     *research_lines,
                     "这条最后要看的不是概念讲得多完整。",
                     "而是它能不能回到我的真实流程里，让我知道该看哪里、改哪里、哪里还没把握。",

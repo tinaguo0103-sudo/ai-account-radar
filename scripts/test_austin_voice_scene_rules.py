@@ -30,6 +30,29 @@ VOICE = load_module(VOICE_MODULE_PATH, "austin_voice_research_fusion")
 SCRIPTING = load_module(SCRIPTING_MODULE_PATH, "austin_scripting_research_fusion")
 
 
+def render_package_document(raw_topic: dict[str, str]) -> str:
+    topic = SCRIPTING.normalize_topic(raw_topic, record_id=raw_topic["record_id"])
+    old_env = os.environ.get("AUSTIN_VOICE_SCRIPT_SKILL_DIR")
+    os.environ["AUSTIN_VOICE_SCRIPT_SKILL_DIR"] = str(VOICE_SKILL_DIR)
+    try:
+        with tempfile.TemporaryDirectory() as temp_dir:
+            result = SCRIPTING.render_full_execution_package(topic, Path(temp_dir), run_date="2026-07-02")
+            return Path(result["document_path"]).read_text(encoding="utf-8")
+    finally:
+        if old_env is None:
+            os.environ.pop("AUSTIN_VOICE_SCRIPT_SKILL_DIR", None)
+        else:
+            os.environ["AUSTIN_VOICE_SCRIPT_SKILL_DIR"] = old_env
+
+
+def markdown_section(document: str, heading: str) -> str:
+    start = document.index(heading)
+    next_start = document.find("\n### ", start + len(heading))
+    if next_start == -1:
+        return document[start:]
+    return document[start:next_start]
+
+
 KNOWLEDGE_TOPIC = {
     "record_id": "recvoaOc5dT6vv",
     "选题命题": "Codex+Obsidian知识库这个选题，我会反过来检查自己的信息雷达有没有沉淀资产",
@@ -40,7 +63,7 @@ KNOWLEDGE_TOPIC = {
     "AI介入点": "AI负责把资料摘要、选题判断、脚本输入和输出路径结构化，人负责确认哪些值得沉淀。",
     "可沉淀资产": "信息雷达内容资产沉淀检查清单",
     "可展示证据": "03内容收件箱；04选题字段；06文档路径；脚本包文件",
-    "需要补的证据": "补一张从03到04再到06的路径截图。",
+    "需要补的证据": "补一张从03到04再到06的路径截图；如果当天还没生成06，就只作为选题系统复盘。",
     "主编判断": "同类资料讲法偏浅，但能转成我自己的内容系统复盘。",
     "搜索来源摘要": "Obsidian 官方文档显示笔记可以链接到文件、标题和块；Obsidian Graph 文档把笔记和关系显示成节点与链接。",
     "表达模式拆解": "同类知识库内容常从“第二大脑、自动整理、图谱”进入，但容易变教程。",
@@ -102,9 +125,13 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
 
         self.assertIn("知识库不是一个大仓库", text)
         self.assertIn("给每条素材贴一张流转单", text)
+        self.assertIn("借这个选题回头检查自己的内容系统", text)
+        self.assertIn("资料进来以后，有没有真的沉淀成后面能用的资产", text)
         self.assertIn("一条素材能不能从 03 收件箱走到 04 选题，再走到 06 脚本和复盘", text)
         self.assertIn("很多知识库内容会先讲 Obsidian 图谱", text)
         self.assertIn("但我现在的问题不是怎么搭库", text)
+        self.assertNotIn("同类资料讲法偏浅", text)
+        self.assertNotIn("如果当天还没生成06", text)
         self.assertNotIn("先给真实场景", text)
         self.assertNotIn("对标拆解后再转译", text)
         self.assertNotIn("我会参考同类内容里这个讲法", text)
@@ -140,6 +167,30 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         self.assertNotIn("保留 voice agent", text)
         self.assertNotIn("丢弃未核验", text)
         self.assertNotIn("融合到 30 秒口播脚本", text)
+
+    def test_internal_boundaries_stay_out_of_shootable_sections(self) -> None:
+        checks = [
+            (VOICE_AGENT_TOPIC, "不需要证明 xAI 工具完整可用"),
+            (KNOWLEDGE_TOPIC, "如果当天还没生成06，就只作为选题系统复盘"),
+        ]
+
+        for raw_topic, forbidden in checks:
+            with self.subTest(topic=raw_topic["record_id"]):
+                document = render_package_document(raw_topic)
+                self.assertIn(forbidden, markdown_section(document, "### 一屏结论"))
+                self.assertIn(forbidden, markdown_section(document, "### QA"))
+
+                for heading in [
+                    "### 视频结构",
+                    "### 口播全文",
+                    "### 分段执行方案",
+                    "### 录屏与素材清单",
+                ]:
+                    self.assertNotIn(forbidden, markdown_section(document, heading))
+
+        knowledge_doc = render_package_document(KNOWLEDGE_TOPIC)
+        self.assertIn("03 收件箱、04 选题字段、06 文档路径和脚本包路径截图", knowledge_doc)
+        self.assertNotIn("同类资料讲法偏浅", knowledge_doc)
 
 
 if __name__ == "__main__":
