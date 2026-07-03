@@ -20,6 +20,7 @@ DAILY_WRITE_FIELDS = [
     "对应方向",
     "原始来源标题",
     "来源链接",
+    "内容指纹",
     "一句话Brief",
     "推荐理由",
     "不建议做的原因",
@@ -80,6 +81,7 @@ CORE_VISIBLE_FIELDS = [
 DETAIL_VISIBLE_FIELDS = CORE_VISIBLE_FIELDS + [
     "原始来源标题",
     "来源链接",
+    "内容指纹",
     "推荐日期",
     "今日排名",
     "运行批次",

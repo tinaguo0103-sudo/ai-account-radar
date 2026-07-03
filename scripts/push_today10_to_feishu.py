@@ -12,7 +12,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +33,10 @@ TODAY10 = OUT / "today_10_topics.csv"
 LATEST_WRITE_TODAY10 = OUT / "latest_write" / "today_10_topics.csv"
 LEGACY_LOG = OUT / "content_sampler_log.json"
 TARGET_TABLE_KEY = "topic_decision"
+CONTENT_INBOX_TABLE_KEY = "content_inbox"
+CONTENT_FINGERPRINT_FIELD = "内容指纹"
+RECENT_DEDUPE_DAYS = int(os.getenv("TOPIC_CARD_RECENT_DEDUPE_DAYS", "5"))
+CONTENT_INBOX_SYNC_RATIO = float(os.getenv("CONTENT_INBOX_SYNC_RATIO", "0.8"))
 REQUIRED_FIELDS = [
     *DAILY_WRITE_FIELDS,
 ]
@@ -163,6 +167,88 @@ def read_today10(path: Path) -> list[dict[str, str]]:
     return rows
 
 
+def normalize(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def parse_date(value: Any) -> datetime | None:
+    text = normalize(value)
+    if not text:
+        return None
+    try:
+        return datetime.strptime(text[:10], "%Y-%m-%d")
+    except ValueError:
+        return None
+
+
+def local_content_item_keys(path: Path) -> set[str]:
+    if not path.exists() or not path.read_text(encoding="utf-8-sig").strip():
+        return set()
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    keys: set[str] = set()
+    for row in rows:
+        key = (
+            normalize(row.get(CONTENT_FINGERPRINT_FIELD))
+            or normalize(row.get("内容链接"))
+            or normalize(row.get("链接"))
+            or normalize(row.get("内容标题"))
+            or normalize(row.get("标题"))
+        )
+        if key:
+            keys.add(key)
+    return keys
+
+
+def minimum_expected_content_inbox_records(local_count: int) -> int:
+    if local_count <= 0:
+        return 0
+    if local_count <= 20:
+        return local_count
+    return max(20, int(local_count * CONTENT_INBOX_SYNC_RATIO))
+
+
+def validate_content_inbox_synced(token: str, app_token: str, tables: dict[str, str], run_id: str, input_path: Path) -> dict[str, Any]:
+    content_items_path = input_path.parent / "content_items.csv"
+    local_keys = local_content_item_keys(content_items_path)
+    if not local_keys:
+        raise SystemExit(
+            f"Refusing to write Feishu 04: missing or empty local content inbox source {content_items_path}. "
+            "04 must only be written after the matching 03 内容收件箱 source exists."
+        )
+    table_id = resolve_table_id(tables, CONTENT_INBOX_TABLE_KEY)
+    if not table_id:
+        raise SystemExit(f"Missing Feishu table: {table_name(CONTENT_INBOX_TABLE_KEY)}")
+    records = all_records(token, app_token, table_id)
+    today = today_slug()
+    run_records = [
+        record for record in records
+        if normalize(record.get("fields", {}).get("最近参与运行批次")) == run_id
+        or normalize(record.get("fields", {}).get("运行批次")) == run_id
+    ]
+    today_records = [
+        record for record in records
+        if normalize(record.get("fields", {}).get("最近采样日期")) == today
+        or normalize(record.get("fields", {}).get("运行日期")) == today
+    ]
+    minimum = minimum_expected_content_inbox_records(len(local_keys))
+    if len(run_records) < minimum:
+        raise SystemExit(
+            "Refusing to write Feishu 04: Feishu 03 内容收件箱 is not synced for this run. "
+            f"run_id={run_id}; local_unique_items={len(local_keys)}; "
+            f"feishu_run_records={len(run_records)}; required_minimum={minimum}; "
+            f"feishu_today_records={len(today_records)}. "
+            "Fix or backfill 03 before writing 04."
+        )
+    return {
+        "content_items_path": str(content_items_path),
+        "local_unique_items": len(local_keys),
+        "feishu_run_records": len(run_records),
+        "feishu_today_records": len(today_records),
+        "required_minimum": minimum,
+    }
+
+
 def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], int]:
     visible = [
         row for row in rows
@@ -286,6 +372,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "对应方向": row.get("对应方向", row.get("对应栏目", "")),
         "原始来源标题": row.get("来源内容") or row.get("原始来源标题", ""),
         "来源链接": row.get("来源链接", ""),
+        CONTENT_FINGERPRINT_FIELD: row.get(CONTENT_FINGERPRINT_FIELD, ""),
         "一句话Brief": row.get("一句话Brief", ""),
         "推荐理由": recommendation_reason,
         "不建议做的原因": row.get("不建议做的原因", ""),
@@ -303,6 +390,53 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
     }
     mapped["卡片速读"] = card_summary_from_fields(mapped)
     return mapped
+
+
+def topic_duplicate_keys(fields: dict[str, Any]) -> set[tuple[str, str]]:
+    keys: set[tuple[str, str]] = set()
+    for field in [CONTENT_FINGERPRINT_FIELD, "来源链接", "原始来源标题", "选题标题"]:
+        value = normalize(fields.get(field))
+        if value:
+            keys.add((field, value))
+    return keys
+
+
+def recent_duplicate_keys(records: list[dict[str, Any]], date: str, run_id: str, days: int = RECENT_DEDUPE_DAYS) -> set[tuple[str, str]]:
+    current = parse_date(date)
+    if not current or days <= 0:
+        return set()
+    cutoff = current - timedelta(days=days)
+    keys: set[tuple[str, str]] = set()
+    for record in records:
+        fields = record.get("fields", {})
+        if normalize(fields.get("运行批次")) == run_id:
+            continue
+        record_date = parse_date(fields.get("推荐日期"))
+        if not record_date or record_date >= current or record_date < cutoff:
+            continue
+        keys.update(topic_duplicate_keys(fields))
+    return keys
+
+
+def filter_recent_duplicate_rows(
+    rows: list[dict[str, str]],
+    existing_records: list[dict[str, Any]],
+    date: str,
+    run_id: str,
+    days: int = RECENT_DEDUPE_DAYS,
+) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
+    duplicate_keys = recent_duplicate_keys(existing_records, date, run_id, days)
+    if not duplicate_keys:
+        return rows, []
+    kept: list[dict[str, str]] = []
+    skipped: list[dict[str, str]] = []
+    for row in rows:
+        row_keys = topic_duplicate_keys(row)
+        if row_keys & duplicate_keys:
+            skipped.append(row)
+        else:
+            kept.append(row)
+    return kept, skipped
 
 
 def dry_run_print(rows: list[dict[str, str]]) -> None:
@@ -465,12 +599,22 @@ def main() -> int:
         raise SystemExit("FEISHU_BASE_APP_TOKEN is required")
     token = feishu.tenant_token()
     tables = list_tables(token, app_token)
+    content_inbox_check = validate_content_inbox_synced(token, app_token, tables, run_id, input_path)
     table_id = resolve_table_id(tables, TARGET_TABLE_KEY)
     if not table_id:
         raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
     created_fields = ensure_fields(token, app_token, table_id)
 
     existing = all_records(token, app_token, table_id)
+    mapped, skipped_recent_duplicates = filter_recent_duplicate_rows(mapped, existing, date, run_id)
+    if skipped_recent_duplicates:
+        skipped_titles = [row.get("选题标题", "") for row in skipped_recent_duplicates]
+        print(json.dumps({
+            "event": "skip_recent_duplicates",
+            "days": RECENT_DEDUPE_DAYS,
+            "count": len(skipped_recent_duplicates),
+            "titles": skipped_titles,
+        }, ensure_ascii=False, indent=2))
     existing_by_source = {
         (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("原始来源标题", ""))): record
         for record in existing
@@ -509,6 +653,8 @@ def main() -> int:
         "updated_existing": updated_existing,
         "skipped_existing": len(mapped) - len(to_create),
         "omitted_rows": omitted_rows,
+        "skipped_recent_duplicates": len(skipped_recent_duplicates),
+        "content_inbox_check": content_inbox_check,
         "created_titles": created_titles,
         "updated_titles": updated_titles,
         "today_view": ensure_today_top10_view(token, app_token, table_id, run_id),

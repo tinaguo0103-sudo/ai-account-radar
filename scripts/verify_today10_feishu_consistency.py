@@ -18,6 +18,7 @@ from push_today10_to_feishu import (
     FALLBACK_EXPERIMENT_PROMPT,
     default_today10_path,
     feishu_visible_rows,
+    filter_recent_duplicate_rows,
     map_row,
     today_slug,
 )
@@ -205,8 +206,9 @@ def main() -> int:
     if not table_id:
         raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
 
-    local_rows, omitted_rows = read_local(args.run_id, input_path)
     records = all_records(token, app_token, table_id)
+    local_rows, omitted_rows = read_local(args.run_id, input_path)
+    local_rows, skipped_recent_duplicates = filter_recent_duplicate_rows(local_rows, records, today_slug(), args.run_id)
     run_records = [record for record in records if normalize(record.get("fields", {}).get("运行批次")) == args.run_id]
     feishu_by_key = {feishu_key(record.get("fields", {})): record for record in run_records}
 
@@ -268,9 +270,10 @@ def main() -> int:
         "ok": not failures,
         "run_id": args.run_id,
         "input": str(input_path),
-        "local_rows_all": len(local_rows) + omitted_rows,
+        "local_rows_all": len(local_rows) + omitted_rows + len(skipped_recent_duplicates),
         "local_rows": len(local_rows),
         "omitted_rows": omitted_rows,
+        "skipped_recent_duplicates": len(skipped_recent_duplicates),
         "feishu_rows": len(run_records),
         "level_counts": dict(level_counts),
         "duplicates": [list(key) for key in duplicates],
