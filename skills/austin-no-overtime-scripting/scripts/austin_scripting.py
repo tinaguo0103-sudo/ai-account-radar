@@ -520,12 +520,70 @@ def has_any(text: str, terms: list[str]) -> bool:
     return any(term.lower() in text for term in terms)
 
 
+CONCEPT_TOOL_TERMS = [
+    "知识库",
+    "rag",
+    "agent",
+    "voice agent",
+    "tts",
+    "工作流系统",
+    "ai工具",
+    "ai 工具",
+    "工具",
+    "模型",
+    "自动化",
+    "codex",
+    "obsidian",
+]
+
+
+def is_concept_tool_topic(topic: dict[str, Any]) -> bool:
+    return has_any(topic_blob(topic), CONCEPT_TOOL_TERMS)
+
+
+def concept_grounding_hook(topic: dict[str, Any], validation: ValidationResult) -> str:
+    if not is_concept_tool_topic(topic):
+        return ""
+    for key in ["old_workflow", "pain_point", "core_thesis"]:
+        value = public_facing_text(trim_end_punctuation(topic.get(key), ""))
+        if value:
+            return clip_text(value, 46, "")
+    evidence = clip_text(evidence_phrase(topic, validation), 36, "")
+    if evidence:
+        return f"先看{evidence}里到底卡在哪里"
+    return ""
+
+
+def concept_method_material(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
+    if not is_concept_tool_topic(topic):
+        return []
+    old = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 82, "先补用户原来怎么解决这个问题")
+    pain = clip_text(topic.get("pain_point") or topic.get("old_workflow"), 82, "先补旧方式在真实工作里卡在哪里")
+    why_now = clip_text(topic.get("ai_intervention") or topic.get("core_thesis"), 82, "先补为什么现在需要引入这个概念、工具或工作流")
+    plain = clip_text(
+        topic.get("plain_explanation")
+        or "用真实工作现场解释概念，不做百科定义，也不把工具名当成主角",
+        104,
+        "",
+    )
+    case = clip_text(topic.get("topic_title"), 72, "当前工具、热点或产品")
+    evidence = inline_items(script_evidence_items(topic, validation), "待补真实截图、录屏或材料路径", limit=3, item_limit=42)
+    return [
+        f"旧方式/普通替代方式：{public_facing_text(old)}",
+        f"真实工作卡点：{public_facing_text(pain)}",
+        f"为什么现在需要它：{public_facing_text(why_now)}",
+        f"人话解释素材：{public_facing_text(plain)}",
+        f"落地案例边界：{public_facing_text(case)} 只是当前案例，不是全文主角",
+        f"回到本人工作流：用 {public_facing_text(evidence)} 验证，而不是靠概念成立",
+    ]
+
+
 def workflow_object(topic: dict[str, Any]) -> str:
     text = topic_blob(topic)
     if any(term in text for term in ["voice agent", "口播", "配音", "声音", "字幕", "分镜"]):
         return "AI口播交付"
     if any(term in text for term in ["知识库", "obsidian", "资料仓库", "沉淀资产", "信息雷达"]):
-        return "内容资产沉淀"
+        return "内容资料流转"
     if any(term in text for term in ["汽车", "智能驾驶", "辅助驾驶", "l3", "l4", "国标"]):
         return "汽车AI内容"
     if any(term in text for term in ["候选池", "excel", "批量补字段", "飞书候选"]):
@@ -547,7 +605,7 @@ def hook_problem(topic: dict[str, Any]) -> str:
     obj = workflow_object(topic)
     mapping = {
         "AI口播交付": "AI口播最怕的不是声音不自然，是放进成片以后没人知道怎么返修",
-        "内容资产沉淀": "内容资产最怕的不是资料没存，是写稿时还要重新找、重新判断、重新组织",
+        "内容资料流转": "资料最怕的不是没保存，是写稿时还要重新找、重新判断、重新组织",
         "汽车AI内容": "汽车内容最怕的不是慢，是一句卖点把边界说过头",
         "候选池": "表格AI最怕的不是填得少，是填满以后没人知道对不对",
         "选题台": "选题台最怕的不是没灵感，是每条看起来都能做",
@@ -568,10 +626,13 @@ def lead_hook(topic: dict[str, Any], validation: ValidationResult) -> str:
         return f"这条先别急着拍，缺的不是标题，是{gap}"
     if has_any(text, ["claude", "团队原则"]):
         return "我不是想学Claude Code的原则，我想看AI任务交出去以后谁来验"
+    grounded = concept_grounding_hook(topic, validation)
+    if grounded:
+        return grounded
     if has_any(text, ["obsidian", "知识库"]):
-        return "知识库如果不能把信息推回任务系统，就只是换个地方收藏"
+        return "先看资料进来以后，下次写内容时还能不能被叫回来用"
     if has_any(text, ["voice agent", "口播", "配音"]):
-        return "先把这段声音放进分镜和字幕里，再判断它能不能交付"
+        return "先把脚本、声音、分镜和字幕放在一起验，再判断能不能交付"
     if has_any(text, ["excel", "批量补字段", "候选池"]):
         return "表格自动化别先看填了多少，先看错了哪里能不能改回来"
     if has_any(text, ["adobe", "返修"]):
@@ -591,7 +652,7 @@ def second_hook(topic: dict[str, Any], validation: ValidationResult) -> str:
     obj = workflow_object(topic)
     mapping = {
         "AI口播交付": "声音自然只是第一步，能不能过分镜、字幕和返修才决定能不能交付",
-        "内容资产沉淀": "不是再搭一个资料仓库，是检查资料有没有变成判断、脚本和复盘资产",
+        "内容资料流转": "不是再搭一个资料仓库，是检查资料下次还能不能被判断、脚本和复盘叫回来",
         "汽车AI内容": "这条不比谁更会写卖点，只比谁能守住证据和功能边界",
         "候选池": "我不缺更多候选，我缺的是每条为什么升降级都能看见",
         "选题台": "选题台不是帮我多想几个标题，是帮我挡掉不该做的题",
@@ -617,9 +678,9 @@ def key_judgment_extras(topic: dict[str, Any]) -> list[str]:
             "AI口播能不能交付，不看声音多像真人，看角色、分镜、字幕和返修能不能接住。",
             "声音只是素材，过了导演验收才可能变成成片。",
         ],
-        "内容资产沉淀": [
-            "知识库只有接进生产流程，才不是另一个资料仓库。",
-            "内容资产不是存起来，而是能回到判断、脚本和复盘。",
+        "内容资料流转": [
+            "资料只有接进生产流程，才不是另一个收藏夹。",
+            "内容不是存起来就完了，而是下次还能回到判断、脚本和复盘。",
         ],
         "候选池": [
             "候选池自动化的价值，不是填满表格，是把判断成本降下来。",
@@ -662,7 +723,7 @@ def golden_line_pool(topic: dict[str, Any]) -> list[str]:
     elif has_any(text, ["voice agent", "口播", "配音"]):
         specific = ["声音自然不是交付，过了分镜、字幕和返修才算。", "AI口播不是少录一遍音，是少走一轮返修。"]
     elif has_any(text, ["obsidian", "知识库"]):
-        specific = ["知识库不是仓库，是回到任务的路由。", "收藏不进入执行台，就只是换了一个地方躺着。"]
+        specific = ["资料不是存起来就完了，关键是下次还能不能用。", "收藏不进入执行台，就只是换了一个地方躺着。"]
     elif has_any(text, ["excel", "批量补字段"]):
         specific = ["表格填满不是自动化，少改才是自动化。", "错得能回写，AI才值得继续用。"]
     elif has_any(text, ["adobe", "返修"]):
@@ -924,10 +985,16 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
     ai_action = clip_text(topic.get("ai_intervention"), 82, "待确认实操主线")
     production_direction = clip_text(topic.get("production_direction"), 110, "")
     research_lines = research_summary_lines(topic)
+    concept_lines = concept_method_material(topic, validation)
     lines = [
         f"- 模板：{template}（{clip_text(template_reason, 54, '按题材和实验类型判断')}）",
         *([f"- 人工制作补充：{production_direction}"] if production_direction else []),
         f"- 主线：{ai_action}",
+        *(
+            ["- 概念/工具型生成前判断（内部素材，不要逐条念，不要固定段落顺序）："]
+            + [f"  - {line}" for line in concept_lines]
+            if concept_lines else []
+        ),
         f"- 开头：{opening_hook_options(topic, validation)[0]}",
         f"- 判断：{inline_items(key_judgment_lines(topic), item_limit=46)}",
         f"- 金句：{inline_items(golden_lines(topic), item_limit=36)}",
@@ -1212,6 +1279,7 @@ def voice_skill_context(topic: dict[str, Any], validation: ValidationResult) -> 
         "evidence_text": inline_items(script_evidence_items(topic, validation), "输入、输出、错误点和人工修改记录", limit=3, item_limit=42),
         "todo_text": inline_items(shooting_reminder_items(validation), "一段真实录屏和一个失败样例", limit=2, item_limit=42),
         "fact_text": inline_items(voice_fact_check_items(validation), "", limit=2, item_limit=48),
+        "concept_method_text": "；".join(concept_method_material(topic, validation)),
         "voice_skill_version": VOICE_SKILL_VERSION,
     }
 

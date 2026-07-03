@@ -183,6 +183,44 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         self.assertNotIn("结果：pass", document)
         self.assertNotIn("可进入拍摄准备", document)
 
+    def test_concept_tool_method_enters_generation_input_without_template_lock(self) -> None:
+        topic = SCRIPTING.normalize_topic(KNOWLEDGE_TOPIC, record_id=KNOWLEDGE_TOPIC["record_id"])
+        validation = SCRIPTING.validate_topic(topic)
+        template, template_reason = SCRIPTING.classify_template(topic)
+        context = SCRIPTING.generation_input_for_06(topic, template, template_reason, validation, [])
+
+        self.assertIn("概念/工具型生成前判断（内部素材，不要逐条念，不要固定段落顺序）", context)
+        self.assertIn("旧方式/普通替代方式：资料存进去以后", context)
+        self.assertIn("真实工作卡点：知识库容易变成资料仓库", context)
+        self.assertIn("为什么现在需要它：AI负责把资料摘要、选题判断", context)
+        self.assertIn("只是当前案例，不是全文主角", context)
+        self.assertNotIn("固定段落顺序：", context)
+        self.assertNotIn("每条必须显性出现", context)
+
+    def test_concept_tool_opening_starts_from_old_way_not_naked_concept(self) -> None:
+        knowledge_doc = render_package_document(KNOWLEDGE_TOPIC)
+        voice_agent_doc = render_package_document(VOICE_AGENT_TOPIC)
+        knowledge_opening = markdown_line(knowledge_doc, "- 开头钩子：")
+        voice_agent_opening = markdown_line(voice_agent_doc, "- 开头钩子：")
+
+        self.assertIn("资料存进去以后", knowledge_opening)
+        self.assertNotIn("- 开头钩子：知识库", knowledge_opening)
+        self.assertIn("以前脚本、配音、字幕、分镜和剪辑验收是分开的", voice_agent_opening)
+        self.assertNotIn("- 开头钩子：xAI Voice Agent Builder", voice_agent_opening)
+
+    def test_method_update_does_not_hardcode_user_examples_or_sample_helpers(self) -> None:
+        paths = [
+            ROOT / "scripts" / "codex_script_package_runner.py",
+            ROOT / "skills" / "austin-no-overtime-scripting" / "SKILL.md",
+            ROOT / "skills" / "austin-no-overtime-scripting" / "scripts" / "austin_scripting.py",
+            ROOT / "skills" / "austin-voice-scriptwriter" / "SKILL.md",
+            ROOT / "skills" / "austin-voice-scriptwriter" / "scripts" / "austin_voice.py",
+        ]
+        source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
+
+        for phrase in ["knowledge_base_opening", "tts_opening", "传统 TTS", "音色像不像", "iCloud", "Word", "备忘录"]:
+            self.assertNotIn(phrase, source)
+
     def test_knowledge_base_material_stays_in_report_not_voice_mapping(self) -> None:
         topic = SCRIPTING.normalize_topic(KNOWLEDGE_TOPIC, record_id=KNOWLEDGE_TOPIC["record_id"])
         text = VOICE.render_voice_text(topic, SCRIPTING.voice_skill_context(topic, SCRIPTING.validate_topic(topic)))
