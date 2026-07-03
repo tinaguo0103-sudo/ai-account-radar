@@ -245,20 +245,26 @@ def is_user_oauth_error(message: str) -> bool:
     return any(needle in lowered for needle in needles)
 
 
-def notify_doc_sync_oauth_failure(title: str, message: str) -> None:
+def notify_doc_sync_failure(title: str, message: str) -> None:
     try:
         from feishu_automation_notify import notify
 
+        if is_user_oauth_error(message):
+            handling = (
+                "重新运行 `python3 scripts/feishu_user_oauth.py` 授权用户身份，"
+                "再运行 `python3 scripts/install_script_package_watcher_launch_agent.py --sync-runtime-only` 同步 runtime。"
+            )
+        else:
+            handling = "检查文档同步错误、用户可见文件夹权限、runtime 配置和本机权限；本地 Markdown 可先作为备份阅读。"
         body = (
             "06 飞书文档同步失败，但本地 Markdown 和 06 记录会继续保留。\n"
             f"选题：{title}\n"
             f"原因：{compact(message, 600)}\n"
-            "处理：重新运行 `python3 scripts/feishu_user_oauth.py` 授权用户身份，"
-            "再运行 `python3 scripts/install_script_package_watcher_launch_agent.py --sync-runtime-only` 同步 runtime。"
+            f"处理：{handling}"
         )
-        notify("【AI账号信息雷达】飞书文档同步授权失效", body)
+        notify("【AI账号信息雷达】飞书文档同步失败", body)
     except Exception as exc:
-        log("feishu oauth failure notification failed: " + compact(exc, 500))
+        log("feishu document sync failure notification failed: " + compact(exc, 500))
 
 
 def record_day(value: Any) -> date | None:
@@ -577,8 +583,7 @@ def try_create_feishu_document(token: str, title: str, package: dict[str, Any]) 
     except Exception as exc:
         message = compact(exc, 1000)
         log("feishu document sync failed: " + message)
-        if is_user_oauth_error(message):
-            notify_doc_sync_oauth_failure(title, message)
+        notify_doc_sync_failure(title, message)
         return FeishuDocSyncResult(
             folder_url=script_package_folder_url(),
             status="飞书文档同步失败",
