@@ -347,10 +347,12 @@ def write_card_preview(card: dict[str, Any], run_id: str) -> Path:
     return path
 
 
-def send_card(token: str, card: dict[str, Any], run_id: str, receive_id: str, receive_id_type: str) -> dict[str, Any]:
+def send_card(token: str, card: dict[str, Any], run_id: str, receive_id: str, receive_id_type: str, force_new_message: bool = False) -> dict[str, Any]:
     if not receive_id:
         raise SystemExit("Missing receive_id. Set FEISHU_CARD_RECEIVE_ID or pass --receive-id.")
     seed = "|".join([run_id or datetime.now().strftime("%Y%m%d%H%M"), receive_id_type, receive_id])
+    if force_new_message:
+        seed = "|".join([seed, datetime.now().strftime("%Y%m%d%H%M%S%f")])
     uuid = f"topic-decision-card-{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:16]}"
     payload = feishu.request_json(
         "POST",
@@ -754,6 +756,7 @@ def parse_args() -> argparse.Namespace:
     send.add_argument("--receive-id-type", default=os.getenv("FEISHU_CARD_RECEIVE_ID_TYPE", "open_id"))
     send.add_argument("--receive-target", action="append", default=[], help="Receive target in type:id form. Can be repeated. Env FEISHU_CARD_RECEIVE_TARGETS also supports comma-separated type:id values.")
     send.add_argument("--dry-run", action="store_true")
+    send.add_argument("--force-new-message", action="store_true", help="Bypass Feishu message idempotency for manual repair resends.")
 
     apply = sub.add_parser("apply", help="Apply submitted form_value JSON back to Feishu 04.")
     apply.add_argument("--run-id", default="latest")
@@ -805,7 +808,7 @@ def main() -> int:
                 )
                 summary["targets"] = [{"receive_id_type": target_type, "receive_id": target_id} for target_type, target_id in targets]
                 summary["send"] = [
-                    send_card(token, card, run_id, target_id, target_type).get("data", {})
+                    send_card(token, card, run_id, target_id, target_type, force_new_message=args.force_new_message).get("data", {})
                     for target_type, target_id in targets
                 ]
         print(json.dumps(summary, ensure_ascii=False, indent=2))
