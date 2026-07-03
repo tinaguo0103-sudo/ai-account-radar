@@ -479,6 +479,38 @@ def clip_text(value: Any, limit: int = 56, fallback: str = "待补") -> str:
     return text[: max(1, limit - 1)].rstrip("，,；;、 ") + "…"
 
 
+PUBLIC_COPY_REPLACEMENTS = [
+    ("有没有真的沉淀资产", "后面还能不能用"),
+    ("是否沉淀资产", "后面还能不能用"),
+    ("怎么沉淀资产", "怎么留下后面能用的东西"),
+    ("沉淀资产", "留下后面能用的东西"),
+    ("内容资产沉淀", "内容以后还能复用"),
+]
+
+
+def public_facing_text(value: Any) -> str:
+    text = str(value or "")
+    for old, new in PUBLIC_COPY_REPLACEMENTS:
+        text = text.replace(old, new)
+    return text
+
+
+def public_facing_value(value: Any) -> Any:
+    if isinstance(value, str):
+        return public_facing_text(value)
+    if isinstance(value, list):
+        return [public_facing_value(item) for item in value]
+    if isinstance(value, tuple):
+        return tuple(public_facing_value(item) for item in value)
+    if isinstance(value, dict):
+        return {key: public_facing_value(item) for key, item in value.items()}
+    return value
+
+
+def public_facing_topic(topic: dict[str, Any]) -> dict[str, Any]:
+    return {key: public_facing_value(value) for key, value in topic.items()}
+
+
 def topic_blob(topic: dict[str, Any]) -> str:
     keys = ["topic_title", "content_pillar", "core_thesis", "pain_point", "old_workflow", "ai_intervention", "production_direction", "takeaway_asset"]
     return " ".join(str(topic.get(key, "")) for key in keys).lower()
@@ -1381,7 +1413,14 @@ def blocking_quality_issues(validation: ValidationResult) -> list[str]:
 INTERNAL_BOUNDARY_TERMS = [
     "不需要证明",
     "如果当天还没生成06",
+    "如果当天没有生成06",
+    "如果当天没生成",
+    "如果今天没有完整生成到最后一步",
+    "如果今天没有完整生成",
+    "如果没有06",
+    "没有生成06",
     "只作为选题系统复盘",
+    "选题系统复盘",
 ]
 
 RELEASE_REMINDER_TERMS = [
@@ -1427,7 +1466,8 @@ def is_release_reminder_item(item: str) -> bool:
 
 
 def is_internal_boundary_item(item: str) -> bool:
-    return any(term in item for term in INTERNAL_BOUNDARY_TERMS)
+    normalized = re.sub(r"\s+", "", item)
+    return any(term in normalized for term in INTERNAL_BOUNDARY_TERMS)
 
 
 def shooting_reminder_items(validation: ValidationResult) -> list[str]:
@@ -1502,6 +1542,7 @@ def full_package_qa(validation: ValidationResult) -> tuple[str, list[str]]:
 
 def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_date: str | None = None) -> dict[str, Any]:
     run_date = run_date or datetime.now().strftime("%Y-%m-%d")
+    topic = public_facing_topic(topic)
     display_title = topic.get("topic_title") or "未命名选题"
     private_runtime = load_private_runtime()
     private_cases = matched_private_cases(topic, private_runtime)

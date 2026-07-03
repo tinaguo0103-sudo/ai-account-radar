@@ -25,9 +25,24 @@ def clip(value: Any, limit: int = 72, fallback: str = "") -> str:
     return cleaned[: max(1, limit - 1)].rstrip("，,；;、 ") + "…"
 
 
+PUBLIC_SPOKEN_REPLACEMENTS = [
+    ("有没有真的沉淀资产", "后面还能不能用"),
+    ("是否沉淀资产", "后面还能不能用"),
+    ("怎么沉淀资产", "怎么留下后面能用的东西"),
+    ("沉淀资产", "后面能用的东西"),
+    ("内容资产" + "沉淀", "内容以后还能复用"),
+]
+
+
+def spoken_text(value: Any, fallback: str = "") -> str:
+    spoken = text(value, fallback)
+    for old, new in PUBLIC_SPOKEN_REPLACEMENTS:
+        spoken = spoken.replace(old, new)
+    return spoken
+
+
 def spoken_title(value: Any, fallback: str = "这条选题") -> str:
-    title = text(value, fallback)
-    return title.replace("沉淀资产", "后面能用的东西")
+    return spoken_text(value, fallback)
 
 
 def blob(topic: dict[str, Any]) -> str:
@@ -151,15 +166,15 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
     obj = workflow_object(topic)
     activity = audience_activity(obj)
     title = spoken_title(topic.get("topic_title"), "这条选题")
-    core = text(topic.get("core_thesis"), title)
-    judgment = text(topic.get("unique_judgment"), core)
-    pain = text(topic.get("pain_point") or topic.get("old_workflow"), core_pain(obj))
-    old = text(topic.get("old_workflow"), pain)
-    ai_action = text(topic.get("ai_intervention"), "让 AI 介入一个能被检查的小环节")
-    direction = text(topic.get("production_direction"), "")
-    evidence = context.get("evidence_text") or "输入、输出、错误点和人工修改记录"
-    todos = context.get("todo_text") or "一段真实录屏和一个失败样例"
-    fact_text = context.get("fact_text") or ""
+    core = spoken_text(topic.get("core_thesis"), title)
+    judgment = spoken_text(topic.get("unique_judgment"), core)
+    pain = spoken_text(topic.get("pain_point") or topic.get("old_workflow"), core_pain(obj))
+    old = spoken_text(topic.get("old_workflow"), pain)
+    ai_action = spoken_text(topic.get("ai_intervention"), "让 AI 介入一个能被检查的小环节")
+    direction = spoken_text(topic.get("production_direction"), "")
+    evidence = spoken_text(context.get("evidence_text"), "输入、输出、错误点和人工修改记录")
+    todos = spoken_text(context.get("todo_text"), "一段真实录屏和一个失败样例")
+    fact_text = spoken_text(context.get("fact_text"), "")
     act1, act2, act3 = action_names(obj)
     questions = concrete_questions(obj)
 

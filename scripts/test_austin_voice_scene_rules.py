@@ -74,6 +74,24 @@ FORBIDDEN_VOICE_PHRASES = [
     "融合到 30 秒口播脚本",
 ]
 
+INTERNAL_STATUS_BOUNDARIES = [
+    "如果当天还没生成06",
+    "如果当天没有生成 06",
+    "如果当天没生成",
+    "如果今天没有完整生成到最后一步",
+    "没有完整生成到最后一步",
+    "选题系统复盘",
+]
+
+USER_VISIBLE_CREATIVE_SECTIONS = [
+    "### 视频结构",
+    "### 口播全文",
+    "### 分段执行方案",
+    "### 录屏与素材清单",
+    "### 剪辑交接",
+    "### 发布包草稿",
+]
+
 
 def voice_section(raw_topic: dict[str, str]) -> str:
     document = render_package_document(raw_topic)
@@ -90,6 +108,13 @@ def spoken_lines(text: str) -> list[str]:
             continue
         lines.append(clean)
     return lines
+
+
+def markdown_line(document: str, prefix: str) -> str:
+    for line in document.splitlines():
+        if line.startswith(prefix):
+            return line
+    raise AssertionError(f"Cannot find line starting with {prefix!r}")
 
 
 KNOWLEDGE_TOPIC = {
@@ -279,6 +304,27 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         knowledge_doc = render_package_document(KNOWLEDGE_TOPIC)
         self.assertIn("03 收件箱、04 选题字段、06 文档路径和脚本包路径截图", knowledge_doc)
         self.assertNotIn("同类资料讲法偏浅", knowledge_doc)
+
+    def test_final_markdown_sanitizes_user_visible_copy(self) -> None:
+        document = render_package_document(KNOWLEDGE_TOPIC)
+
+        self.assertNotIn("沉淀资产", document)
+        self.assertNotIn("结果：pass", document)
+        self.assertIn("结果：draft", document)
+
+        one_screen = markdown_section(document, "### 一屏结论")
+        self.assertNotIn("沉淀资产", one_screen)
+        shooting_line = markdown_line(document, "- 拍摄前待办：")
+        opening_line = markdown_line(document, "- 开头钩子：")
+        for term in INTERNAL_STATUS_BOUNDARIES:
+            self.assertNotIn(term, shooting_line)
+            self.assertNotIn(term, opening_line)
+
+        for heading in USER_VISIBLE_CREATIVE_SECTIONS:
+            section = markdown_section(document, heading)
+            self.assertNotIn("沉淀资产", section)
+            for term in INTERNAL_STATUS_BOUNDARIES:
+                self.assertNotIn(term, section)
 
 
 if __name__ == "__main__":

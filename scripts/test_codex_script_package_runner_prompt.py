@@ -41,6 +41,9 @@ class CodexScriptPackageRunnerPromptTest(unittest.TestCase):
             "请使用本机全局 Skill `$austin-no-overtime-scripting-ar009-test` 和 `$austin-voice-scriptwriter-ar009-test` 的方法",
             prompt,
         )
+        self.assertIn("内部状态边界只能留在 `发布前核验`、`QA 风险与防错` 或 `发布前提醒`", prompt)
+        self.assertIn("`沉淀资产` 是内部抽象词，不得出现在用户可见创作内容中", prompt)
+        self.assertIn("`qa_status` 不要自评为 `pass`", prompt)
 
 
 if __name__ == "__main__":
