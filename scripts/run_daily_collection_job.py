@@ -16,24 +16,44 @@ from feishu_automation_notify import notify
 
 ROOT = Path(__file__).resolve().parents[1]
 LOG_DIR = ROOT / "output" / "logs"
+CAPTURE_TAIL_CHARS = 4000
 
 
 def run_step(name: str, command: list[str]) -> dict[str, Any]:
     started_at = datetime.now().isoformat(timespec="seconds")
     print(f"\n== {name} ==", flush=True)
     print(" ".join(command), flush=True)
-    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
-    if result.stdout:
-        print(result.stdout, flush=True)
-    if result.stderr:
-        print(result.stderr, file=sys.stderr, flush=True)
+    output_tail = ""
+    process = subprocess.Popen(
+        command,
+        cwd=ROOT,
+        text=True,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        bufsize=1,
+    )
+    try:
+        assert process.stdout is not None
+        for line in process.stdout:
+            print(line, end="", flush=True)
+            output_tail = (output_tail + line)[-CAPTURE_TAIL_CHARS:]
+        returncode = process.wait()
+    except KeyboardInterrupt:
+        process.terminate()
+        try:
+            process.wait(timeout=10)
+        except subprocess.TimeoutExpired:
+            process.kill()
+            process.wait()
+        output_tail = (output_tail + "\nInterrupted by outer automation.\n")[-CAPTURE_TAIL_CHARS:]
+        returncode = 130
     return {
         "name": name,
         "command": command,
         "started_at": started_at,
-        "returncode": result.returncode,
-        "stdout": result.stdout[-4000:],
-        "stderr": result.stderr[-4000:],
+        "returncode": returncode,
+        "stdout": output_tail,
+        "stderr": "",
     }
 
 
