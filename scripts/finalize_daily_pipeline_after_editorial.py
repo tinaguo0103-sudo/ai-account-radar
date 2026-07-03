@@ -17,6 +17,7 @@ It does not generate editorial content.
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 import subprocess
 import sys
@@ -68,6 +69,56 @@ def write_json(path: Path, payload: dict[str, Any]) -> None:
 
 def default_today_path(run_id: str) -> Path:
     return OUT / "runs" / run_id / "today_10_topics.csv"
+
+
+def csv_row_count(path: Path) -> int:
+    if not path.exists() or not path.read_text(encoding="utf-8-sig").strip():
+        return 0
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return len(list(csv.DictReader(handle)))
+
+
+def ensure_latest_sampler_log(run_id: str, today_path: Path) -> None:
+    output_dir = OUT / "runs" / run_id
+    run_log_path = output_dir / "content_sampler_log.json"
+    payload = read_json(run_log_path)
+    if not payload:
+        payload = {
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "run_id": run_id,
+            "mode": "write-feishu",
+            "output_dir": str(output_dir),
+            "items": csv_row_count(output_dir / "content_items.csv"),
+            "breakdowns": csv_row_count(output_dir / "content_breakdowns.csv"),
+            "today_candidates": csv_row_count(today_path),
+            "logs": ["Recovered by external editorial finalizer; original sampler log was missing."],
+            "outputs": {
+                "content_items": str(output_dir / "content_items.csv"),
+                "content_breakdowns": str(output_dir / "content_breakdowns.csv"),
+                "today_candidates": str(today_path),
+                "today_10_markdown": str(output_dir / f"today_10_topics_{datetime.now().strftime('%Y-%m-%d')}.md"),
+                "debug_top10_csv": str(output_dir / "debug_today10_generation.csv"),
+                "debug_top10_markdown": str(output_dir / "debug_today10_generation.md"),
+                "content_sampler_log": str(run_log_path),
+            },
+        }
+        write_json(run_log_path, payload)
+    payload.update({
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "run_id": run_id,
+        "mode": "write-feishu",
+        "output_dir": str(output_dir),
+        "today_candidates": csv_row_count(today_path),
+    })
+    outputs = payload.get("outputs") if isinstance(payload.get("outputs"), dict) else {}
+    outputs.update({
+        "today_candidates": str(today_path),
+        "content_sampler_log": str(run_log_path),
+    })
+    payload["outputs"] = outputs
+    write_json(run_log_path, payload)
+    for directory in (OUT, OUT / "latest", OUT / "latest_write"):
+        write_json(directory / "content_sampler_log.json", payload)
 
 
 def update_pipeline_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool) -> Path:
@@ -126,6 +177,8 @@ def main() -> int:
 
     editorial_report = today_path.parent / "editorial_skill_report.json"
     daily_pipeline.sync_enriched_candidate_mirrors(today_path, editorial_report, args.write_feishu)
+    if args.write_feishu:
+        ensure_latest_sampler_log(args.run_id, today_path)
 
     steps: list[dict[str, Any]] = []
     dry_run_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py"), "--input", str(today_path)]
