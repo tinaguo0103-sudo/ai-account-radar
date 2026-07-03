@@ -178,8 +178,11 @@ def refresh_user_doc_token_if_needed() -> str:
         values["FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN_EXPIRES_AT"] = str(now + expires_in)
     if refresh_expires_in:
         values["FEISHU_SCRIPT_PACKAGE_USER_REFRESH_TOKEN_EXPIRES_AT"] = str(now + refresh_expires_in)
-    sync_user_tokens(values)
     os.environ.update(values)
+    try:
+        sync_user_tokens(values)
+    except OSError as exc:
+        log("feishu oauth token save failed after refresh: " + compact(exc, 500))
     return new_access_token
 
 

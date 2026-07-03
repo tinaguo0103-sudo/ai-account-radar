@@ -151,9 +151,17 @@ def sync_user_tokens(values: dict[str, str], *, root: Path = ROOT, runtime_dir: 
     token_values = {key: str(values[key]) for key in SCRIPT_PACKAGE_TOKEN_KEYS if values.get(key)}
     if not token_values:
         return []
+    saved_to: list[Path] = []
+    errors: list[str] = []
     for env_file in env_files:
-        update_env_file(env_file, token_values)
-    return env_files
+        try:
+            update_env_file(env_file, token_values)
+            saved_to.append(env_file)
+        except OSError as exc:
+            errors.append(f"{env_file}: {exc}")
+    if not saved_to and errors:
+        raise PermissionError("Could not save Feishu user OAuth tokens: " + "; ".join(errors))
+    return saved_to
 
 
 def preserve_latest_user_tokens(*, root: Path = ROOT, runtime_dir: Path = DEFAULT_RUNTIME_DIR) -> tuple[dict[str, str], list[Path]]:
