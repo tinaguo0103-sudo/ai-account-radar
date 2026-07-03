@@ -5,7 +5,8 @@
 ## 使用规则
 
 - PM 线程派发任务后，必须记录任务 ID、目标线程、派发时间、任务摘要和禁止事项。
-- 每条交接记录必须有当前状态：`PM Triaged` / `Dispatched` / `Waiting Callback` / `Blocked / Need Authorization` / `Completed`.
+- 每条交接记录必须有当前状态：`PM Triaged` / `Queued / Waiting Dispatch` / `Dispatched` / `Waiting Callback` / `Blocked / Need Authorization` / `Completed`.
+- PM 线程是唯一派发者；执行线程之间不得互相发送新任务指令。需要转交测试、返修或生产 smoke 时，回传 PM，由 PM 判断立即派发还是进入 `docs/pm_dispatch_queue.md`。
 - 执行线程完成后，优先主动把 `PM交接摘要` 发送回 PM 线程 `019f2649-423f-7812-8efc-af6dd02eb511`；PM 线程再记录读回时间、结论、证据、剩余风险和建议更新的需求状态。
 - 如果执行线程不能使用线程工具回传，必须在自身 final 中保留 `PM交接摘要`，由 PM 线程读回。
 - 如果执行线程需要授权、生产写入、SCF 部署、真实通知或 OAuth，必须记录为 `Blocked / Need Authorization`，再由 PM 线程向用户确认。
@@ -45,15 +46,25 @@
 - 背景：用户反馈 2026-07-02 生成的两个选题/口播稿结构稳定但表达泛化，缺少真实体验场景、具体细节、对标视频表达拆解，以及“先场景后知识库/方法”的叙事方式。
 - 禁止事项：不直接改生产；不写生产业务表；不创建生产飞书文档；不发真实选题卡。
 - 验收口径：开发线程需定位 06 生成链路并用 2026-07-02 两个实际选题做改前/改后本地回归；测试线程先出测试计划，开发交付后独立回归。Bug 返修最多 3 轮。
-- 当前状态：Waiting Callback
-- 读回结论：PM 已整理为 AR-009，优先级 P2，发布路径为跟随 `feature/next-production-flow`，不走 hotfix main；已派发开发实现。测试线程已完成测试计划，当前等待开发交付。
+- 当前状态：Completed
+- 读回结论：PM 已整理为 AR-009，优先级 P2，发布路径为跟随 `feature/next-production-flow`，不走 hotfix main；开发线程已完成并 push `019f484 feat: make 06 scripts scene-first`；测试线程独立 QA 通过，不需要本轮 bug 返修。
+- 开发交付摘要：
+  - 提交：`019f484 feat: make 06 scripts scene-first`
+  - 改动范围：dev 仓库 Skill 镜像、fixture、测试和项目状态文档；未修改全局私有 Skill，未写生产飞书，未创建生产文档。
+  - 新增验证：`scripts/test_austin_voice_scene_rules.py`、`skills/austin-no-overtime-scripting/examples/ar009_20260702_scene_regression.json`、`docs/spikes/ar009_scene_expression_regression.md`、`output/ar009_scene_regression/2026-07-02/`。
+  - 开发验证：14 个 unittest 通过，`git diff --check` 通过，`python3 scripts/pre_merge_check.py` 通过，两条 2026-07-02 样例 batch_render 成功生成改后 06 包。
 - 测试计划摘要：
   - 硬门槛：先场景后概念；先账号内真实问题后方法；体现个人体验、具体场景和细节；对标/同类表达拆解后再转译；知识库类选题避免概念先行；改后更可拍、更像用户账号表达。
   - 评分维度：场景优先、真实问题、个人体验、细节颗粒度、对标转译、知识库叙事、可拍摄性、账号贴合度，每项 0/1/2 分；单项 0 分要求返修，两个样例平均不低于 1.5 才建议进入下一发布门槛。
   - 对抗性反例：概念开头、虚假“我最近发现”、伪造对标表达、仅口语化抽象词、只改善导演/剪辑建议但口播正文仍泛化。
   - Bug 返修格式：问题、证据、复现方式、期望结果、实际结果、严重级别、返修轮次 N/3。
-- 剩余风险：需要开发线程定位 06 生成链路中的提示词、Skill 镜像或样例评估入口；若涉及全局私有 Skill，需要明确同步策略。测试线程必须保持独立验证，不参与开发改动。测试线程提到的 PM 文档未提交改动已由 PM 提交，当前 dev worktree 干净。
-- 状态建议：AR-009 标为 `In Dev`，QA Lane 为 `Dev In Progress / Test Plan Ready`，返修轮次 `0/3`。
+- QA 结论：
+  - 独立验证：14 个 Python 单测通过，`git diff --check` 通过，`python3 scripts/pre_merge_check.py` 通过，独立 batch render 成功生成 2 份 06 包。
+  - xAI Voice Agent 样例：先进入“30 秒口播脚本 + 角色语气/分镜/字幕/返修验收”，再讨论 Voice Agent / AI 口播概念，评分约 15/16。
+  - Codex+Obsidian 知识库样例：先讲资料进入后仍需重新找、判断、组织，再落到 `03 收件箱 -> 04 选题判断 -> 06 脚本路径/证据/复盘线索`，知识库概念未开头前置，评分约 16/16。
+  - 对抗性审查：未出现“我要做知识库”概念先行、未伪造 xAI 或 Codex+Obsidian 已验证能力、未声称引用具体对标视频细节。
+- 剩余风险：生产 watcher 默认读取全局私有 Skill，本轮未同步全局私有版；合并/启用前需要 PM 决定同步策略，并在同步后做最小 production smoke。对标拆解当前基于题目/fixture 摘要，不是实时外部检索，不能对外声称引用了具体对标视频细节。
+- 状态建议：AR-009 标为 `Ready`，QA Lane 为 `QA Passed`，返修轮次 `0/3`；发布前门禁为全局私有 Skill 同步 + 最小 production smoke。
 
 ### 2026-07-03 PM 协作协议主动回传验证
 
