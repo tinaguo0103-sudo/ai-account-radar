@@ -80,6 +80,16 @@ FORBIDDEN_VOICE_PHRASES = [
     "最后还是回到我自己判断",
 ]
 
+FORBIDDEN_FALLBACK_TEMPLATE_PHRASES = [
+    "我先不讲「",
+    "这一段不急着解释工具",
+    "这个动作不求完整演示",
+    "不让它变成整条视频的主角",
+    "如果这一段只剩",
+    "拍之前我至少还要补",
+    "补不上，这条就先停在草稿",
+]
+
 INTERNAL_STATUS_BOUNDARIES = [
     "如果当天还没生成06",
     "如果当天没有生成 06",
@@ -251,9 +261,10 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
 
         self.assertIn("知识库不是一个大仓库", markdown_section(document, "### 搜索与表达融合"))
         self.assertIn("给每条素材贴一张流转单", markdown_section(document, "### 搜索与表达融合"))
-        self.assertIn("能转成我自己的内容系统复盘", text)
+        self.assertIn("fallback_draft", text)
+        self.assertIn("not_style_qa", text)
         self.assertNotIn("沉淀资产", text)
-        for phrase in FORBIDDEN_VOICE_PHRASES:
+        for phrase in FORBIDDEN_VOICE_PHRASES + FORBIDDEN_FALLBACK_TEMPLATE_PHRASES:
             self.assertNotIn(phrase, text)
         self.assertNotIn("如果当天还没生成06", text)
         self.assertNotIn("先给真实场景", text)
@@ -262,18 +273,22 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         self.assertNotIn("但最后会收回到我的表达", text)
         self.assertNotIn("这里守住一个基线", text)
 
-    def test_deterministic_voice_uses_input_derived_headings(self) -> None:
+    def test_deterministic_voice_is_not_style_qa_fallback(self) -> None:
         topic = SCRIPTING.normalize_topic(VOICE_AGENT_TOPIC, record_id=VOICE_AGENT_TOPIC["record_id"])
         text = VOICE.render_voice_text(topic, SCRIPTING.voice_skill_context(topic, SCRIPTING.validate_topic(topic)))
 
-        self.assertIn("### 00:00-00:30｜旧方式脚本", text)
-        self.assertIn("### 01:05-01:55｜AI可以生成声音版本", text)
+        self.assertIn("fallback_draft", text)
+        self.assertIn("not_style_qa", text)
+        self.assertIn("只用于字段、格式和安全边界兜底", text)
+        self.assertIn("不代表 Austin 风格质量验收", text)
         self.assertNotIn("### 00:00-00:35｜真实痛点", text)
         self.assertNotIn("### 00:35-01:05｜旧流程", text)
         self.assertNotIn("### 01:05-01:35｜这条真正要做什么", text)
         self.assertNotIn("### 01:35-02:50｜三个动作", text)
         self.assertNotIn("### 00:00-00:30｜先给真实场景", text)
         self.assertNotIn("沿用真实痛点、旧流程、三步动作、边界收尾", text)
+        for phrase in FORBIDDEN_FALLBACK_TEMPLATE_PHRASES:
+            self.assertNotIn(phrase, text)
 
     def test_voice_agent_keeps_research_material_out_of_voice_body(self) -> None:
         topic = SCRIPTING.normalize_topic(VOICE_AGENT_TOPIC, record_id=VOICE_AGENT_TOPIC["record_id"])
@@ -288,7 +303,7 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
             self.assertIn(term, voice_text)
         self.assertTrue("剪辑" in voice_text or "返修" in voice_text)
         self.assertNotIn("很多人现在用 Agent 做项目", voice_text)
-        for phrase in FORBIDDEN_VOICE_PHRASES:
+        for phrase in FORBIDDEN_VOICE_PHRASES + FORBIDDEN_FALLBACK_TEMPLATE_PHRASES:
             self.assertNotIn(phrase, text)
         self.assertNotIn("xAI Voice Agent Builder 已经", text)
         self.assertNotIn("我会参考同类内容里这个讲法", text)
@@ -308,20 +323,20 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
     def test_two_real_samples_do_not_reuse_fixed_voice_lines(self) -> None:
         voice_agent_text = voice_section(VOICE_AGENT_TOPIC)
         knowledge_text = voice_section(KNOWLEDGE_TOPIC)
-        for phrase in FORBIDDEN_VOICE_PHRASES:
+        for phrase in FORBIDDEN_VOICE_PHRASES + FORBIDDEN_FALLBACK_TEMPLATE_PHRASES:
             self.assertNotIn(phrase, voice_agent_text)
             self.assertNotIn(phrase, knowledge_text)
         self.assertNotIn("沉淀资产", knowledge_text)
+        self.assertIn("not_style_qa", voice_agent_text)
+        self.assertIn("not_style_qa", knowledge_text)
 
         voice_agent_lines = spoken_lines(voice_agent_text)
         knowledge_lines = spoken_lines(knowledge_text)
         shared_lines = sorted(set(voice_agent_lines) & set(knowledge_lines))
-        self.assertGreaterEqual(len(voice_agent_lines), 20)
-        self.assertGreaterEqual(len(knowledge_lines), 20)
-        self.assertLessEqual(len(shared_lines), 4, shared_lines)
+        self.assertLessEqual(len(shared_lines), 3, shared_lines)
         self.assertLessEqual(
             len(shared_lines) / min(len(voice_agent_lines), len(knowledge_lines)),
-            0.18,
+            0.35,
             shared_lines,
         )
 
@@ -340,17 +355,17 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         for document in [voice_agent_doc, knowledge_doc]:
             voice_text = markdown_range(document, "### 口播全文", "### 分段执行方案")
             plan_text = markdown_range(document, "### 分段执行方案", "### 录屏与素材清单")
+            self.assertIn("not_style_qa", voice_text)
+            self.assertIn("not_style_qa", plan_text)
             for term in fixed_scaffold_terms:
                 self.assertNotIn(term, voice_text)
                 self.assertNotIn(term, plan_text)
-            for phrase in FORBIDDEN_VOICE_PHRASES:
+            for phrase in FORBIDDEN_VOICE_PHRASES + FORBIDDEN_FALLBACK_TEMPLATE_PHRASES:
                 self.assertNotIn(phrase, voice_text)
                 self.assertNotIn(phrase, plan_text)
 
-        shared_headings = sorted(set(voice_subheadings(voice_agent_doc)) & set(voice_subheadings(knowledge_doc)))
-        shared_plan_purposes = sorted(set(execution_plan_purposes(voice_agent_doc)) & set(execution_plan_purposes(knowledge_doc)))
-        self.assertLessEqual(len(shared_headings), 1, shared_headings)
-        self.assertLessEqual(len(shared_plan_purposes), 1, shared_plan_purposes)
+        self.assertIn("PM/用户内容质量验收必须走 codex exec + -ar009-test", markdown_section(voice_agent_doc, "### QA"))
+        self.assertIn("PM/用户内容质量验收必须走 codex exec + -ar009-test", markdown_section(knowledge_doc, "### QA"))
 
     def test_missing_real_scene_gets_qa_warning_without_voice_fill(self) -> None:
         raw_topic = {

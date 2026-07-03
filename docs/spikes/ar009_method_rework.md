@@ -83,3 +83,54 @@ Round 2 反同构统计：
 
 - 这仍是 deterministic 本地渲染，不是最终内容质量证明。
 - 真实 `codex exec` 测试应继续使用 `austin-no-overtime-scripting-ar009-test` / `austin-voice-scriptwriter-ar009-test`，由 PM 决定是否派测试线程复测。
+
+## PM Review 返修：fallback 不再作为内容质量样例
+
+PM Review `51bc938` 不通过，原因成立：上一轮清掉了旧固定标题和旧固定句，但 Round 2 fallback 仍生成了一套新的共用推进句。这说明问题不在某几句话，而在 deterministic fallback 仍承担“完整 Austin 风格口播样例”的角色。
+
+复现到的问题：
+
+- Round 2 两条样例都出现 `我先不讲「...」是什么`、`这一段不急着解释工具`、`这个动作不求完整演示`、`不让它变成整条视频的主角`、`如果这一段只剩「...」听起来新`、`拍之前我至少还要补`、`补不上，这条就先停在草稿`。
+- 这些句子同时进入 `口播全文`、`视频结构` 和 `分段执行方案`，说明 fallback 仍在把内部方法判断展开成可见口播结构。
+
+根因判断：
+
+- `austin_voice.py` 的 deterministic renderer 只要继续输出完整风格化口播，就会自然生成跨样例推进模板；换一批句子不能解决。
+- deterministic fallback 适合验证字段完整、内部边界、禁词、事实提醒和 Markdown 结构，不适合证明“像不像用户”。
+- AR-009 的内容质量验收应转到真实 `codex exec` 路径，并显式调用 `austin-no-overtime-scripting-ar009-test` / `austin-voice-scriptwriter-ar009-test`。
+
+本轮修正：
+
+- `austin_voice.py` fallback 改为 `fallback_draft / not_style_qa`，只输出旧方式、真实卡点、核心观点、AI 介入、证据、待补和事实边界等字段化草稿。
+- 06 执行包 QA 增加提醒：`fallback_draft / not_style_qa` 只做字段、格式和安全兜底；PM/用户内容质量验收必须走 `codex exec + -ar009-test` 私有测试 Skill。
+- 测试新增本轮 7 类固定推进句防线，并断言 fallback/报告不得自称 Austin 风格或内容质量通过。
+
+真实测试 Skill 验收路径：
+
+```bash
+SCRIPT_PACKAGE_SKILL_NAME=austin-no-overtime-scripting-ar009-test \
+SCRIPT_PACKAGE_VOICE_SKILL_NAME=austin-voice-scriptwriter-ar009-test \
+SCRIPT_PACKAGE_OUTPUT_ROOT=/private/tmp/ar009_method_rework_codex_exec_dev \
+python3 scripts/codex_script_package_runner.py --record-id <record_id> --limit 1 --no-completion-card
+```
+
+注意：不加 `--write-feishu`，不得写生产表、发真实卡、创建生产飞书文档或触发生产采集。若开发线程无法安全跑完整 `codex exec`，由 PM 派测试线程使用同一组环境变量复测。
+
+本轮开发线程真实验证：
+
+- 先用 `AI_ACCOUNT_RADAR_ENV=staging ... --skip-codex` 做只读队列预检，staging 中没有这两个生产 record，返回 `count: 0`，未写入。
+- 随后绕过飞书队列，直接用 fixture 调用 runner 的 `generate_package_with_retry()`；环境变量显式设置 `SCRIPT_PACKAGE_SKILL_NAME=austin-no-overtime-scripting-ar009-test`、`SCRIPT_PACKAGE_VOICE_SKILL_NAME=austin-voice-scriptwriter-ar009-test`、`SCRIPT_PACKAGE_OUTPUT_ROOT=/private/tmp/ar009_method_rework_codex_exec_dev`。
+- 两条真实 `codex exec` 均完成，没有 `--write-feishu`，没有发送完成卡，没有创建生产飞书文档。
+
+真实 `codex exec` 输出：
+
+- `/private/tmp/ar009_method_rework_codex_exec_dev/2026-07-03_xAI_Voice_Agent_Builder出来后_我想重看AI口播能不能进入视频交付_完整脚本与制作包.md`
+- `/private/tmp/ar009_method_rework_codex_exec_dev/2026-07-03_Codex+Obsidian知识库这个选题_我会反过来检查自己的信息雷达有没有沉淀资产_完整脚本与制作包.md`
+
+真实输出检查：
+
+- 两份真实输出不含 `fallback_draft` / `not_style_qa`，说明内容质量样例来自测试 Skill + `codex exec`，不是 deterministic fallback。
+- xAI 输出主线回到 AI 口播进入视频交付，覆盖角色语气、分镜节奏、字幕长度、返修入口和最终成片验收；未声称 xAI Builder 已开放或已验证。
+- 知识库输出从“资料存了但写内容时仍要重新找、重新判断、重新组织”的真实痛点切入，再用“流转单”解释知识库；不是从概念或工具教程切入。
+- 知识库中的 `如果当天完整稿没有真实生成到最后一步` 只出现在 `发布前核验` / QA 风险区域；未进入口播全文、视频结构、素材清单或发布包草稿。
+- `沉淀资产` 未进入用户可见正文内容；仅作为原始题目保留在文件名路径中。

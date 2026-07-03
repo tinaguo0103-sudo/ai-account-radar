@@ -10,6 +10,11 @@ from typing import Any
 
 
 VOICE_SKILL_VERSION = "austin-voice-scriptwriter-v0.1"
+VOICE_STYLE_QA_STATUS = "fallback_draft / not_style_qa"
+FALLBACK_NOTICE = (
+    "仓库 deterministic fallback：只用于字段、格式和安全边界兜底，"
+    "不代表 Austin 风格质量验收；真实内容质量请走 codex exec + -ar009-test 私有测试 Skill。"
+)
 
 
 def text(value: Any, fallback: str = "") -> str:
@@ -196,90 +201,51 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
     pain = spoken_text(topic.get("pain_point") or topic.get("old_workflow"), core_pain(obj))
     old = spoken_text(topic.get("old_workflow"), pain)
     ai_action = spoken_text(topic.get("ai_intervention"), "让 AI 介入一个能被检查的小环节")
-    direction = spoken_text(topic.get("production_direction"), "")
     evidence = spoken_text(context.get("evidence_text"), "输入、输出、错误点和人工修改记录")
     todos = spoken_text(context.get("todo_text"), "一段真实录屏和一个失败样例")
     fact_text = spoken_text(context.get("fact_text"), "")
-    act1, act2, act3 = action_names(obj)
-    questions = concrete_questions(obj)
-    activity = audience_activity(obj)
-    old_label = section_label(old, "旧方式卡住")
-    pain_label = section_label(pain, "真实卡点")
-    action_label = section_label(ai_action, "这次验证")
-    evidence_label = section_label(evidence, "可见证据")
-    boundary_label = section_label(judgment, "边界判断")
+    concept_material = spoken_text(context.get("concept_method_text"), "")
+    boundary = boundary_line(obj, fact_text)
 
-    if direction and obj == "Agent项目":
-        direction_line = "\n\n所以这条我会收在自己的真实项目里，不复述工具原则，也不讲成教程。"
-    elif direction:
-        direction_line = "\n\n所以这条我会按真实案例来讲，不把它讲成工具功能介绍。"
-    else:
-        direction_line = ""
     return [
         (
-            f"00:00-00:30｜{old_label}",
+            "00:00-00:20｜fallback_draft｜not_style_qa｜旧方式字段",
             "\n\n".join(
                 [
-                    f"我先不讲「{clip(title, 28, '这个题')}」是什么。",
-                    f"真实现场里，旧方式先卡在这里：{old}。",
-                    f"这件事放在{activity}里，最容易被忽略的是：{pain}。",
-                    *question_lines(questions, 2),
+                    FALLBACK_NOTICE,
+                    f"选题：{clip(title, 64, '这条选题')}。",
+                    f"旧方式字段：{old}。",
+                    f"真实卡点字段：{pain}。",
                 ]
             ),
         ),
         (
-            f"00:30-01:05｜{pain_label}",
+            "00:20-00:50｜fallback_draft｜not_style_qa｜方法素材",
             "\n\n".join(
                 [
-                    old_flow_bridge(obj, title),
-                    f"这一段不急着解释工具，先把「{first_clause(pain, 24, '这个卡点')}」讲到观众能对上自己的现场。",
-                    f"这一段要让观众先听懂：{core}。",
-                    direction_line.strip(),
+                    f"核心观点字段：{core}。",
+                    f"当前工具/热点字段：{title}。",
+                    f"生成前判断素材：{clip(concept_material, 120, '旧方式、真实卡点、为什么现在需要它、如何回到自己的工作流')}。",
                 ]
             ).strip(),
         ),
         (
-            f"01:05-01:55｜{action_label}",
+            "00:50-01:20｜fallback_draft｜not_style_qa｜验证素材",
             "\n\n".join(
                 [
-                    f"这次我只收一个具体动作：{ai_action}。",
-                    f"这个动作不求完整演示，但要能看见「{first_clause(ai_action, 28, 'AI介入点')}」到底接住了哪一环。",
-                    f"我的判断先放在旁边：{judgment}。",
-                    f"讲到「{clip(title, 18, '工具')}」时，我只把它放在这个动作里看，不让它变成整条视频的主角。",
+                    f"AI介入字段：{ai_action}。",
+                    f"可见证据字段：{evidence}。",
+                    f"拍摄待补字段：{todos}。",
                 ]
             ),
         ),
         (
-            f"01:55-02:55｜{evidence_label}",
+            "01:20-01:45｜fallback_draft｜not_style_qa｜边界字段",
             "\n\n".join(
                 [
-                    f"录屏里我会先做这件事：{act1}。",
-                    f"接着看它有没有进入下一环：{act2}。",
-                    f"这里必须给观众看到：{evidence}。",
-                    f"最后再用这一项收住：{act3}。",
-                    action_close_line(obj, judgment),
-                ]
-            ),
-        ),
-        (
-            f"02:55-03:35｜{boundary_label}",
-            "\n\n".join(
-                [
-                    contrast_line(obj, old, ai_action),
-                    f"如果这一段只剩「{clip(title, 18, '概念')}」听起来新，我会直接判失败。",
-                    f"我想留下的是这个判断：{clip(judgment, 58, '这件事有没有回到人的判断')}。",
-                    f"拍完以后，下一次遇到类似的{activity}，要能少一次重新判断。",
-                ]
-            ),
-        ),
-        (
-            f"03:35-04:10｜补{section_label(todos, '拍前证据')}",
-            "\n\n".join(
-                [
-                    boundary_line(obj, fact_text),
-                    f"拍之前我至少还要补：{todos}。",
-                    f"如果「{first_clause(todos, 24, '这些画面')}」补不上，这条就先停在草稿，不把它包装成已经跑通。",
-                    f"我的分界线很简单：{clip(judgment, 48, '先看真实任务能不能支撑这个判断')}。",
+                    f"主编判断字段：{judgment}。",
+                    f"事实/发布边界字段：{boundary}。",
+                    "状态：not_style_qa，本段不能作为 PM 或用户验收 Austin 风格的样例。",
                 ]
             ).strip(),
         ),

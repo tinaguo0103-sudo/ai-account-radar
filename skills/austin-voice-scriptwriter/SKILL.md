@@ -61,4 +61,5 @@ description: 将已确认的 AI 账号选题、Topic Card、制作方向补充�
 
 - 需要更完整的公开安全风格规则时，读 `references/public_voice_style.md`。
 - 如果全局私有版存在 `references/private/three_round_learning.md`，需要模仿 Austin 最新口播风格时优先读它；仓库脱敏版不包含这个私有学习文档。
-- 需要 deterministic 生成口播段落时，优先调用 `scripts/austin_voice.py`。
+- `scripts/austin_voice.py` 只提供 `fallback_draft / not_style_qa` 的字段化兜底，用于格式、安全和边界检查；不得把它当成 Austin 风格质量样例。
+- 真实内容质量验收必须走 `codex exec` 调用测试 Skill / 私有 Skill，并由 PM、测试线程或用户人工看样例。

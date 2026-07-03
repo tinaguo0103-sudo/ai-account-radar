@@ -49,6 +49,7 @@ class CodexScriptPackageRunnerPromptTest(unittest.TestCase):
         self.assertIn("不要把用户举例写成固定规则", prompt)
         self.assertIn("不能套统一六段、统一“三个动作”或固定章节名", prompt)
         self.assertIn("deterministic fallback 只用于格式、安全和字段兜底", prompt)
+        self.assertIn("真实内容质量以本机测试 Skill / 私有 Skill 生成结果和人工样例为准", prompt)
 
 
 if __name__ == "__main__":

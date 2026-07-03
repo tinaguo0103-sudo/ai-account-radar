@@ -453,7 +453,7 @@ def next_action_items(topic: dict[str, Any], validation: ValidationResult) -> li
 def done_criteria(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
     criteria = [
         "本地完整执行包打开后，能马上知道这条视频怎么说、怎么拍、缺什么素材。",
-        "口播全文先由 austin-voice-scriptwriter 生成，再由本 Skill 编排录屏、剪辑、发布和 QA。",
+        f"口播全文先由 {VOICE_SKILL_NAME} 生成，再由本 Skill 编排录屏、剪辑、发布和 QA。",
         "执行方案按时间线展开，不是散点重点清单。",
     ]
     if shooting_reminder_items(validation) or release_reminder_items(validation):
@@ -1602,6 +1602,10 @@ def full_package_qa(validation: ValidationResult) -> tuple[str, list[str]]:
     return "draft", ["草稿，待 PM 验收，待 QA", *reminders]
 
 
+def has_not_style_qa_voice(sections: list[tuple[str, str]]) -> bool:
+    return any("not_style_qa" in heading or "not_style_qa" in body for heading, body in sections)
+
+
 def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_date: str | None = None) -> dict[str, Any]:
     run_date = run_date or datetime.now().strftime("%Y-%m-%d")
     topic = public_facing_topic(topic)
@@ -1614,6 +1618,12 @@ def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_
     folder.mkdir(parents=True, exist_ok=True)
     document_path = folder / FULL_PACKAGE_FILE
     qa_status, qa_issues = full_package_qa(validation)
+    voice_sections = teleprompter_sections(topic, validation)
+    if has_not_style_qa_voice(voice_sections):
+        qa_issues.append(
+            "fallback_draft / not_style_qa：仓库 deterministic fallback 只做字段、格式和安全兜底；"
+            "PM/用户内容质量验收必须走 codex exec + -ar009-test 私有测试 Skill。"
+        )
     qa_issues = qa_issues + real_scene_quality_warnings(topic)
     outline = full_package_outline(topic, validation)
     rows = execution_package_rows(topic, validation)
