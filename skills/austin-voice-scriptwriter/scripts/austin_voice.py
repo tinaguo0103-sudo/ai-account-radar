@@ -42,15 +42,12 @@ def blob(topic: dict[str, Any]) -> str:
 
 def workflow_object(topic: dict[str, Any]) -> str:
     content = blob(topic)
-    if any(term in content for term in ["知识库", "obsidian", "资料仓库", "沉淀资产", "信息雷达"]):
-        return "内容资产沉淀"
-    if any(term in content for term in ["voice agent", "口播", "配音", "声音", "字幕", "分镜"]):
-        return "AI口播交付"
+    knowledge_like = any(term in content for term in ["知识库", "obsidian", "资料仓库", "沉淀资产", "信息雷达"])
     if any(term in content for term in ["汽车", "智能驾驶", "辅助驾驶", "l3", "l4", "国标"]):
         return "汽车内容"
     if any(term in content for term in ["封面"]):
         return "封面"
-    if any(term in content for term in ["agent", "claude", "codex", "自动执行", "任务拆解", "验收"]):
+    if any(term in content for term in ["agent", "claude", "codex", "自动执行", "任务拆解", "验收"]) and not knowledge_like:
         return "Agent项目"
     if any(term in content for term in ["选题", "brief", "主编", "候选池", "飞书"]):
         return "选题"
@@ -61,8 +58,6 @@ def workflow_object(topic: dict[str, Any]) -> str:
 
 def audience_activity(obj: str) -> str:
     return {
-        "内容资产沉淀": "做内容生产",
-        "AI口播交付": "做 AI 口播",
         "汽车内容": "用 AI 写汽车内容",
         "封面": "做短视频封面",
         "选题": "做账号选题",
@@ -74,8 +69,6 @@ def audience_activity(obj: str) -> str:
 
 def core_pain(obj: str) -> str:
     return {
-        "内容资产沉淀": "不是资料不够多，而是资料进来以后，写内容时还是要重新找、重新判断、重新组织",
-        "AI口播交付": "不是声音生成不出来，而是放进成片以后，角色、字幕、分镜和返修都接不住",
         "汽车内容": "不是写不出卖点，而是你不知道哪句话能说，哪句话必须停下来复核",
         "封面": "不是做不出图，而是每次都要重新想标题、比例、人物和排版",
         "选题": "不是没有热点，而是看到一堆候选后，不知道哪条真的值得拍",
@@ -87,8 +80,6 @@ def core_pain(obj: str) -> str:
 
 def concrete_questions(obj: str) -> list[str]:
     return {
-        "内容资产沉淀": ["这条资料为什么值得看？", "它和我的账号有什么关系？", "我当时为什么选它？", "最后有没有变成脚本、判断或者复盘资产？"],
-        "AI口播交付": ["这段声音像不像这个角色？", "停顿能不能卡住画面？", "字幕长度压不压得住？", "返修时到底改脚本、改语气，还是重新生成？"],
         "汽车内容": ["这句话有没有夸大？", "依据来自哪里？", "是不是把辅助能力说成了自动驾驶？", "发布前谁来复核？"],
         "封面": ["标题放在哪？", "人物放左边还是右边？", "不同平台比例要不要重做？", "这次风格会不会又跑偏？"],
         "选题": ["这条能不能讲？", "和我的账号有没有关系？", "观众为什么要听？", "怎么不写成新闻搬运？"],
@@ -100,8 +91,6 @@ def concrete_questions(obj: str) -> list[str]:
 
 def action_names(obj: str) -> tuple[str, str, str]:
     return {
-        "内容资产沉淀": ("拿一条真实内容回看路径", "让判断留在字段里", "看它最后有没有变成资产"),
-        "AI口播交付": ("先定角色和语气", "把声音放回分镜和字幕里", "用返修标准验收"),
         "汽车内容": ("先把边界说清楚", "让依据留下来", "最后人工复核"),
         "封面": ("先读脚本", "把版式固定下来", "用规则约束质量"),
         "选题": ("先把候选翻成人话", "用账号定位筛一遍", "最后只选能拍的"),
@@ -111,53 +100,21 @@ def action_names(obj: str) -> tuple[str, str, str]:
     }.get(obj, ("先把任务说清楚", "让过程留下痕迹", "最后人工判断"))
 
 
-def optional_paragraph(value: Any, prefix: str = "") -> list[str]:
-    cleaned = text(value, "")
-    if not cleaned:
-        return []
-    return [f"{prefix}{cleaned}。"]
-
-
-def research_spoken_lines(topic: dict[str, Any], obj: str) -> list[str]:
-    if obj == "AI口播交付":
-        return [
-            "很多语音 Agent 内容会先讲几分钟搭一个会对话的 Agent。",
-            "但我这条不拍教程，我只看一段声音放进 30 秒口播以后，角色、分镜、字幕和返修能不能接住。",
-        ]
-    if obj == "内容资产沉淀":
-        return [
-            "很多知识库内容会先讲 Obsidian 图谱、双链，或者第二大脑。",
-            "但我现在的问题不是怎么搭库，而是一条素材能不能从 03 收件箱走到 04 选题，再走到 06 脚本和复盘。",
-        ]
-    return []
-
-
-def spoken_judgment(topic: dict[str, Any], obj: str, raw: str) -> str:
-    if obj == "AI口播交付":
-        return "把这个热点放进我熟悉的 AI导演工作流里，看它离真正成片还差哪一步"
-    if obj == "内容资产沉淀" and any(term in raw for term in ["对标视频", "对标内容", "同类内容", "同类资料", "讲法偏浅"]):
-        return "借这个选题回头检查自己的内容系统：资料进来以后，有没有真的沉淀成后面能用的资产"
-    return raw
-
-
 def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None = None) -> list[tuple[str, str]]:
     context = context or {}
     obj = workflow_object(topic)
     activity = audience_activity(obj)
     title = text(topic.get("topic_title"), "这条选题")
     core = text(topic.get("core_thesis"), title)
-    judgment = spoken_judgment(topic, obj, text(topic.get("unique_judgment"), core))
+    judgment = text(topic.get("unique_judgment"), core)
     pain = text(topic.get("pain_point") or topic.get("old_workflow"), core_pain(obj))
     old = text(topic.get("old_workflow"), pain)
-    ai_action = text(topic.get("ai_intervention"), "让 AI 介入一个能被检查的小环节")
     direction = text(topic.get("production_direction"), "")
     evidence = context.get("evidence_text") or "输入、输出、错误点和人工修改记录"
     todos = context.get("todo_text") or "一段真实录屏和一个失败样例"
     fact_text = context.get("fact_text") or ""
-    plain_explanation = context.get("plain_explanation") or ""
     act1, act2, act3 = action_names(obj)
     questions = concrete_questions(obj)
-    research_lines = research_spoken_lines(topic, obj)
 
     if direction and obj == "Agent项目":
         direction_line = "\n\n所以这条我会收在自己的真实项目里，不复述工具原则，也不讲成教程。"
@@ -173,9 +130,8 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
             "\n\n".join(
                 [
                     f"很多人现在{activity}，最痛苦的{core_pain(obj)}。",
-                    "这个点我自己也会反复卡住。",
+                    "你可能也有这种感觉。",
                     *questions,
-                    *optional_paragraph(plain_explanation),
                     "你要是真的把它放进项目里，这些问题就不能靠感觉。",
                 ]
             ),
@@ -196,10 +152,9 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
             "\n\n".join(
                 [
                     f"所以这条我不想把「{title}」讲成工具教程。",
-                    f"我真正想做的是，{judgment}。",
-                    *research_lines,
-                    "这条最后要看的不是概念讲得多完整。",
-                    "而是它能不能回到我的真实流程里，让我知道该看哪里、改哪里、哪里还没把握。",
+                    f"我真正想做的是：{judgment}。",
+                    "说白了，我不是想让 AI 多生成几段话。",
+                    "我是想让它每次交付的时候，都把“我做了什么、哪里没把握、你该看哪里”一起交出来。",
                 ]
             ),
         ),
@@ -222,8 +177,8 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
             "\n\n".join(
                 [
                     "你看，这才是我觉得 AI 真正进入工作流的关键。",
-                    "不是它能不能生成内容。",
-                    "而是它生成完以后，你有没有办法判断它、修正它、复用它。",
+                    f"不是「{clip(title, 32, '这个工具')}」看起来有多完整。",
+                    "而是它放进真实任务以后，我有没有办法判断它、修正它、复用它。",
                     "以前是我把任务丢出去，等一个结果，再靠经验一点点看。",
                     "现在我希望任务一开始就带着规则，过程中留下痕迹，最后由我来判断能不能用。",
                 ]
@@ -239,8 +194,8 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
                     f"拍之前我至少还要补：{todos}。",
                     fact_line.strip(),
                     "它解决的是另一个问题。",
-                    "不要让 AI 看起来完成了，但你心里还是没底。",
-                    "AI 负责把事情往前推，规则负责把过程留下来，人负责最后判断能不能用。",
+                    "我更在意的是，这次拍完以后，下一次遇到同类任务能不能少一点返工。",
+                    f"最后还是回到我自己判断：{clip(judgment, 54, '结果能不能用，不能只看它有没有生成出来')}。",
                 ]
             ).strip(),
         ),

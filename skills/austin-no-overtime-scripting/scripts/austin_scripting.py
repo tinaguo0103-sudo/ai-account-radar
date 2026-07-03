@@ -184,6 +184,23 @@ def private_boundaries(private_cases: list[dict[str, Any]]) -> list[str]:
     return boundaries
 
 
+INTERNAL_JUDGMENT_PREFIXES = [
+    "同类资料讲法偏浅",
+    "同类内容讲法偏浅",
+    "对标资料讲法偏浅",
+    "对标内容讲法偏浅",
+    "对标视频讲法偏浅",
+]
+
+
+def voice_facing_judgment(value: Any) -> str:
+    judgment = trim_end_punctuation(value, "")
+    for prefix in INTERNAL_JUDGMENT_PREFIXES:
+        if judgment.startswith(prefix) and "但" in judgment:
+            return trim_end_punctuation(judgment.split("但", 1)[1], judgment)
+    return judgment
+
+
 def normalize_topic(fields: dict[str, Any], record_id: str = "") -> dict[str, Any]:
     topic_title = first_non_empty(fields, ["topic_title", "选题命题", "我的选题标题", "选题标题", "可发布标题"])
     demo_materials = split_items(first_non_empty(fields, ["demo_materials", "可展示证据", "可展示结果", "演示素材"]))
@@ -207,7 +224,7 @@ def normalize_topic(fields: dict[str, Any], record_id: str = "") -> dict[str, An
         "demo_materials": demo_materials,
         "missing_evidence": missing_evidence,
         "production_direction": first_non_empty(fields, ["production_direction", "我的制作补充", "制作方向", "使用案例", "人工制作补充"], skip_placeholders=False),
-        "unique_judgment": first_non_empty(fields, ["unique_judgment", "人工一句话判断", "我的思考点", "主编判断", "选题判断", "我的切入"]),
+        "unique_judgment": voice_facing_judgment(first_non_empty(fields, ["unique_judgment", "人工一句话判断", "我的思考点", "主编判断", "选题判断", "我的切入"])),
         "takeaway_asset": first_non_empty(fields, ["takeaway_asset", "可沉淀资产", "资料包承接方式", "重点体现"]),
         "research_sources": split_research_items(first_non_empty(fields, ["research_sources", "搜索来源摘要", "同类来源摘要"], skip_placeholders=False)),
         "expression_patterns": split_research_items(first_non_empty(fields, ["expression_patterns", "表达模式拆解", "对标表达拆解"], skip_placeholders=False)),
@@ -717,15 +734,12 @@ def opening_hook_options(topic: dict[str, Any], validation: ValidationResult) ->
     ])
 
 
-def natural_judgment_text(topic: dict[str, Any], fallback: str = "AI不能只看生成结果，必须回到业务验收") -> str:
-    raw = trim_end_punctuation(topic.get("unique_judgment"), "")
-    if workflow_object(topic) == "内容资产沉淀" and any(term in raw for term in ["对标视频", "对标内容", "同类内容", "同类资料", "讲法偏浅"]):
-        return "借这个选题回头检查自己的内容系统：资料进来以后，有没有真的沉淀成后面能用的资产"
-    return raw or fallback
+def topic_judgment_text(topic: dict[str, Any], fallback: str = "AI不能只看生成结果，必须回到业务验收") -> str:
+    return trim_end_punctuation(topic.get("unique_judgment"), "") or fallback
 
 
 def key_judgment_lines(topic: dict[str, Any]) -> list[str]:
-    judgment = clip_text(natural_judgment_text(topic), 54, "AI不能只看生成结果，必须回到业务验收")
+    judgment = clip_text(topic_judgment_text(topic), 54, "AI不能只看生成结果，必须回到业务验收")
     return unique_items([judgment] + key_judgment_extras(topic))
 
 
@@ -754,7 +768,7 @@ def core_viewpoint(topic: dict[str, Any], validation: ValidationResult) -> str:
     core = clip_text(topic.get("core_thesis"), 72, title)
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 72, "旧流程里有一个真实低效或高风险环节")
     ai_action = clip_text(topic.get("ai_intervention"), 72, "用AI介入一个可验证的小环节")
-    judgment = clip_text(natural_judgment_text(topic, "AI只能辅助判断，最终取舍仍然要回到人的业务标准"), 72, "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
+    judgment = clip_text(topic_judgment_text(topic, "AI只能辅助判断，最终取舍仍然要回到人的业务标准"), 72, "AI只能辅助判断，最终取舍仍然要回到人的业务标准")
     evidence_text = clip_text(evidence_phrase(topic, validation), 60, "输入、输出和人工验收画面")
     hook = opening_hook_options(topic, validation)[0]
     if validation.status == "blocked":
@@ -793,7 +807,7 @@ def outline_segments(topic: dict[str, Any], validation: ValidationResult | None 
     validation = validation or ValidationResult("revise", [], [], [], [])
     obj = workflow_object(topic)
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 58, "旧流程里的真实痛点")
-    judgment = clip_text(natural_judgment_text(topic, "我的判断和边界"), 58, "我的判断和边界")
+    judgment = clip_text(topic_judgment_text(topic, "我的判断和边界"), 58, "我的判断和边界")
     ai_action = clip_text(topic.get("ai_intervention"), 58, "AI介入动作")
     evidence_text = clip_text(evidence_phrase(topic, validation), 48, "关键截图、录屏或前后对比")
     hook = opening_hook_options(topic, validation)[0]
@@ -947,7 +961,7 @@ def execution_rows(topic: dict[str, Any], template: str) -> list[dict[str, str]]
             "#": "03",
             "时间段": "00:30-01:00",
             "段落目的": "奥斯汀判断",
-            "口播轨": natural_judgment_text(topic, "这里补我的主观判断和取舍标准。"),
+            "口播轨": topic_judgment_text(topic, "这里补我的主观判断和取舍标准。"),
             "画面/录屏轨": "方法卡、流程图或字段变化截图。",
             "字幕重点": "不是工具演示，是工作流验收。",
             "后期提示": "切回真人大画面强调判断。",
@@ -1166,11 +1180,6 @@ def voice_skill_context(topic: dict[str, Any], validation: ValidationResult) -> 
         "evidence_text": inline_items(script_evidence_items(topic, validation), "输入、输出、错误点和人工修改记录", limit=3, item_limit=42),
         "todo_text": inline_items(shooting_reminder_items(validation), "一段真实录屏和一个失败样例", limit=2, item_limit=42),
         "fact_text": inline_items(voice_fact_check_items(validation), "", limit=2, item_limit=48),
-        "research_source_text": inline_items(topic.get("research_sources", []), "", limit=3, item_limit=86),
-        "expression_pattern_text": inline_items(topic.get("expression_patterns", []), "", limit=2, item_limit=86),
-        "fusion_note_text": inline_items(topic.get("fusion_notes", []), "", limit=3, item_limit=86),
-        "plain_explanation": str(topic.get("plain_explanation") or "").strip(),
-        "style_baseline_text": inline_items(topic.get("style_baseline_notes", []), "", limit=2, item_limit=72),
         "voice_skill_version": VOICE_SKILL_VERSION,
     }
 
@@ -1205,7 +1214,7 @@ def teleprompter_sections(topic: dict[str, Any], validation: ValidationResult) -
     pain = trim_end_punctuation(topic.get("pain_point") or topic.get("old_workflow"), "旧流程里有一个真实卡点")
     old = trim_end_punctuation(topic.get("old_workflow"), pain)
     ai_action = trim_end_punctuation(topic.get("ai_intervention"), "让 AI 介入一个可以验收的小环节")
-    judgment = trim_end_punctuation(natural_judgment_text(topic, "AI 真正要进入业务流程，必须留下可验收的证据"), "AI 真正要进入业务流程，必须留下可验收的证据")
+    judgment = trim_end_punctuation(topic_judgment_text(topic, "AI 真正要进入业务流程，必须留下可验收的证据"), "AI 真正要进入业务流程，必须留下可验收的证据")
     asset = trim_end_punctuation(topic.get("takeaway_asset"), "一份可复用的流程清单")
     evidence = inline_items(script_evidence_items(topic, validation), "输入、输出、异常和人工验收画面", limit=3, item_limit=44)
     todos = inline_items(shooting_reminder_items(validation), "拍摄前不额外补P0素材", limit=2, item_limit=42)
@@ -1254,7 +1263,7 @@ def readable_todo_items(validation: ValidationResult) -> list[str]:
 
 def full_package_outline(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
     pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 70, "旧流程缺少验收字段")
-    judgment = clip_text(natural_judgment_text(topic, "AI任务必须留下状态、异常和验收记录"), 70, "AI任务必须留下状态、异常和验收记录")
+    judgment = clip_text(topic_judgment_text(topic, "AI任务必须留下状态、异常和验收记录"), 70, "AI任务必须留下状态、异常和验收记录")
     ai_action = clip_text(topic.get("ai_intervention"), 76, "按验收表跑一次真实任务")
     evidence = inline_items(script_evidence_items(topic, validation), "任务跑表、输入输出、失败样例", limit=3, item_limit=34)
     todos = inline_items(shooting_reminder_items(validation), "无P0素材缺口", limit=2, item_limit=34)
@@ -1385,6 +1394,26 @@ RELEASE_REMINDER_TERMS = [
     *INTERNAL_BOUNDARY_TERMS,
 ]
 
+REAL_SCENE_TERMS = [
+    "案例",
+    "现场",
+    "截图",
+    "录屏",
+    "样例",
+    "脚本片段",
+    "验收表",
+    "路径",
+    "文件",
+    "素材",
+    "分镜",
+    "字幕",
+    "收件箱",
+    "字段",
+    "文档",
+    "清单",
+    "对比",
+]
+
 
 def concrete_todo_items(validation: ValidationResult) -> list[str]:
     return [
@@ -1437,6 +1466,27 @@ def production_reminders(validation: ValidationResult) -> list[str]:
     return reminders
 
 
+def real_scene_quality_warnings(topic: dict[str, Any]) -> list[str]:
+    scene_sources: list[str] = []
+    for key in [
+        "production_direction",
+        "core_thesis",
+        "pain_point",
+        "old_workflow",
+        "ai_intervention",
+        "takeaway_asset",
+    ]:
+        value = str(topic.get(key) or "").strip()
+        if value:
+            scene_sources.append(value)
+    scene_sources.extend(str(item) for item in topic.get("demo_materials", []) if str(item).strip())
+    scene_sources.extend(str(item) for item in topic.get("missing_evidence", []) if str(item).strip())
+    scene_text = " ".join(scene_sources)
+    if any(term in scene_text for term in REAL_SCENE_TERMS):
+        return []
+    return ["真实案例/现场不足：会影响像用户程度，建议补“这条准备用哪个真实案例/现场讲”。"]
+
+
 def full_package_qa(validation: ValidationResult) -> tuple[str, list[str]]:
     blocking_issues: list[str] = []
     if validation.missing_required:
@@ -1461,6 +1511,7 @@ def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_
     folder.mkdir(parents=True, exist_ok=True)
     document_path = folder / FULL_PACKAGE_FILE
     qa_status, qa_issues = full_package_qa(validation)
+    qa_issues = qa_issues + real_scene_quality_warnings(topic)
     outline = full_package_outline(topic, validation)
     rows = execution_package_rows(topic, validation)
     capture_rows = capture_rows_for_full_package(topic, validation, private_cases)
@@ -1536,6 +1587,7 @@ def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_
         "reader_summary": f"{qa_status}｜{template}｜{full_script_opening(topic, validation)}",
         "qa_status": qa_status,
         "qa_issues": qa_issues,
+        "quality_warnings": real_scene_quality_warnings(topic),
         "p0_todos": shooting_reminder_items(validation),
         "release_reminders": release_reminder_items(validation),
         "evidence_gaps": validation.evidence_gaps,

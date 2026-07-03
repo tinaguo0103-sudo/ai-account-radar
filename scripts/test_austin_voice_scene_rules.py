@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Regression tests for AR-009 research-fusion Austin voice rules."""
+"""Regression tests for AR-009 voice baseline and research-material handling."""
 from __future__ import annotations
 
 import importlib.util
@@ -51,6 +51,39 @@ def markdown_section(document: str, heading: str) -> str:
     if next_start == -1:
         return document[start:]
     return document[start:next_start]
+
+
+FORBIDDEN_VOICE_PHRASES = [
+    "这条最后要看的不是概念讲得多完整",
+    "能不能回到我的真实流程",
+    "很多语音 Agent 内容会先讲几分钟搭一个会对话的 Agent",
+    "很多知识库内容会先讲 Obsidian 图谱",
+    "借这个选题回头检查自己的内容系统",
+    "资料进来以后，有没有真的沉淀成后面能用的资产",
+    "一条素材能不能从 03 收件箱走到 04 选题，再走到 06 脚本和复盘",
+    "不要让 AI 看起来完成了",
+    "同类资料讲法偏浅",
+    "保留 voice agent",
+    "丢弃未核验",
+    "融合到 30 秒口播脚本",
+]
+
+
+def voice_section(raw_topic: dict[str, str]) -> str:
+    document = render_package_document(raw_topic)
+    return markdown_section(document, "### 口播全文")
+
+
+def spoken_lines(text: str) -> list[str]:
+    lines = []
+    for line in text.splitlines():
+        clean = line.strip()
+        if not clean or clean.startswith("###"):
+            continue
+        if len(clean) < 12:
+            continue
+        lines.append(clean)
+    return lines
 
 
 KNOWLEDGE_TOPIC = {
@@ -119,27 +152,22 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         self.assertNotIn("结果：pass", document)
         self.assertNotIn("可进入拍摄准备", document)
 
-    def test_knowledge_base_gets_plain_explanation_without_new_style_headings(self) -> None:
+    def test_knowledge_base_material_stays_in_report_not_voice_mapping(self) -> None:
         topic = SCRIPTING.normalize_topic(KNOWLEDGE_TOPIC, record_id=KNOWLEDGE_TOPIC["record_id"])
         text = VOICE.render_voice_text(topic, SCRIPTING.voice_skill_context(topic, SCRIPTING.validate_topic(topic)))
+        document = render_package_document(KNOWLEDGE_TOPIC)
 
-        self.assertIn("知识库不是一个大仓库", text)
-        self.assertIn("给每条素材贴一张流转单", text)
-        self.assertIn("借这个选题回头检查自己的内容系统", text)
-        self.assertIn("资料进来以后，有没有真的沉淀成后面能用的资产", text)
-        self.assertIn("一条素材能不能从 03 收件箱走到 04 选题，再走到 06 脚本和复盘", text)
-        self.assertIn("很多知识库内容会先讲 Obsidian 图谱", text)
-        self.assertIn("但我现在的问题不是怎么搭库", text)
-        self.assertNotIn("同类资料讲法偏浅", text)
+        self.assertIn("知识库不是一个大仓库", markdown_section(document, "### 搜索与表达融合"))
+        self.assertIn("给每条素材贴一张流转单", markdown_section(document, "### 搜索与表达融合"))
+        self.assertIn("能转成我自己的内容系统复盘", text)
+        for phrase in FORBIDDEN_VOICE_PHRASES:
+            self.assertNotIn(phrase, text)
         self.assertNotIn("如果当天还没生成06", text)
         self.assertNotIn("先给真实场景", text)
         self.assertNotIn("对标拆解后再转译", text)
         self.assertNotIn("我会参考同类内容里这个讲法", text)
         self.assertNotIn("但最后会收回到我的表达", text)
         self.assertNotIn("这里守住一个基线", text)
-        self.assertNotIn("保留链接、关系", text)
-        self.assertNotIn("丢弃插件安装", text)
-        self.assertNotIn("融合到信息雷达", text)
 
     def test_stable_voice_baseline_headings_are_preserved(self) -> None:
         topic = SCRIPTING.normalize_topic(VOICE_AGENT_TOPIC, record_id=VOICE_AGENT_TOPIC["record_id"])
@@ -152,21 +180,59 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         self.assertNotIn("### 00:00-00:30｜先给真实场景", text)
         self.assertNotIn("沿用真实痛点、旧流程、三步动作、边界收尾", text)
 
-    def test_voice_agent_fuses_benchmark_without_claiming_xai_verified(self) -> None:
+    def test_voice_agent_keeps_research_material_out_of_voice_body(self) -> None:
         topic = SCRIPTING.normalize_topic(VOICE_AGENT_TOPIC, record_id=VOICE_AGENT_TOPIC["record_id"])
         text = VOICE.render_voice_text(topic, SCRIPTING.voice_skill_context(topic, SCRIPTING.validate_topic(topic)))
+        document = render_package_document(VOICE_AGENT_TOPIC)
 
-        self.assertIn("很多语音 Agent 内容会先讲几分钟搭一个会对话的 Agent", text)
-        self.assertIn("但我这条不拍教程", text)
-        self.assertIn("角色、分镜、字幕和返修能不能接住", text)
+        self.assertIn("同类 voice-agent 内容常用", markdown_section(document, "### 搜索与表达融合"))
+        self.assertIn("30 秒口播脚本、角色语气、分镜节奏、字幕长度和返修验收", markdown_section(document, "### 搜索与表达融合"))
         self.assertIn("xAI Voice Agent 需要确认是否开放", text)
+        for phrase in FORBIDDEN_VOICE_PHRASES:
+            self.assertNotIn(phrase, text)
         self.assertNotIn("xAI Voice Agent Builder 已经", text)
         self.assertNotIn("我会参考同类内容里这个讲法", text)
         self.assertNotIn("但最后会收回到我的表达", text)
         self.assertNotIn("这里守住一个基线", text)
-        self.assertNotIn("保留 voice agent", text)
-        self.assertNotIn("丢弃未核验", text)
-        self.assertNotIn("融合到 30 秒口播脚本", text)
+
+    def test_voice_script_has_no_ar009_fixed_body_mapping(self) -> None:
+        source = VOICE_MODULE_PATH.read_text(encoding="utf-8")
+
+        self.assertFalse(hasattr(VOICE, "research_spoken_lines"))
+        self.assertFalse(hasattr(VOICE, "spoken_judgment"))
+        self.assertNotIn("内容资产沉淀", source)
+        self.assertNotIn("AI口播交付", source)
+        for phrase in FORBIDDEN_VOICE_PHRASES:
+            self.assertNotIn(phrase, source)
+
+    def test_two_real_samples_do_not_reuse_fixed_voice_lines(self) -> None:
+        voice_agent_text = voice_section(VOICE_AGENT_TOPIC)
+        knowledge_text = voice_section(KNOWLEDGE_TOPIC)
+        for phrase in FORBIDDEN_VOICE_PHRASES:
+            self.assertNotIn(phrase, voice_agent_text)
+            self.assertNotIn(phrase, knowledge_text)
+
+        shared_lines = sorted(set(spoken_lines(voice_agent_text)) & set(spoken_lines(knowledge_text)))
+        self.assertLessEqual(len(shared_lines), 8, shared_lines)
+
+    def test_missing_real_scene_gets_qa_warning_without_voice_fill(self) -> None:
+        raw_topic = {
+            "record_id": "rec_missing_scene",
+            "选题命题": "一个抽象AI工作流选题",
+            "对应方向": "真实工作流改造",
+            "一句话Brief": "讲AI工作流为什么要被验收。",
+            "我的工作流痛点": "工作流跑完以后不知道怎么判断。",
+            "旧流程痛点": "以前只看结果。",
+            "AI介入点": "AI先整理结果。",
+            "可沉淀资产": "复盘资产",
+            "可展示证据": "",
+            "需要补的证据": "",
+            "主编判断": "AI不能只看生成结果，必须回到业务验收。",
+        }
+        document = render_package_document(raw_topic)
+
+        self.assertIn("真实案例/现场不足", markdown_section(document, "### QA"))
+        self.assertNotIn("真实案例/现场不足", markdown_section(document, "### 口播全文"))
 
     def test_internal_boundaries_stay_out_of_shootable_sections(self) -> None:
         checks = [
