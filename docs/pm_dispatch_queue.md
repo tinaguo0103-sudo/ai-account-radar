@@ -8,7 +8,8 @@
 - 如果目标线程是 active / in progress，PM 不调用 `send_message_to_thread`，而是把任务记录为 `Queued / Waiting Dispatch`。
 - 如果目标线程 idle，PM 可以派发任务，并把队列状态更新为 `Dispatched`。
 - 只有 P0 生产事故、用户明确要求中止、或任务标注 `emergency interrupt` 时，PM 才能打断 active 线程。
-- 当前用户拥有的 Codex 线程工具 `send_message_to_thread` 没有原生队列参数；队列语义由本文件、线程状态读回和 PM 定时检查共同实现。
+- 当前用户拥有的 Codex 线程工具 `send_message_to_thread` 没有原生队列参数；队列语义由本文件、线程状态读回和 PM 事件触发检查共同实现。
+- 不做固定频率轮询，避免无效消耗 token。只有收到执行线程回传、用户发来新指令、PM 处理发布/需求事项，或 PM 明确需要推进队列时，才检查并派发下一项。
 - 队列任务必须包含目标线程、任务 ID、派发条件、禁止事项和验收口径。
 - 派发后仍要在 `docs/thread_handoff_log.md` 记录真实派发和读回结果。
 
