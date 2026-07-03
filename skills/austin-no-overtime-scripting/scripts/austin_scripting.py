@@ -292,7 +292,7 @@ def md_list(items: list[str], fallback: str = "待补") -> str:
 def inline_items(items: list[str], fallback: str = "待补", limit: int = 3, item_limit: int = 42) -> str:
     clean = [clip_text(item, item_limit, "") for item in items if str(item).strip()]
     clean = [item for item in clean if item]
-    return " / ".join(clean[:limit]) if clean else fallback
+    return "；".join(clean[:limit]) if clean else fallback
 
 
 def md_bullets(items: list[str], fallback: str = "待补") -> str:
@@ -1111,7 +1111,7 @@ def production_recommendation(validation: ValidationResult) -> str:
         return "先不拍：核心字段缺失，容易写成泛讲观点。"
     if blocking_quality_issues(validation):
         return "先补关键判断或证据，否则容易写成泛讲观点。"
-    return "可以进入拍摄准备。"
+    return "草稿：待 PM 验收和独立 QA 后，再判断是否进入拍摄准备。"
 
 
 def full_script_opening(topic: dict[str, Any], validation: ValidationResult) -> str:
@@ -1378,7 +1378,10 @@ def is_release_reminder_item(item: str) -> bool:
 
 
 def shooting_reminder_items(validation: ValidationResult) -> list[str]:
-    return [item for item in concrete_todo_items(validation) if not is_release_reminder_item(item)]
+    return [
+        item for item in concrete_todo_items(validation)
+        if not is_release_reminder_item(item) and not str(item).startswith("不需要证明")
+    ]
 
 
 def release_reminder_items(validation: ValidationResult) -> list[str]:
@@ -1413,7 +1416,7 @@ def full_package_qa(validation: ValidationResult) -> tuple[str, list[str]]:
         return "blocked", blocking_issues + reminders
     if blocking_issues:
         return "revise", blocking_issues + reminders
-    return "pass", ["可进入拍摄准备", *reminders]
+    return "draft", ["草稿，待 PM 验收，待 QA", *reminders]
 
 
 def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_date: str | None = None) -> dict[str, Any]:

@@ -118,13 +118,35 @@ def optional_paragraph(value: Any, prefix: str = "") -> list[str]:
     return [f"{prefix}{cleaned}。"]
 
 
+def research_spoken_lines(topic: dict[str, Any], obj: str) -> list[str]:
+    if obj == "AI口播交付":
+        return [
+            "很多语音 Agent 内容会先讲几分钟搭一个会对话的 Agent。",
+            "但我这条不拍教程，我只看一段声音放进 30 秒口播以后，角色、分镜、字幕和返修能不能接住。",
+        ]
+    if obj == "内容资产沉淀":
+        return [
+            "很多知识库内容会先讲 Obsidian 图谱、双链，或者第二大脑。",
+            "但我现在的问题不是怎么搭库，而是一条素材能不能从 03 收件箱走到 04 选题，再走到 06 脚本和复盘。",
+        ]
+    return []
+
+
+def spoken_judgment(topic: dict[str, Any], obj: str, raw: str) -> str:
+    if obj == "AI口播交付":
+        return "把这个热点放进我熟悉的 AI导演工作流里，看它离真正成片还差哪一步"
+    if obj == "内容资产沉淀" and any(term in raw for term in ["对标视频", "对标内容", "同类内容"]):
+        return "把这条外部灵感，拉回到我自己的内容系统复盘里"
+    return raw
+
+
 def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None = None) -> list[tuple[str, str]]:
     context = context or {}
     obj = workflow_object(topic)
     activity = audience_activity(obj)
     title = text(topic.get("topic_title"), "这条选题")
     core = text(topic.get("core_thesis"), title)
-    judgment = text(topic.get("unique_judgment"), core)
+    judgment = spoken_judgment(topic, obj, text(topic.get("unique_judgment"), core))
     pain = text(topic.get("pain_point") or topic.get("old_workflow"), core_pain(obj))
     old = text(topic.get("old_workflow"), pain)
     ai_action = text(topic.get("ai_intervention"), "让 AI 介入一个能被检查的小环节")
@@ -133,11 +155,9 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
     todos = context.get("todo_text") or "一段真实录屏和一个失败样例"
     fact_text = context.get("fact_text") or ""
     plain_explanation = context.get("plain_explanation") or ""
-    expression_pattern = context.get("expression_pattern_text") or ""
-    fusion_note = context.get("fusion_note_text") or ""
-    style_baseline = context.get("style_baseline_text") or ""
     act1, act2, act3 = action_names(obj)
     questions = concrete_questions(obj)
+    research_lines = research_spoken_lines(topic, obj)
 
     if direction and obj == "Agent项目":
         direction_line = "\n\n所以这条我会收在自己的真实项目里，不复述工具原则，也不讲成教程。"
@@ -153,7 +173,7 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
             "\n\n".join(
                 [
                     f"很多人现在{activity}，最痛苦的{core_pain(obj)}。",
-                    f"你可能也有这种感觉。",
+                    "这个点我自己也会反复卡住。",
                     *questions,
                     *optional_paragraph(plain_explanation),
                     "你要是真的把它放进项目里，这些问题就不能靠感觉。",
@@ -177,11 +197,9 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
                 [
                     f"所以这条我不想把「{title}」讲成工具教程。",
                     f"我真正想做的是：{judgment}。",
-                    *optional_paragraph(expression_pattern, "我会参考同类内容里这个讲法："),
-                    *optional_paragraph(fusion_note, "但最后会收回到我的表达："),
-                    *optional_paragraph(style_baseline, "这里守住一个基线："),
-                    "说白了，我不是想让 AI 多生成几段话。",
-                    "我是想让它每次交付的时候，都把“我做了什么、哪里没把握、你该看哪里”一起交出来。",
+                    *research_lines,
+                    "这条最后要看的不是概念讲得多完整。",
+                    "而是它能不能回到我的真实流程里，让我知道该看哪里、改哪里、哪里还没把握。",
                 ]
             ),
         ),

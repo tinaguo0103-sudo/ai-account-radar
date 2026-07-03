@@ -41,7 +41,7 @@ KNOWLEDGE_TOPIC = {
     "可沉淀资产": "信息雷达内容资产沉淀检查清单",
     "可展示证据": "03内容收件箱；04选题字段；06文档路径；脚本包文件",
     "需要补的证据": "补一张从03到04再到06的路径截图。",
-    "主编判断": "对标视频浅，但能转成我自己的内容系统复盘。",
+    "主编判断": "同类资料讲法偏浅，但能转成我自己的内容系统复盘。",
     "搜索来源摘要": "Obsidian 官方文档显示笔记可以链接到文件、标题和块；Obsidian Graph 文档把笔记和关系显示成节点与链接。",
     "表达模式拆解": "同类知识库内容常从“第二大脑、自动整理、图谱”进入，但容易变教程。",
     "融合说明": "保留链接、关系、可检索这三个信息点；丢弃插件安装、库结构教程；融合到信息雷达 03 收件箱 -> 04 选题判断 -> 06 脚本包路径。",
@@ -91,6 +91,10 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         self.assertIn("### 搜索与表达融合", document)
         self.assertIn("OpenAI Realtime voice-agent 文档", document)
         self.assertIn("30 秒口播脚本、角色语气、分镜节奏、字幕长度和返修验收", document)
+        self.assertIn("结果：draft", document)
+        self.assertIn("草稿，待 PM 验收，待 QA", document)
+        self.assertNotIn("结果：pass", document)
+        self.assertNotIn("可进入拍摄准备", document)
 
     def test_knowledge_base_gets_plain_explanation_without_new_style_headings(self) -> None:
         topic = SCRIPTING.normalize_topic(KNOWLEDGE_TOPIC, record_id=KNOWLEDGE_TOPIC["record_id"])
@@ -98,9 +102,17 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
 
         self.assertIn("知识库不是一个大仓库", text)
         self.assertIn("给每条素材贴一张流转单", text)
-        self.assertIn("03 收件箱 -> 04 选题判断 -> 06 脚本包路径", text)
+        self.assertIn("一条素材能不能从 03 收件箱走到 04 选题，再走到 06 脚本和复盘", text)
+        self.assertIn("很多知识库内容会先讲 Obsidian 图谱", text)
+        self.assertIn("但我现在的问题不是怎么搭库", text)
         self.assertNotIn("先给真实场景", text)
         self.assertNotIn("对标拆解后再转译", text)
+        self.assertNotIn("我会参考同类内容里这个讲法", text)
+        self.assertNotIn("但最后会收回到我的表达", text)
+        self.assertNotIn("这里守住一个基线", text)
+        self.assertNotIn("保留链接、关系", text)
+        self.assertNotIn("丢弃插件安装", text)
+        self.assertNotIn("融合到信息雷达", text)
 
     def test_stable_voice_baseline_headings_are_preserved(self) -> None:
         topic = SCRIPTING.normalize_topic(VOICE_AGENT_TOPIC, record_id=VOICE_AGENT_TOPIC["record_id"])
@@ -110,17 +122,24 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         self.assertIn("### 00:35-01:05｜旧流程", text)
         self.assertIn("### 01:05-01:35｜这条真正要做什么", text)
         self.assertIn("### 01:35-02:50｜三个动作", text)
-        self.assertIn("沿用真实痛点、旧流程、三步动作、边界收尾", text)
         self.assertNotIn("### 00:00-00:30｜先给真实场景", text)
+        self.assertNotIn("沿用真实痛点、旧流程、三步动作、边界收尾", text)
 
     def test_voice_agent_fuses_benchmark_without_claiming_xai_verified(self) -> None:
         topic = SCRIPTING.normalize_topic(VOICE_AGENT_TOPIC, record_id=VOICE_AGENT_TOPIC["record_id"])
         text = VOICE.render_voice_text(topic, SCRIPTING.voice_skill_context(topic, SCRIPTING.validate_topic(topic)))
 
-        self.assertIn("同类 voice-agent 内容常用", text)
-        self.assertIn("丢弃未核验的 xAI 具体能力", text)
+        self.assertIn("很多语音 Agent 内容会先讲几分钟搭一个会对话的 Agent", text)
+        self.assertIn("但我这条不拍教程", text)
+        self.assertIn("角色、分镜、字幕和返修能不能接住", text)
         self.assertIn("xAI Voice Agent 需要确认是否开放", text)
         self.assertNotIn("xAI Voice Agent Builder 已经", text)
+        self.assertNotIn("我会参考同类内容里这个讲法", text)
+        self.assertNotIn("但最后会收回到我的表达", text)
+        self.assertNotIn("这里守住一个基线", text)
+        self.assertNotIn("保留 voice agent", text)
+        self.assertNotIn("丢弃未核验", text)
+        self.assertNotIn("融合到 30 秒口播脚本", text)
 
 
 if __name__ == "__main__":
