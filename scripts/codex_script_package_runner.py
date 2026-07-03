@@ -674,16 +674,18 @@ def generate_package_with_retry(topic: dict[str, Any], timeout_seconds: int) -> 
             raise
         status = qa_status_of(package)
         should_retry, retry_reason = should_retry_package(package)
+        will_retry = should_retry and attempt < MAX_REVISE_ATTEMPTS
+        history_retry_reason = retry_reason if will_retry or not should_retry else f"max_attempts_reached:{retry_reason}"
         attempts.append({
             "attempt": str(attempt),
             "qa_status": status,
             "qa_result": compact(package.get("qa_result"), 1000),
-            "retry": str(should_retry).lower(),
-            "retry_reason": retry_reason,
+            "retry": str(will_retry).lower(),
+            "retry_reason": history_retry_reason,
         })
         if not should_retry:
             return package, attempt, attempts
-        if attempt < MAX_REVISE_ATTEMPTS:
+        if will_retry:
             log(json.dumps({
                 "event": "qa_revise_retry",
                 "topic_title": topic.get("topic_title"),

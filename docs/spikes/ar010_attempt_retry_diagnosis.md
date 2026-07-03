@@ -37,6 +37,7 @@ AR-009 真实测试 Skill 输出属于第二种：两条真实 `codex exec` 均�
 
 - `qa_status=revise` 可以表示待 PM/QA 人工验收，不等于自动重试。
 - 只有 `qa_result` 明确要求重写，或用户可见内容混入内部边界时，runner 才会再生成。
+- attempt history 中的 `retry` 表示 runner 是否实际进入下一轮；如果最后一轮仍有硬性重试理由但已达到 `MAX_REVISE_ATTEMPTS`，`retry=false`，`retry_reason` 记录为 `max_attempts_reached:<原始原因>`。
 
 ## 测试证据
 

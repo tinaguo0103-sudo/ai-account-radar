@@ -73,8 +73,9 @@ class CodexScriptPackageRunnerRetryTest(unittest.TestCase):
         self.assertEqual(result["qa_status"], "revise")
         self.assertEqual(attempts, runner.MAX_REVISE_ATTEMPTS)
         self.assertEqual(run.call_count, runner.MAX_REVISE_ATTEMPTS)
-        self.assertEqual(history[-1]["retry"], "true")
-        self.assertTrue(history[-1]["retry_reason"].startswith("qa_result:"))
+        self.assertEqual(history[0]["retry"], "true")
+        self.assertEqual(history[-1]["retry"], "false")
+        self.assertTrue(history[-1]["retry_reason"].startswith("max_attempts_reached:qa_result:"))
 
     def test_codex_exec_error_retries_and_then_succeeds(self) -> None:
         with patch.object(runner, "run_codex_for_topic", side_effect=[RuntimeError("JSON schema missing field"), package(qa_status="pass")]) as run:
