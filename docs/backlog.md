@@ -128,3 +128,15 @@
 - 验证方式：PM 对话能识别开发线程和生产线程；任务卡可发送到对应线程；执行后 PM 读回线程结果，并更新 `docs/backlog.md` / `docs/release_board.md`。
 - 关联分支/提交：
 - 备注：当前识别到的开发线程为 `019f1de3-f3f2-71d2-ae63-a74cd38f8474`，生产线程为 `019ee85b-ed34-7133-b440-3bf73382d101`，PM 线程为 `019f2649-423f-7812-8efc-af6dd02eb511`。涉及真实生产写入、SCF、通知或 OAuth 时仍需按门禁要求向用户明确授权。
+
+### AR-008 06 watcher 飞书文档同步读取 `.env.local` 权限失败
+
+- 类型：生产稳定
+- 优先级：P1
+- 状态：Inbox
+- 来源：生产目录 `output/logs/codex_script_package_runner_2026-07-03.log`
+- 影响：第二张卡提交后的 06 完整脚本与制作包可能无法稳定同步飞书文档或写入 06 记录；如果只写日志不通知，用户可能看不到 06 生成失败。
+- 发布策略：优先诊断；如确认影响生产 06 链路，走 hotfix main，并同步回 `feature/next-production-flow`。
+- 验证方式：生产只读检查 runner 日志和 LaunchAgent 状态；必要时在 staging/test 06 表、测试文件夹和个人通知目标做 06 runner 写入验证；production smoke 只做最小观察，不写测试数据到生产业务表。
+- 关联分支/提交：
+- 备注：日志显示 `feishu document sync failed: Operation not permitted: '.env.local'`，同日 ready topics 为 0；需确认是沙箱/权限问题、环境文件路径问题，还是无待处理记录时的误报。

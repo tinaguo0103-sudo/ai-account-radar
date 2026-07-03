@@ -8,8 +8,8 @@
 - 生产分支：`main`
 - 开发目录：`/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_dev`
 - 开发分支：`feature/next-production-flow`
-- 当前判断：生产连续两天不稳定时，暂不合并 dev 大功能。
-- 当前主门控：`AR-001`
+- 当前判断：2026-07-03 生产 08:00 采集和 10:00 选题卡发送已恢复成功；06 watcher 出现 `.env.local` 权限错误，需先诊断 `AR-008`，暂不因为单日恢复就合并 dev 大功能。
+- 当前主门控：`AR-001` + `AR-008`
 
 ## PM Coordination Lane
 
@@ -33,6 +33,7 @@
 |---|---|---:|---|---|---|
 | AR-001 | 生产连续两天不稳定，先不要发布 dev 大功能 | P0 | Next | hotfix main | production smoke + 定时日志 |
 | AR-005 | 生产唤醒/保活机制上线 | P1 | Next | 可独立 hotfix | dry-run + status |
+| AR-008 | 06 watcher 飞书文档同步读取 `.env.local` 权限失败 | P1 | Inbox | 先诊断；必要时 hotfix main | 生产只读日志 + staging/test 06 写入验证 |
 
 ## Next Feature Release
 
