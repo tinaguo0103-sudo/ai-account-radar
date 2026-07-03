@@ -28,11 +28,11 @@
 
 ## QA Lane
 
-用于独立验证开发线程交付结果。测试线程默认不改代码，只做测试计划、对抗性审查、回归验证、staging/test 验证和证据整理。Bug 返修最多 3 轮，超过后回到 PM 做取舍。
+用于独立验证开发线程交付结果。测试线程默认不改代码，只做测试计划、对抗性审查、回归验证、staging/test 验证和证据整理。用户可见输出类任务必须提供真实样例证据，只有代码测试通过但没有可人工确认样例时，不得标为最终 Ready。Bug 返修最多 3 轮，超过后回到 PM 做取舍。
 
 | ID | 标题 | 优先级 | 状态 | 验证路径 | 当前轮次 |
 |---|---|---:|---|---|---:|
-| AR-009 | 06 口播稿从泛化结构转向场景化表达 | P2 | QA Passed | dev 仓库两条 2026-07-02 样例独立回归通过；发布前需全局私有 Skill 同步 + production smoke | 0/3 |
+| AR-009 | 06 口播稿从泛化结构转向场景化表达 | P2 | Waiting User Review | dev 仓库两条 2026-07-02 样例独立回归通过；待用户查看真实样例 | 0/3 |
 
 ## Hotfix Lane
 
@@ -58,7 +58,8 @@
 | AR-002 | dev 大功能合并前完整预合并验证 | P1 | Next | feature/next-production-flow -> main | staging + pre_merge + smoke |
 | AR-003 | 学习确认卡上线前部署腾讯云 SCF receiver | P1 | Next | feature/next-production-flow -> main + SCF 部署 | Node + receiver health + smoke |
 | AR-006 | 学习闭环生产启用 | P2 | Staging Tested | feature/next-production-flow -> main | staging 04/06/08 |
-| AR-009 | 06 口播稿从泛化结构转向场景化表达 | P2 | Ready | feature/next-production-flow -> main | QA passed；待全局私有 Skill 同步 + production smoke |
+| AR-009 | 06 口播稿从泛化结构转向场景化表达 | P2 | Waiting User Review | feature/next-production-flow -> main | QA passed；待用户样例确认、全局私有 Skill 同步 + production smoke |
+| AR-010 | 用户可见输出测试必须提供真实案例证据 | P1 | Ready | PM/QA 流程立即生效 | 真实输入 + 真实输出路径/链接 + 关键片段 + 人工确认点 |
 
 ## Blocked / Watch
 

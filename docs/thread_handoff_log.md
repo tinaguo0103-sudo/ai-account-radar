@@ -64,7 +64,8 @@
   - Codex+Obsidian 知识库样例：先讲资料进入后仍需重新找、判断、组织，再落到 `03 收件箱 -> 04 选题判断 -> 06 脚本路径/证据/复盘线索`，知识库概念未开头前置，评分约 16/16。
   - 对抗性审查：未出现“我要做知识库”概念先行、未伪造 xAI 或 Codex+Obsidian 已验证能力、未声称引用具体对标视频细节。
 - 剩余风险：生产 watcher 默认读取全局私有 Skill，本轮未同步全局私有版；合并/启用前需要 PM 决定同步策略，并在同步后做最小 production smoke。对标拆解当前基于题目/fixture 摘要，不是实时外部检索，不能对外声称引用了具体对标视频细节。
-- 状态建议：AR-009 标为 `Ready`，QA Lane 为 `QA Passed`，返修轮次 `0/3`；发布前门禁为全局私有 Skill 同步 + 最小 production smoke。
+- PM 复核修正：用户指出未看到真实测试案例，无法人工确认实际效果。AR-009 虽然技术 QA 通过，但应回退为 `Waiting User Review`；已补充 `docs/spikes/ar009_user_review_samples.md` 作为人工确认入口。
+- 状态建议：AR-009 标为 `Waiting User Review`，QA Lane 为 `Waiting User Review`，返修轮次 `0/3`；发布前门禁为用户确认真实样例、全局私有 Skill 同步 + 最小 production smoke。
 
 ### 2026-07-03 PM 协作协议主动回传验证
 
