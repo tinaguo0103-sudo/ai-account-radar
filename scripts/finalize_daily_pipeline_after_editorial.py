@@ -164,16 +164,24 @@ def update_pipeline_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool)
     return log_path
 
 
-def update_scheduled_log(tail_steps: list[dict[str, Any]], ok: bool) -> Path:
+def update_scheduled_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool) -> Path:
     log_path = LOG_DIR / f"scheduled_daily_collection_{datetime.now().strftime('%Y-%m-%d')}.json"
     payload = read_json(log_path)
     if not payload:
-        return log_path
+        payload = {
+            "ok": ok,
+            "run_id": run_id,
+            "generated_at": datetime.now().isoformat(timespec="seconds"),
+            "recovered_from": "external_editorial_finalizer",
+            "recovery_note": "Scheduled wrapper log was missing; created during external editorial recovery.",
+            "steps": [],
+        }
     existing_steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
     payload.update({
         "ok": ok,
         "recovered_ok": ok,
         "recovered_from": "external_editorial_finalizer",
+        "run_id": run_id or payload.get("run_id", ""),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "steps": existing_steps + tail_steps,
     })
@@ -242,7 +250,7 @@ def main() -> int:
 
     ok = all(step["returncode"] == 0 for step in steps)
     log_path = update_pipeline_log(args.run_id, steps, ok)
-    scheduled_log = update_scheduled_log(steps, ok) if args.update_scheduled_log else ""
+    scheduled_log = update_scheduled_log(args.run_id, steps, ok) if args.update_scheduled_log else ""
     print(json.dumps({
         "ok": ok,
         "run_id": args.run_id,
