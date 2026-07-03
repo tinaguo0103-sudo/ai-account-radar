@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Any
 
 
-SKILL_VERSION = "austin-production-packager-v0.7"
+SKILL_VERSION = "austin-production-packager-v0.6"
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 VOICE_SKILL_NAME = "austin-voice-scriptwriter"
-VOICE_SKILL_VERSION = "austin-voice-scriptwriter-v0.2"
+VOICE_SKILL_VERSION = "austin-voice-scriptwriter-v0.1"
 
 REQUIRED_FIELDS = [
     "topic_title",
@@ -92,6 +92,18 @@ def split_items(value: Any) -> list[str]:
     if is_emptyish_value(text):
         return []
     parts = re.split(r"[；;\n、]+|(?<=。)", text)
+    return [normalized_text(part) for part in parts if not is_emptyish_value(part)]
+
+
+def split_research_items(value: Any) -> list[str]:
+    if value is None:
+        return []
+    if isinstance(value, list):
+        return [normalized_text(item) for item in value if not is_emptyish_value(item)]
+    text = normalized_text(value)
+    if is_emptyish_value(text):
+        return []
+    parts = re.split(r"[；;\n]+", text)
     return [normalized_text(part) for part in parts if not is_emptyish_value(part)]
 
 
@@ -197,6 +209,11 @@ def normalize_topic(fields: dict[str, Any], record_id: str = "") -> dict[str, An
         "production_direction": first_non_empty(fields, ["production_direction", "我的制作补充", "制作方向", "使用案例", "人工制作补充"], skip_placeholders=False),
         "unique_judgment": first_non_empty(fields, ["unique_judgment", "人工一句话判断", "我的思考点", "主编判断", "选题判断", "我的切入"]),
         "takeaway_asset": first_non_empty(fields, ["takeaway_asset", "可沉淀资产", "资料包承接方式", "重点体现"]),
+        "research_sources": split_research_items(first_non_empty(fields, ["research_sources", "搜索来源摘要", "同类来源摘要"], skip_placeholders=False)),
+        "expression_patterns": split_research_items(first_non_empty(fields, ["expression_patterns", "表达模式拆解", "对标表达拆解"], skip_placeholders=False)),
+        "fusion_notes": split_research_items(first_non_empty(fields, ["fusion_notes", "融合说明", "取舍说明"], skip_placeholders=False)),
+        "plain_explanation": first_non_empty(fields, ["plain_explanation", "概念浅显解释", "知识库浅显解释"], skip_placeholders=False),
+        "style_baseline_notes": split_research_items(first_non_empty(fields, ["style_baseline_notes", "风格基线保护"], skip_placeholders=False)),
         "preferred_duration_min": parse_duration(first_non_empty(fields, ["preferred_duration_min", "目标时长"], "4")),
         "publish_platforms": publish_platforms,
         "fact_check_points": fact_check_points,
@@ -290,6 +307,36 @@ def md_numbered(items: list[str], fallback: str = "待补") -> str:
     if not clean:
         return f"1. {fallback}"
     return "\n".join(f"{index}. {item}" for index, item in enumerate(clean, 1))
+
+
+def research_summary_lines(topic: dict[str, Any]) -> list[str]:
+    lines: list[str] = []
+    if topic.get("research_sources"):
+        lines.append(f"搜索来源：{inline_items(topic.get('research_sources', []), limit=4, item_limit=74)}")
+    if topic.get("expression_patterns"):
+        lines.append(f"表达模式：{inline_items(topic.get('expression_patterns', []), limit=3, item_limit=74)}")
+    if topic.get("fusion_notes"):
+        lines.append(f"融合方式：{inline_items(topic.get('fusion_notes', []), limit=3, item_limit=74)}")
+    if topic.get("plain_explanation"):
+        lines.append(f"浅显解释：{clip_text(topic.get('plain_explanation'), 96, '')}")
+    if topic.get("style_baseline_notes"):
+        lines.append(f"风格基线：{inline_items(topic.get('style_baseline_notes', []), limit=3, item_limit=64)}")
+    return lines
+
+
+def research_markdown(topic: dict[str, Any]) -> str:
+    blocks: list[str] = []
+    if topic.get("research_sources"):
+        blocks.append("**搜索/同类来源摘要**\n\n" + md_bullets(topic.get("research_sources", [])))
+    if topic.get("expression_patterns"):
+        blocks.append("**表达模式拆解**\n\n" + md_bullets(topic.get("expression_patterns", [])))
+    if topic.get("fusion_notes"):
+        blocks.append("**取舍与融合说明**\n\n" + md_bullets(topic.get("fusion_notes", [])))
+    if topic.get("plain_explanation"):
+        blocks.append(f"**概念浅显解释**\n\n{topic.get('plain_explanation')}")
+    if topic.get("style_baseline_notes"):
+        blocks.append("**风格基线保护**\n\n" + md_bullets(topic.get("style_baseline_notes", [])))
+    return "\n\n".join(blocks)
 
 
 def script_status_from_validation(validation: ValidationResult) -> str:
@@ -473,9 +520,9 @@ def lead_hook(topic: dict[str, Any], validation: ValidationResult) -> str:
     if has_any(text, ["claude", "团队原则"]):
         return "我不是想学Claude Code的原则，我想看AI任务交出去以后谁来验"
     if has_any(text, ["obsidian", "知识库"]):
-        return "先拿一条内容走完03到04再到06，再谈它是不是知识库资产"
+        return "知识库如果不能把信息推回任务系统，就只是换个地方收藏"
     if has_any(text, ["voice agent", "口播", "配音"]):
-        return "先拿30秒口播放进分镜和字幕里，再判断AI声音能不能交付"
+        return "先把这段声音放进分镜和字幕里，再判断它能不能交付"
     if has_any(text, ["excel", "批量补字段", "候选池"]):
         return "表格自动化别先看填了多少，先看错了哪里能不能改回来"
     if has_any(text, ["adobe", "返修"]):
@@ -822,6 +869,7 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
     boundaries = private_boundaries(private_cases)[:3]
     ai_action = clip_text(topic.get("ai_intervention"), 82, "待确认实操主线")
     production_direction = clip_text(topic.get("production_direction"), 110, "")
+    research_lines = research_summary_lines(topic)
     lines = [
         f"- 模板：{template}（{clip_text(template_reason, 54, '按题材和实验类型判断')}）",
         *([f"- 人工制作补充：{production_direction}"] if production_direction else []),
@@ -830,14 +878,11 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
         f"- 判断：{inline_items(key_judgment_lines(topic), item_limit=46)}",
         f"- 金句：{inline_items(golden_lines(topic), item_limit=36)}",
         f"- 证据建议：{inline_items(evidence, '待补：至少明确一个可展示证据', limit=4, item_limit=34)}",
-        "- 场景化表达规则：先讲账号内真实场景和旧流程卡点，再引出方法或工具；不能一上来讲概念。",
-        "- 对标转译规则：先拆对标内容表面在讲什么，再说明我如何转成自己的业务语言和制作现场。",
-        "- 细节颗粒度规则：口播必须出现个人使用体验、具体字段/路径/截图/返修点等可拍细节。",
-        "- 知识库类规则：先抛内容生产现场里的查找、判断、脚本路径或复盘问题，再把知识库作为解决方案引出。",
         f"- 待补素材：{inline_items(p0_todos, '无P0素材缺口，可人工确认执行包', limit=2, item_limit=36)}",
         f"- 核验：{inline_items(fact_checks, '无额外事实核验点', limit=2, item_limit=44)}",
         f"- 边界：{inline_items(boundaries, '无额外私有边界提醒', limit=2, item_limit=38)}",
         f"- 可选案例参考：{private_case_names(private_cases)}（仅供06选择，不强制使用）",
+        *[f"- {line}（只作为素材，不改变稳定口播结构）" for line in research_lines],
         "- 本执行包已生成：完整口播稿、录屏清单、剪辑交接、发布包、QA；后续可按需拆任务。",
     ]
     return "\n".join(lines)
@@ -1115,6 +1160,11 @@ def voice_skill_context(topic: dict[str, Any], validation: ValidationResult) -> 
         "evidence_text": inline_items(script_evidence_items(topic, validation), "输入、输出、错误点和人工修改记录", limit=3, item_limit=42),
         "todo_text": inline_items(shooting_reminder_items(validation), "一段真实录屏和一个失败样例", limit=2, item_limit=42),
         "fact_text": inline_items(release_reminder_items(validation), "", limit=2, item_limit=48),
+        "research_source_text": inline_items(topic.get("research_sources", []), "", limit=3, item_limit=86),
+        "expression_pattern_text": inline_items(topic.get("expression_patterns", []), "", limit=2, item_limit=86),
+        "fusion_note_text": inline_items(topic.get("fusion_notes", []), "", limit=3, item_limit=86),
+        "plain_explanation": str(topic.get("plain_explanation") or "").strip(),
+        "style_baseline_text": inline_items(topic.get("style_baseline_notes", []), "", limit=2, item_limit=72),
         "voice_skill_version": VOICE_SKILL_VERSION,
     }
 
@@ -1382,6 +1432,8 @@ def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_
     capture_rows = capture_rows_for_full_package(topic, validation, private_cases)
     headers = ["时间", "段落", "真人口播", "画面/录屏", "剪辑重点", "QA"]
     capture_headers = ["素材类型", "需要内容", "用途", "优先级", "状态"]
+    research_section = research_markdown(topic)
+    research_block = f"\n### 搜索与表达融合\n\n{research_section}\n" if research_section else ""
     write_text(document_path, f"""# {display_title}
 
 ## 06 完整口播稿与执行包
@@ -1399,6 +1451,7 @@ def render_full_execution_package(topic: dict[str, Any], output_root: Path, run_
 ### 视频结构
 
 {md_numbered(outline)}
+{research_block}
 
 ### 口播全文
 
