@@ -133,10 +133,10 @@
 
 - 类型：生产稳定
 - 优先级：P1
-- 状态：Inbox
+- 状态：Released
 - 来源：生产目录 `output/logs/codex_script_package_runner_2026-07-03.log`
 - 影响：第二张卡提交后的 06 完整脚本与制作包可能无法稳定同步飞书文档或写入 06 记录；如果只写日志不通知，用户可能看不到 06 生成失败。
 - 发布策略：优先诊断；如确认影响生产 06 链路，走 hotfix main，并同步回 `feature/next-production-flow`。
 - 验证方式：生产只读检查 runner 日志和 LaunchAgent 状态；必要时在 staging/test 06 表、测试文件夹和个人通知目标做 06 runner 写入验证；production smoke 只做最小观察，不写测试数据到生产业务表。
-- 关联分支/提交：
-- 备注：日志显示 `feishu document sync failed: Operation not permitted: '.env.local'`，同日 ready topics 为 0；需确认是沙箱/权限问题、环境文件路径问题，还是无待处理记录时的误报。
+- 关联分支/提交：生产 `main` 当前提交 `db61b84 Clarify script package doc sync failure alerts`
+- 备注：生产只读诊断确认 10:59 错误为旧日志残留；11:18 后 runtime `.env.local` 更新，LaunchAgent 指向 `~/.codex/ai-account-radar-runtime`，后续 watcher 未复现。06 记录 `recvoh7TvgV7zl` 已有飞书文档 URL、文件夹 URL，`文档同步状态=已同步到用户可见飞书文件夹`，错误字段为空。未做生产写入 smoke；如需验证下一次创建，另开 P2 staging/test 06 文档创建 smoke。
