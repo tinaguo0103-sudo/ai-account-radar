@@ -78,6 +78,25 @@ Codex automation 指向生产目录：
 5. 合并回 `main` 后，再让生产目录 `git pull` 到新版本。
 6. 如果生产链路出问题，优先在生产目录做最小紧急修复，并同步回开发分支。
 
+## 需求与发布管理
+
+本项目使用轻量 Markdown 管理需求和版本，不单独搭建项目管理平台：
+
+```text
+docs/backlog.md
+docs/release_board.md
+docs/pm_conversation_handoff.md
+```
+
+规则：
+
+- 新需求、生产优化、hotfix、版本合并，先记录到 `docs/backlog.md`。
+- 发布路径、hotfix lane、next feature release 和 blocked/watch 统一维护在 `docs/release_board.md`。
+- 生产不稳定时，`P0/P1` 生产修复优先于 dev 大功能。
+- 可以从 `main` 独立做 hotfix；发布后必须同步回 `feature/next-production-flow`。
+- dev 大功能未 Ready 时，不因为小优化强行合并生产。
+- PM 对话负责维护 backlog/release board，并给开发对话生成任务卡；开发对话执行前必须先读这三个文件。
+
 ## 测试环境与预合并验证
 
 涉及飞书写入、字段、卡片、状态流转、通知或外部服务的功能，合并前必须优先使用 staging/test 飞书 Base 或测试表验证。测试数据必须与生产 Base / 生产业务表隔离；测试云文档必须与生产云文档文件夹隔离；测试通知必须默认发个人 open_id。除只读检查外，不允许用生产表、生产文件夹或正式群来做功能测试。
