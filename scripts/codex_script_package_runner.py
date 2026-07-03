@@ -23,7 +23,7 @@ from typing import Any
 from urllib.parse import quote
 
 from local_env import load_local_env
-from feishu_user_oauth_store import sync_user_tokens
+from feishu_user_oauth_store import preserve_latest_user_tokens, sync_user_tokens
 
 import push_to_feishu as feishu
 from script_package_shared import (
@@ -148,6 +148,9 @@ def exchange_user_refresh_token(refresh_token: str) -> dict[str, Any]:
 
 
 def refresh_user_doc_token_if_needed() -> str:
+    latest_tokens, _ = preserve_latest_user_tokens()
+    if latest_tokens:
+        os.environ.update(latest_tokens)
     access_token = (
         os.getenv("FEISHU_SCRIPT_PACKAGE_USER_ACCESS_TOKEN", "").strip()
         or os.getenv("FEISHU_USER_ACCESS_TOKEN", "").strip()

@@ -94,11 +94,15 @@ def related_env_files(root: Path = ROOT, runtime_dir: Path = DEFAULT_RUNTIME_DIR
 
     root = root.expanduser().resolve()
     runtime_dir = runtime_dir.expanduser().resolve()
-    roots: list[Path] = [root]
 
     source_root = runtime_source_root(root)
     if source_root and source_root != root:
-        roots.append(source_root)
+        # When running from the runtime copy, write only the runtime env file.
+        # LaunchAgent processes may not have Desktop/TCC permission to update
+        # the source worktree, and OAuth refresh tokens are single-use.
+        return [root / ".env.local"]
+
+    roots: list[Path] = [root]
 
     if runtime_dir != root and runtime_dir.exists() and runtime_declares_source(runtime_dir, root):
         roots.append(runtime_dir)
