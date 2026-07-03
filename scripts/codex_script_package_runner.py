@@ -53,6 +53,37 @@ LOG_DIR = ROOT / "output" / "logs"
 LOCK_FILE = ROOT / ".runtime" / "codex_script_package_runner.lock"
 RUNNER_VERSION = "codex-local-script-package-runner-v0.2"
 MAX_REVISE_ATTEMPTS = 2
+RETRY_QA_PATTERNS = (
+    "需要重写",
+    "必须重写",
+    "请重写",
+    "重写口播",
+    "结构不可用",
+    "脚本不可用",
+    "缺少关键输入",
+    "缺关键输入",
+    "事实无法成立",
+    "内部状态边界进入",
+    "进入用户可见",
+)
+USER_VISIBLE_RETRY_SECTIONS = (
+    "开头钩子候选",
+    "视频结构",
+    "口播全文",
+    "分段执行方案",
+    "录屏与素材清单",
+    "剪辑交接",
+    "发布包草稿",
+)
+USER_VISIBLE_BOUNDARY_PATTERNS = (
+    "如果当天还没生成06",
+    "如果当天没有生成 06",
+    "如果当天没有生成06",
+    "如果今天没有完整生成到最后一步",
+    "没有完整生成到最后一步",
+    "选题系统复盘",
+    "沉淀资产",
+)
 DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 TEST_TITLE_PREFIXES = ("【测试】", "【流程测试】", "【部署后测试】", "【模拟测试】", "[测试]", "测试：", "测试:")
 TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(测试|测速)[^\]]*\])")
@@ -465,6 +496,65 @@ def qa_status_of(package: dict[str, Any]) -> str:
     return status if status in {"pass", "revise", "blocked"} else "revise"
 
 
+def heading_text(line: str) -> tuple[int, str] | None:
+    match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line.strip())
+    if not match:
+        return None
+    return len(match.group(1)), match.group(2).strip()
+
+
+def markdown_named_sections(markdown: str, section_names: tuple[str, ...]) -> dict[str, str]:
+    sections: dict[str, list[str]] = {}
+    active_name = ""
+    active_level = 0
+    for line in markdown.splitlines():
+        heading = heading_text(line)
+        if heading:
+            level, name = heading
+            clean_name = name.strip("：: ")
+            if active_name and level <= active_level:
+                active_name = ""
+                active_level = 0
+            for section_name in section_names:
+                if clean_name == section_name or clean_name.startswith(section_name):
+                    active_name = section_name
+                    active_level = level
+                    sections.setdefault(section_name, [])
+                    break
+            else:
+                if active_name and level <= active_level:
+                    active_name = ""
+                    active_level = 0
+            continue
+        if active_name:
+            sections.setdefault(active_name, []).append(line)
+    return {name: "\n".join(lines) for name, lines in sections.items()}
+
+
+def visible_boundary_issues(markdown: str) -> list[str]:
+    issues: list[str] = []
+    sections = markdown_named_sections(markdown, USER_VISIBLE_RETRY_SECTIONS)
+    for section_name, body in sections.items():
+        for pattern in USER_VISIBLE_BOUNDARY_PATTERNS:
+            if pattern in body:
+                issues.append(f"{section_name}:{pattern}")
+    return issues
+
+
+def should_retry_package(package: dict[str, Any]) -> tuple[bool, str]:
+    status = qa_status_of(package)
+    if status != "revise":
+        return False, f"qa_status={status}"
+    qa_result = str(package.get("qa_result") or "")
+    for pattern in RETRY_QA_PATTERNS:
+        if pattern in qa_result:
+            return True, f"qa_result:{pattern}"
+    boundary_issues = visible_boundary_issues(str(package.get("full_markdown") or ""))
+    if boundary_issues:
+        return True, "visible_boundary:" + ",".join(boundary_issues[:3])
+    return False, "revise_waiting_external_qa"
+
+
 def topic_prompt(topic: dict[str, Any], previous_package: dict[str, Any] | None = None, attempt: int = 1) -> str:
     script_skill = script_package_skill_name()
     voice_skill = script_package_voice_skill_name()
@@ -502,6 +592,7 @@ def topic_prompt(topic: dict[str, Any], previous_package: dict[str, Any] | None 
 - 内部状态边界只能留在 `发布前核验`、`QA 风险与防错` 或 `发布前提醒`：例如“如果当天/今天没有生成 06”“没有完整生成到最后一步”“选题系统复盘”。这些句子不得进入开头钩子、拍摄前待办、视频结构、口播全文、分段执行方案、录屏与素材清单、剪辑交接、发布包草稿。
 - `沉淀资产` 是内部抽象词，不得出现在用户可见创作内容中，包括开头钩子、标题/封面、简介、置顶评论、口播、素材清单、分段方案和 QA 通过原因。改成人话：有没有留下来、下次还能不能用、路径有没有串起来、后面能不能复用、资料有没有变成下次能用的东西。
 - 当前仍是测试/返修阶段，`qa_status` 不要自评为 `pass`；应标为草稿、待 PM 验收、待 QA，不能写“可进入拍摄准备”。
+- `qa_status=revise` 可以表示待 PM/QA 人工验收，不等于自动重试；只有 `qa_result` 明确要求重写，或用户可见内容混入内部边界时，runner 才会再生成。
 - 素材、事实核验、发布前回看原文属于提醒；不要因为这些提醒就把可用稿全部判死。
 - 输出必须严格符合 JSON Schema，不要输出 Markdown 代码块，不要输出解释。
 - `full_markdown` 必须是一份完整 Markdown，至少包含：先看结论、核心观点、开头钩子候选、视频结构、搜索与表达融合、口播全文、录屏与素材清单、剪辑交接、发布包草稿、QA 报告。
@@ -557,20 +648,47 @@ def generate_package_with_retry(topic: dict[str, Any], timeout_seconds: int) -> 
     attempts: list[dict[str, str]] = []
     previous_package: dict[str, Any] | None = None
     for attempt in range(1, MAX_REVISE_ATTEMPTS + 1):
-        package = run_codex_for_topic(topic, timeout_seconds, previous_package=previous_package, attempt=attempt)
+        try:
+            package = run_codex_for_topic(topic, timeout_seconds, previous_package=previous_package, attempt=attempt)
+        except Exception as exc:
+            retry_error = compact(exc, 1000)
+            attempts.append({
+                "attempt": str(attempt),
+                "qa_status": "error",
+                "qa_result": retry_error,
+                "retry": str(attempt < MAX_REVISE_ATTEMPTS).lower(),
+                "retry_reason": "codex_exec_error",
+            })
+            if attempt < MAX_REVISE_ATTEMPTS:
+                log(json.dumps({
+                    "event": "codex_exec_retry",
+                    "topic_title": topic.get("topic_title"),
+                    "attempt": attempt,
+                    "error": retry_error,
+                }, ensure_ascii=False))
+                previous_package = {
+                    "qa_status": "revise",
+                    "qa_result": f"上一轮 codex exec 失败，需要重试：{retry_error}",
+                }
+                continue
+            raise
         status = qa_status_of(package)
+        should_retry, retry_reason = should_retry_package(package)
         attempts.append({
             "attempt": str(attempt),
             "qa_status": status,
             "qa_result": compact(package.get("qa_result"), 1000),
+            "retry": str(should_retry).lower(),
+            "retry_reason": retry_reason,
         })
-        if status != "revise":
+        if not should_retry:
             return package, attempt, attempts
         if attempt < MAX_REVISE_ATTEMPTS:
             log(json.dumps({
                 "event": "qa_revise_retry",
                 "topic_title": topic.get("topic_title"),
                 "attempt": attempt,
+                "retry_reason": retry_reason,
                 "qa_result": package.get("qa_result"),
             }, ensure_ascii=False))
             previous_package = package
