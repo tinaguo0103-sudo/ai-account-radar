@@ -88,3 +88,20 @@
   - 06 表记录 `recvoh7TvgV7zl` 已有飞书文档 URL、文件夹 URL，`文档同步状态=已同步到用户可见飞书文件夹`，`文档同步错误` 为空，`QA结果=pass`。
 - 剩余风险：没有创建新的生产飞书文档做写入 smoke；如需验证下一次真实待处理记录创建文档，应走 staging/test 06 表、测试文件夹和个人通知目标。
 - 状态建议：AR-008 标为 `Released`；如需继续增强，另开 P2 staging/test 06 文档创建 smoke。
+
+### 2026-07-03 AR-009 开发线程交付
+
+- 目标线程：开发分支线程 `019f1de3-f3f2-71d2-ae63-a74cd38f8474`
+- 派发类型：dev 功能优化；等待测试线程独立回归
+- 背景：用户反馈 2026-07-02 生成的两个 06 口播稿结构稳定但表达仍偏泛化，需要把口播从“框架正确”推进到“场景化表达”：先账号内真实问题，再对标拆解和方法转译，知识库类选题不能先讲知识库概念。
+- 禁止事项：不合并未 Ready 的 dev 大功能；不写生产业务表；不发真实选题卡；不创建生产飞书文档；不直接修改全局私有 Skill。
+- 验收口径：用 2026-07-02 两条实际样例做本地回归；输出改前/改后摘要；新增自动回归测试；完成后通知 PM 线程和测试线程。
+- 当前状态：Waiting QA
+- 开发结论：已在仓库脱敏 Skill 镜像中增加场景化表达规则，并在 06 包装器的生成输入中显式写入场景化、对标转译、细节颗粒度和知识库类规则。
+- 证据：
+  - 新增回归 fixture：`skills/austin-no-overtime-scripting/examples/ar009_20260702_scene_regression.json`。
+  - 新增测试：`scripts/test_austin_voice_scene_rules.py`，覆盖知识库样例、AI 口播样例和 06 完整包生成。
+  - 新增对比摘要：`docs/spikes/ar009_scene_expression_regression.md`。
+  - 本地生成输出：`output/ar009_scene_regression/2026-07-02/`。
+- 剩余风险：本轮没有同步全局私有 Skill，生产 watcher 默认仍读取全局私有版；上线前需由 PM 决定同步策略并做最小 production smoke。测试线程尚未独立回归。
+- 状态建议：AR-009 暂不标 Ready，保持 `Waiting QA`；测试线程通过后再建议进入 `Ready`。

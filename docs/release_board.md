@@ -32,7 +32,7 @@
 
 | ID | 标题 | 优先级 | 状态 | 验证路径 | 当前轮次 |
 |---|---|---:|---|---|---:|
-| AR-009 | 06 口播稿从泛化结构转向场景化表达 | P2 | Dev In Progress / Test Plan Ready | 开发交付后由测试线程用昨日两条样例独立回归 | 0/3 |
+| AR-009 | 06 口播稿从泛化结构转向场景化表达 | P2 | Waiting QA | 开发交付后由测试线程用昨日两条样例独立回归 | 0/3 |
 
 ## Hotfix Lane
 
@@ -58,7 +58,7 @@
 | AR-002 | dev 大功能合并前完整预合并验证 | P1 | Next | feature/next-production-flow -> main | staging + pre_merge + smoke |
 | AR-003 | 学习确认卡上线前部署腾讯云 SCF receiver | P1 | Next | feature/next-production-flow -> main + SCF 部署 | Node + receiver health + smoke |
 | AR-006 | 学习闭环生产启用 | P2 | Staging Tested | feature/next-production-flow -> main | staging 04/06/08 |
-| AR-009 | 06 口播稿从泛化结构转向场景化表达 | P2 | In Dev | feature/next-production-flow -> main | 昨日两条样例改前/改后回归 |
+| AR-009 | 06 口播稿从泛化结构转向场景化表达 | P2 | Waiting QA | feature/next-production-flow -> main | 昨日两条样例改前/改后回归 |
 
 ## Blocked / Watch
 

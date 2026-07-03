@@ -13,10 +13,10 @@ from pathlib import Path
 from typing import Any
 
 
-SKILL_VERSION = "austin-production-packager-v0.6"
+SKILL_VERSION = "austin-production-packager-v0.7"
 SKILL_ROOT = Path(__file__).resolve().parents[1]
 VOICE_SKILL_NAME = "austin-voice-scriptwriter"
-VOICE_SKILL_VERSION = "austin-voice-scriptwriter-v0.1"
+VOICE_SKILL_VERSION = "austin-voice-scriptwriter-v0.2"
 
 REQUIRED_FIELDS = [
     "topic_title",
@@ -426,6 +426,10 @@ def has_any(text: str, terms: list[str]) -> bool:
 
 def workflow_object(topic: dict[str, Any]) -> str:
     text = topic_blob(topic)
+    if any(term in text for term in ["voice agent", "口播", "配音", "声音", "字幕", "分镜"]):
+        return "AI口播交付"
+    if any(term in text for term in ["知识库", "obsidian", "资料仓库", "沉淀资产", "信息雷达"]):
+        return "内容资产沉淀"
     if any(term in text for term in ["汽车", "智能驾驶", "辅助驾驶", "l3", "l4", "国标"]):
         return "汽车AI内容"
     if any(term in text for term in ["候选池", "excel", "批量补字段", "飞书候选"]):
@@ -446,6 +450,8 @@ def workflow_object(topic: dict[str, Any]) -> str:
 def hook_problem(topic: dict[str, Any]) -> str:
     obj = workflow_object(topic)
     mapping = {
+        "AI口播交付": "AI口播最怕的不是声音不自然，是放进成片以后没人知道怎么返修",
+        "内容资产沉淀": "内容资产最怕的不是资料没存，是写稿时还要重新找、重新判断、重新组织",
         "汽车AI内容": "汽车内容最怕的不是慢，是一句卖点把边界说过头",
         "候选池": "表格AI最怕的不是填得少，是填满以后没人知道对不对",
         "选题台": "选题台最怕的不是没灵感，是每条看起来都能做",
@@ -467,7 +473,9 @@ def lead_hook(topic: dict[str, Any], validation: ValidationResult) -> str:
     if has_any(text, ["claude", "团队原则"]):
         return "我不是想学Claude Code的原则，我想看AI任务交出去以后谁来验"
     if has_any(text, ["obsidian", "知识库"]):
-        return "知识库如果不能把信息推回任务系统，就只是换个地方收藏"
+        return "先拿一条内容走完03到04再到06，再谈它是不是知识库资产"
+    if has_any(text, ["voice agent", "口播", "配音"]):
+        return "先拿30秒口播放进分镜和字幕里，再判断AI声音能不能交付"
     if has_any(text, ["excel", "批量补字段", "候选池"]):
         return "表格自动化别先看填了多少，先看错了哪里能不能改回来"
     if has_any(text, ["adobe", "返修"]):
@@ -486,6 +494,8 @@ def lead_hook(topic: dict[str, Any], validation: ValidationResult) -> str:
 def second_hook(topic: dict[str, Any], validation: ValidationResult) -> str:
     obj = workflow_object(topic)
     mapping = {
+        "AI口播交付": "声音自然只是第一步，能不能过分镜、字幕和返修才决定能不能交付",
+        "内容资产沉淀": "不是再搭一个资料仓库，是检查资料有没有变成判断、脚本和复盘资产",
         "汽车AI内容": "这条不比谁更会写卖点，只比谁能守住证据和功能边界",
         "候选池": "我不缺更多候选，我缺的是每条为什么升降级都能看见",
         "选题台": "选题台不是帮我多想几个标题，是帮我挡掉不该做的题",
@@ -506,6 +516,14 @@ def key_judgment_extras(topic: dict[str, Any]) -> list[str]:
         "汽车AI内容": [
             "汽车内容里的AI提效，必须先过功能边界和证据线。",
             "热点只能给入口，能不能上线要看风险复核。",
+        ],
+        "AI口播交付": [
+            "AI口播能不能交付，不看声音多像真人，看角色、分镜、字幕和返修能不能接住。",
+            "声音只是素材，过了导演验收才可能变成成片。",
+        ],
+        "内容资产沉淀": [
+            "知识库只有接进生产流程，才不是另一个资料仓库。",
+            "内容资产不是存起来，而是能回到判断、脚本和复盘。",
         ],
         "候选池": [
             "候选池自动化的价值，不是填满表格，是把判断成本降下来。",
@@ -545,6 +563,8 @@ def golden_line_pool(topic: dict[str, Any]) -> list[str]:
     specific: list[str] = []
     if has_any(text, ["claude", "团队原则"]):
         specific = ["原则不能收藏，要变成验收动作。", "AI任务不是交出去就结束，是验得回来才算数。"]
+    elif has_any(text, ["voice agent", "口播", "配音"]):
+        specific = ["声音自然不是交付，过了分镜、字幕和返修才算。", "AI口播不是少录一遍音，是少走一轮返修。"]
     elif has_any(text, ["obsidian", "知识库"]):
         specific = ["知识库不是仓库，是回到任务的路由。", "收藏不进入执行台，就只是换了一个地方躺着。"]
     elif has_any(text, ["excel", "批量补字段"]):
@@ -810,6 +830,10 @@ def generation_input_for_06(topic: dict[str, Any], template: str, template_reaso
         f"- 判断：{inline_items(key_judgment_lines(topic), item_limit=46)}",
         f"- 金句：{inline_items(golden_lines(topic), item_limit=36)}",
         f"- 证据建议：{inline_items(evidence, '待补：至少明确一个可展示证据', limit=4, item_limit=34)}",
+        "- 场景化表达规则：先讲账号内真实场景和旧流程卡点，再引出方法或工具；不能一上来讲概念。",
+        "- 对标转译规则：先拆对标内容表面在讲什么，再说明我如何转成自己的业务语言和制作现场。",
+        "- 细节颗粒度规则：口播必须出现个人使用体验、具体字段/路径/截图/返修点等可拍细节。",
+        "- 知识库类规则：先抛内容生产现场里的查找、判断、脚本路径或复盘问题，再把知识库作为解决方案引出。",
         f"- 待补素材：{inline_items(p0_todos, '无P0素材缺口，可人工确认执行包', limit=2, item_limit=36)}",
         f"- 核验：{inline_items(fact_checks, '无额外事实核验点', limit=2, item_limit=44)}",
         f"- 边界：{inline_items(boundaries, '无额外私有边界提醒', limit=2, item_limit=38)}",
