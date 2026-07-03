@@ -1362,19 +1362,13 @@ def readable_todo_items(validation: ValidationResult) -> list[str]:
 
 
 def full_package_outline(topic: dict[str, Any], validation: ValidationResult) -> list[str]:
-    pain = clip_text(topic.get("old_workflow") or topic.get("pain_point"), 70, "旧流程缺少验收字段")
-    judgment = clip_text(topic_judgment_text(topic, "AI任务必须留下状态、异常和验收记录"), 70, "AI任务必须留下状态、异常和验收记录")
-    ai_action = clip_text(topic.get("ai_intervention"), 76, "按验收表跑一次真实任务")
-    evidence = inline_items(script_evidence_items(topic, validation), "任务跑表、输入输出、失败样例", limit=3, item_limit=34)
-    todos = inline_items(shooting_reminder_items(validation), "无P0素材缺口", limit=2, item_limit=34)
-    return [
-        f"00:00-00:10｜开场钩子：{full_script_opening(topic, validation)}",
-        f"00:10-00:40｜真实痛点：交代{pain}，画面给旧任务或缺失验收字段的现场。",
-        f"00:40-01:15｜核心判断：切真人，说清{judgment}。",
-        f"01:15-02:30｜实操主线：只跑一个小任务，展示{ai_action}。",
-        f"02:30-03:20｜失败和修正：放出{evidence}，说明哪里必须人工接手。",
-        f"03:20-04:00｜收尾判断：回到是否值得继续拍；拍摄前补齐{todos}。",
-    ]
+    outline: list[str] = []
+    for heading, body in teleprompter_sections(topic, validation):
+        first_line = next((line.strip() for line in body.splitlines() if line.strip()), "")
+        time_range, purpose = heading.split("｜", 1)
+        capture = capture_hint_for_segment(topic, validation, purpose)
+        outline.append(f"{time_range}｜{purpose}：{clip_text(first_line, 64, '按口播段落推进')}。画面给{capture}。")
+    return outline
 
 
 def execution_package_rows(topic: dict[str, Any], validation: ValidationResult) -> list[dict[str, str]]:
@@ -1396,11 +1390,11 @@ def capture_hint_for_segment(topic: dict[str, Any], validation: ValidationResult
     evidence = script_evidence_items(topic, validation)
     if "开场" in purpose:
         return clip_text(evidence[0] if evidence else topic.get("topic_title"), 72, "先闪现结果或冲突画面")
-    if "痛点" in purpose or "旧流程" in purpose:
+    if "痛点" in purpose or "旧流程" in purpose or "旧方式" in purpose or "资料" in purpose:
         return clip_text(topic.get("old_workflow") or topic.get("pain_point"), 72, "旧流程截图或任务卡住的画面")
-    if "判断" in purpose or "真正要做什么" in purpose:
+    if "判断" in purpose or "卡点" in purpose or "边界" in purpose:
         return "切真人大画面，旁边给方法卡或验收字段草稿"
-    if "实操" in purpose or "三个动作" in purpose:
+    if "实操" in purpose or "动作" in purpose or "验证" in purpose:
         return clip_text(topic.get("ai_intervention"), 84, "录屏展示输入、AI处理和验收字段")
     if "失败" in purpose:
         return inline_items(shooting_reminder_items(validation), "错误结果、人工修正、验收打叉", limit=2, item_limit=38)

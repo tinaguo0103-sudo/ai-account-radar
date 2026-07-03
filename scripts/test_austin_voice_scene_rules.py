@@ -72,6 +72,12 @@ FORBIDDEN_VOICE_PHRASES = [
     "保留 voice agent",
     "丢弃未核验",
     "融合到 30 秒口播脚本",
+    "如果真要拿",
+    "这条真正要做什么",
+    "围绕「",
+    "我先看三个动作",
+    "能不能继续做，最后看的是",
+    "最后还是回到我自己判断",
 ]
 
 INTERNAL_STATUS_BOUNDARIES = [
@@ -115,6 +121,23 @@ def markdown_line(document: str, prefix: str) -> str:
         if line.startswith(prefix):
             return line
     raise AssertionError(f"Cannot find line starting with {prefix!r}")
+
+
+def voice_subheadings(document: str) -> list[str]:
+    section = markdown_range(document, "### 口播全文", "### 分段执行方案")
+    return [line.strip() for line in section.splitlines() if line.startswith("### 00:")]
+
+
+def execution_plan_purposes(document: str) -> list[str]:
+    section = markdown_range(document, "### 分段执行方案", "### 录屏与素材清单")
+    purposes: list[str] = []
+    for line in section.splitlines():
+        if not line.startswith("| ") or line.startswith("|---") or "段落" in line:
+            continue
+        cells = [cell.strip() for cell in line.strip("|").split("|")]
+        if len(cells) >= 2:
+            purposes.append(cells[1])
+    return purposes
 
 
 KNOWLEDGE_TOPIC = {
@@ -239,14 +262,16 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         self.assertNotIn("但最后会收回到我的表达", text)
         self.assertNotIn("这里守住一个基线", text)
 
-    def test_stable_voice_baseline_headings_are_preserved(self) -> None:
+    def test_deterministic_voice_uses_input_derived_headings(self) -> None:
         topic = SCRIPTING.normalize_topic(VOICE_AGENT_TOPIC, record_id=VOICE_AGENT_TOPIC["record_id"])
         text = VOICE.render_voice_text(topic, SCRIPTING.voice_skill_context(topic, SCRIPTING.validate_topic(topic)))
 
-        self.assertIn("### 00:00-00:35｜真实痛点", text)
-        self.assertIn("### 00:35-01:05｜旧流程", text)
-        self.assertIn("### 01:05-01:35｜这条真正要做什么", text)
-        self.assertIn("### 01:35-02:50｜三个动作", text)
+        self.assertIn("### 00:00-00:30｜旧方式脚本", text)
+        self.assertIn("### 01:05-01:55｜AI可以生成声音版本", text)
+        self.assertNotIn("### 00:00-00:35｜真实痛点", text)
+        self.assertNotIn("### 00:35-01:05｜旧流程", text)
+        self.assertNotIn("### 01:05-01:35｜这条真正要做什么", text)
+        self.assertNotIn("### 01:35-02:50｜三个动作", text)
         self.assertNotIn("### 00:00-00:30｜先给真实场景", text)
         self.assertNotIn("沿用真实痛点、旧流程、三步动作、边界收尾", text)
 
@@ -299,6 +324,33 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
             0.18,
             shared_lines,
         )
+
+    def test_two_real_samples_do_not_share_fixed_section_scaffold(self) -> None:
+        voice_agent_doc = render_package_document(VOICE_AGENT_TOPIC)
+        knowledge_doc = render_package_document(KNOWLEDGE_TOPIC)
+        fixed_scaffold_terms = [
+            "真实痛点",
+            "旧流程",
+            "这条真正要做什么",
+            "三个动作",
+            "前后对比",
+            "边界和收尾",
+        ]
+
+        for document in [voice_agent_doc, knowledge_doc]:
+            voice_text = markdown_range(document, "### 口播全文", "### 分段执行方案")
+            plan_text = markdown_range(document, "### 分段执行方案", "### 录屏与素材清单")
+            for term in fixed_scaffold_terms:
+                self.assertNotIn(term, voice_text)
+                self.assertNotIn(term, plan_text)
+            for phrase in FORBIDDEN_VOICE_PHRASES:
+                self.assertNotIn(phrase, voice_text)
+                self.assertNotIn(phrase, plan_text)
+
+        shared_headings = sorted(set(voice_subheadings(voice_agent_doc)) & set(voice_subheadings(knowledge_doc)))
+        shared_plan_purposes = sorted(set(execution_plan_purposes(voice_agent_doc)) & set(execution_plan_purposes(knowledge_doc)))
+        self.assertLessEqual(len(shared_headings), 1, shared_headings)
+        self.assertLessEqual(len(shared_plan_purposes), 1, shared_plan_purposes)
 
     def test_missing_real_scene_gets_qa_warning_without_voice_fill(self) -> None:
         raw_topic = {

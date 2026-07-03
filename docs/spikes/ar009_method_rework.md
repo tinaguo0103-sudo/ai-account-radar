@@ -42,3 +42,44 @@
 
 - 本地 deterministic 渲染只能验证仓库镜像和测试 Skill 副本的规则，不等于真实 `codex exec` 口播质量。
 - 真实私有 Skill 仍可能把“方法判断”解释成固定结构，需要测试线程用 `austin-no-overtime-scripting-ar009-test` / `austin-voice-scriptwriter-ar009-test` 跑完整路径复测。
+
+## PM Review 返修：方法不能落成固定结构
+
+PM Review `ab0349d` 不通过，原因成立：上一版虽然把概念/工具型判断写成“内部素材”，但 deterministic fallback 仍用固定 6 段口播和固定分段执行表承接，导致两条样例共享同一套章节名、动作段和过渡句。
+
+复现到的问题：
+
+- 两条样例的 `口播全文` 都有 `真实痛点`、`旧流程`、`这条真正要做什么`、`三个动作`、`前后对比`、`边界和收尾`。
+- 两条样例都出现 `如果真要拿「...」来拍，就不能只看工具介绍`、`围绕「...」，我先看三个动作`、`能不能继续做，最后看的是...`、`最后还是回到我自己判断...`。
+- `分段执行方案` 直接复用口播段落标题，因此把同构骨架继续放大到拍摄执行层。
+
+根因判断：
+
+- `austin-voice-scriptwriter/scripts/austin_voice.py` 的 deterministic renderer 仍把 Austin 风格等同于固定六段结构。
+- `austin-no-overtime-scripting/scripts/austin_scripting.py` 的 `full_package_outline()` 又额外生成一套固定 `开场钩子/真实痛点/核心判断/实操主线/失败和修正/收尾判断`。
+- 测试此前只拦重复长句和禁词，没有拦跨样例重复章节标题、推进骨架和分段执行表段落名。
+
+本轮修正：
+
+- voice deterministic fallback 改为从输入材料派生段落标题：旧方式、痛点、AI 介入、证据、判断和待补素材都来自 Topic Card，而不是固定章节名。
+- 移除 PM 点名的固定过渡句，不再写统一“三个动作”段。
+- `full_package_outline()` 改为从实际口播段落派生视频结构，避免执行包层另造一套固定结构。
+- runner prompt 和 Skill 文档明确：仓库 deterministic fallback 只做格式、安全和字段兜底，不代表最终 Austin 风格质量验收；真实质量要看测试 Skill / 私有 Skill 的实际输出和人工样例。
+- 新增测试：同时检查跨样例口播章节标题、分段执行表段落名和 PM 点名固定句。
+
+Round 2 本地输出：
+
+- `/private/tmp/ar009_method_rework_round2/2026-07-03/recvoaOc5dJfbS_xAI_Voice_Agent_Builder出来后，我想重看AI口播能不能进入视频交付/full_script_execution_package.md`
+- `/private/tmp/ar009_method_rework_round2/2026-07-03/recvoaOc5dT6vv_Codex+Obsidian知识库这个选题，我会反过来检查自己的信息雷达有没有留下后面能用的东西/full_script_execution_package.md`
+
+Round 2 反同构统计：
+
+- 共享 `口播全文` 子章节标题：0。
+- 共享 `分段执行方案` 段落名：0。
+- PM 点名固定句命中：0，包括 `如果真要拿`、`这条真正要做什么`、`围绕「...」我先看三个动作`、`能不能继续做，最后看的是`、`最后还是回到我自己判断`。
+- `如果当天还没生成06` 仍只在发布前核验 / QA 发布前提醒中出现；未进入口播、拍摄和素材区。
+
+仍需注意：
+
+- 这仍是 deterministic 本地渲染，不是最终内容质量证明。
+- 真实 `codex exec` 测试应继续使用 `austin-no-overtime-scripting-ar009-test` / `austin-voice-scriptwriter-ar009-test`，由 PM 决定是否派测试线程复测。

@@ -47,6 +47,8 @@ class CodexScriptPackageRunnerPromptTest(unittest.TestCase):
         self.assertIn("概念/工具型选题，先做生成前判断", prompt)
         self.assertIn("只作为素材组织方式，不是口播模板", prompt)
         self.assertIn("不要把用户举例写成固定规则", prompt)
+        self.assertIn("不能套统一六段、统一“三个动作”或固定章节名", prompt)
+        self.assertIn("deterministic fallback 只用于格式、安全和字段兜底", prompt)
 
 
 if __name__ == "__main__":

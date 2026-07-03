@@ -68,6 +68,8 @@ def workflow_object(topic: dict[str, Any]) -> str:
         return "汽车内容"
     if video_like:
         return "视频交付"
+    if knowledge_like:
+        return "内容资料流转"
     if any(term in content for term in ["封面"]):
         return "封面"
     if any(term in content for term in ["agent", "claude", "codex", "自动执行", "任务拆解", "验收"]) and not knowledge_like:
@@ -83,6 +85,7 @@ def audience_activity(obj: str) -> str:
     return {
         "视频交付": "做 AI 口播和视频交付",
         "汽车内容": "用 AI 写汽车内容",
+        "内容资料流转": "处理资料和内容线索",
         "封面": "做短视频封面",
         "选题": "做账号选题",
         "视觉交付": "把 AI 设计稿拿去交付",
@@ -95,6 +98,7 @@ def core_pain(obj: str) -> str:
     return {
         "视频交付": "不是声音生成不出来，而是脚本、声音、角色、分镜、字幕和剪辑验收接不住",
         "汽车内容": "不是写不出卖点，而是你不知道哪句话能说，哪句话必须停下来复核",
+        "内容资料流转": "不是资料没有保存，而是写内容时还要重新找、重新判断、重新组织",
         "封面": "不是做不出图，而是每次都要重新想标题、比例、人物和排版",
         "选题": "不是没有热点，而是看到一堆候选后，不知道哪条真的值得拍",
         "视觉交付": "不是画面不好看，而是不知道它能不能导出、能不能改、能不能交付",
@@ -107,6 +111,7 @@ def concrete_questions(obj: str) -> list[str]:
     return {
         "视频交付": ["这段声音像不像这个角色？", "停顿能不能卡住分镜？", "字幕长度压不压得住？", "剪辑返修时到底改脚本、改语气，还是重新生成？"],
         "汽车内容": ["这句话有没有夸大？", "依据来自哪里？", "是不是把辅助能力说成了自动驾驶？", "发布前谁来复核？"],
+        "内容资料流转": ["这条资料下次还能不能找到？", "为什么当时觉得它值得看？", "它后来有没有进选题、脚本或复盘？", "如果又要重新判断一遍，保存这一步到底省了什么？"],
         "封面": ["标题放在哪？", "人物放左边还是右边？", "不同平台比例要不要重做？", "这次风格会不会又跑偏？"],
         "选题": ["这条能不能讲？", "和我的账号有没有关系？", "观众为什么要听？", "怎么不写成新闻搬运？"],
         "视觉交付": ["导出以后样式会不会乱？", "客户要改一版时怎么办？", "哪些地方必须人工修？", "最后能不能进入交付？"],
@@ -119,6 +124,7 @@ def action_names(obj: str) -> tuple[str, str, str]:
     return {
         "视频交付": ("先把脚本和角色定清楚", "把声音放回分镜、字幕和剪辑节奏里", "用返修验收决定能不能交付"),
         "汽车内容": ("先把边界说清楚", "让依据留下来", "最后人工复核"),
+        "内容资料流转": ("先看资料从哪里进来", "再看它有没有接到选题和脚本", "最后看下次能不能直接用"),
         "封面": ("先读脚本", "把版式固定下来", "用规则约束质量"),
         "选题": ("先把候选翻成人话", "用账号定位筛一遍", "最后只选能拍的"),
         "视觉交付": ("先定交付标准", "再跑一次导出", "最后看人工修正点"),
@@ -130,15 +136,17 @@ def action_names(obj: str) -> tuple[str, str, str]:
 def old_flow_bridge(obj: str, title: str) -> str:
     if obj == "视频交付":
         return "声音出来只是中间产物。脚本、角色、画面节奏、字幕和剪辑有一环接不上，最后都还是返修。"
-    if obj == "选题":
+    if obj == "内容资料流转":
         return "资料被收藏不等于进了内容系统。到写稿时还要重新判断、重新组织，这条资料就没有真的留下来。"
+    if obj == "选题":
+        return "候选被收进来不等于值得拍。到定题时还要重新判断，说明前面的筛选没有帮上忙。"
     return f"如果「{clip(title, 28, '这个题')}」只停在结果页，后面还是要靠人一点点判断。"
 
 
 def action_close_line(obj: str, judgment: str) -> str:
     if obj == "视频交付":
         return "声音、字幕、分镜和返修表要一起看，单独一段配音不能说明它能交付。"
-    if obj == "选题":
+    if obj == "内容资料流转":
         return "如果这条资料最后不能回到选题、脚本或复盘里，就先别把它讲成方法。"
     return f"最后能不能继续拍，还是回到这个判断：{clip(judgment, 48, '结果能不能被人验收')}。"
 
@@ -146,7 +154,7 @@ def action_close_line(obj: str, judgment: str) -> str:
 def contrast_line(obj: str, old: str, ai_action: str) -> str:
     if obj == "视频交付":
         return "以前是脚本、配音、字幕、分镜分开验；现在我要把声音放回角色、画面节奏和返修标准里一起看。"
-    if obj == "选题":
+    if obj == "内容资料流转":
         return "以前是资料先进库，写稿时再重新找；现在要看它能不能从收件箱走到选题判断，再走到脚本路径。"
     return f"以前是「{clip(old, 38, '旧流程靠感觉判断')}」；现在我只看「{clip(ai_action, 38, 'AI动作能不能被验收')}」有没有留下证据。"
 
@@ -156,15 +164,32 @@ def boundary_line(obj: str, fact_text: str) -> str:
         return f"涉及事实或平台能力的地方，发布前我还会再核一遍：{fact_text}。"
     if obj == "视频交付":
         return "这条不能把声音 demo 当成成片能力，最后还要回到视频交付验收。"
-    if obj == "选题":
+    if obj == "内容资料流转":
         return "这条不能把知识库讲成万能答案，它只是在检查素材有没有进入内容生产链路。"
     return "这条不能把一次生成当成最终结论，还是要看真实任务里的人工判断。"
+
+
+def first_clause(value: Any, limit: int = 14, fallback: str = "这一段") -> str:
+    cleaned = spoken_text(value, fallback)
+    for sep in ["，", "。", "；", "：", "、"]:
+        if sep in cleaned:
+            cleaned = cleaned.split(sep, 1)[0]
+            break
+    return clip(cleaned, limit, fallback)
+
+
+def section_label(value: Any, fallback: str) -> str:
+    label = first_clause(value, 16, fallback)
+    return label.replace("以前", "旧方式").replace("我会", "").strip("：:，,。 ")
+
+
+def question_lines(questions: list[str], limit: int = 3) -> list[str]:
+    return [question.rstrip("。！？?") + "？" for question in questions[:limit]]
 
 
 def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None = None) -> list[tuple[str, str]]:
     context = context or {}
     obj = workflow_object(topic)
-    activity = audience_activity(obj)
     title = spoken_title(topic.get("topic_title"), "这条选题")
     core = spoken_text(topic.get("core_thesis"), title)
     judgment = spoken_text(topic.get("unique_judgment"), core)
@@ -177,6 +202,12 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
     fact_text = spoken_text(context.get("fact_text"), "")
     act1, act2, act3 = action_names(obj)
     questions = concrete_questions(obj)
+    activity = audience_activity(obj)
+    old_label = section_label(old, "旧方式卡住")
+    pain_label = section_label(pain, "真实卡点")
+    action_label = section_label(ai_action, "这次验证")
+    evidence_label = section_label(evidence, "可见证据")
+    boundary_label = section_label(judgment, "边界判断")
 
     if direction and obj == "Agent项目":
         direction_line = "\n\n所以这条我会收在自己的真实项目里，不复述工具原则，也不讲成教程。"
@@ -186,69 +217,69 @@ def render_voice_sections(topic: dict[str, Any], context: dict[str, Any] | None 
         direction_line = ""
     return [
         (
-            "00:00-00:35｜真实痛点",
+            f"00:00-00:30｜{old_label}",
             "\n\n".join(
                 [
-                    f"很多人现在{activity}，最痛苦的{core_pain(obj)}。",
-                    f"这条里我更在意的是：{pain}。",
-                    *questions,
-                    f"如果真要拿「{clip(title, 30, '这个题')}」来拍，就不能只看工具介绍。",
+                    f"我先不讲「{clip(title, 28, '这个题')}」是什么。",
+                    f"真实现场里，旧方式先卡在这里：{old}。",
+                    f"这件事放在{activity}里，最容易被忽略的是：{pain}。",
+                    *question_lines(questions, 2),
                 ]
             ),
         ),
         (
-            "00:35-01:05｜旧流程",
+            f"00:30-01:05｜{pain_label}",
             "\n\n".join(
                 [
-                    f"旧流程里最容易卡在这里：{old}。",
                     old_flow_bridge(obj, title),
+                    f"这一段不急着解释工具，先把「{first_clause(pain, 24, '这个卡点')}」讲到观众能对上自己的现场。",
+                    f"这一段要让观众先听懂：{core}。",
                     direction_line.strip(),
                 ]
             ).strip(),
         ),
         (
-            "01:05-01:35｜这条真正要做什么",
+            f"01:05-01:55｜{action_label}",
             "\n\n".join(
                 [
-                    f"所以这条我不想把「{title}」讲成工具教程。",
-                    f"我真正想做的是：{judgment}。",
-                    f"我会把它落到一个具体动作上：{ai_action}。",
-                    f"如果这一步讲不清，「{clip(title, 24, '这个题')}」就会变成泛泛的工具感想。",
+                    f"这次我只收一个具体动作：{ai_action}。",
+                    f"这个动作不求完整演示，但要能看见「{first_clause(ai_action, 28, 'AI介入点')}」到底接住了哪一环。",
+                    f"我的判断先放在旁边：{judgment}。",
+                    f"讲到「{clip(title, 18, '工具')}」时，我只把它放在这个动作里看，不让它变成整条视频的主角。",
                 ]
             ),
         ),
         (
-            "01:35-02:50｜三个动作",
+            f"01:55-02:55｜{evidence_label}",
             "\n\n".join(
                 [
-                    f"围绕「{clip(title, 22, '这条')}」，我先看三个动作。",
-                    f"第一个，{act1}。",
-                    f"第二个，是{act2}。",
-                    f"这里我会重点看：{evidence}。",
-                    f"第三个，是{act3}。",
+                    f"录屏里我会先做这件事：{act1}。",
+                    f"接着看它有没有进入下一环：{act2}。",
+                    f"这里必须给观众看到：{evidence}。",
+                    f"最后再用这一项收住：{act3}。",
                     action_close_line(obj, judgment),
                 ]
             ),
         ),
         (
-            "02:50-03:35｜前后对比",
+            f"02:55-03:35｜{boundary_label}",
             "\n\n".join(
                 [
-                    f"前后对比要回到「{clip(title, 24, '这个题')}」本身。",
-                    f"不是「{clip(title, 32, '这个工具')}」看起来有多完整。",
                     contrast_line(obj, old, ai_action),
-                    f"能不能继续做，最后看的是：{clip(judgment, 58, '这件事有没有回到人的判断')}。",
+                    f"如果这一段只剩「{clip(title, 18, '概念')}」听起来新，我会直接判失败。",
+                    f"我想留下的是这个判断：{clip(judgment, 58, '这件事有没有回到人的判断')}。",
+                    f"拍完以后，下一次遇到类似的{activity}，要能少一次重新判断。",
                 ]
             ),
         ),
         (
-            "03:35-04:10｜边界和收尾",
+            f"03:35-04:10｜补{section_label(todos, '拍前证据')}",
             "\n\n".join(
                 [
-                    f"这条的边界也要提前说清楚：{clip(title, 24, '这个题')}不能讲过头。",
                     boundary_line(obj, fact_text),
                     f"拍之前我至少还要补：{todos}。",
-                    f"最后还是回到我自己判断：{clip(judgment, 54, '结果能不能用，不能只看它有没有生成出来')}。",
+                    f"如果「{first_clause(todos, 24, '这些画面')}」补不上，这条就先停在草稿，不把它包装成已经跑通。",
+                    f"我的分界线很简单：{clip(judgment, 48, '先看真实任务能不能支撑这个判断')}。",
                 ]
             ).strip(),
         ),
