@@ -53,6 +53,12 @@ def markdown_section(document: str, heading: str) -> str:
     return document[start:next_start]
 
 
+def markdown_range(document: str, start_heading: str, end_heading: str) -> str:
+    start = document.index(start_heading)
+    end = document.index(end_heading, start + len(start_heading))
+    return document[start:end]
+
+
 FORBIDDEN_VOICE_PHRASES = [
     "这条最后要看的不是概念讲得多完整",
     "能不能回到我的真实流程",
@@ -71,7 +77,7 @@ FORBIDDEN_VOICE_PHRASES = [
 
 def voice_section(raw_topic: dict[str, str]) -> str:
     document = render_package_document(raw_topic)
-    return markdown_section(document, "### 口播全文")
+    return markdown_range(document, "### 口播全文", "### 分段执行方案")
 
 
 def spoken_lines(text: str) -> list[str]:
@@ -184,10 +190,15 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         topic = SCRIPTING.normalize_topic(VOICE_AGENT_TOPIC, record_id=VOICE_AGENT_TOPIC["record_id"])
         text = VOICE.render_voice_text(topic, SCRIPTING.voice_skill_context(topic, SCRIPTING.validate_topic(topic)))
         document = render_package_document(VOICE_AGENT_TOPIC)
+        voice_text = markdown_range(document, "### 口播全文", "### 分段执行方案")
 
         self.assertIn("同类 voice-agent 内容常用", markdown_section(document, "### 搜索与表达融合"))
         self.assertIn("30 秒口播脚本、角色语气、分镜节奏、字幕长度和返修验收", markdown_section(document, "### 搜索与表达融合"))
         self.assertIn("xAI Voice Agent 需要确认是否开放", text)
+        for term in ["脚本", "声音", "角色", "分镜", "字幕"]:
+            self.assertIn(term, voice_text)
+        self.assertTrue("剪辑" in voice_text or "返修" in voice_text)
+        self.assertNotIn("很多人现在用 Agent 做项目", voice_text)
         for phrase in FORBIDDEN_VOICE_PHRASES:
             self.assertNotIn(phrase, text)
         self.assertNotIn("xAI Voice Agent Builder 已经", text)
@@ -212,8 +223,17 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
             self.assertNotIn(phrase, voice_agent_text)
             self.assertNotIn(phrase, knowledge_text)
 
-        shared_lines = sorted(set(spoken_lines(voice_agent_text)) & set(spoken_lines(knowledge_text)))
-        self.assertLessEqual(len(shared_lines), 8, shared_lines)
+        voice_agent_lines = spoken_lines(voice_agent_text)
+        knowledge_lines = spoken_lines(knowledge_text)
+        shared_lines = sorted(set(voice_agent_lines) & set(knowledge_lines))
+        self.assertGreaterEqual(len(voice_agent_lines), 20)
+        self.assertGreaterEqual(len(knowledge_lines), 20)
+        self.assertLessEqual(len(shared_lines), 4, shared_lines)
+        self.assertLessEqual(
+            len(shared_lines) / min(len(voice_agent_lines), len(knowledge_lines)),
+            0.18,
+            shared_lines,
+        )
 
     def test_missing_real_scene_gets_qa_warning_without_voice_fill(self) -> None:
         raw_topic = {
