@@ -10,6 +10,34 @@
 - 自动队列默认和卡片有效期一致，只扫近 5 天推荐记录，并排除明显测试标题；旧记录或测试记录要用 `--record-id` / `--include-test-records` 手动补跑。
 - 锁屏但 Mac 不睡眠、不断网时可以跑；睡眠后唤醒一般会继续跑；关机或重启期间不会跑，但登录后会由 LaunchAgent 自动拉起。
 
+## 0. 生产窗口唤醒与保活
+
+每日生产链路依赖本机 Codex 和网络环境。为了降低“不插电、屏幕熄灭、系统空闲睡眠”导致 08:00 任务延迟的风险，生产机应安装一个本机唤醒/保活窗口：
+
+```bash
+python3 scripts/install_production_keepawake.py --configure-wake
+```
+
+默认行为：
+
+- `pmset repeat wakeorpoweron MTWRFSU 07:50:00`：每天 07:50 唤醒或开机。
+- 用户级 LaunchAgent `com.austin.ai-account-radar.production-keepawake`：每天 07:50 执行 `/usr/bin/caffeinate -im -t 10800`，保活 3 小时。
+- 这个保活不强制点亮屏幕，只防止系统空闲睡眠和磁盘睡眠，覆盖 08:00 采集、09:15 主编写回和 10:00 发卡。
+
+查看状态：
+
+```bash
+python3 scripts/install_production_keepawake.py --status
+```
+
+只安装 LaunchAgent、不修改系统唤醒计划：
+
+```bash
+python3 scripts/install_production_keepawake.py --launch-agent-only
+```
+
+注意：这能提高“不插电但开盖/未合盖”的稳定性；不能保证 MacBook 在“不插电且合盖”时继续完整执行用户态任务。长期生产观察仍建议流程窗口内保持开盖，屏幕可以自动熄灭。
+
 ## 1. 当前生产 watcher
 
 当前不使用旧的每小时自动任务。旧 `ai-06` 已停用，避免空队列时仍占用调度额度。
