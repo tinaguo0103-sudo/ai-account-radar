@@ -98,6 +98,79 @@ Current L3 conclusion: the grid-view URL-field path is clickable; the record-det
 
 Note: creating a fresh staging test document was blocked by revoked user OAuth (`invalid_grant`, code `20064`), so this round reused an existing real staging/test document URL. No production document, production table, or production schema was touched.
 
+### Flow QA and backfill rework
+
+User feedback clarified that clickable-field QA is not complete unless the actual 06 write flow and old-record backfill path are covered. This round adds three narrow, production-safe entrypoints:
+
+- `scripts/setup_script_package_clickable_links.py`
+  - Default mode is dry-run.
+  - Only checks/creates `飞书文档链接` and `飞书文件夹链接` as URL fields (`type=15`).
+  - Only patches explicitly selected grid views, preserving existing hidden-field settings and removing the two URL fields from the hidden list when needed.
+  - Does not rename title fields, delete deprecated fields, delete old views, backfill records, or run the broad 06 workspace setup.
+- `scripts/backfill_script_package_clickable_links.py`
+  - Default mode is dry-run.
+  - Reads legacy text URL fields `飞书文档` / `飞书文件夹`.
+  - Writes only mirror URL fields `飞书文档链接` / `飞书文件夹链接`.
+  - Produces a JSON report in `output/logs/`, supports read-back validation, detects invalid URLs, and is idempotent when mirror fields already match.
+- `scripts/script_package_clickable_link_flow_qa.py`
+  - Uses a fixture `FeishuDocSyncResult` instead of calling `codex exec` or creating a real doc.
+  - Exercises the real `package_row -> create_script_package_record -> read-back` path.
+  - Verifies both legacy text fields and new URL mirror fields are written from `doc_sync.url` / `folder_url`.
+
+Staging/test validation used `.env.staging.local` and table `06 完整脚本与制作包__测试` (`tbl5PQjZhajZtxsP`). No production table, production schema, production document, collection job, or Topic Card was touched.
+
+Narrow schema/view setup:
+
+```json
+{
+  "environment": "staging",
+  "table_id": "tbl5PQjZhajZtxsP",
+  "field_plan": {
+    "already_ok": ["飞书文档链接", "飞书文件夹链接"],
+    "create": [],
+    "conflicts": []
+  },
+  "view": "AR-011 L3 链接验证",
+  "view_id": "vewN1u2jdL",
+  "write": true
+}
+```
+
+06 flow QA fixture:
+
+```json
+{
+  "created_record_id": "recvopbwen6A9r",
+  "checks": {
+    "legacy_doc_text": true,
+    "legacy_folder_text": true,
+    "doc_url_field": true,
+    "folder_url_field": true
+  }
+}
+```
+
+Backfill staging/test fixture:
+
+```json
+{
+  "created_fixture_record_ids": [
+    "recvopbAcl2SDf",
+    "recvopbAZnYhOX",
+    "recvopbBNkS8DG"
+  ],
+  "dry_run_counts": {
+    "to_update": 2,
+    "invalid_source": 1
+  },
+  "write_read_back_ok": true,
+  "idempotent_rerun_counts": {
+    "already_ok": 2,
+    "invalid_source": 1
+  }
+}
+```
+
 ### Production read-only audit
 
 Environment: `../ai_account_radar/.env.local`
@@ -113,11 +186,13 @@ No production write was performed.
 
 This AR cannot be marked Ready for production until PM/user authorizes a production schema change. Minimal schema option:
 
-1. Add URL fields to production `06 完整脚本与制作包`:
+1. Run `scripts/setup_script_package_clickable_links.py` in production dry-run mode and confirm the side-effect list only contains URL-field creation and selected grid-view patching.
+2. Add URL fields to production `06 完整脚本与制作包` after authorization:
    - `飞书文档链接`
    - `飞书文件夹链接`
-2. Add these fields to the main script package grid views near the existing `飞书文档` / `飞书文件夹` fields. The grid view is the verified clickable path.
-3. Keep legacy text fields for compatibility and historical records.
-4. After merge/pull, run one minimal production smoke on a real newly generated 06 record and read back the URL fields.
+3. Add these fields to the main script package grid views near the existing `飞书文档` / `飞书文件夹` fields. The grid view is the verified clickable path.
+4. Run `scripts/backfill_script_package_clickable_links.py` production dry-run, review total records, parseable URLs, invalid URLs, and planned record ids.
+5. After authorization, run backfill write and read-back. Keep legacy text fields unchanged.
+6. After merge/pull, run one minimal production smoke on a real newly generated 06 record and read back the old text fields plus new URL fields.
 
 Changing the existing `飞书文档` field from text to URL may be cleaner visually but is riskier because historical text values and view behavior may be affected.
