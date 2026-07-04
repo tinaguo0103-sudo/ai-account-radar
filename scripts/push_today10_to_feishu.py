@@ -38,6 +38,7 @@ REQUIRED_FIELDS = [
 ]
 ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
 FEISHU_VISIBLE_LEVELS = {"今日最值得做", "可选候选"}
+VISIBLE_ACTIONS = {"立即蹭热点", "生成脚本包"}
 LEVEL_ALIASES = {
     "备选": "可选候选",
     "备选候选": "可选候选",
@@ -66,6 +67,15 @@ def normalize_level(value: str) -> str:
     if "暂存" in cleaned or "观察" in cleaned:
         return "暂存观察"
     return "可选候选" if cleaned else ""
+
+
+def inferred_visible_level(row: dict[str, str], visible_rank: int) -> str:
+    level = normalize_level(row.get("今日建议级别", ""))
+    if level:
+        return level
+    if row.get("推荐动作", "") in VISIBLE_ACTIONS and row.get("是否建议进入制作", "") == "是":
+        return "今日最值得做" if visible_rank == 1 else "可选候选"
+    return ""
 
 
 def short_text(value: str, limit: int = 38) -> str:
@@ -103,12 +113,42 @@ def workflow_pain_for(row: dict[str, str]) -> str:
     return "我的内容生产或业务交付里还缺一段可记录、可复跑、可验收的流程。"
 
 
+def is_visible_action_candidate(row: dict[str, str]) -> bool:
+    return row.get("推荐动作", "") in VISIBLE_ACTIONS and row.get("是否建议进入制作", "") == "是"
+
+
+def inferred_experiment_for(row: dict[str, str]) -> str:
+    if not is_visible_action_candidate(row):
+        return ""
+    trigger = workflow_trigger_for(row)
+    pain = workflow_pain_for(row)
+    asset = short_text(row.get("可沉淀资产", "") or "一张可复用检查清单", 42)
+    result = short_text(row.get("可展示结果", "") or row.get("可展示证据", "") or "一页旧流程/新流程对比", 42)
+    return short_text(
+        f"输入{short_text(trigger, 28)}和我的真实场景，跑一轮{short_text(pain, 34)}改造，输出{result}，检查是否能沉淀{asset}。",
+        140,
+    )
+
+
 def experiment_for(row: dict[str, str]) -> str:
     for field in ["我要做的实验", "我的改造动作"]:
         value = short_text(row.get(field, ""), 140)
         if value and has_experiment_action(value):
             return value
+    inferred = inferred_experiment_for(row)
+    if inferred and has_experiment_action(inferred):
+        return inferred
     return FALLBACK_EXPERIMENT_PROMPT
+
+
+def validation_for(row: dict[str, str]) -> str:
+    value = short_text(row.get("验证方式", ""), 160)
+    if value and has_experiment_action(value):
+        return value
+    experiment = experiment_for(row)
+    if experiment == FALLBACK_EXPERIMENT_PROMPT:
+        return ""
+    return short_text(f"1. {experiment} 2. 记录输出物、通过/失败原因和下一步补证据。", 160)
 
 
 def clean_short_proposition(value: str) -> str:
@@ -135,6 +175,8 @@ def proposition_for(row: dict[str, str]) -> str:
 
 
 def display_title_for(row: dict[str, str]) -> str:
+    if is_visible_action_candidate(row) and row.get("我的选题标题"):
+        return short_text(row["我的选题标题"], 88)
     proposition = proposition_for(row)
     if proposition:
         return proposition
@@ -164,12 +206,20 @@ def read_today10(path: Path) -> list[dict[str, str]]:
 
 
 def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], int]:
-    visible = [
-        row for row in rows
-        if normalize_level(row.get("今日建议级别", "")) in FEISHU_VISIBLE_LEVELS
-        and experiment_for(row) != FALLBACK_EXPERIMENT_PROMPT
-    ]
-    return visible, len(rows) - len(visible)
+    visible: list[dict[str, str]] = []
+    omitted = 0
+    for row in rows:
+        if experiment_for(row) == FALLBACK_EXPERIMENT_PROMPT:
+            omitted += 1
+            continue
+        level = inferred_visible_level(row, len(visible) + 1)
+        if level in FEISHU_VISIBLE_LEVELS:
+            normalized = dict(row)
+            normalized["今日建议级别"] = level
+            visible.append(normalized)
+            continue
+        omitted += 1
+    return visible, omitted
 
 
 def default_today10_path() -> Path:
@@ -294,7 +344,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "我的工作流痛点": pain,
         "旧流程痛点": row.get("旧流程痛点", ""),
         "AI介入点": row.get("AI介入点", ""),
-        "验证方式": row.get("验证方式", ""),
+        "验证方式": validation_for(row),
         "可沉淀资产": row.get("可沉淀资产", ""),
         "我的思考点": row.get("我的思考点", ""),
         "可展示证据": row.get("可展示证据") or row.get("可展示结果", ""),
