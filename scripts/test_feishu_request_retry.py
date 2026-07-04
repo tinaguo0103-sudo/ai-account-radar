@@ -1,18 +1,21 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import io
 import json
 import tempfile
 import unittest
 from pathlib import Path
+from urllib.error import HTTPError
 
 import feishu_automation_notify
 import push_to_feishu
 
 
 class FakeResponse:
-    def __init__(self, payload: dict) -> None:
+    def __init__(self, payload: dict, status: int = 200) -> None:
         self.payload = payload
+        self.status = status
 
     def __enter__(self) -> "FakeResponse":
         return self
@@ -23,8 +26,65 @@ class FakeResponse:
     def read(self) -> bytes:
         return json.dumps(self.payload).encode("utf-8")
 
+    def getcode(self) -> int:
+        return self.status
+
 
 class FeishuRequestRetryTest(unittest.TestCase):
+    def setUp(self) -> None:
+        self.telemetry_tmpdir = tempfile.TemporaryDirectory()
+        self.original_log_dir = push_to_feishu.LOG_DIR
+        push_to_feishu.LOG_DIR = Path(self.telemetry_tmpdir.name)
+
+    def tearDown(self) -> None:
+        push_to_feishu.LOG_DIR = self.original_log_dir
+        self.telemetry_tmpdir.cleanup()
+
+    def telemetry_events(self) -> list[dict]:
+        logs = list(Path(self.telemetry_tmpdir.name).glob("feishu_request_telemetry_*.jsonl"))
+        events: list[dict] = []
+        for path in logs:
+            for line in path.read_text(encoding="utf-8").splitlines():
+                if line.strip():
+                    events.append(json.loads(line))
+        return events
+
+    def test_success_request_records_sanitized_telemetry(self) -> None:
+        original_urlopen = push_to_feishu.urlopen
+
+        def ok_urlopen(*_args, **_kwargs):
+            return FakeResponse({"code": 0, "data": {"ok": True}}, status=200)
+
+        try:
+            push_to_feishu.urlopen = ok_urlopen
+            result = push_to_feishu.request_json(
+                "PUT",
+                "/bitable/v1/apps/app_token_secret/tables/table123/records/rec456?receive_id_type=open_id&page_token=query_secret",
+                token="tenant-secret",
+                body={"fields": {"正文": "private body"}},
+            )
+        finally:
+            push_to_feishu.urlopen = original_urlopen
+
+        self.assertEqual(result["data"]["ok"], True)
+        events = self.telemetry_events()
+        self.assertEqual(len(events), 1)
+        event = events[0]
+        self.assertEqual(event["method"], "PUT")
+        self.assertEqual(event["path_template"], "/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}?page_token=<redacted>&receive_id_type=<redacted>")
+        self.assertEqual(event["table_id"], "table123")
+        self.assertEqual(event["record_id"], "rec456")
+        self.assertGreater(event["payload_size_bytes"], 0)
+        self.assertEqual(event["status_code"], 200)
+        self.assertEqual(event["error_kind"], "none")
+        self.assertFalse(event["status_unknown"])
+        telemetry_text = json.dumps(events, ensure_ascii=False)
+        self.assertNotIn("tenant-secret", telemetry_text)
+        self.assertNotIn("app_token_secret", telemetry_text)
+        self.assertNotIn("query_secret", telemetry_text)
+        self.assertNotIn("private body", telemetry_text)
+        self.assertNotIn("Authorization", telemetry_text)
+
     def test_get_retries_transient_timeout(self) -> None:
         calls = {"count": 0}
         original_urlopen = push_to_feishu.urlopen
@@ -46,6 +106,14 @@ class FeishuRequestRetryTest(unittest.TestCase):
 
         self.assertEqual(calls["count"], 2)
         self.assertEqual(result["data"]["ok"], True)
+        events = self.telemetry_events()
+        self.assertEqual([event["attempt"] for event in events], [1, 2])
+        self.assertEqual(events[0]["error_kind"], "timeout")
+        self.assertTrue(events[0]["will_retry"])
+        self.assertEqual(events[0]["retry_decision"], "retry")
+        self.assertTrue(events[0]["status_unknown"])
+        self.assertEqual(events[1]["error_kind"], "none")
+        self.assertFalse(events[1]["will_retry"])
 
     def test_non_idempotent_post_is_not_retried_by_default(self) -> None:
         calls = {"count": 0}
@@ -67,6 +135,12 @@ class FeishuRequestRetryTest(unittest.TestCase):
             push_to_feishu.urlopen = original_urlopen
 
         self.assertEqual(calls["count"], 1)
+        events = self.telemetry_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["method"], "POST")
+        self.assertEqual(events[0]["retry_decision"], "retry_disabled_status_unknown")
+        self.assertFalse(events[0]["will_retry"])
+        self.assertTrue(events[0]["status_unknown"])
 
     def test_max_attempts_error_is_visible_for_safe_request(self) -> None:
         calls = {"count": 0}
@@ -87,6 +161,85 @@ class FeishuRequestRetryTest(unittest.TestCase):
             push_to_feishu.time.sleep = original_sleep
 
         self.assertEqual(calls["count"], 2)
+
+    def test_http_error_records_status_code_and_kind(self) -> None:
+        original_urlopen = push_to_feishu.urlopen
+
+        def failing_urlopen(*_args, **_kwargs):
+            raise HTTPError(
+                "https://open.feishu.cn/open-apis/bitable/v1/apps/app/tables/table/records/rec",
+                503,
+                "Service Unavailable",
+                {},
+                io.BytesIO(b'{"code": 999, "msg": "busy"}'),
+            )
+
+        try:
+            push_to_feishu.urlopen = failing_urlopen
+            with self.assertRaisesRegex(RuntimeError, "failed after 1 attempts; status unknown"):
+                push_to_feishu.request_json(
+                    "GET",
+                    "/bitable/v1/apps/app/tables/table/records/rec",
+                    attempts=1,
+                )
+        finally:
+            push_to_feishu.urlopen = original_urlopen
+
+        events = self.telemetry_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["status_code"], 503)
+        self.assertEqual(events[0]["error_kind"], "http_error")
+        self.assertEqual(events[0]["retry_decision"], "max_attempts_reached")
+        self.assertTrue(events[0]["status_unknown"])
+
+    def test_api_error_records_telemetry_without_payload_body(self) -> None:
+        original_urlopen = push_to_feishu.urlopen
+
+        def api_error_urlopen(*_args, **_kwargs):
+            return FakeResponse({"code": 91403, "msg": "Forbidden", "sensitive": "server-payload"}, status=200)
+
+        try:
+            push_to_feishu.urlopen = api_error_urlopen
+            with self.assertRaisesRegex(RuntimeError, "failed"):
+                push_to_feishu.request_json(
+                    "POST",
+                    "/bitable/v1/apps/app_token_secret/tables/table/records",
+                    body={"fields": {"正文": "private body"}},
+                )
+        finally:
+            push_to_feishu.urlopen = original_urlopen
+
+        events = self.telemetry_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["error_kind"], "api_error")
+        self.assertEqual(events[0]["feishu_code"], 91403)
+        telemetry_text = json.dumps(events, ensure_ascii=False)
+        self.assertNotIn("server-payload", telemetry_text)
+        self.assertNotIn("private body", telemetry_text)
+        self.assertNotIn("app_token_secret", telemetry_text)
+
+    def test_telemetry_write_failure_preserves_original_error(self) -> None:
+        original_urlopen = push_to_feishu.urlopen
+        original_write = push_to_feishu.write_feishu_request_telemetry
+
+        def flaky_urlopen(*_args, **_kwargs):
+            raise TimeoutError("The read operation timed out")
+
+        def failing_telemetry_write(_event):
+            raise OSError("disk full")
+
+        try:
+            push_to_feishu.urlopen = flaky_urlopen
+            push_to_feishu.write_feishu_request_telemetry = failing_telemetry_write
+            with self.assertRaisesRegex(RuntimeError, "failed after 1 attempts; status unknown"):
+                push_to_feishu.request_json(
+                    "PUT",
+                    "/bitable/v1/apps/app/tables/table/records/rec",
+                    attempts=1,
+                )
+        finally:
+            push_to_feishu.urlopen = original_urlopen
+            push_to_feishu.write_feishu_request_telemetry = original_write
 
     def test_notification_failure_is_persisted_as_status_unknown(self) -> None:
         original_log_dir = feishu_automation_notify.LOG_DIR
