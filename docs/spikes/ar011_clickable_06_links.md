@@ -58,6 +58,46 @@ Read-back confirmed:
 }
 ```
 
+### L3 UI click rework
+
+Initial L3 test failed in the record detail panel: the URL fields were visible and the DOM exposed hrefs, but automated click attempts in the detail panel did not produce an observable navigation or new tab. This means API read-back alone was not enough, and the detail-panel path should not be the only acceptance path.
+
+Rework changed the staging/test setup:
+
+- Added a dedicated grid view: `AR-011 L3 链接验证`
+- Test view id: `vewN1u2jdL`
+- Test record id: `recvop4Ypg2yjh`
+- Test screenshot: `/private/tmp/ar011_l3_grid_links_visible.png`
+- The URL fields are visible as table columns:
+  - `飞书文档链接`
+  - `飞书文件夹链接`
+
+The test record uses an existing real staging/test Feishu document URL and the staging/test folder URL:
+
+```json
+{
+  "doc_url_field": {
+    "link": "https://my.feishu.cn/docx/FZuPdGDlmobf6lxk2wmcquksn2c",
+    "text": "打开飞书文档"
+  },
+  "folder_url_field": {
+    "link": "https://my.feishu.cn/drive/folder/X79kfZ274lcpy4dtjypcEBUmn2b",
+    "text": "打开飞书文件夹"
+  }
+}
+```
+
+Observed UI behavior:
+
+- In the grid view, hovering the `飞书文档链接` cell underlines `打开飞书文档`.
+- Clicking the underlined grid-cell link opens a Chrome tab at the target `docx` URL.
+- Clicking the `飞书文件夹链接` grid-cell link opens a Chrome tab at the target test folder URL.
+- In this browser tooling, opened target pages appeared in `browser.user.openTabs()` rather than the session-local `browser.tabs.list()`, which explains why a narrower automation check could incorrectly report "no new tab".
+
+Current L3 conclusion: the grid-view URL-field path is clickable; the record-detail click path remains unreliable for automation and should not be the release proof. Acceptance should require URL fields visible in the main script-package grid view and a user-visible click from that grid.
+
+Note: creating a fresh staging test document was blocked by revoked user OAuth (`invalid_grant`, code `20064`), so this round reused an existing real staging/test document URL. No production document, production table, or production schema was touched.
+
 ### Production read-only audit
 
 Environment: `../ai_account_radar/.env.local`
@@ -76,7 +116,7 @@ This AR cannot be marked Ready for production until PM/user authorizes a product
 1. Add URL fields to production `06 完整脚本与制作包`:
    - `飞书文档链接`
    - `飞书文件夹链接`
-2. Add these fields to the main script package views near the existing `飞书文档` / `飞书文件夹` fields.
+2. Add these fields to the main script package grid views near the existing `飞书文档` / `飞书文件夹` fields. The grid view is the verified clickable path.
 3. Keep legacy text fields for compatibility and historical records.
 4. After merge/pull, run one minimal production smoke on a real newly generated 06 record and read back the URL fields.
 

@@ -17,6 +17,7 @@ from feishu_table_registry import TABLES, resolve_table_id
 
 
 TARGET_TABLE_KEY = "script_package"
+CLICKABLE_LINK_FIELDS = ["飞书文档链接", "飞书文件夹链接"]
 
 BUSINESS_FIELDS = [
     "脚本标题",
@@ -24,6 +25,7 @@ BUSINESS_FIELDS = [
     "脚本状态",
     "是否可拍",
     "飞书文档",
+    "飞书文档链接",
     "核心观点",
     "开头钩子",
     "素材提醒",
@@ -33,6 +35,7 @@ BUSINESS_FIELDS = [
     "文档同步错误",
     "本地文档",
     "飞书文件夹",
+    "飞书文件夹链接",
     "推荐模板",
     "版本",
 ]
@@ -60,6 +63,8 @@ VIEW_SPECS = [
             "关联选题",
             "脚本状态",
             "是否可拍",
+            "飞书文档链接",
+            "飞书文件夹链接",
             "飞书文档",
             "核心观点",
             "开头钩子",
@@ -80,6 +85,8 @@ VIEW_SPECS = [
             "素材提醒",
             "发布前核验",
             "QA结果",
+            "飞书文档链接",
+            "飞书文件夹链接",
             "飞书文档",
             "本地文档",
         ],
@@ -150,6 +157,8 @@ def ensure_text_fields(token: str, app_token: str, table_id: str) -> list[str]:
     fields = list_fields(token, app_token, table_id)
     created: list[str] = []
     for name in BUSINESS_FIELDS:
+        if name in CLICKABLE_LINK_FIELDS:
+            continue
         if name in fields:
             continue
         feishu.request_json(
@@ -157,6 +166,26 @@ def ensure_text_fields(token: str, app_token: str, table_id: str) -> list[str]:
             f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
             token=token,
             body={"field_name": name, "type": 1},
+        )
+        created.append(name)
+        time.sleep(0.1)
+    return created
+
+
+def ensure_url_fields(token: str, app_token: str, table_id: str) -> list[str]:
+    fields = list_fields(token, app_token, table_id)
+    created: list[str] = []
+    for name in CLICKABLE_LINK_FIELDS:
+        field = fields.get(name)
+        if field:
+            if int(field.get("type") or 0) != 15:
+                raise RuntimeError(f"{name} exists but is not a URL field: type={field.get('type')}")
+            continue
+        feishu.request_json(
+            "POST",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
+            token=token,
+            body={"field_name": name, "type": 15},
         )
         created.append(name)
         time.sleep(0.1)
@@ -308,6 +337,7 @@ def main() -> int:
 
     title_field = rename_primary_title_field(token, app_token, table_id)
     created_fields = ensure_text_fields(token, app_token, table_id)
+    created_url_fields = ensure_url_fields(token, app_token, table_id)
     title_backfilled = backfill_script_titles(token, app_token, table_id)
     deleted_fields = delete_deprecated_fields(token, app_token, table_id)
     views = [patch_view(token, app_token, table_id, spec) for spec in VIEW_SPECS]
@@ -319,6 +349,7 @@ def main() -> int:
         "table": TABLES[TARGET_TABLE_KEY],
         "table_id": table_id,
         "created_fields": created_fields,
+        "created_url_fields": created_url_fields,
         "title_field": title_field,
         "title_backfilled": title_backfilled,
         "deprecated_fields": deleted_fields,
