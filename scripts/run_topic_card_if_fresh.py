@@ -14,14 +14,16 @@ from zoneinfo import ZoneInfo
 
 from automation_failure_qa import qa_for_command_failure, qa_for_topic_skip
 from automation_worktree_guard import check_automation_worktree, guard_failure_summary
-from local_env import load_local_env
+import feishu_idempotency as idempotency
 from feishu_automation_notify import notify
+from local_env import load_local_env
 
 
 ROOT = Path(__file__).resolve().parents[1]
 LATEST_WRITE = ROOT / "output" / "latest_write"
 PIPELINE_LOG_DIR = ROOT / "output" / "logs"
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
+TOPIC_CARD_GUARD_KINDS = {"topic_candidate_create", "topic_card_send"}
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -87,6 +89,14 @@ def skip_summary(reason: str, run_id: str) -> str:
     return qa_for_topic_skip(reason, run_id)
 
 
+def idempotency_skip_summary(run_id: str, unknowns: list[dict[str, Any]]) -> str:
+    return "\n".join([
+        "10:00 每日选题卡发送已跳过：检测到 Feishu 非幂等写入状态未知。",
+        idempotency.guard_summary(run_id, unknowns),
+        "处理建议：先人工确认 Feishu 04 记录或聊天卡片是否已经发生，再决定恢复或清理；不要绕过守卫重发同一 run_id。",
+    ])
+
+
 def send_failure_summary(command: list[str], run_id: str, returncode: int, stdout: str = "", stderr: str = "") -> str:
     return qa_for_command_failure("10:00 每日选题卡发送", command, returncode, stdout=stdout, stderr=stderr, run_id=run_id)
 
@@ -132,6 +142,22 @@ def main() -> int:
             "reason": reason,
             "run_id": run_id,
             "note": "Skipped card sending to avoid reusing stale candidates.",
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    unknowns = idempotency.blocking_unknowns(run_id=run_id, kinds=TOPIC_CARD_GUARD_KINDS)
+    if unknowns:
+        summary = idempotency_skip_summary(run_id, unknowns)
+        if not args.no_notify:
+            notify("AI账号雷达今日未发选题卡", summary)
+        print(json.dumps({
+            "ok": True,
+            "sent": False,
+            "reason": "feishu_idempotency_unknown_guard",
+            "run_id": run_id,
+            "unknown_count": len(unknowns),
+            "note": "Skipped card sending because a non-idempotent Feishu operation is status-unknown.",
+            "summary": summary,
         }, ensure_ascii=False, indent=2))
         return 0
 

@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlencode
 
+import feishu_idempotency as idempotency
 import push_to_feishu as feishu
 from feishu_table_registry import TABLES, resolve_table_id
 from topic_decision_fields import SELECTION_REASON_OPTIONS
@@ -28,6 +29,8 @@ from topic_decision_fields import SELECTION_REASON_OPTIONS
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output" / "decision_cards"
 TARGET_TABLE_KEY = "topic_decision"
+TOPIC_CREATE_KIND = "topic_candidate_create"
+TOPIC_CARD_SEND_KIND = "topic_card_send"
 DEFAULT_LIMIT = 7
 CARD_EXPIRE_DAYS = 5
 DEFAULT_STATUS_FILTER = {"待判断", ""}
@@ -347,21 +350,117 @@ def write_card_preview(card: dict[str, Any], run_id: str) -> Path:
     return path
 
 
-def send_card(token: str, card: dict[str, Any], run_id: str, receive_id: str, receive_id_type: str) -> dict[str, Any]:
+def card_send_business_key(run_id: str, receive_id_type: str, receive_id: str, uuid: str) -> str:
+    return "|".join([run_id, receive_id_type, idempotency.target_hash(receive_id), uuid])
+
+
+def is_status_unknown_error(exc: BaseException) -> bool:
+    return "status unknown" in str(exc).lower()
+
+
+def write_card_send_ledger(
+    *,
+    run_id: str,
+    receive_id_type: str,
+    receive_id: str,
+    uuid: str,
+    status: str,
+    payload_digest: str,
+    preview_path: str = "",
+    remote_id: str = "",
+    error: str = "",
+    recovery_hint: str = "",
+) -> dict[str, Any]:
+    business_key = card_send_business_key(run_id, receive_id_type, receive_id, uuid)
+    metadata = {
+        "receive_id_type": receive_id_type,
+        "receive_id_hash": idempotency.target_hash(receive_id),
+        "preview_path": preview_path,
+        "uuid": uuid,
+    }
+    return idempotency.write_ledger_event(
+        kind=TOPIC_CARD_SEND_KIND,
+        run_id=run_id,
+        business_key=business_key,
+        status=status,
+        target="Feishu Topic Card",
+        operation=idempotency.operation_id(TOPIC_CARD_SEND_KIND, run_id, business_key, payload_digest, "Feishu Topic Card"),
+        payload_digest=payload_digest,
+        remote_id=remote_id,
+        error=error,
+        recovery_hint=recovery_hint,
+        metadata=metadata,
+    )
+
+
+def ensure_no_blocking_unknown_for_card_send(run_id: str) -> list[dict[str, Any]]:
+    return idempotency.blocking_unknowns(run_id=run_id, kinds={TOPIC_CREATE_KIND, TOPIC_CARD_SEND_KIND})
+
+
+def send_card(token: str, card: dict[str, Any], run_id: str, receive_id: str, receive_id_type: str, preview_path: str = "") -> dict[str, Any]:
     if not receive_id:
         raise SystemExit("Missing receive_id. Set FEISHU_CARD_RECEIVE_ID or pass --receive-id.")
     seed = "|".join([run_id or datetime.now().strftime("%Y%m%d%H%M"), receive_id_type, receive_id])
     uuid = f"topic-decision-card-{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:16]}"
-    payload = feishu.request_json(
-        "POST",
-        f"/im/v1/messages?receive_id_type={receive_id_type}",
-        token=token,
-        body={
-            "receive_id": receive_id,
-            "msg_type": "interactive",
-            "content": json.dumps(card, ensure_ascii=False),
-            "uuid": uuid,
-        },
+    body = {
+        "receive_id": receive_id,
+        "msg_type": "interactive",
+        "content": json.dumps(card, ensure_ascii=False),
+        "uuid": uuid,
+    }
+    payload_digest = idempotency.payload_hash({
+        "uuid": uuid,
+        "receive_id_type": receive_id_type,
+        "receive_id_hash": idempotency.target_hash(receive_id),
+        "content_hash": idempotency.payload_hash(card),
+    })
+    write_card_send_ledger(
+        run_id=run_id,
+        receive_id_type=receive_id_type,
+        receive_id=receive_id,
+        uuid=uuid,
+        status="pending",
+        payload_digest=payload_digest,
+        preview_path=preview_path,
+        recovery_hint="Topic Card send intent recorded before Feishu message POST.",
+    )
+    try:
+        payload = feishu.request_json(
+            "POST",
+            f"/im/v1/messages?receive_id_type={receive_id_type}",
+            token=token,
+            body=body,
+        )
+    except Exception as exc:
+        status = "delivery_unknown" if is_status_unknown_error(exc) else "failed_before_send"
+        hint = (
+            "Message delivery status unknown; manually confirm chat delivery before rerunning the same run_id."
+            if status == "delivery_unknown"
+            else "Message send failed before a status-unknown response; inspect error before rerun."
+        )
+        write_card_send_ledger(
+            run_id=run_id,
+            receive_id_type=receive_id_type,
+            receive_id=receive_id,
+            uuid=uuid,
+            status=status,
+            payload_digest=payload_digest,
+            preview_path=preview_path,
+            error=exc,
+            recovery_hint=hint,
+        )
+        raise
+    message_id = str(payload.get("data", {}).get("message_id") or "")
+    write_card_send_ledger(
+        run_id=run_id,
+        receive_id_type=receive_id_type,
+        receive_id=receive_id,
+        uuid=uuid,
+        status="succeeded",
+        payload_digest=payload_digest,
+        preview_path=preview_path,
+        remote_id=message_id,
+        recovery_hint="Topic Card send acknowledged by Feishu.",
     )
     return payload
 
@@ -798,6 +897,16 @@ def main() -> int:
                     summary["targets"] = [{"receive_id_type": target_type, "receive_id": target_id} for target_type, target_id in targets]
                 summary["send"] = "dry-run"
             else:
+                unknowns = ensure_no_blocking_unknown_for_card_send(run_id)
+                if unknowns:
+                    print(json.dumps({
+                        "ok": False,
+                        "send": "blocked_by_feishu_idempotency_unknown",
+                        "run_id": run_id,
+                        "unknown_count": len(unknowns),
+                        "summary": idempotency.guard_summary(run_id, unknowns),
+                    }, ensure_ascii=False, indent=2))
+                    return 2
                 targets = parse_receive_targets(
                     [os.getenv("FEISHU_CARD_RECEIVE_TARGETS", ""), *args.receive_target],
                     args.receive_id,
@@ -805,7 +914,7 @@ def main() -> int:
                 )
                 summary["targets"] = [{"receive_id_type": target_type, "receive_id": target_id} for target_type, target_id in targets]
                 summary["send"] = [
-                    send_card(token, card, run_id, target_id, target_type).get("data", {})
+                    send_card(token, card, run_id, target_id, target_type, preview_path=str(preview_path)).get("data", {})
                     for target_type, target_id in targets
                 ]
         print(json.dumps(summary, ensure_ascii=False, indent=2))
