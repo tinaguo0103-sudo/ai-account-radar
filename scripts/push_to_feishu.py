@@ -46,6 +46,7 @@ LOG_DIR = OUT / "logs"
 DEFAULT_API_HOST = "https://open.feishu.cn"
 SAFE_RETRY_METHODS = {"GET", "PUT", "PATCH", "DELETE"}
 TRANSIENT_HTTP_STATUS = {408, 425, 429, 500, 502, 503, 504}
+RECORD_ACTION_ENDPOINTS = {"batch_create", "search"}
 
 load_local_env()
 
@@ -111,8 +112,9 @@ def should_retry_request(method: str, retry: bool | None) -> bool:
 
 
 def retry_status_unknown_error(method: str, path: str, exc: BaseException) -> RuntimeError:
+    path_template = sanitized_path_metadata(path)["path_template"]
     return RuntimeError(
-        f"{method} {path} failed with transient error; status unknown and not retried "
+        f"{method} {path_template} failed with transient error; status unknown and not retried "
         f"because request is not marked safe/idempotent: {exc}"
     )
 
@@ -125,12 +127,13 @@ def extract_path_part(path: str, pattern: str) -> str | None:
 def sanitized_path_metadata(path: str) -> dict[str, Any]:
     raw_path, separator, query = path.partition("?")
     table_id = extract_path_part(raw_path, r"/tables/([^/?]+)")
-    record_id = extract_path_part(raw_path, r"/records/([^/?]+)")
+    record_id_candidate = extract_path_part(raw_path, r"/records/([^/?]+)")
+    record_id = record_id_candidate if record_id_candidate and record_id_candidate not in RECORD_ACTION_ENDPOINTS else None
     sanitized = raw_path
     replacements = [
         (r"(/bitable/v1/apps/)[^/?]+", r"\1{app_token}"),
         (r"(/tables/)[^/?]+", r"\1{table_id}"),
-        (r"(/records/)[^/?]+", r"\1{record_id}"),
+        (r"(/records/)(?!batch_create(?:/|$)|search(?:/|$))[^/?]+", r"\1{record_id}"),
         (r"(/docx/v1/documents/)[^/?]+", r"\1{document_id}"),
         (r"(/blocks/)[^/?]+", r"\1{block_id}"),
     ]
@@ -261,6 +264,7 @@ def request_json(
     retry_enabled = should_retry_request(method, retry)
     max_attempts = max(1, attempts)
     payload_size_bytes = len(data or b"")
+    path_template = sanitized_path_metadata(path)["path_template"]
     last_exc: BaseException | None = None
     for attempt in range(1, max_attempts + 1):
         started = time.monotonic()
@@ -287,7 +291,7 @@ def request_json(
                     status_unknown=False,
                     feishu_code=feishu_code,
                 )
-                raise RuntimeError(f"{method} {path} failed: {payload}")
+                raise RuntimeError(f"{method} {path_template} failed: {payload}")
             record_request_telemetry(
                 method=method,
                 path=path,
@@ -329,16 +333,16 @@ def request_json(
                 status_unknown=transient,
             )
             if not transient:
-                raise RuntimeError(f"{method} {path} failed: HTTP {exc.code} {detail}") from exc
+                raise RuntimeError(f"{method} {path_template} failed: HTTP {exc.code} {detail}") from exc
             if not retry_enabled:
                 raise retry_status_unknown_error(method, path, exc) from exc
             if final_attempt:
                 raise RuntimeError(
-                    f"{method} {path} failed after {attempt} attempts; status unknown: HTTP {exc.code} {detail}"
+                    f"{method} {path_template} failed after {attempt} attempts; status unknown: HTTP {exc.code} {detail}"
                 ) from exc
             sleep_seconds = base_delay * attempt
             print(
-                f"[warn] transient Feishu {method} {path} failed "
+                f"[warn] transient Feishu {method} {path_template} failed "
                 f"(attempt {attempt}/{attempts}); retrying in {sleep_seconds:.1f}s: HTTP {exc.code}",
                 file=sys.stderr,
             )
@@ -370,17 +374,17 @@ def request_json(
                 raise retry_status_unknown_error(method, path, exc) from exc
             if final_attempt:
                 raise RuntimeError(
-                    f"{method} {path} failed after {attempt} attempts; status unknown: {exc}"
+                    f"{method} {path_template} failed after {attempt} attempts; status unknown: {exc}"
                 ) from exc
             sleep_seconds = base_delay * attempt
             print(
-                f"[warn] transient Feishu {method} {path} failed "
+                f"[warn] transient Feishu {method} {path_template} failed "
                 f"(attempt {attempt}/{attempts}); retrying in {sleep_seconds:.1f}s: {exc}",
                 file=sys.stderr,
             )
             time.sleep(sleep_seconds)
     else:
-        raise RuntimeError(f"{method} {path} failed after {attempts} attempts: {last_exc}")
+        raise RuntimeError(f"{method} {path_template} failed after {attempts} attempts: {last_exc}")
 
 
 def tenant_token() -> str:
