@@ -139,6 +139,23 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 
 Codex 定时任务负责触发本仓库脚本和执行外层主编 Skill；迁移时需要重新创建同名 Codex automation，并保留这个“defer editorial -> outer Codex editorial -> finalizer”的边界。
 
+如果 08:00 已完成本地采集和候选生成，但写入 `03 内容收件箱` 时遇到飞书超时，且 `output/runs/<run_id>/content_items.csv` 已存在，不要重新采集。先用已有 run 产物补写 03，再走既有收尾：
+
+```bash
+python3 scripts/content_sampler.py \
+  --recover-content-inbox-from-run output/runs/<run_id> \
+  --run-id <run_id> \
+  --write-feishu
+
+python3 scripts/finalize_daily_pipeline_after_editorial.py \
+  --run-id <run_id> \
+  --input output/runs/<run_id>/today_10_topics.csv \
+  --write-feishu \
+  --update-scheduled-log
+```
+
+恢复命令只读取指定 run 目录，不重新抓取平台数据；运行前后仍必须依赖 `03 -> 04` 同步门禁校验，不能绕过 `validate_content_inbox_synced`。
+
 反馈规则：
 
 - 08:00 采集成功：不主动发消息，避免打扰。

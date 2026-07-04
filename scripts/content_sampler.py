@@ -22,7 +22,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any
+from typing import Any, Callable
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -2120,6 +2120,109 @@ def item_row(item: ContentItem) -> dict[str, Any]:
     }
 
 
+def int_from_cell(value: Any) -> int:
+    text = cell_text(value)
+    try:
+        return int(float(text)) if text else 0
+    except ValueError:
+        return 0
+
+
+def content_item_from_row(row: dict[str, Any]) -> ContentItem:
+    raw_len = int_from_cell(row.get("正文长度") or row.get("正文原始长度"))
+    body = cell_text(row.get("正文/字幕/简介片段"))
+    return ContentItem(
+        source_type=normalize_source_type(cell_text(row.get("来源类型"))),
+        platform=cell_text(row.get("平台")),
+        account_name=cell_text(row.get("账号名/公众号名")),
+        title=cell_text(row.get("内容标题")) or "未命名内容",
+        url=cell_text(row.get("内容链接")),
+        content_shape=cell_text(row.get("内容形态")),
+        cover_text=cell_text(row.get("封面文字")),
+        body_snippet=body,
+        published_at=cell_text(row.get("发布时间")),
+        comment_questions=cell_text(row.get("评论区问题")),
+        ocr_text=cell_text(row.get("原始payload路径")) or cell_text(row.get("截图/OCR文本")),
+        fetch_method=cell_text(row.get("抓取方式")) or "recovered_from_run_csv",
+        fetch_status=cell_text(row.get("抓取状态")) or "ok",
+        failure_reason=cell_text(row.get("失败原因")),
+        fingerprint=cell_text(row.get("内容指纹")) or fingerprint(
+            cell_text(row.get("内容链接")),
+            cell_text(row.get("内容标题")),
+            cell_text(row.get("账号名/公众号名")),
+        ),
+        column=normalize_column(cell_text(row.get("对应栏目"))),
+        learn_focus=cell_text(row.get("重点学习")),
+        do_not_copy=cell_text(row.get("不能照搬")),
+        convert_direction=cell_text(row.get("转化方向")),
+        raw_text_length=raw_len or len(body),
+        body_truncated="否" if cell_text(row.get("是否全文解析")) == "是" else "",
+        reused_url=cell_text(row.get("是否来自已解析URL复用")) or "否",
+        parse_hint=cell_text(row.get("解析说明")),
+    )
+
+
+def load_content_items_from_csv(path: Path) -> list[ContentItem]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return [content_item_from_row(row) for row in csv.DictReader(handle)]
+
+
+def csv_data_row_count(path: Path) -> int:
+    if not path.exists():
+        return 0
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return max(0, sum(1 for _ in csv.DictReader(handle)))
+
+
+def write_recovery_sampler_log(
+    run_dir: Path,
+    run_id: str,
+    status: str,
+    items_count: int,
+    progress: dict[str, Any] | None = None,
+    feishu_content_ledger: dict[str, Any] | None = None,
+    error: str = "",
+    write_feishu: bool = True,
+) -> Path:
+    log_path = run_dir / "content_sampler_log.json"
+    today_candidates_path = run_dir / "today_10_topics.csv"
+    content_breakdowns_path = run_dir / "content_breakdowns.csv"
+    log = {
+        "generated_at": now_iso(),
+        "run_id": run_id,
+        "mode": "write-feishu" if write_feishu else "dry-run",
+        "recovery": True,
+        "recovery_status": status,
+        "output_dir": str(run_dir),
+        "items": items_count,
+        "breakdowns": csv_data_row_count(content_breakdowns_path),
+        "today_candidates": csv_data_row_count(today_candidates_path),
+        "logs": [
+            "Recovered 03 content inbox from existing run directory.",
+            "No platform collection was performed during recovery.",
+        ],
+        "outputs": {
+            "content_items": str(run_dir / "content_items.csv"),
+            "content_breakdowns": str(content_breakdowns_path),
+            "today_candidates": str(today_candidates_path),
+            "debug_top10_csv": str(run_dir / "debug_today10_generation.csv"),
+            "debug_top10_markdown": str(run_dir / "debug_today10_generation.md"),
+            "content_sampler_log": str(log_path),
+        },
+        "recovery_progress": progress or {
+            "total_items": items_count,
+            "processed_items": 0,
+            "remaining_items": items_count,
+        },
+    }
+    if feishu_content_ledger is not None:
+        log["feishu_content_ledger"] = feishu_content_ledger
+    if error:
+        log["error"] = error
+    log_path.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
+    return log_path
+
+
 def require_feishu_env() -> str:
     missing = [name for name in ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_BASE_APP_TOKEN"] if not os.getenv(name)]
     if missing:
@@ -2245,8 +2348,50 @@ def batch_create_records(token: str, app_token: str, table_id: str, rows: list[d
     return total
 
 
+def is_transient_feishu_error(exc: BaseException) -> bool:
+    text = f"{exc.__class__.__name__}: {exc}".lower()
+    return any(
+        marker in text
+        for marker in [
+            "timed out",
+            "timeout",
+            "temporarily unavailable",
+            "connection reset",
+            "remote end closed",
+            "ssl",
+        ]
+    )
+
+
+def request_json_with_retry(
+    method: str,
+    path: str,
+    token: str,
+    body: dict[str, Any],
+    *,
+    attempts: int = 3,
+    base_delay: float = 1.0,
+) -> dict[str, Any]:
+    last_exc: BaseException | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return feishu.request_json(method, path, token=token, body=body)
+        except Exception as exc:
+            last_exc = exc
+            if attempt >= attempts or not is_transient_feishu_error(exc):
+                raise
+            sleep_seconds = base_delay * attempt
+            print(
+                f"[warn] transient Feishu {method} failed "
+                f"(attempt {attempt}/{attempts}); retrying in {sleep_seconds:.1f}s: {exc}",
+                file=sys.stderr,
+            )
+            time.sleep(sleep_seconds)
+    raise RuntimeError(f"Feishu request failed after {attempts} attempts: {last_exc}")
+
+
 def update_record_fields(token: str, app_token: str, table_id: str, record_id: str, fields: dict[str, str]) -> None:
-    feishu.request_json(
+    request_json_with_retry(
         "PUT",
         f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
         token=token,
@@ -2345,7 +2490,28 @@ def ensure_content_inbox_today_view(token: str, app_token: str, table_id: str) -
     }
 
 
-def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dict[str, Any]:
+def write_content_ledger_to_feishu(
+    items: list[ContentItem],
+    run_id: str,
+    progress_callback: Callable[[dict[str, Any]], None] | None = None,
+) -> dict[str, Any]:
+    progress: dict[str, Any] = {
+        "stage": "start",
+        "total_items": len(items),
+        "processed_items": 0,
+        "remaining_items": len(items),
+        "updated_existing": 0,
+        "skipped_duplicates": 0,
+        "queued_create": 0,
+        "created_records": 0,
+    }
+
+    def emit(stage: str) -> None:
+        progress["stage"] = stage
+        progress["remaining_items"] = max(0, progress["total_items"] - progress["processed_items"])
+        if progress_callback:
+            progress_callback(dict(progress))
+
     app_token = require_feishu_env()
     token = feishu.tenant_token()
     table_id = resolve_table_id(list_tables(token, app_token), "content_inbox")
@@ -2353,6 +2519,7 @@ def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dic
         raise SystemExit(f"Missing Feishu table: {table_name('content_inbox')}")
     created_fields = ensure_content_inbox_fields(token, app_token, table_id)
     existing = all_records(token, app_token, table_id)
+    emit("loaded_existing_records")
     by_fp = {str(record.get("fields", {}).get("内容指纹", "")): record for record in existing if record.get("fields", {}).get("内容指纹")}
     by_url = {str(record.get("fields", {}).get("链接", "")): record for record in existing if record.get("fields", {}).get("链接")}
     by_title_time: dict[tuple[str, str], dict[str, Any]] = {}
@@ -2416,19 +2583,31 @@ def write_content_ledger_to_feishu(items: list[ContentItem], run_id: str) -> dic
                 })
             update_record_fields(token, app_token, table_id, record_id, update_fields)
             updated_existing += 1
+            progress["updated_existing"] = updated_existing
             if not same_run_new:
                 skipped_duplicates += 1
+                progress["skipped_duplicates"] = skipped_duplicates
+            progress["processed_items"] += 1
+            if progress["processed_items"] % 10 == 0:
+                emit("updating_existing_records")
             time.sleep(0.1)
             continue
         fields = item_to_content_inbox_fields(item, run_id, is_new=True, duplicate=False)
         to_create.append(fields)
+        progress["processed_items"] += 1
+        progress["queued_create"] = len(to_create)
+        if progress["processed_items"] % 10 == 0:
+            emit("matching_records")
         by_fp[item.fingerprint] = {"record_id": ""}
         by_url[item.url] = {"record_id": ""}
         if title_key and published_key:
             by_title_time[(title_key, published_key)] = {"record_id": ""}
         if title_key and item.source_type == "公众号文章":
             by_wechat_title[title_key] = {"record_id": ""}
+    emit("creating_new_records")
     created_records = batch_create_records(token, app_token, table_id, to_create) if to_create else 0
+    progress["created_records"] = created_records
+    emit("configuring_views")
     return {
         "table": table_name("content_inbox"),
         "run_id": run_id,
@@ -2908,6 +3087,62 @@ def select_skill_review_candidates(candidates: list[dict[str, Any]]) -> list[dic
     return selected
 
 
+def recover_content_inbox_from_run(run_dir: Path, run_id: str, write_feishu: bool) -> dict[str, Any]:
+    if not run_id:
+        raise SystemExit("--recover-content-inbox-from-run requires --run-id")
+    run_dir = run_dir.expanduser().resolve()
+    content_items_path = run_dir / "content_items.csv"
+    if not run_dir.exists() or not run_dir.is_dir():
+        raise SystemExit(f"Recovery run directory does not exist: {run_dir}")
+    if not content_items_path.exists():
+        raise SystemExit(f"Recovery requires existing content_items.csv: {content_items_path}")
+    items = load_content_items_from_csv(content_items_path)
+    if not items:
+        raise SystemExit(f"Recovery content_items.csv is empty: {content_items_path}")
+
+    progress = {
+        "stage": "preflight",
+        "total_items": len(items),
+        "processed_items": 0,
+        "remaining_items": len(items),
+        "updated_existing": 0,
+        "skipped_duplicates": 0,
+        "queued_create": 0,
+        "created_records": 0,
+    }
+    result: dict[str, Any] = {
+        "generated_at": now_iso(),
+        "run_id": run_id,
+        "mode": "write-feishu" if write_feishu else "dry-run",
+        "recovery": True,
+        "run_dir": str(run_dir),
+        "content_items": len(items),
+        "content_breakdowns": csv_data_row_count(run_dir / "content_breakdowns.csv"),
+        "today_candidates": csv_data_row_count(run_dir / "today_10_topics.csv"),
+        "will_write_feishu": write_feishu,
+    }
+    if not write_feishu:
+        result["note"] = "dry-run only; no Feishu writes and no recovery log mutation"
+        return result
+
+    write_recovery_sampler_log(run_dir, run_id, "pending", len(items), progress)
+
+    def on_progress(snapshot: dict[str, Any]) -> None:
+        progress.clear()
+        progress.update(snapshot)
+        write_recovery_sampler_log(run_dir, run_id, "partial", len(items), snapshot)
+
+    try:
+        ledger = write_content_ledger_to_feishu(items, run_id, progress_callback=on_progress)
+    except Exception as exc:
+        write_recovery_sampler_log(run_dir, run_id, "failed", len(items), progress, error=str(exc))
+        raise
+    write_recovery_sampler_log(run_dir, run_id, "success", len(items), progress, feishu_content_ledger=ledger)
+    result["feishu_content_ledger"] = ledger
+    result["content_sampler_log"] = str(run_dir / "content_sampler_log.json")
+    return result
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-fetch-aihot", action="store_true")
@@ -2915,9 +3150,19 @@ def main() -> int:
     parser.add_argument("--write-feishu", action="store_true", help="Write all analyzed ContentItems into Feishu 03 内容收件箱 as the content ledger.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
     parser.add_argument("--debug-top10", action="store_true", help="Write local candidate generation diagnostics into this run's output directory.")
+    parser.add_argument(
+        "--recover-content-inbox-from-run",
+        default="",
+        help="Recover Feishu 03 内容收件箱 from an existing output/runs/<run_id> directory without collecting platform data.",
+    )
     args = parser.parse_args()
 
     run_id = args.run_id or default_run_id()
+    if args.recover_content_inbox_from_run:
+        result = recover_content_inbox_from_run(Path(args.recover_content_inbox_from_run), run_id, args.write_feishu)
+        print(json.dumps(result, ensure_ascii=False, indent=2))
+        return 0
+
     output_dir = run_output_dir(run_id, args.write_feishu)
     output_dir.mkdir(parents=True, exist_ok=True)
     items, logs = collect_items(not args.no_fetch_aihot, Path(args.manual))
