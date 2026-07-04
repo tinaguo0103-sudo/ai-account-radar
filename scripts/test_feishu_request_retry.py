@@ -5,6 +5,7 @@ import io
 import json
 import tempfile
 import unittest
+from contextlib import redirect_stderr
 from pathlib import Path
 from urllib.error import HTTPError
 
@@ -85,6 +86,29 @@ class FeishuRequestRetryTest(unittest.TestCase):
         self.assertNotIn("private body", telemetry_text)
         self.assertNotIn("Authorization", telemetry_text)
 
+    def test_action_endpoint_is_not_treated_as_record_id(self) -> None:
+        original_urlopen = push_to_feishu.urlopen
+
+        def ok_urlopen(*_args, **_kwargs):
+            return FakeResponse({"code": 0, "data": {"ok": True}}, status=200)
+
+        try:
+            push_to_feishu.urlopen = ok_urlopen
+            push_to_feishu.request_json(
+                "POST",
+                "/bitable/v1/apps/app_token_secret/tables/table123/records/batch_create",
+                body={"records": [{"fields": {"标题": "A"}}]},
+                retry=True,
+            )
+        finally:
+            push_to_feishu.urlopen = original_urlopen
+
+        events = self.telemetry_events()
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["path_template"], "/bitable/v1/apps/{app_token}/tables/{table_id}/records/batch_create")
+        self.assertEqual(events[0]["table_id"], "table123")
+        self.assertIsNone(events[0]["record_id"])
+
     def test_get_retries_transient_timeout(self) -> None:
         calls = {"count": 0}
         original_urlopen = push_to_feishu.urlopen
@@ -96,10 +120,15 @@ class FeishuRequestRetryTest(unittest.TestCase):
                 raise TimeoutError("The read operation timed out")
             return FakeResponse({"code": 0, "data": {"ok": True}})
 
+        stderr = io.StringIO()
         try:
             push_to_feishu.urlopen = flaky_urlopen
             push_to_feishu.time.sleep = lambda *_args, **_kwargs: None
-            result = push_to_feishu.request_json("GET", "/bitable/v1/apps/app/tables")
+            with redirect_stderr(stderr):
+                result = push_to_feishu.request_json(
+                    "GET",
+                    "/bitable/v1/apps/app_token_secret/tables?receive_id_type=open_id&page_token=query_secret",
+                )
         finally:
             push_to_feishu.urlopen = original_urlopen
             push_to_feishu.time.sleep = original_sleep
@@ -114,6 +143,10 @@ class FeishuRequestRetryTest(unittest.TestCase):
         self.assertTrue(events[0]["status_unknown"])
         self.assertEqual(events[1]["error_kind"], "none")
         self.assertFalse(events[1]["will_retry"])
+        warning_text = stderr.getvalue()
+        self.assertIn("/bitable/v1/apps/{app_token}/tables?page_token=<redacted>&receive_id_type=<redacted>", warning_text)
+        self.assertNotIn("app_token_secret", warning_text)
+        self.assertNotIn("query_secret", warning_text)
 
     def test_non_idempotent_post_is_not_retried_by_default(self) -> None:
         calls = {"count": 0}
@@ -125,19 +158,25 @@ class FeishuRequestRetryTest(unittest.TestCase):
 
         try:
             push_to_feishu.urlopen = flaky_urlopen
-            with self.assertRaisesRegex(RuntimeError, "status unknown and not retried"):
+            with self.assertRaisesRegex(RuntimeError, "status unknown and not retried") as context:
                 push_to_feishu.request_json(
                     "POST",
-                    "/bitable/v1/apps/app/tables/table/records/batch_create",
+                    "/bitable/v1/apps/app_token_secret/tables/table/records/batch_create?page_token=query_secret",
                     body={"records": [{"fields": {"标题": "A"}}]},
                 )
         finally:
             push_to_feishu.urlopen = original_urlopen
 
         self.assertEqual(calls["count"], 1)
+        message = str(context.exception)
+        self.assertIn("/bitable/v1/apps/{app_token}/tables/{table_id}/records/batch_create?page_token=<redacted>", message)
+        self.assertNotIn("app_token_secret", message)
+        self.assertNotIn("query_secret", message)
         events = self.telemetry_events()
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["method"], "POST")
+        self.assertEqual(events[0]["path_template"], "/bitable/v1/apps/{app_token}/tables/{table_id}/records/batch_create?page_token=<redacted>")
+        self.assertIsNone(events[0]["record_id"])
         self.assertEqual(events[0]["retry_decision"], "retry_disabled_status_unknown")
         self.assertFalse(events[0]["will_retry"])
         self.assertTrue(events[0]["status_unknown"])
