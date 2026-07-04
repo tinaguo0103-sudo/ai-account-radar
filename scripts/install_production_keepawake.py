@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import datetime as dt
 import os
 import plistlib
 import subprocess
@@ -83,6 +84,18 @@ def status_warnings_from_plist(plist: dict[str, object]) -> list[str]:
     return []
 
 
+def pmset_display_time(value: str) -> str:
+    hour, minute, _ = parse_hhmmss(value)
+    return dt.time(hour=hour, minute=minute).strftime("%I:%M%p").lstrip("0")
+
+
+def wake_schedule_matches(schedule_text: str, days: str, wake_time: str) -> bool:
+    if days != "MTWRFSU":
+        return False
+    expected = f"wakepoweron at {pmset_display_time(wake_time)} every day"
+    return expected in schedule_text
+
+
 def bootout() -> None:
     if PLIST_PATH.exists():
         run(["launchctl", "bootout", launchctl_target(), str(PLIST_PATH)], check=False)
@@ -122,6 +135,10 @@ def configure_wake(args: argparse.Namespace) -> int:
     if result.stderr:
         print(result.stderr)
     if result.returncode != 0:
+        current = run(["pmset", "-g", "sched"], check=False)
+        if wake_schedule_matches(current.stdout, args.days, args.wake_time):
+            print("existing pmset repeat wake schedule already matches; keeping current configuration")
+            return 0
         print("failed to configure pmset repeat wake; this may require administrator privileges")
     return result.returncode
 

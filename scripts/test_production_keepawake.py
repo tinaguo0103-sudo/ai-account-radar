@@ -41,6 +41,26 @@ class ProductionKeepawakeTest(unittest.TestCase):
 
         self.assertEqual(keepawake.status_warnings_from_plist(plist), [])
 
+    def test_wake_schedule_matches_default_daily_schedule(self):
+        schedule = "\n".join(
+            [
+                "Repeating power events:",
+                "  wakepoweron at 7:50AM every day",
+            ]
+        )
+
+        self.assertTrue(keepawake.wake_schedule_matches(schedule, "MTWRFSU", "07:50:00"))
+
+    def test_wake_schedule_does_not_match_different_days(self):
+        schedule = "\n".join(
+            [
+                "Repeating power events:",
+                "  wakepoweron at 7:50AM every day",
+            ]
+        )
+
+        self.assertFalse(keepawake.wake_schedule_matches(schedule, "MTWRF", "07:50:00"))
+
 
 if __name__ == "__main__":
     unittest.main()
