@@ -220,6 +220,112 @@ test("uses candidate snapshots to skip full-table reads on selection submit", as
   assert.equal(sends.length, 0);
 });
 
+test("allows historical compensation candidates when card snapshots preserve the original run", async () => {
+  const records = [
+    { record_id: "rec_old", fields: { "选题标题": "历史候选", "运行批次": "run_old", "状态": "待判断" } },
+    { record_id: "rec_today", fields: { "选题标题": "今日候选", "运行批次": "run_today", "状态": "待判断" } },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: {
+            action: "submit_topic_decisions",
+            run_id: "run_today",
+            candidate_ids: ["rec_old", "rec_today"],
+            candidate_snapshots: {
+              rec_old: { title: "历史候选", run_id: "run_old", date: "2026-07-02" },
+              rec_today: { title: "今日候选", run_id: "run_today", date: "2026-07-04" },
+            },
+          },
+          form_value: {
+            script_package_records: ["rec_old"],
+            positive_reason_tags: ["证据够"],
+            manual_reason: "补发历史候选",
+          },
+        },
+      },
+    },
+    { ...env, SEND_PRODUCTION_DIRECTION_CARD: "false" },
+    { fetchImpl: makeMockFetch(records, calls) },
+  );
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择"));
+  const puts = calls.filter((call) => call.method === "PUT");
+  assert.equal(puts.length, 2);
+  assert.equal(puts[0].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_topic/records/rec_old");
+  assert.equal(puts[0].body.fields["状态"], "生成脚本包");
+  assert.equal(puts[1].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_topic/records/rec_today");
+  assert.equal(puts[1].body.fields["状态"], "不做");
+});
+
+test("rejects historical compensation candidates when card snapshots are missing", async () => {
+  const records = [
+    { record_id: "rec_old", fields: { "选题标题": "历史候选", "运行批次": "run_old", "状态": "待判断" } },
+    { record_id: "rec_today", fields: { "选题标题": "今日候选", "运行批次": "run_today", "状态": "待判断" } },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: { action: "submit_topic_decisions", run_id: "run_today", candidate_ids: ["rec_old", "rec_today"] },
+          form_value: {
+            script_package_records: ["rec_old"],
+            positive_reason_tags: ["证据够"],
+            manual_reason: "补发历史候选",
+          },
+        },
+      },
+    },
+    env,
+    { fetchImpl: makeMockFetch(records, calls) },
+  );
+  const body = await response.json();
+  assert.deepEqual(body, toastBody("warning", "这张卡对应的记录批次已变化，请使用最新卡片"));
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
+});
+
+test("accepts production direction feedback for historical candidates with snapshots", async () => {
+  const records = [
+    { record_id: "rec_old", fields: { "选题标题": "历史候选", "运行批次": "run_old", "状态": "生成脚本包" } },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: {
+            action: "submit_production_directions",
+            run_id: "run_today",
+            candidate_ids: ["rec_old"],
+            candidate_snapshots: {
+              rec_old: { title: "历史候选", run_id: "run_old", date: "2026-07-02" },
+            },
+          },
+          form_value: {
+            production_direction__rec_old: "用真实项目复盘讲，不做工具教程。",
+          },
+        },
+      },
+    },
+    env,
+    { fetchImpl: makeMockFetch(records, calls) },
+  );
+  assert.deepEqual(await response.json(), toastBody("success", "已保存 1 条制作方向"));
+  const puts = calls.filter((call) => call.method === "PUT");
+  assert.equal(puts.length, 1);
+  assert.equal(puts[0].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_topic/records/rec_old");
+  assert.deepEqual(puts[0].body.fields, {
+    "我的制作补充": "用真实项目复盘讲，不做工具教程。",
+    "制作方向卡状态": "已提交",
+    "制作方向卡错误": "",
+  });
+});
+
 test("sends queued production direction cards from explicit queue", async () => {
   const records = [
     {

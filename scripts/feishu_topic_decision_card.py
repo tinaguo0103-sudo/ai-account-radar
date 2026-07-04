@@ -14,7 +14,7 @@ import os
 import sys
 import threading
 import time
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from typing import Any
@@ -40,6 +40,7 @@ SUBMIT_SELECTION_ACTION = "submit_topic_decisions"
 SUBMIT_NO_SELECTION_ACTION = "submit_no_selection"
 SUPPORTED_SUBMIT_ACTIONS = {SUBMIT_SELECTION_ACTION, SUBMIT_NO_SELECTION_ACTION}
 RECEIPT_LOG = OUT / "callback_receipts.jsonl"
+CANDIDATE_LEDGER = OUT / "topic_card_candidate_ledger.jsonl"
 POSITIVE_REASON_OPTIONS = [
     "有真实业务现场",
     "实验能马上做",
@@ -92,11 +93,121 @@ def compact(value: Any, limit: int) -> str:
     return text[:limit].rstrip() + "..."
 
 
+def parse_record_date(value: Any) -> date | None:
+    text = normalize(value)
+    if not text:
+        return None
+    try:
+        return date.fromisoformat(text[:10])
+    except ValueError:
+        return None
+
+
+def candidate_rank(fields: dict[str, Any]) -> int:
+    try:
+        return int(normalize(fields.get("今日排名")) or "9999")
+    except ValueError:
+        return 9999
+
+
+def candidate_title(fields: dict[str, Any]) -> str:
+    return normalize(fields.get("选题标题") or fields.get("选题命题") or fields.get("一句话Brief"))
+
+
+def candidate_dedupe_key(fields: dict[str, Any]) -> str:
+    title = candidate_title(fields)
+    source = normalize(fields.get("原始来源标题") or fields.get("来源URL") or fields.get("来源内容"))
+    key = "|".join(part for part in [source, title] if part)
+    return hashlib.sha1(key.encode("utf-8")).hexdigest() if key else ""
+
+
+def compensation_pool_window(today: date | None = None, days: int = 3) -> tuple[date, date]:
+    current = today or datetime.now().date()
+    return current - timedelta(days=max(days, 1) - 1), current
+
+
+def is_candidate_pending(fields: dict[str, Any], include_decided: bool = False) -> bool:
+    if include_decided:
+        return True
+    status = normalize(fields.get("状态"))
+    if status not in DEFAULT_STATUS_FILTER:
+        return False
+    generated = normalize(fields.get("是否已生成脚本稿"))
+    return not (generated and generated not in {"否", "未生成"})
+
+
+def load_card_candidate_ledger() -> set[str]:
+    sent: set[str] = set()
+    if CANDIDATE_LEDGER.exists():
+        for line in CANDIDATE_LEDGER.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                event = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            if str(event.get("status") or "") in {"sent", "submitted"}:
+                record_id = str(event.get("record_id") or "")
+                if record_id:
+                    sent.add(record_id)
+    if RECEIPT_LOG.exists():
+        for line in RECEIPT_LOG.read_text(encoding="utf-8").splitlines():
+            if not line.strip():
+                continue
+            try:
+                receipt = json.loads(line)
+            except json.JSONDecodeError:
+                continue
+            sent.update(str(record_id) for record_id in receipt.get("candidate_ids", []) if str(record_id))
+    return sent
+
+
+def card_candidate_value(card: dict[str, Any]) -> dict[str, Any]:
+    for element in card.get("body", {}).get("elements", []):
+        if element.get("tag") != "form":
+            continue
+        for form_element in element.get("elements", []):
+            if form_element.get("tag") != "column_set":
+                continue
+            for column in form_element.get("columns", []):
+                for button in column.get("elements", []):
+                    for behavior in button.get("behaviors", []):
+                        value = behavior.get("value") if isinstance(behavior.get("value"), dict) else {}
+                        if value.get("action") == SUBMIT_SELECTION_ACTION:
+                            return value
+    return {}
+
+
+def write_card_candidate_ledger(card: dict[str, Any], run_id: str, preview_path: str) -> None:
+    value = card_candidate_value(card)
+    candidate_ids = [str(item) for item in value.get("candidate_ids", []) if str(item)]
+    snapshots = value.get("candidate_snapshots") if isinstance(value.get("candidate_snapshots"), dict) else {}
+    if not candidate_ids:
+        return
+    CANDIDATE_LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    created_at = datetime.now().isoformat(timespec="seconds")
+    with CANDIDATE_LEDGER.open("a", encoding="utf-8") as handle:
+        for record_id in candidate_ids:
+            snapshot = snapshots.get(record_id, {}) if isinstance(snapshots.get(record_id), dict) else {}
+            event = {
+                "created_at": created_at,
+                "status": "sent",
+                "run_id": run_id,
+                "record_id": record_id,
+                "original_run_id": str(snapshot.get("run_id") or ""),
+                "original_date": str(snapshot.get("date") or ""),
+                "title_hash": hashlib.sha1(str(snapshot.get("title") or "").encode("utf-8")).hexdigest()[:16],
+                "preview_path": preview_path,
+            }
+            handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
+
+
 def option_text(index: int, fields: dict[str, Any]) -> str:
     title = compact(fields.get("选题标题"), 32) or f"候选 {index}"
     level = compact(fields.get("今日建议级别"), 8)
     risk = compact(fields.get("AI味风险"), 4)
-    suffix = " / ".join(part for part in [level, f"AI味{risk}" if risk else ""] if part)
+    original_date = compact(fields.get("推荐日期"), 10)
+    suffix = " / ".join(part for part in [original_date, level, f"AI味{risk}" if risk else ""] if part)
     return f"{index}. {title}" + (f"｜{suffix}" if suffix else "")
 
 
@@ -108,8 +219,15 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     missing = compact(fields.get("需要补的证据"), 52)
     direction = compact(fields.get("对应方向"), 18)
     risk = compact(fields.get("AI味风险"), 8)
+    original_date = compact(fields.get("推荐日期"), 10)
+    original_run_id = compact(fields.get("运行批次"), 40)
     lines = [f"**{index}. {title}**"]
-    meta = "｜".join(part for part in [direction, f"AI味：{risk}" if risk else ""] if part)
+    meta = "｜".join(part for part in [
+        f"日期：{original_date}" if original_date else "",
+        f"run：{original_run_id}" if original_run_id else "",
+        direction,
+        f"AI味：{risk}" if risk else "",
+    ] if part)
     if meta:
         lines.append(meta)
     if brief:
@@ -153,16 +271,39 @@ def fetch_candidates(run_id: str, limit: int, include_decided: bool = False) -> 
     token = feishu.tenant_token()
     app_token = require_app_token()
     table_id = get_topic_table(token, app_token)
-    selected: list[dict[str, Any]] = []
+    window_start, window_end = compensation_pool_window()
+    sent_candidate_ids = load_card_candidate_ledger() if not include_decided else set()
+    best_by_key: dict[str, dict[str, Any]] = {}
     for record in all_records(token, app_token, table_id):
         fields = record.get("fields", {})
-        if run_id and normalize(fields.get("运行批次")) != run_id:
+        record_run_id = normalize(fields.get("运行批次"))
+        record_date = parse_record_date(fields.get("推荐日期"))
+        is_today_run = bool(run_id and record_run_id == run_id)
+        in_compensation_window = bool(record_date and window_start <= record_date <= window_end)
+        if not is_today_run and not in_compensation_window:
             continue
-        status = normalize(fields.get("状态"))
-        if not include_decided and status not in DEFAULT_STATUS_FILTER:
+        if not is_candidate_pending(fields, include_decided=include_decided):
             continue
-        selected.append(record)
-    selected.sort(key=lambda record: int(normalize(record.get("fields", {}).get("今日排名")) or "9999"))
+        record_id = str(record.get("record_id") or "")
+        if record_id in sent_candidate_ids:
+            continue
+        dedupe_key = candidate_dedupe_key(fields) or record_id
+        existing = best_by_key.get(dedupe_key)
+        if not existing:
+            best_by_key[dedupe_key] = record
+            continue
+        existing_fields = existing.get("fields", {})
+        existing_is_today = normalize(existing_fields.get("运行批次")) == run_id
+        if is_today_run and not existing_is_today:
+            best_by_key[dedupe_key] = record
+        elif is_today_run == existing_is_today and candidate_rank(fields) < candidate_rank(existing_fields):
+            best_by_key[dedupe_key] = record
+    selected = list(best_by_key.values())
+    selected.sort(key=lambda record: (
+        candidate_rank(record.get("fields", {})),
+        -(parse_record_date(record.get("fields", {}).get("推荐日期")) or date.min).toordinal(),
+        normalize(record.get("fields", {}).get("运行批次")),
+    ))
     return token, app_token, table_id, selected[:limit]
 
 
@@ -205,6 +346,11 @@ def tag_options(values: list[str]) -> list[dict[str, str]]:
 def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     issued_at = datetime.now(timezone.utc).replace(microsecond=0)
     expires_at = issued_at + timedelta(days=CARD_EXPIRE_DAYS)
+    coverage_dates = sorted({
+        normalize(record.get("fields", {}).get("推荐日期"))
+        for record in records
+        if normalize(record.get("fields", {}).get("推荐日期"))
+    })
     options = [
         {"text": option_text(index, record.get("fields", {})), "value": str(record.get("record_id") or "")}
         for index, record in enumerate(records, start=1)
@@ -213,6 +359,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     card_meta = {
         "run_id": run_id,
         "candidate_ids": [option["value"] for option in options],
+        "coverage_dates": coverage_dates,
         "card_issued_at": issued_at.isoformat().replace("+00:00", "Z"),
         "card_expires_at": expires_at.isoformat().replace("+00:00", "Z"),
         "card_ttl_days": CARD_EXPIRE_DAYS,
@@ -223,6 +370,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
             "brief": compact(record.get("fields", {}).get("一句话Brief"), 120),
             "experiment": compact(record.get("fields", {}).get("我要做的实验"), 120),
             "run_id": normalize(record.get("fields", {}).get("运行批次")),
+            "date": normalize(record.get("fields", {}).get("推荐日期")),
         }
         for record in records
         if record.get("record_id")
@@ -230,7 +378,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
-            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成口播稿和制作包的编号；提交后，已选记录进入 `{SCRIPT_PACKAGE_READY_STATUS}`，未选记录标记为 `不做`。如果有选中记录，系统会稍后再发一张卡片让你逐条补制作方向。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n运行批次：`{run_id or '未指定'}`",
+            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成口播稿和制作包的编号；提交后，已选记录进入 `{SCRIPT_PACKAGE_READY_STATUS}`，未选记录标记为 `不做`。如果有选中记录，系统会稍后再发一张卡片让你逐条补制作方向。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n运行批次：`{run_id or '未指定'}`\n\n本次候选覆盖：{('、'.join(coverage_dates) if coverage_dates else '未识别日期')}",
         }
     ]
     for index, record in enumerate(records, start=1):
@@ -548,6 +696,15 @@ def remember_receipt(key: str, *, action_name: str, run_id: str, candidate_ids: 
     }
     with RECEIPT_LOG.open("a", encoding="utf-8") as f:
         f.write(json.dumps(receipt, ensure_ascii=False, sort_keys=True) + "\n")
+    CANDIDATE_LEDGER.parent.mkdir(parents=True, exist_ok=True)
+    with CANDIDATE_LEDGER.open("a", encoding="utf-8") as handle:
+        for record_id in candidate_ids:
+            handle.write(json.dumps({
+                "created_at": datetime.now().isoformat(timespec="seconds"),
+                "status": "submitted",
+                "run_id": run_id,
+                "record_id": record_id,
+            }, ensure_ascii=False, sort_keys=True) + "\n")
 
 
 def decisions_from_form(
@@ -583,6 +740,7 @@ def apply_form_value(
     form_value: dict[str, Any],
     *,
     candidate_ids: list[str] | None = None,
+    candidate_snapshots: dict[str, Any] | None = None,
     run_id: str = "",
     write: bool = False,
     force_no_selection: bool = False,
@@ -598,8 +756,11 @@ def apply_form_value(
             continue
         fields = record.get("fields", {})
         if run_id and normalize(fields.get("运行批次")) != run_id:
-            skipped.append({"record_id": record_id, "title": normalize(fields.get("选题标题")), "reason": "run_id_mismatch"})
-            continue
+            snapshot = (candidate_snapshots or {}).get(record_id, {})
+            snapshot_run_id = str(snapshot.get("run_id") or "") if isinstance(snapshot, dict) else ""
+            if snapshot_run_id != normalize(fields.get("运行批次")):
+                skipped.append({"record_id": record_id, "title": normalize(fields.get("选题标题")), "reason": "run_id_mismatch"})
+                continue
         update_fields: dict[str, Any] = {
             "状态": decision["status"],
             "学习状态": "待学习",
@@ -682,6 +843,7 @@ def process_card_submission(
         table_id,
         form_value,
         candidate_ids=candidate_ids,
+        candidate_snapshots=value.get("candidate_snapshots") if isinstance(value.get("candidate_snapshots"), dict) else {},
         run_id=run_id,
         write=write,
         force_no_selection=action_name == SUBMIT_NO_SELECTION_ACTION,
@@ -886,6 +1048,7 @@ def main() -> int:
             "ok": True,
             "run_id": run_id,
             "record_count": len(records),
+            "coverage_dates": card_candidate_value(card).get("coverage_dates", []),
             "preview_path": str(preview_path),
             "latest_preview_path": str(OUT / "latest_topic_decision_card.json"),
         }
@@ -913,10 +1076,14 @@ def main() -> int:
                     args.receive_id_type,
                 )
                 summary["targets"] = [{"receive_id_type": target_type, "receive_id": target_id} for target_type, target_id in targets]
-                summary["send"] = [
-                    send_card(token, card, run_id, target_id, target_type, preview_path=str(preview_path)).get("data", {})
-                    for target_type, target_id in targets
-                ]
+                sends = []
+                candidate_ledger_written = False
+                for target_type, target_id in targets:
+                    sends.append(send_card(token, card, run_id, target_id, target_type, preview_path=str(preview_path)).get("data", {}))
+                    if not candidate_ledger_written:
+                        write_card_candidate_ledger(card, run_id, str(preview_path))
+                        candidate_ledger_written = True
+                summary["send"] = sends
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0
 

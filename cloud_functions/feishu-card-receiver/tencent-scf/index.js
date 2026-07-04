@@ -634,6 +634,7 @@ function snapshotRecord(recordId, snapshot = {}) {
       "一句话Brief": normalize(snapshot.brief),
       "我要做的实验": normalize(snapshot.experiment),
       "运行批次": normalize(snapshot.run_id),
+      "推荐日期": normalize(snapshot.date),
     },
   };
 }
@@ -646,10 +647,21 @@ function buildProductionDirectionCard(selectedRecords, runId) {
   const issuedAt = new Date();
   const expiresAt = new Date(issuedAt.getTime() + DEFAULT_CARD_EXPIRE_DAYS * 24 * 60 * 60 * 1000);
   const candidateIds = selectedRecords.map((record) => record.record_id);
+  const candidateSnapshots = Object.fromEntries(selectedRecords.map((record) => [
+    record.record_id,
+    {
+      title: normalize(record.fields?.["选题标题"]),
+      brief: normalize(record.fields?.["一句话Brief"]),
+      experiment: normalize(record.fields?.["我要做的实验"]),
+      run_id: normalize(record.fields?.["运行批次"]),
+      date: normalize(record.fields?.["推荐日期"]),
+    },
+  ]));
   const submitValue = {
     action: SUBMIT_PRODUCTION_DIRECTIONS_ACTION,
     run_id: runId,
     candidate_ids: candidateIds,
+    candidate_snapshots: candidateSnapshots,
     card_issued_at: issuedAt.toISOString(),
     card_expires_at: expiresAt.toISOString(),
     card_ttl_days: DEFAULT_CARD_EXPIRE_DAYS,
@@ -841,12 +853,17 @@ function runIdMismatch(record, runId) {
   return Boolean(runId && actualRunId && actualRunId !== runId);
 }
 
-async function selectionCardGuard(token, tableId, candidateIds, runId) {
+function snapshotAllowsRunMismatch(record, snapshot) {
+  const actualRunId = normalize(record?.fields?.["运行批次"]);
+  return Boolean(actualRunId && normalize(snapshot?.run_id) === actualRunId);
+}
+
+async function selectionCardGuard(token, tableId, candidateIds, runId, snapshots = {}) {
   const records = await recordsById(token, tableId, candidateIds);
   const missing = candidateIds.filter((recordId) => recordId && !records[recordId]);
   if (missing.length) return { blocked: true, reason: "card_records_missing", missing };
 
-  const mismatched = candidateIds.filter((recordId) => runIdMismatch(records[recordId], runId));
+  const mismatched = candidateIds.filter((recordId) => runIdMismatch(records[recordId], runId) && !snapshotAllowsRunMismatch(records[recordId], snapshots[recordId]));
   if (mismatched.length) return { blocked: true, reason: "card_run_mismatch", record_ids: mismatched };
 
   const processed = candidateIds.filter((recordId) => {
@@ -857,12 +874,12 @@ async function selectionCardGuard(token, tableId, candidateIds, runId) {
   return { blocked: false };
 }
 
-async function productionDirectionCardGuard(token, tableId, candidateIds, runId) {
+async function productionDirectionCardGuard(token, tableId, candidateIds, runId, snapshots = {}) {
   const records = await recordsById(token, tableId, candidateIds);
   const missing = candidateIds.filter((recordId) => recordId && !records[recordId]);
   if (missing.length) return { blocked: true, reason: "card_records_missing", missing };
 
-  const mismatched = candidateIds.filter((recordId) => runIdMismatch(records[recordId], runId));
+  const mismatched = candidateIds.filter((recordId) => runIdMismatch(records[recordId], runId) && !snapshotAllowsRunMismatch(records[recordId], snapshots[recordId]));
   if (mismatched.length) return { blocked: true, reason: "card_run_mismatch", record_ids: mismatched };
 
   const alreadyFilled = candidateIds.filter((recordId) => normalize(records[recordId]?.fields?.[PRODUCTION_DIRECTION_FIELD]));
@@ -993,7 +1010,7 @@ function selectionQueueFields(decision, queueInfo) {
   };
 }
 
-async function applyFormValue(token, tableId, formValue, { candidateIds, runId, forceNoSelection, queueInfo }) {
+async function applyFormValue(token, tableId, formValue, { candidateIds, runId, forceNoSelection, queueInfo, snapshots = {} }) {
   const decisions = decisionsFromForm(formValue, candidateIds, forceNoSelection);
   const records = Object.fromEntries((await allRecords(token, tableId)).map((record) => [record.record_id, record]));
   const updates = [];
@@ -1008,8 +1025,11 @@ async function applyFormValue(token, tableId, formValue, { candidateIds, runId, 
     }
     const fields = record.fields || {};
     if (runId && normalize(fields["运行批次"]) !== runId) {
-      skipped.push({ record_id: recordId, title: normalize(fields["选题标题"]), reason: "run_id_mismatch" });
-      continue;
+      const snapshotRunId = normalize(snapshots[recordId]?.run_id);
+      if (snapshotRunId !== normalize(fields["运行批次"])) {
+        skipped.push({ record_id: recordId, title: normalize(fields["选题标题"]), reason: "run_id_mismatch" });
+        continue;
+      }
     }
     const updateFields = {
       "状态": decision.status,
@@ -1055,10 +1075,6 @@ async function applyFormValueFast(token, tableId, formValue, { candidateIds, run
 
   for (const [recordId, decision] of Object.entries(decisions)) {
     const snapshot = snapshots[recordId] || {};
-    if (runId && snapshot.run_id && normalize(snapshot.run_id) !== runId) {
-      skipped.push({ record_id: recordId, title: normalize(snapshot.title), reason: "run_id_mismatch" });
-      continue;
-    }
     updates.push({
       record_id: recordId,
       title: normalize(snapshot.title),
@@ -1344,7 +1360,7 @@ async function processCardSubmission(value, formValue) {
 
   const tableId = await topicTableId(token);
   if (actionName === SUBMIT_PRODUCTION_DIRECTIONS_ACTION) {
-    const guard = await productionDirectionCardGuard(token, tableId, candidateIds, runId);
+    const guard = await productionDirectionCardGuard(token, tableId, candidateIds, runId, candidateSnapshots);
     if (guard.blocked) {
       return {
         ok: false,
@@ -1364,7 +1380,7 @@ async function processCardSubmission(value, formValue) {
     return directionSummary;
   }
 
-  const guard = await selectionCardGuard(token, tableId, candidateIds, runId);
+  const guard = await selectionCardGuard(token, tableId, candidateIds, runId, candidateSnapshots);
   if (guard.blocked) {
     return {
       ok: false,
@@ -1396,6 +1412,7 @@ async function processCardSubmission(value, formValue) {
         runId,
         forceNoSelection: actionName === SUBMIT_NO_SELECTION_ACTION,
         queueInfo,
+        snapshots: candidateSnapshots,
       });
   if (shouldQueueProductionDirectionCard(actionName, summary)) {
     summary.production_direction_card = {
