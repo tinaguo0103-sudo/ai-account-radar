@@ -172,6 +172,25 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
         self.assertEqual(omitted, 1)
         self.assertEqual(visible[0]["今日建议级别"], "今日最值得做")
 
+    def test_legacy_script_candidate_gets_executable_experiment(self) -> None:
+        row = {
+            "我的选题标题": "Prompt退环境后，真正要学的是把AI任务跑成闭环",
+            "推荐动作": "生成脚本包",
+            "是否建议进入制作": "是",
+            "今日建议级别": "",
+            "来源内容": "Prompt退环境",
+            "业务场景": "AI项目生产环境",
+            "旧流程痛点": "只有工具调用，没有阶段交付和失败回滚",
+            "可展示结果": "一页项目检查表",
+            "可沉淀资产": "项目验收清单",
+            "我要做的实验": "",
+            "验证方式": "",
+        }
+
+        self.assertNotEqual(push_today10_to_feishu.experiment_for(row), push_today10_to_feishu.FALLBACK_EXPERIMENT_PROMPT)
+        self.assertIn("输入", push_today10_to_feishu.experiment_for(row))
+        self.assertIn("记录输出物", push_today10_to_feishu.validation_for(row))
+
 
 if __name__ == "__main__":
     unittest.main()

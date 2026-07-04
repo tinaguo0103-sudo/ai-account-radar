@@ -117,12 +117,42 @@ def workflow_pain_for(row: dict[str, str]) -> str:
     return "我的内容生产或业务交付里还缺一段可记录、可复跑、可验收的流程。"
 
 
+def is_visible_action_candidate(row: dict[str, str]) -> bool:
+    return row.get("推荐动作", "") in VISIBLE_ACTIONS and row.get("是否建议进入制作", "") == "是"
+
+
+def inferred_experiment_for(row: dict[str, str]) -> str:
+    if not is_visible_action_candidate(row):
+        return ""
+    trigger = workflow_trigger_for(row)
+    pain = workflow_pain_for(row)
+    asset = short_text(row.get("可沉淀资产", "") or "一张可复用检查清单", 42)
+    result = short_text(row.get("可展示结果", "") or row.get("可展示证据", "") or "一页旧流程/新流程对比", 42)
+    return short_text(
+        f"输入{short_text(trigger, 28)}和我的真实场景，跑一轮{short_text(pain, 34)}改造，输出{result}，检查是否能沉淀{asset}。",
+        140,
+    )
+
+
 def experiment_for(row: dict[str, str]) -> str:
     for field in ["我要做的实验", "我的改造动作"]:
         value = short_text(row.get(field, ""), 140)
         if value and has_experiment_action(value):
             return value
+    inferred = inferred_experiment_for(row)
+    if inferred and has_experiment_action(inferred):
+        return inferred
     return FALLBACK_EXPERIMENT_PROMPT
+
+
+def validation_for(row: dict[str, str]) -> str:
+    value = short_text(row.get("验证方式", ""), 160)
+    if value and has_experiment_action(value):
+        return value
+    experiment = experiment_for(row)
+    if experiment == FALLBACK_EXPERIMENT_PROMPT:
+        return ""
+    return short_text(f"1. {experiment} 2. 记录输出物、通过/失败原因和下一步补证据。", 160)
 
 
 def clean_short_proposition(value: str) -> str:
@@ -399,7 +429,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "我的工作流痛点": pain,
         "旧流程痛点": row.get("旧流程痛点", ""),
         "AI介入点": row.get("AI介入点", ""),
-        "验证方式": row.get("验证方式", ""),
+        "验证方式": validation_for(row),
         "可沉淀资产": row.get("可沉淀资产", ""),
         "我的思考点": row.get("我的思考点", ""),
         "可展示证据": row.get("可展示证据") or row.get("可展示结果", ""),
