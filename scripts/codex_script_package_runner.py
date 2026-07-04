@@ -32,6 +32,7 @@ from script_package_shared import (
     TOPIC_MARK_FIELD,
     ensure_text_fields,
     feishu_ready_topics,
+    fields_by_name,
     filter_topics,
     load_austin_module,
     normalize_topics,
@@ -53,6 +54,12 @@ LOG_DIR = ROOT / "output" / "logs"
 LOCK_FILE = ROOT / ".runtime" / "codex_script_package_runner.lock"
 RUNNER_VERSION = "codex-local-script-package-runner-v0.2"
 MAX_REVISE_ATTEMPTS = 2
+BITABLE_TEXT_FIELD_TYPE = 1
+BITABLE_URL_FIELD_TYPE = 15
+CLICKABLE_LINK_FIELDS = {
+    "飞书文档": {"label": "打开飞书文档", "mirror_field": "飞书文档链接"},
+    "飞书文件夹": {"label": "打开飞书文件夹", "mirror_field": "飞书文件夹链接"},
+}
 RETRY_QA_PATTERNS = (
     "需要重写",
     "必须重写",
@@ -814,7 +821,7 @@ def script_status(qa_status: str) -> str:
     return "已生成完整脚本包"
 
 
-def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: Path, doc_sync: FeishuDocSyncResult | None = None, attempts: int = 1) -> dict[str, str]:
+def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: Path, doc_sync: FeishuDocSyncResult | None = None, attempts: int = 1) -> dict[str, Any]:
     qa_status = qa_status_of(package)
     qa_result = str(package.get("qa_result") or "待人工确认")
     doc_sync = doc_sync or FeishuDocSyncResult()
@@ -839,12 +846,38 @@ def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: P
     }
 
 
-def create_script_package_record(token: str, app_token: str, table_id: str, row: dict[str, str]) -> str:
+def clickable_link_value(url: str, label: str, field_type: Any) -> Any:
+    clean_url = str(url or "").strip()
+    if not clean_url:
+        return ""
+    try:
+        normalized_type = int(field_type or 0)
+    except (TypeError, ValueError):
+        normalized_type = 0
+    if normalized_type == BITABLE_URL_FIELD_TYPE:
+        return {"link": clean_url, "text": label}
+    return clean_url
+
+
+def format_script_package_record_fields(row: dict[str, Any], field_meta: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    fields = dict(row)
+    for field_name, spec in CLICKABLE_LINK_FIELDS.items():
+        label = spec["label"]
+        value = str(fields.get(field_name) or "").strip()
+        fields[field_name] = clickable_link_value(value, label, field_meta.get(field_name, {}).get("type"))
+        mirror_field = spec["mirror_field"]
+        if mirror_field in field_meta:
+            fields[mirror_field] = clickable_link_value(value, label, field_meta.get(mirror_field, {}).get("type"))
+    return fields
+
+
+def create_script_package_record(token: str, app_token: str, table_id: str, row: dict[str, Any]) -> str:
+    payload_fields = format_script_package_record_fields(row, fields_by_name(token, app_token, table_id))
     payload = feishu.request_json(
         "POST",
         f"/bitable/v1/apps/{app_token}/tables/{table_id}/records",
         token=token,
-        body={"fields": row},
+        body={"fields": payload_fields},
     )
     data = payload.get("data", {})
     record = data.get("record", data)

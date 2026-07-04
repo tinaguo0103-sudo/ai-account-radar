@@ -19,6 +19,7 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_ENV_OUT = ROOT / ".env.staging.local"
 TEST_TABLE_NAME = "06 完整脚本与制作包__测试"
 TEST_FOLDER_NAME = "06完整脚本与制作包_TEST"
+CLICKABLE_LINK_TEST_FIELDS = ["飞书文档链接", "飞书文件夹链接"]
 
 
 def quote_env(value: str) -> str:
@@ -56,6 +57,7 @@ def create_test_table(token: str, app_token: str) -> str:
     if TEST_TABLE_NAME in by_name:
         table_id = by_name[TEST_TABLE_NAME]
         ensure_text_fields(token, app_token, table_id, SCRIPT_PACKAGE_FIELDS)
+        ensure_url_fields(token, app_token, table_id, CLICKABLE_LINK_TEST_FIELDS)
         return table_id
     payload = feishu.request_json(
         "POST",
@@ -74,8 +76,36 @@ def create_test_table(token: str, app_token: str) -> str:
     table_id = str(table.get("table_id") or data.get("table_id") or "")
     if not table_id:
         raise RuntimeError(f"Could not create test table: {payload}")
+    ensure_url_fields(token, app_token, table_id, CLICKABLE_LINK_TEST_FIELDS)
     time.sleep(0.2)
     return table_id
+
+
+def ensure_url_fields(token: str, app_token: str, table_id: str, field_names: list[str]) -> list[str]:
+    fields = {
+        field["field_name"]: field
+        for field in feishu.request_json(
+            "GET",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
+            token=token,
+        ).get("data", {}).get("items", [])
+    }
+    created: list[str] = []
+    for name in field_names:
+        existing = fields.get(name)
+        if existing:
+            if int(existing.get("type") or 0) != 15:
+                raise RuntimeError(f"{name} exists but is not a URL field: type={existing.get('type')}")
+            continue
+        feishu.request_json(
+            "POST",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields",
+            token=token,
+            body={"field_name": name, "type": 15},
+        )
+        created.append(name)
+        time.sleep(0.1)
+    return created
 
 
 def drive_folder_url(folder_token: str) -> str:

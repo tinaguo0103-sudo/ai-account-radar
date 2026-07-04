@@ -131,7 +131,17 @@ def normalize(value: Any) -> str:
     if value is None:
         return ""
     if isinstance(value, list):
-        return "、".join(str(item).strip() for item in value if str(item).strip())
+        parts: list[str] = []
+        for item in value:
+            if isinstance(item, dict):
+                text = str(item.get("link") or item.get("url") or item.get("text") or item.get("name") or "").strip()
+            else:
+                text = str(item).strip()
+            if text:
+                parts.append(text)
+        return "、".join(parts)
+    if isinstance(value, dict):
+        return str(value.get("link") or value.get("url") or value.get("text") or value.get("name") or "").strip()
     return str(value).strip()
 
 
