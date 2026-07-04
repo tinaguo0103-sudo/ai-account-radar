@@ -42,6 +42,7 @@ REQUIRED_FIELDS = [
 ]
 ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
 FEISHU_VISIBLE_LEVELS = {"今日最值得做", "可选候选"}
+VISIBLE_ACTIONS = {"立即蹭热点", "生成脚本包"}
 LEVEL_ALIASES = {
     "备选": "可选候选",
     "备选候选": "可选候选",
@@ -70,6 +71,15 @@ def normalize_level(value: str) -> str:
     if "暂存" in cleaned or "观察" in cleaned:
         return "暂存观察"
     return "可选候选" if cleaned else ""
+
+
+def inferred_visible_level(row: dict[str, str], visible_rank: int) -> str:
+    level = normalize_level(row.get("今日建议级别", ""))
+    if level:
+        return level
+    if row.get("推荐动作", "") in VISIBLE_ACTIONS and row.get("是否建议进入制作", "") == "是":
+        return "今日最值得做" if visible_rank == 1 else "可选候选"
+    return ""
 
 
 def short_text(value: str, limit: int = 38) -> str:
@@ -250,12 +260,20 @@ def validate_content_inbox_synced(token: str, app_token: str, tables: dict[str, 
 
 
 def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], int]:
-    visible = [
-        row for row in rows
-        if normalize_level(row.get("今日建议级别", "")) in FEISHU_VISIBLE_LEVELS
-        and experiment_for(row) != FALLBACK_EXPERIMENT_PROMPT
-    ]
-    return visible, len(rows) - len(visible)
+    visible: list[dict[str, str]] = []
+    omitted = 0
+    for row in rows:
+        if experiment_for(row) == FALLBACK_EXPERIMENT_PROMPT:
+            omitted += 1
+            continue
+        level = inferred_visible_level(row, len(visible) + 1)
+        if level in FEISHU_VISIBLE_LEVELS:
+            normalized = dict(row)
+            normalized["今日建议级别"] = level
+            visible.append(normalized)
+            continue
+        omitted += 1
+    return visible, omitted
 
 
 def default_today10_path() -> Path:

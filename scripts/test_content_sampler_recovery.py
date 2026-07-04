@@ -7,6 +7,27 @@ import unittest
 from pathlib import Path
 
 import content_sampler
+import push_today10_to_feishu
+
+
+def sample_item(title: str, url: str, fingerprint: str) -> content_sampler.ContentItem:
+    return content_sampler.ContentItem(
+        source_type="公众号文章",
+        platform="微信公众号",
+        account_name="示例账号",
+        title=title,
+        url=url,
+        content_shape="长文",
+        cover_text="",
+        body_snippet="正文",
+        published_at="2026-07-04",
+        comment_questions="",
+        ocr_text="",
+        fetch_method="recovered_from_run_csv",
+        fetch_status="ok",
+        failure_reason="",
+        fingerprint=fingerprint,
+    )
 
 
 class ContentSamplerRecoveryTest(unittest.TestCase):
@@ -78,6 +99,78 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
             self.assertEqual(result["content_items"], 1)
             self.assertFalse(result["will_write_feishu"])
             self.assertFalse((run_dir / "content_sampler_log.json").exists())
+
+    def test_recovery_plan_counts_existing_run_and_missing_records(self) -> None:
+        items = [
+            sample_item("已有本批次", "https://example.com/a", "fp-a"),
+            sample_item("历史重复", "https://example.com/b", "fp-b"),
+            sample_item("待新增", "https://example.com/c", "fp-c"),
+        ]
+        records = [
+            {"fields": {"内容指纹": "fp-a", "最近参与运行批次": "run_20260704_080730"}},
+            {"fields": {"内容指纹": "fp-b", "最近参与运行批次": "run_old"}},
+        ]
+        original_all_records = content_sampler.all_records
+        try:
+            content_sampler.all_records = lambda *_args, **_kwargs: records
+            plan = content_sampler.content_inbox_recovery_plan("token", "app", "table", items, "run_20260704_080730")
+        finally:
+            content_sampler.all_records = original_all_records
+
+        self.assertEqual(plan["total_items"], 3)
+        self.assertEqual(plan["existing_matches"], 2)
+        self.assertEqual(plan["already_in_run"], 1)
+        self.assertEqual(plan["records_to_update"], 2)
+        self.assertEqual(plan["queued_create"], 1)
+
+    def test_recovery_log_mirrors_write_feishu_progress(self) -> None:
+        with tempfile.TemporaryDirectory() as tmpdir:
+            tmp_root = Path(tmpdir)
+            run_dir = tmp_root / "run_20260704_080730"
+            run_dir.mkdir()
+            original_out = content_sampler.OUT
+            original_latest_write = content_sampler.LATEST_WRITE_DIR
+            try:
+                content_sampler.OUT = tmp_root / "output"
+                content_sampler.LATEST_WRITE_DIR = tmp_root / "output" / "latest_write"
+                content_sampler.write_recovery_sampler_log(
+                    run_dir,
+                    "run_20260704_080730",
+                    "pending",
+                    3,
+                    {"total_items": 3, "processed_items": 0, "remaining_items": 3},
+                )
+            finally:
+                content_sampler.OUT = original_out
+                content_sampler.LATEST_WRITE_DIR = original_latest_write
+
+            self.assertTrue((run_dir / "content_sampler_log.json").exists())
+            self.assertTrue((tmp_root / "output" / "content_sampler_log.json").exists())
+            self.assertTrue((tmp_root / "output" / "latest_write" / "content_sampler_log.json").exists())
+
+    def test_feishu_visible_rows_infers_missing_level_for_script_candidates(self) -> None:
+        rows = [
+            {
+                "我的选题标题": "值得推进",
+                "推荐动作": "生成脚本包",
+                "是否建议进入制作": "是",
+                "今日建议级别": "",
+                "我要做的实验": "拿一条真实材料跑一轮脚本包生成并记录结果",
+            },
+            {
+                "我的选题标题": "先观察",
+                "推荐动作": "暂存观察",
+                "是否建议进入制作": "暂存观察",
+                "今日建议级别": "",
+                "我要做的实验": "拿一条真实材料跑一轮脚本包生成并记录结果",
+            },
+        ]
+
+        visible, omitted = push_today10_to_feishu.feishu_visible_rows(rows)
+
+        self.assertEqual(len(visible), 1)
+        self.assertEqual(omitted, 1)
+        self.assertEqual(visible[0]["今日建议级别"], "今日最值得做")
 
 
 if __name__ == "__main__":

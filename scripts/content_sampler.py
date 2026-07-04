@@ -979,6 +979,40 @@ def focus_point(topic: dict[str, Any], item: ContentItem) -> str:
     return "重点体现：这条内容如何被我拿来改造一个真实流程，而不是复述资讯。"
 
 
+def workflow_experiment_for(topic_title: str, item: ContentItem, profile: dict[str, str]) -> str:
+    result = profile.get("可展示结果", "一页对比结果")
+    asset = profile.get("可沉淀资产", "一张检查清单")
+    scene = profile.get("业务场景", "")
+    text = item_text(item)
+    if "AI导演" in scene or any(k in text for k in ["视频", "分镜", "短剧", "成片"]):
+        return f"拿这条来源做一次AI视频交付实验：输入来源材料和一个自己的短视频题目，输出{result}，通过标准是能沉淀{asset}并标出人工验收点。"
+    if "Agent" in scene or any(k in text for k in ["Agent", "智能体", "Claude Code", "Codex", "Prompt"]):
+        return f"拿这条来源做一次Agent任务拆解实验：输入来源材料和我的一个真实重复任务，输出{result}，通过标准是能沉淀{asset}并标出失败处理点。"
+    if "品牌" in scene or "营销" in scene or any(k in text for k in ["品牌", "素材", "营销", "审核"]):
+        return f"拿这条来源做一次品牌内容审核实验：输入来源材料和一条真实素材样本，输出{result}，通过标准是能沉淀{asset}并标出发布前复核点。"
+    return f"拿这条来源做一次工作流改造实验：输入来源材料和我的一个真实场景，输出{result}，通过标准是能沉淀{asset}并标出人工判断点。"
+
+
+def validation_for_experiment(profile: dict[str, str]) -> str:
+    result = profile.get("可展示结果", "对比结果")
+    asset = profile.get("可沉淀资产", "检查清单")
+    return f"1. 用当前来源材料跑一次最小实验，输出{result}；2. 检查结果是否能复用成{asset}，并记录通过/失败原因。"
+
+
+def evidence_gap_for(item: ContentItem, profile: dict[str, str]) -> str:
+    if item.source_type == "AIHOT热点":
+        return "发布前回看原文或官方来源，避免只凭摘要下结论。"
+    if is_douyin_shallow_item(item):
+        return "如果要深讲，需要补口播转写、画面截图或自己的真实案例。"
+    if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
+        return "需要补全文或关键段落，避免只凭摘要拆方法。"
+    return "需要补一张自己的旧流程/新流程对比图或真实操作截图。"
+
+
+def brief_for_topic(topic_title: str, profile: dict[str, str]) -> str:
+    return f"{topic_title}：重点不是复述来源，而是用它验证{profile.get('业务场景', '我的真实工作流')}里哪一步可以被AI改造。"
+
+
 def is_agent_task_content(text: str) -> bool:
     lower = text.lower()
     head = lower[:220]
@@ -1980,8 +2014,22 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         }
     own_angle = own_scenario_angle({"业务场景": profile["业务场景"]}, item)
     focus = focus_point({"业务场景": profile["业务场景"]}, item)
+    experiment = workflow_experiment_for(topic_title, item, profile)
+    validation = validation_for_experiment(profile)
+    evidence_gap = evidence_gap_for(item, profile)
     return {
         "我的选题标题": topic_title,
+        "选题命题": topic_title,
+        "一句话Brief": brief_for_topic(topic_title, profile),
+        "我要做的实验": experiment,
+        "热点触发点": extract_event_anchor(item) or row["内容标题"],
+        "我的工作流痛点": old_pain(scene),
+        "验证方式": validation,
+        "可展示证据": profile["可展示结果"],
+        "需要补的证据": evidence_gap,
+        "我的思考点": own_angle,
+        "重点体现": focus,
+        "不能声称的部分": "不能声称已在真实项目完整跑通，除非补到自己的截图、录屏或实际结果。",
         "内部切入角度": topic_title,
         "可发布标题": "",
         "内容类型": "",
@@ -2011,6 +2059,7 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "来源内容": row["内容标题"],
         "来源链接": item.url,
         "来源类型": row["来源类型"],
+        "对应方向": normalize_column(column),
         "对应栏目": normalize_column(column),
         "热点切入方式": row["热点切入方式"],
         "这个热点为什么值得蹭": row["这个热点为什么值得蹭"],
@@ -2220,6 +2269,9 @@ def write_recovery_sampler_log(
     if error:
         log["error"] = error
     log_path.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
+    if write_feishu:
+        copy_output_file(log_path, OUT / "content_sampler_log.json")
+        copy_output_file(log_path, LATEST_WRITE_DIR / "content_sampler_log.json")
     return log_path
 
 
@@ -2256,6 +2308,73 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
         if not data.get("has_more"):
             return records
         page_token = data.get("page_token", "")
+
+
+def content_record_indexes(records: list[dict[str, Any]]) -> tuple[
+    dict[str, dict[str, Any]],
+    dict[str, dict[str, Any]],
+    dict[tuple[str, str], dict[str, Any]],
+    dict[str, dict[str, Any]],
+]:
+    by_fp = {str(record.get("fields", {}).get("内容指纹", "")): record for record in records if record.get("fields", {}).get("内容指纹")}
+    by_url = {str(record.get("fields", {}).get("链接", "")): record for record in records if record.get("fields", {}).get("链接")}
+    by_title_time: dict[tuple[str, str], dict[str, Any]] = {}
+    by_wechat_title: dict[str, dict[str, Any]] = {}
+    for record in records:
+        fields = record.get("fields", {})
+        title = normalize_space(str(fields.get("标题", "")))
+        published_at = normalize_space(str(fields.get("发布时间", "")))
+        source_type = normalize_space(str(fields.get("来源类型", "")))
+        if title and published_at:
+            by_title_time[(title, published_at)] = record
+        if title and source_type == "公众号文章":
+            by_wechat_title[title] = record
+    return by_fp, by_url, by_title_time, by_wechat_title
+
+
+def matching_content_record(
+    item: ContentItem,
+    indexes: tuple[
+        dict[str, dict[str, Any]],
+        dict[str, dict[str, Any]],
+        dict[tuple[str, str], dict[str, Any]],
+        dict[str, dict[str, Any]],
+    ],
+) -> dict[str, Any] | None:
+    by_fp, by_url, by_title_time, by_wechat_title = indexes
+    title_key = normalize_space(item.title)
+    published_key = normalize_space(item.published_at)
+    return (
+        by_fp.get(item.fingerprint)
+        or by_url.get(item.url)
+        or by_title_time.get((title_key, published_key))
+        or (by_wechat_title.get(title_key) if item.source_type == "公众号文章" else None)
+    )
+
+
+def content_inbox_recovery_plan(token: str, app_token: str, table_id: str, items: list[ContentItem], run_id: str) -> dict[str, Any]:
+    existing = all_records(token, app_token, table_id)
+    indexes = content_record_indexes(existing)
+    existing_matches = 0
+    already_in_run = 0
+    missing_records = 0
+    for item in items:
+        record = matching_content_record(item, indexes)
+        if record:
+            existing_matches += 1
+            fields = record.get("fields", {})
+            if str(fields.get("运行批次", "")) == run_id or str(fields.get("最近参与运行批次", "")) == run_id:
+                already_in_run += 1
+            continue
+        missing_records += 1
+    return {
+        "total_items": len(items),
+        "existing_matches": existing_matches,
+        "already_in_run": already_in_run,
+        "queued_create": missing_records,
+        "records_to_update": existing_matches,
+        "remaining_items": len(items),
+    }
 
 
 def ensure_content_inbox_fields(token: str, app_token: str, table_id: str) -> list[str]:
@@ -2520,19 +2639,7 @@ def write_content_ledger_to_feishu(
     created_fields = ensure_content_inbox_fields(token, app_token, table_id)
     existing = all_records(token, app_token, table_id)
     emit("loaded_existing_records")
-    by_fp = {str(record.get("fields", {}).get("内容指纹", "")): record for record in existing if record.get("fields", {}).get("内容指纹")}
-    by_url = {str(record.get("fields", {}).get("链接", "")): record for record in existing if record.get("fields", {}).get("链接")}
-    by_title_time: dict[tuple[str, str], dict[str, Any]] = {}
-    by_wechat_title: dict[str, dict[str, Any]] = {}
-    for record in existing:
-        fields = record.get("fields", {})
-        title = normalize_space(str(fields.get("标题", "")))
-        published_at = normalize_space(str(fields.get("发布时间", "")))
-        source_type = normalize_space(str(fields.get("来源类型", "")))
-        if title and published_at:
-            by_title_time[(title, published_at)] = record
-        if title and source_type == "公众号文章":
-            by_wechat_title[title] = record
+    by_fp, by_url, by_title_time, by_wechat_title = content_record_indexes(existing)
     to_create: list[dict[str, str]] = []
     updated_existing = 0
     skipped_duplicates = 0
@@ -3133,6 +3240,16 @@ def recover_content_inbox_from_run(run_dir: Path, run_id: str, write_feishu: boo
         write_recovery_sampler_log(run_dir, run_id, "partial", len(items), snapshot)
 
     try:
+        app_token = require_feishu_env()
+        token = feishu.tenant_token()
+        table_id = resolve_table_id(list_tables(token, app_token), "content_inbox")
+        if not table_id:
+            raise SystemExit(f"Missing Feishu table: {table_name('content_inbox')}")
+        plan = content_inbox_recovery_plan(token, app_token, table_id, items, run_id)
+        progress.update(plan)
+        progress["stage"] = "planned_recovery"
+        write_recovery_sampler_log(run_dir, run_id, "partial", len(items), progress)
+        print(json.dumps({"event": "content_inbox_recovery_plan", "run_id": run_id, **plan}, ensure_ascii=False))
         ledger = write_content_ledger_to_feishu(items, run_id, progress_callback=on_progress)
     except Exception as exc:
         write_recovery_sampler_log(run_dir, run_id, "failed", len(items), progress, error=str(exc))
@@ -3179,6 +3296,7 @@ def main() -> int:
     today10 = select_skill_review_candidates(candidates)
     today10 = assign_action_quotas(today10)
     today10 = apply_editorial_judgement(today10, item_by_fp)
+    today10 = assign_today_priority(today10)
     write_debug_top10(today10, candidates, breakdown_by_fp, item_by_fp, output_dir)
 
     write_csv(output_dir / "content_items.csv", item_rows)
