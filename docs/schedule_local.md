@@ -21,8 +21,8 @@ python3 scripts/install_production_keepawake.py --install --configure-wake
 默认行为：
 
 - `pmset repeat wakeorpoweron MTWRFSU 07:50:00`：每天 07:50 唤醒或开机。
-- 用户级 LaunchAgent `com.austin.ai-account-radar.production-keepawake`：每天 07:50 执行 `/usr/bin/caffeinate -im -t 10800`，保活 3 小时。
-- 这个保活不强制点亮屏幕，只防止系统空闲睡眠和磁盘睡眠，覆盖 08:00 采集、09:15 主编写回和 10:00 发卡。
+- 用户级 LaunchAgent `com.austin.ai-account-radar.production-keepawake`：每天 07:50 执行 `/usr/bin/caffeinate -ims -t 10800`，保活 3 小时。
+- 这个保活不强制点亮屏幕，会阻止系统空闲睡眠、磁盘睡眠，并在 AC 电源下请求 `PreventSystemSleep`，覆盖 08:00 采集、09:15 主编写回和 10:00 发卡。
 
 查看状态：
 
@@ -37,6 +37,8 @@ python3 scripts/install_production_keepawake.py --launch-agent-only
 ```
 
 注意：这能提高“不插电但开盖/未合盖”的稳定性；不能保证 MacBook 在“不插电且合盖”时继续完整执行用户态任务。长期生产观察仍建议流程窗口内保持开盖，屏幕可以自动熄灭。
+
+2026-07-04 生产复盘确认，旧命令 `/usr/bin/caffeinate -im -t 10800` 只产生 `PreventUserIdleSystemSleep` / `PreventDiskIdle`，无法防住 Maintenance Sleep / DarkWake 窗口。当前命令包含 `-s`，但 `PreventSystemSleep` 只在 AC 电源下有效；如果 MacBook 合盖进入 clamshell sleep，仍可能需要接电、开盖或外接显示器等系统条件配合。安装后可用 `--status` 检查实际 LaunchAgent 命令；若 status warning 提示缺少 `-s`，必须重新安装本项目 keepawake。
 
 ## 1. 当前生产 watcher
 
