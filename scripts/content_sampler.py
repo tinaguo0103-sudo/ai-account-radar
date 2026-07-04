@@ -2468,18 +2468,10 @@ def batch_create_records(token: str, app_token: str, table_id: str, rows: list[d
 
 
 def is_transient_feishu_error(exc: BaseException) -> bool:
+    if hasattr(feishu, "is_transient_error"):
+        return bool(feishu.is_transient_error(exc))
     text = f"{exc.__class__.__name__}: {exc}".lower()
-    return any(
-        marker in text
-        for marker in [
-            "timed out",
-            "timeout",
-            "temporarily unavailable",
-            "connection reset",
-            "remote end closed",
-            "ssl",
-        ]
-    )
+    return any(marker in text for marker in ["timed out", "timeout", "connection reset"])
 
 
 def request_json_with_retry(
@@ -2494,7 +2486,7 @@ def request_json_with_retry(
     last_exc: BaseException | None = None
     for attempt in range(1, attempts + 1):
         try:
-            return feishu.request_json(method, path, token=token, body=body)
+            return feishu.request_json(method, path, token=token, body=body, retry=False)
         except Exception as exc:
             last_exc = exc
             if attempt >= attempts or not is_transient_feishu_error(exc):
