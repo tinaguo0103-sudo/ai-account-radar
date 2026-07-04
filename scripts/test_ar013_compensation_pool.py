@@ -159,5 +159,45 @@ class AR013CompensationPoolTest(unittest.TestCase):
         self.assertNotIn("Private Topic Body", text)
 
 
+class TopicCardTableIsolationTest(unittest.TestCase):
+    def test_get_topic_table_prefers_explicit_staging_table_id(self) -> None:
+        with patch.dict("os.environ", {"FEISHU_TOPIC_TABLE_ID": "tbl_staging_topic"}), \
+                patch.object(card.feishu, "list_tables", side_effect=AssertionError("list_tables should not be called")):
+            table_id = card.get_topic_table("token", "app")
+
+        self.assertEqual(table_id, "tbl_staging_topic")
+
+    def test_get_topic_table_falls_back_to_table_name_without_explicit_id(self) -> None:
+        with patch.dict("os.environ", {}, clear=True), \
+                patch.object(card.feishu, "list_tables", return_value=[
+                    {"name": "04 分析与选题", "table_id": "tbl_by_name"},
+                ]):
+            table_id = card.get_topic_table("token", "app")
+
+        self.assertEqual(table_id, "tbl_by_name")
+
+    def test_fetch_candidates_uses_explicit_table_id_for_build_path(self) -> None:
+        captured: dict[str, str] = {}
+
+        def fake_all_records(_token: str, _app_token: str, table_id: str) -> list[dict]:
+            captured["table_id"] = table_id
+            return [
+                record("rec_staging", title="Staging", run_id="run_staging", day="2026-07-04"),
+            ]
+
+        with patch.dict("os.environ", {"FEISHU_TOPIC_DECISION_TABLE_ID": "tbl_staging_topic"}), \
+                patch.object(card.feishu, "tenant_token", return_value="token"), \
+                patch.object(card, "require_app_token", return_value="app"), \
+                patch.object(card.feishu, "list_tables", side_effect=AssertionError("list_tables should not be called")), \
+                patch.object(card, "all_records", side_effect=fake_all_records), \
+                patch.object(card, "load_card_candidate_ledger", return_value=set()), \
+                patch.object(card, "compensation_pool_window", return_value=(date(2026, 7, 2), date(2026, 7, 4))):
+            _token, _app, table_id, selected = card.fetch_candidates("run_staging", 7)
+
+        self.assertEqual(table_id, "tbl_staging_topic")
+        self.assertEqual(captured["table_id"], "tbl_staging_topic")
+        self.assertEqual([item["record_id"] for item in selected], ["rec_staging"])
+
+
 if __name__ == "__main__":
     unittest.main()

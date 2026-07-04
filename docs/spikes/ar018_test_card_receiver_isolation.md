@@ -25,7 +25,9 @@ The Feishu cloud receiver code itself already prefers explicit topic table env v
 
 The local health check did not mirror that priority before this change.
 
-The current `.env.staging.local` has the staging 04 table id configured, but the test card receiver and target variables are still incomplete for real Flow QA:
+After the receiver health check was fixed and a test SCF URL was configured, AR-018 Test Card Smoke found one more isolation gap: the real Topic Card sender path still used table-name lookup in `feishu_topic_decision_card.get_topic_table()`. Under the same `.env.staging.local`, health check used `tblWAH8Ba3wh5jdo`, but sender/build resolved the production table named `04 分析与选题`. Sender and health check must share the same table-id priority before any real test card is sent.
+
+The current `.env.staging.local` has the staging 04 table id configured. For real Flow QA it must also have the isolated test receiver and personal/test receive targets:
 
 - `FEISHU_TENCENT_SCF_URL`
 - `FEISHU_CARD_RECEIVE_TARGETS`
@@ -40,6 +42,14 @@ The current `.env.staging.local` has the staging 04 table id configured, but the
 - adds `--require-test-card-config` for card Flow QA;
 - fails the test-card config gate when receiver URL, test receive target, production-direction test target, or explicit topic table id is missing;
 - rejects `AI_ACCOUNT_RADAR_ENV=prod/production` for test-card config.
+
+`scripts/feishu_topic_decision_card.py` now uses the same explicit topic-table priority:
+
+- `FEISHU_TOPIC_TABLE_ID`;
+- `FEISHU_TOPIC_DECISION_TABLE_ID`;
+- table-name lookup only when no explicit topic table id is configured.
+
+This applies to build/send candidate reads, apply, local callback serving, and long-connection callback serving because all of those paths resolve through `get_topic_table()`.
 
 Normal read-only checks can still use:
 
@@ -72,16 +82,28 @@ Read-only staging health now reports the explicit staging table id source for `t
 }
 ```
 
+The real sender path now matches that table id under the same staging env:
+
+```text
+health_table_id=tblWAH8Ba3wh5jdo
+health_source=FEISHU_TOPIC_TABLE_ID
+sender_table_id=tblWAH8Ba3wh5jdo
+same=true
+```
+
+`feishu_topic_decision_card.py build --run-id ar018-test --limit 1` can run without sending a card and uses the staging/test table path.
+
 No production table writes, production card sends, production collection, or production SCF changes were performed.
 
 ## Required External Configuration
 
-Before AR-013 Flow QA can send/click a real test card, PM/user must provide or authorize:
+Before AR-013 Flow QA can send/click a real test card, PM/user must ensure:
 
-- a test Tencent SCF receiver URL, or permission to deploy a separate test receiver;
-- cloud env vars for that receiver, especially explicit staging/test `FEISHU_TOPIC_TABLE_ID=tblWAH8Ba3wh5jdo`;
-- a personal/test `FEISHU_CARD_RECEIVE_TARGETS`;
-- a personal/test `FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS`;
-- confirmation that the test receiver app does not trigger production 06 watcher or production follow-up automation.
+- the test Tencent SCF receiver URL is configured in local staging env;
+- cloud env vars for that receiver explicitly include staging/test `FEISHU_TOPIC_TABLE_ID=tblWAH8Ba3wh5jdo`;
+- personal/test `FEISHU_CARD_RECEIVE_TARGETS` is configured;
+- personal/test `FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS` is configured;
+- sender/build table id and health check table id both point to `tblWAH8Ba3wh5jdo`;
+- the test receiver app does not trigger production 06 watcher or production follow-up automation.
 
 After those are configured, run the full gate command above and only then resume AR-013 Flow + Regression QA.

@@ -29,6 +29,7 @@ from topic_decision_fields import SELECTION_REASON_OPTIONS
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output" / "decision_cards"
 TARGET_TABLE_KEY = "topic_decision"
+TOPIC_TABLE_ID_ENV_KEYS = ("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE_ID")
 TOPIC_CREATE_KIND = "topic_candidate_create"
 TOPIC_CARD_SEND_KIND = "topic_card_send"
 DEFAULT_LIMIT = 7
@@ -241,7 +242,18 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     return "\n".join(lines)
 
 
+def explicit_topic_table_id() -> tuple[str, str]:
+    for key in TOPIC_TABLE_ID_ENV_KEYS:
+        value = os.getenv(key, "").strip()
+        if value:
+            return value, key
+    return "", ""
+
+
 def get_topic_table(token: str, app_token: str) -> str:
+    explicit_table_id, _source = explicit_topic_table_id()
+    if explicit_table_id:
+        return explicit_table_id
     table_id = resolve_table_id({table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}, TARGET_TABLE_KEY)
     if not table_id:
         raise SystemExit(f"Missing table: {TABLES[TARGET_TABLE_KEY]}")
