@@ -190,6 +190,7 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
         self.assertNotEqual(push_today10_to_feishu.experiment_for(row), push_today10_to_feishu.FALLBACK_EXPERIMENT_PROMPT)
         self.assertIn("输入", push_today10_to_feishu.experiment_for(row))
         self.assertIn("记录输出物", push_today10_to_feishu.validation_for(row))
+        self.assertEqual(push_today10_to_feishu.display_title_for(row), row["我的选题标题"])
 
 
 if __name__ == "__main__":

@@ -179,6 +179,8 @@ def proposition_for(row: dict[str, str]) -> str:
 
 
 def display_title_for(row: dict[str, str]) -> str:
+    if is_visible_action_candidate(row) and row.get("我的选题标题"):
+        return short_text(row["我的选题标题"], 88)
     proposition = proposition_for(row)
     if proposition:
         return proposition
