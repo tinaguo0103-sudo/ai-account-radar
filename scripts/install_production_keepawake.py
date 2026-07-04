@@ -14,6 +14,7 @@ PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 LOG_DIR = Path.home() / "Library" / "Logs" / "ai-account-radar"
 DEFAULT_WAKE_TIME = "07:50:00"
 DEFAULT_DURATION_SECONDS = 3 * 60 * 60
+CAFFEINATE_FLAGS = "-ims"
 
 
 def run(command: list[str], check: bool = True) -> subprocess.CompletedProcess[str]:
@@ -47,7 +48,7 @@ def build_plist(start_time: str, duration_seconds: int) -> dict[str, object]:
         "Label": LABEL,
         "ProgramArguments": [
             "/usr/bin/caffeinate",
-            "-im",
+            CAFFEINATE_FLAGS,
             "-t",
             str(duration),
         ],
@@ -58,6 +59,28 @@ def build_plist(start_time: str, duration_seconds: int) -> dict[str, object]:
         "StandardOutPath": str(LOG_DIR / "production_keepawake.out.log"),
         "StandardErrorPath": str(LOG_DIR / "production_keepawake.err.log"),
     }
+
+
+def has_caffeinate_flag(arguments: list[str], flag: str) -> bool:
+    expected = flag.removeprefix("-")
+    for argument in arguments:
+        if argument.startswith("-") and expected in argument[1:]:
+            return True
+    return False
+
+
+def status_warnings_from_plist(plist: dict[str, object]) -> list[str]:
+    arguments = plist.get("ProgramArguments")
+    if not isinstance(arguments, list) or not all(isinstance(item, str) for item in arguments):
+        return ["LaunchAgent ProgramArguments is missing or invalid; keepawake command cannot be verified."]
+    if "/usr/bin/caffeinate" not in arguments:
+        return ["LaunchAgent is not using /usr/bin/caffeinate; keepawake command cannot be verified."]
+    if not has_caffeinate_flag(arguments, "-s"):
+        return [
+            "LaunchAgent caffeinate flags do not include -s; "
+            "PreventSystemSleep will not be asserted on AC power."
+        ]
+    return []
 
 
 def bootout() -> None:
@@ -117,6 +140,17 @@ def uninstall(args: argparse.Namespace) -> int:
 def status() -> int:
     plist_exists = PLIST_PATH.exists()
     print(f"plist_exists={plist_exists} path={PLIST_PATH}")
+    if plist_exists:
+        try:
+            with PLIST_PATH.open("rb") as handle:
+                plist = plistlib.load(handle)
+            arguments = plist.get("ProgramArguments")
+            if isinstance(arguments, list):
+                print(f"installed_program_arguments={arguments}")
+            for warning in status_warnings_from_plist(plist):
+                print(f"WARNING: {warning}")
+        except Exception as exc:  # pragma: no cover - defensive status output
+            print(f"WARNING: failed to inspect plist: {exc}")
     result = run(["launchctl", "print", service_name()], check=False)
     if result.stdout:
         print(result.stdout)
