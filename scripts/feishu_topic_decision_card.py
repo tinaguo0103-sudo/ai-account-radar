@@ -87,6 +87,13 @@ def normalize(value: Any) -> str:
     return str(value).strip()
 
 
+def selection_reason_value(tags: Any, current_value: Any = None) -> Any:
+    values = [str(item).strip() for item in (tags if isinstance(tags, list) else [tags]) if str(item).strip()]
+    if isinstance(current_value, list):
+        return values
+    return "、".join(values)
+
+
 def compact(value: Any, limit: int) -> str:
     text = " ".join(normalize(value).split())
     if len(text) <= limit:
@@ -776,7 +783,7 @@ def apply_form_value(
         update_fields: dict[str, Any] = {
             "状态": decision["status"],
             "学习状态": "待学习",
-            "选择原因标签": decision["tags"],
+            "选择原因标签": selection_reason_value(decision["tags"], fields.get("选择原因标签")),
             "人工一句话判断": decision.get("manual_reason") or "",
         }
         updates.append({

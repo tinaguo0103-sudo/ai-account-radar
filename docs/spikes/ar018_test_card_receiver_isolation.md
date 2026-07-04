@@ -107,3 +107,24 @@ Before AR-013 Flow QA can send/click a real test card, PM/user must ensure:
 - the test receiver app does not trigger production 06 watcher or production follow-up automation.
 
 After those are configured, run the full gate command above and only then resume AR-013 Flow + Regression QA.
+
+## 2026-07-04 Callback Write Failure Diagnosis
+
+AR-018 Test Card Smoke Round 2 proved that the test card can be sent to the personal test target and rendered in Feishu Web, but clicking `本批都不选` did not update the staging/test 04 record.
+
+The callback path was narrowed with a safe synthetic event against the isolated test receiver URL and the staging/test record:
+
+- the request reached the isolated test SCF receiver;
+- the receiver attempted to update staging/test table `tblWAH8Ba3wh5jdo`;
+- Feishu rejected the update because `选择原因标签` was sent as an array while the actual staging/test field is `type=1 / Text`;
+- production 04/06 and watcher paths were not touched.
+
+The receiver and local sender now format `选择原因标签` by field shape:
+
+- type `4` multi-select fields keep an array of option names;
+- text fields receive a readable `、`-joined string;
+- empty no-selection tags become an empty string for text fields.
+
+This keeps the staging/test table compatible without assuming every environment has already migrated the reason-tag field to multi-select.
+
+Deployment note: the local package was rebuilt with `npm run package:tencent-scf`, but this code still must be uploaded to the isolated test SCF `feishu-topic-card-receiver-ar018-test` before the next real test-card smoke. The available isolated Chrome profile is not logged in to Tencent Cloud, and no local `tccli`/deployment credential was available in the dev worktree.

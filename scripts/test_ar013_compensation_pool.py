@@ -127,6 +127,44 @@ class AR013CompensationPoolTest(unittest.TestCase):
         self.assertEqual(summary["candidate_update_count"], 2)
         self.assertEqual(summary["skipped"], [])
         self.assertEqual(summary["updates"][0]["record_id"], "rec_old")
+        self.assertEqual(summary["updates"][0]["fields"]["选择原因标签"], "")
+
+    def test_apply_form_value_formats_reason_tags_for_text_fields(self) -> None:
+        records = [record("rec_a", title="A", run_id="run_20260704_080730", day="2026-07-04")]
+        with patch.object(card, "all_records", return_value=records):
+            summary = card.apply_form_value(
+                "token",
+                "app",
+                "table",
+                {
+                    card.ENTER_SCRIPT_PACKAGE_FORM_KEY: ["rec_a"],
+                    "positive_reason_tags": ["证据够", "判断够强"],
+                },
+                candidate_ids=["rec_a"],
+                run_id="run_20260704_080730",
+                write=False,
+            )
+
+        self.assertEqual(summary["updates"][0]["fields"]["选择原因标签"], "证据够、判断够强")
+
+    def test_apply_form_value_preserves_reason_tags_for_multi_select_fields(self) -> None:
+        records = [record("rec_a", title="A", run_id="run_20260704_080730", day="2026-07-04")]
+        records[0]["fields"]["选择原因标签"] = []
+        with patch.object(card, "all_records", return_value=records):
+            summary = card.apply_form_value(
+                "token",
+                "app",
+                "table",
+                {
+                    card.ENTER_SCRIPT_PACKAGE_FORM_KEY: ["rec_a"],
+                    "positive_reason_tags": ["证据够"],
+                },
+                candidate_ids=["rec_a"],
+                run_id="run_20260704_080730",
+                write=False,
+            )
+
+        self.assertEqual(summary["updates"][0]["fields"]["选择原因标签"], ["证据够"])
 
     def test_apply_form_value_rejects_cross_run_candidate_without_snapshot(self) -> None:
         records = [record("rec_old", title="Old", run_id="run_20260703_080000", day="2026-07-03")]

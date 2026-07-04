@@ -129,15 +129,68 @@ test("updates selected and unselected candidate records", async () => {
   assert.deepEqual(puts[0].body.fields, {
     "状态": "生成脚本包",
     "学习状态": "待学习",
-    "选择原因标签": ["证据够"],
+    "选择原因标签": "证据够",
     "人工一句话判断": "测试原因",
   });
   assert.deepEqual(puts[1].body.fields, {
     "状态": "不做",
     "学习状态": "待学习",
-    "选择原因标签": [],
+    "选择原因标签": "",
     "人工一句话判断": "",
   });
+});
+
+test("preserves reason tags as array when field is multi-select", async () => {
+  const records = [
+    { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } },
+  ];
+  const calls = [];
+  const fetchImpl = async (url, init = {}) => {
+    const parsed = new URL(url);
+    const path = parsed.pathname + parsed.search;
+    calls.push({ method: init.method || "GET", path, body: init.body ? JSON.parse(init.body) : undefined });
+    if (path.endsWith("/auth/v3/tenant_access_token/internal")) {
+      return Response.json({ code: 0, tenant_access_token: "tenant_test" });
+    }
+    if (path.includes("/bitable/v1/apps/base_test/tables") && !path.includes("/records") && !path.includes("/fields")) {
+      return Response.json({ code: 0, data: { items: [{ name: "04 分析与选题", table_id: "tbl_topic" }] } });
+    }
+    if (path.endsWith("/fields")) {
+      return Response.json({ code: 0, data: { items: [{ field_name: "选择原因标签", type: 4 }] } });
+    }
+    if (path.includes("/records?")) {
+      return Response.json({ code: 0, data: { has_more: false, items: records } });
+    }
+    const recordMatch = path.match(/\/records\/([^/?]+)$/);
+    if (recordMatch && (init.method || "GET") === "GET") {
+      const record = records.find((item) => item.record_id === decodeURIComponent(recordMatch[1]));
+      if (!record) return Response.json({ code: 1254045, msg: "record not found" }, { status: 404 });
+      return Response.json({ code: 0, data: { record } });
+    }
+    if (path.includes("/records/")) {
+      return Response.json({ code: 0, data: {} });
+    }
+    return Response.json({ code: 999, msg: `unexpected path ${path}` }, { status: 500 });
+  };
+  const response = await handlePayload(
+    {
+      header: { token: "verify_test" },
+      event: {
+        action: {
+          value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a"] },
+          form_value: {
+            script_package_records: ["rec_a"],
+            positive_reason_tags: ["证据够"],
+          },
+        },
+      },
+    },
+    env,
+    { fetchImpl },
+  );
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 1 条选择"));
+  const put = calls.find((call) => call.method === "PUT");
+  assert.deepEqual(put.body.fields["选择原因标签"], ["证据够"]);
 });
 
 test("queues production direction card after selected topics are written", async () => {

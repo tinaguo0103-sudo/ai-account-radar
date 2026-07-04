@@ -999,6 +999,12 @@ function fieldsEqual(current, next) {
   return Object.entries(next).every(([fieldName, value]) => normalize(current[fieldName]) === normalize(value));
 }
 
+function selectionReasonValue(tags, field) {
+  const values = coerceList(tags);
+  if (Number(field?.type) === 4) return values;
+  return values.join("、");
+}
+
 function selectionQueueFields(decision, queueInfo) {
   if (!queueInfo?.enabled || decision.status !== SCRIPT_PACKAGE_READY_STATUS) return {};
   return {
@@ -1012,6 +1018,8 @@ function selectionQueueFields(decision, queueInfo) {
 
 async function applyFormValue(token, tableId, formValue, { candidateIds, runId, forceNoSelection, queueInfo, snapshots = {} }) {
   const decisions = decisionsFromForm(formValue, candidateIds, forceNoSelection);
+  const fieldMap = await fieldsByName(token, tableId);
+  const reasonField = fieldMap["选择原因标签"];
   const records = Object.fromEntries((await allRecords(token, tableId)).map((record) => [record.record_id, record]));
   const updates = [];
   const skipped = [];
@@ -1034,7 +1042,7 @@ async function applyFormValue(token, tableId, formValue, { candidateIds, runId, 
     const updateFields = {
       "状态": decision.status,
       "学习状态": "待学习",
-      "选择原因标签": decision.tags,
+      "选择原因标签": selectionReasonValue(decision.tags, reasonField),
       "人工一句话判断": decision.manual_reason || "",
       ...selectionQueueFields(decision, queueInfo),
     };
@@ -1069,6 +1077,8 @@ async function applyFormValue(token, tableId, formValue, { candidateIds, runId, 
 
 async function applyFormValueFast(token, tableId, formValue, { candidateIds, runId, forceNoSelection, snapshots, queueInfo }) {
   const decisions = decisionsFromForm(formValue, candidateIds, forceNoSelection);
+  const fieldMap = await fieldsByName(token, tableId);
+  const reasonField = fieldMap["选择原因标签"];
   const dryRun = String(envValue("DRY_RUN")).toLowerCase() === "true";
   const updates = [];
   const skipped = [];
@@ -1081,7 +1091,7 @@ async function applyFormValueFast(token, tableId, formValue, { candidateIds, run
       fields: {
         "状态": decision.status,
         "学习状态": "待学习",
-        "选择原因标签": decision.tags,
+        "选择原因标签": selectionReasonValue(decision.tags, reasonField),
         "人工一句话判断": decision.manual_reason || "",
         ...selectionQueueFields(decision, queueInfo),
       },
