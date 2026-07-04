@@ -24,11 +24,13 @@ from __future__ import annotations
 import csv
 import json
 import os
+import socket
+import ssl
 import sys
 import time
 from pathlib import Path
 from typing import Any
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from feishu_table_registry import PROTECTED_TABLE_NAMES, table_name
@@ -38,6 +40,8 @@ from local_env import load_local_env
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
 DEFAULT_API_HOST = "https://open.feishu.cn"
+SAFE_RETRY_METHODS = {"GET", "PUT", "PATCH", "DELETE"}
+TRANSIENT_HTTP_STATUS = {408, 425, 429, 500, 502, 503, 504}
 
 load_local_env()
 
@@ -75,18 +79,97 @@ def die(message: str) -> None:
     raise SystemExit(1)
 
 
-def request_json(method: str, path: str, token: str | None = None, body: dict[str, Any] | None = None) -> dict[str, Any]:
+def is_transient_error(exc: BaseException) -> bool:
+    if isinstance(exc, HTTPError):
+        return exc.code in TRANSIENT_HTTP_STATUS
+    if isinstance(exc, URLError):
+        return True
+    if isinstance(exc, (TimeoutError, socket.timeout, ConnectionResetError, ssl.SSLError)):
+        return True
+    text = f"{exc.__class__.__name__}: {exc}".lower()
+    return any(
+        marker in text
+        for marker in [
+            "timed out",
+            "timeout",
+            "temporarily unavailable",
+            "connection reset",
+            "remote end closed",
+            "ssl",
+        ]
+    )
+
+
+def should_retry_request(method: str, retry: bool | None) -> bool:
+    if retry is not None:
+        return retry
+    return method.upper() in SAFE_RETRY_METHODS
+
+
+def retry_status_unknown_error(method: str, path: str, exc: BaseException) -> RuntimeError:
+    return RuntimeError(
+        f"{method} {path} failed with transient error; status unknown and not retried "
+        f"because request is not marked safe/idempotent: {exc}"
+    )
+
+
+def request_json(
+    method: str,
+    path: str,
+    token: str | None = None,
+    body: dict[str, Any] | None = None,
+    *,
+    retry: bool | None = None,
+    attempts: int = 3,
+    base_delay: float = 1.0,
+) -> dict[str, Any]:
     data = None if body is None else json.dumps(body, ensure_ascii=False).encode("utf-8")
     headers = {"Content-Type": "application/json; charset=utf-8"}
     if token:
         headers["Authorization"] = f"Bearer {token}"
     req = Request(api_base_url() + path, data=data, method=method, headers=headers)
-    try:
-        with urlopen(req, timeout=30) as resp:
-            payload = json.loads(resp.read().decode("utf-8"))
-    except HTTPError as exc:
-        detail = exc.read().decode("utf-8", errors="replace")
-        raise RuntimeError(f"{method} {path} failed: HTTP {exc.code} {detail}") from exc
+    retry_enabled = should_retry_request(method, retry)
+    last_exc: BaseException | None = None
+    for attempt in range(1, max(1, attempts) + 1):
+        try:
+            with urlopen(req, timeout=30) as resp:
+                payload = json.loads(resp.read().decode("utf-8"))
+            break
+        except HTTPError as exc:
+            last_exc = exc
+            detail = exc.read().decode("utf-8", errors="replace")
+            if not is_transient_error(exc):
+                raise RuntimeError(f"{method} {path} failed: HTTP {exc.code} {detail}") from exc
+            if not retry_enabled:
+                raise retry_status_unknown_error(method, path, exc) from exc
+            if attempt >= max(1, attempts):
+                raise RuntimeError(
+                    f"{method} {path} failed after {attempt} attempts; status unknown: HTTP {exc.code} {detail}"
+                ) from exc
+            sleep_seconds = base_delay * attempt
+            print(
+                f"[warn] transient Feishu {method} {path} failed "
+                f"(attempt {attempt}/{attempts}); retrying in {sleep_seconds:.1f}s: HTTP {exc.code}",
+                file=sys.stderr,
+            )
+            time.sleep(sleep_seconds)
+        except (TimeoutError, socket.timeout, URLError, ConnectionResetError, ssl.SSLError) as exc:
+            last_exc = exc
+            if not retry_enabled:
+                raise retry_status_unknown_error(method, path, exc) from exc
+            if attempt >= max(1, attempts):
+                raise RuntimeError(
+                    f"{method} {path} failed after {attempt} attempts; status unknown: {exc}"
+                ) from exc
+            sleep_seconds = base_delay * attempt
+            print(
+                f"[warn] transient Feishu {method} {path} failed "
+                f"(attempt {attempt}/{attempts}); retrying in {sleep_seconds:.1f}s: {exc}",
+                file=sys.stderr,
+            )
+            time.sleep(sleep_seconds)
+    else:
+        raise RuntimeError(f"{method} {path} failed after {attempts} attempts: {last_exc}")
     if payload.get("code", 0) != 0:
         raise RuntimeError(f"{method} {path} failed: {payload}")
     return payload
@@ -100,7 +183,7 @@ def tenant_token() -> str:
     payload = request_json("POST", "/auth/v3/tenant_access_token/internal", body={
         "app_id": app_id,
         "app_secret": app_secret,
-    })
+    }, retry=True)
     token = payload.get("tenant_access_token")
     if not token:
         die("Feishu did not return tenant_access_token")

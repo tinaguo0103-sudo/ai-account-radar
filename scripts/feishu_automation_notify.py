@@ -7,10 +7,15 @@ import hashlib
 import json
 import os
 from datetime import datetime
+from pathlib import Path
 from typing import Any
 
 import push_to_feishu as feishu
 from local_env import load_local_env
+
+
+ROOT = Path(__file__).resolve().parents[1]
+LOG_DIR = ROOT / "output" / "logs"
 
 
 def parse_receive_targets(raw_targets: list[str]) -> list[tuple[str, str]]:
@@ -57,6 +62,30 @@ def send_text(token: str, receive_id_type: str, receive_id: str, text: str, uuid
     )
 
 
+def persist_notification_failure(
+    title: str,
+    body: str,
+    receive_id_type: str,
+    receive_id: str,
+    exc: BaseException,
+) -> Path:
+    LOG_DIR.mkdir(parents=True, exist_ok=True)
+    path = LOG_DIR / f"feishu_notification_failures_{datetime.now().strftime('%Y-%m-%d')}.jsonl"
+    event = {
+        "generated_at": datetime.now().isoformat(timespec="seconds"),
+        "title": title,
+        "receive_id_type": receive_id_type,
+        "receive_id": receive_id,
+        "delivery_status": "unknown",
+        "retry_policy": "not_retried_to_avoid_duplicate_notification",
+        "error": f"{exc.__class__.__name__}: {exc}",
+        "body_preview": body[:500],
+    }
+    with path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(event, ensure_ascii=False) + "\n")
+    return path
+
+
 def notify(title: str, body: str, targets: list[tuple[str, str]] | None = None) -> list[dict[str, Any]]:
     load_local_env()
     token = feishu.tenant_token()
@@ -65,7 +94,22 @@ def notify(title: str, body: str, targets: list[tuple[str, str]] | None = None) 
     text = f"{title}\n时间：{now}\n{body}".strip()
     responses: list[dict[str, Any]] = []
     for receive_id_type, receive_id in send_targets:
-        responses.append(send_text(token, receive_id_type, receive_id, text, f"{title}|{body}|{receive_id_type}|{receive_id}|{now[:16]}"))
+        try:
+            responses.append(send_text(token, receive_id_type, receive_id, text, f"{title}|{body}|{receive_id_type}|{receive_id}|{now[:16]}"))
+        except Exception as exc:
+            path = persist_notification_failure(title, body, receive_id_type, receive_id, exc)
+            print(
+                json.dumps(
+                    {
+                        "ok": False,
+                        "event": "feishu_notification_delivery_unknown",
+                        "log": str(path),
+                        "error": f"{exc.__class__.__name__}: {exc}",
+                    },
+                    ensure_ascii=False,
+                )
+            )
+            raise
     return responses
 
 
