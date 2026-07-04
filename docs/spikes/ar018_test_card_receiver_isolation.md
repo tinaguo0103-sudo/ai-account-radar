@@ -128,3 +128,28 @@ The receiver and local sender now format `选择原因标签` by field shape:
 This keeps the staging/test table compatible without assuming every environment has already migrated the reason-tag field to multi-select.
 
 Deployment note: the local package was rebuilt with `npm run package:tencent-scf`, but this code still must be uploaded to the isolated test SCF `feishu-topic-card-receiver-ar018-test` before the next real test-card smoke. The available isolated Chrome profile is not logged in to Tencent Cloud, and no local `tccli`/deployment credential was available in the dev worktree.
+
+## 2026-07-05 Real Button Callback Diagnosis
+
+AR-018 Test Card Smoke Round 3 proved that the deployed test receiver can write staging/test `04` when called directly with a synthetic `submit_no_selection` event, but a real Feishu Web button click still did not update the staging/test record.
+
+The diagnosis narrowed the failure to the Feishu app callback binding, not the receiver write logic:
+
+- local staging health check still passed and pointed at `tblWAH8Ba3wh5jdo`;
+- sender table-id probe and health check used the same staging/test table;
+- Tencent SCF log query for `feishu-topic-card-receiver-ar018-test` could not confirm real clicks because the test function has not enabled log delivery;
+- Feishu Open Platform callback config subscribed `card.action.trigger`, but the configured callback URL hash matched the production receiver URL from production `.env.local`;
+- the configured callback URL hash did not match `.env.staging.local` `FEISHU_TENCENT_SCF_URL`;
+- Feishu event log query for the real click window returned no `card.action.trigger` delivery result for the inspected app.
+
+This means the real Web button is not proven to hit the isolated test SCF. The current app-level callback binding is production-shaped, while local staging sends cards with the same app credentials. Changing that callback URL to the test receiver would affect the app globally and could break production card callbacks, so it must not be done as an AR-018 test fix.
+
+Next safe paths:
+
+1. Create or use a separate Feishu test app/robot whose callback URL can point to `feishu-topic-card-receiver-ar018-test`.
+2. Configure `.env.staging.local` to use that test app id/secret and personal test receive targets.
+3. Keep the production app callback bound to the production receiver.
+4. Enable log delivery on the test SCF or add a test-only redacted callback marker before the next real Web button smoke.
+5. Rerun `check_feishu_card_cloud_receiver.py --require-test-card-config --table-key topic_decision`, then run a real test card smoke against the separate test app.
+
+Until a separate test app or explicitly safe test callback binding exists, AR-018 should remain blocked for real button Flow QA even though synthetic receiver writes pass.
