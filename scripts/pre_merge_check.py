@@ -101,6 +101,16 @@ def check_feishu_receiver_node_tests() -> dict[str, Any]:
 
 
 def check_topic_card_guard() -> dict[str, Any]:
+    if ROOT.resolve() == PRODUCTION_ROOT.resolve():
+        return {
+            "ok": False,
+            "name": "topic card production guard in dev",
+            "returncode": 2,
+            "stdout": "",
+            "stderr": "Refusing to run Topic Card guard probe from the production worktree.",
+            "command": [sys.executable, "scripts/run_topic_card_if_fresh.py", "--no-notify"],
+            "cwd": str(ROOT),
+        }
     result = run([sys.executable, "scripts/run_topic_card_if_fresh.py", "--no-notify"])
     ok = result["returncode"] == 2 and "running_from_development_worktree" in result["stdout"]
     return {"ok": ok, "name": "topic card production guard in dev", **result}
