@@ -113,10 +113,10 @@ def check_topic_card_guard() -> dict[str, Any]:
             "returncode": 2,
             "stdout": "",
             "stderr": "Refusing to run Topic Card guard probe from the production worktree.",
-            "command": [sys.executable, "scripts/run_topic_card_if_fresh.py", "--no-notify"],
+            "command": [sys.executable, "scripts/run_topic_card_if_fresh.py", "--check-only"],
             "cwd": str(ROOT),
         }
-    result = run([sys.executable, "scripts/run_topic_card_if_fresh.py", "--no-notify"])
+    result = run([sys.executable, "scripts/run_topic_card_if_fresh.py", "--check-only"])
     ok = result["returncode"] == 2 and (
         "running_from_development_worktree" in result["stdout"]
         or "running_from_unexpected_directory" in result["stdout"]

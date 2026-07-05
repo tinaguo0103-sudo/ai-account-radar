@@ -166,6 +166,11 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Guarded sender for the daily topic decision card.")
     parser.add_argument("--limit", type=int, default=7)
     parser.add_argument("--send-dry-run", action="store_true")
+    parser.add_argument(
+        "--check-only",
+        action="store_true",
+        help="Only evaluate freshness/idempotency guards; do not invoke the card sender or write card artifacts.",
+    )
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu skip/failure notifications.")
     parser.add_argument(
         "--allow-non-production-worktree",
@@ -175,10 +180,11 @@ def main() -> int:
     args = parser.parse_args()
 
     load_local_env()
+    should_notify = (not args.no_notify) and (not args.check_only)
     guard = check_automation_worktree(ROOT, allow_non_production=args.allow_non_production_worktree)
     if not guard.ok:
         summary = guard_failure_summary(guard, "10:00 每日选题卡发送")
-        if not args.no_notify:
+        if should_notify:
             notify("AI账号雷达选题卡发送失败", qa_for_command_failure(
                 "10:00 每日选题卡发送",
                 [sys.executable, str(Path(__file__).resolve())],
@@ -188,6 +194,8 @@ def main() -> int:
         print(json.dumps({
             "ok": False,
             "sent": False,
+            "would_send": False,
+            "check_only": args.check_only,
             "reason": guard.reason,
             "note": "Blocked card sending because the automation entrypoint is not running from the production worktree.",
         }, ensure_ascii=False, indent=2))
@@ -195,11 +203,13 @@ def main() -> int:
 
     ok, reason, run_id = fresh_collection_status()
     if not ok:
-        if not args.no_notify:
+        if should_notify:
             notify("AI账号雷达今日未发选题卡", skip_summary(reason, run_id))
         print(json.dumps({
             "ok": True,
             "sent": False,
+            "would_send": False,
+            "check_only": args.check_only,
             "reason": reason,
             "run_id": run_id,
             "note": "Skipped card sending to avoid reusing stale candidates.",
@@ -209,16 +219,33 @@ def main() -> int:
     unknowns = idempotency.blocking_unknowns(run_id=run_id, kinds=TOPIC_CARD_GUARD_KINDS)
     if unknowns:
         summary = idempotency_skip_summary(run_id, unknowns)
-        if not args.no_notify:
+        if should_notify:
             notify("AI账号雷达今日未发选题卡", summary)
         print(json.dumps({
             "ok": True,
             "sent": False,
+            "would_send": False,
+            "check_only": args.check_only,
             "reason": "feishu_idempotency_unknown_guard",
             "run_id": run_id,
             "unknown_count": len(unknowns),
             "note": "Skipped card sending because a non-idempotent Feishu operation is status-unknown.",
             "summary": summary,
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    if args.check_only:
+        candidate_count, candidate_reason = feishu_topic_records_for_run(run_id)
+        print(json.dumps({
+            "ok": True,
+            "sent": False,
+            "would_send": candidate_reason == "ok" and candidate_count > 0,
+            "check_only": True,
+            "reason": "fresh",
+            "run_id": run_id,
+            "candidate_count": candidate_count,
+            "candidate_count_reason": candidate_reason,
+            "note": "Check-only mode did not invoke the card sender or write card artifacts.",
         }, ensure_ascii=False, indent=2))
         return 0
 
@@ -233,7 +260,7 @@ def main() -> int:
     if args.send_dry_run:
         command.append("--send-dry-run")
     result = subprocess.run(command, cwd=ROOT, text=True)
-    if result.returncode != 0 and not args.no_notify:
+    if result.returncode != 0 and should_notify:
         notify("AI账号雷达选题卡发送失败", send_failure_summary(run_id, result.returncode))
     print(json.dumps({"ok": result.returncode == 0, "sent": result.returncode == 0, "run_id": run_id}, ensure_ascii=False, indent=2))
     return result.returncode
