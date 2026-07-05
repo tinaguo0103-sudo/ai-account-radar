@@ -31,6 +31,7 @@ from script_package_shared import (
     TOPIC_MARK_FIELD,
     ensure_text_fields,
     feishu_ready_topics,
+    fields_by_name,
     filter_topics,
     load_austin_module,
     normalize_topics,
@@ -46,10 +47,49 @@ DEFAULT_OUTPUT_ROOT = (
     if PROJECT_SCRIPT_PACKAGE_ROOT.exists() or PROJECT_SCRIPT_PACKAGE_ROOT.is_symlink()
     else ROOT / "output" / "script_execution_packages"
 )
+DEFAULT_SCRIPT_PACKAGE_SKILL_NAME = "austin-no-overtime-scripting"
+DEFAULT_SCRIPT_PACKAGE_VOICE_SKILL_NAME = "austin-voice-scriptwriter"
 LOG_DIR = ROOT / "output" / "logs"
 LOCK_FILE = ROOT / ".runtime" / "codex_script_package_runner.lock"
 RUNNER_VERSION = "codex-local-script-package-runner-v0.2"
 MAX_REVISE_ATTEMPTS = 2
+BITABLE_TEXT_FIELD_TYPE = 1
+BITABLE_URL_FIELD_TYPE = 15
+CLICKABLE_LINK_FIELDS = {
+    "飞书文档": {"label": "打开飞书文档", "mirror_field": "飞书文档链接"},
+    "飞书文件夹": {"label": "打开飞书文件夹", "mirror_field": "飞书文件夹链接"},
+}
+RETRY_QA_PATTERNS = (
+    "需要重写",
+    "必须重写",
+    "请重写",
+    "重写口播",
+    "结构不可用",
+    "脚本不可用",
+    "缺少关键输入",
+    "缺关键输入",
+    "事实无法成立",
+    "内部状态边界进入",
+    "进入用户可见",
+)
+USER_VISIBLE_RETRY_SECTIONS = (
+    "开头钩子候选",
+    "视频结构",
+    "口播全文",
+    "分段执行方案",
+    "录屏与素材清单",
+    "剪辑交接",
+    "发布包草稿",
+)
+USER_VISIBLE_BOUNDARY_PATTERNS = (
+    "如果当天还没生成06",
+    "如果当天没有生成 06",
+    "如果当天没有生成06",
+    "如果今天没有完整生成到最后一步",
+    "没有完整生成到最后一步",
+    "选题系统复盘",
+    "沉淀资产",
+)
 DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 TEST_TITLE_PREFIXES = ("【测试】", "【流程测试】", "【部署后测试】", "【模拟测试】", "[测试]", "测试：", "测试:")
 TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(测试|测速)[^\]]*\])")
@@ -358,6 +398,14 @@ def codex_bin() -> str:
     return os.getenv("CODEX_BIN", DEFAULT_CODEX_BIN)
 
 
+def script_package_skill_name() -> str:
+    return os.getenv("SCRIPT_PACKAGE_SKILL_NAME", DEFAULT_SCRIPT_PACKAGE_SKILL_NAME).strip() or DEFAULT_SCRIPT_PACKAGE_SKILL_NAME
+
+
+def script_package_voice_skill_name() -> str:
+    return os.getenv("SCRIPT_PACKAGE_VOICE_SKILL_NAME", DEFAULT_SCRIPT_PACKAGE_VOICE_SKILL_NAME).strip() or DEFAULT_SCRIPT_PACKAGE_VOICE_SKILL_NAME
+
+
 def configured_path(env_name: str, default: Path) -> Path:
     return Path(os.getenv(env_name, str(default))).expanduser()
 
@@ -383,7 +431,68 @@ def qa_status_of(package: dict[str, Any]) -> str:
     return status if status in {"pass", "revise", "blocked"} else "revise"
 
 
+def heading_text(line: str) -> tuple[int, str] | None:
+    match = re.match(r"^(#{1,6})\s+(.+?)\s*$", line.strip())
+    if not match:
+        return None
+    return len(match.group(1)), match.group(2).strip()
+
+
+def markdown_named_sections(markdown: str, section_names: tuple[str, ...]) -> dict[str, str]:
+    sections: dict[str, list[str]] = {}
+    active_name = ""
+    active_level = 0
+    for line in markdown.splitlines():
+        heading = heading_text(line)
+        if heading:
+            level, name = heading
+            clean_name = name.strip("：: ")
+            if active_name and level <= active_level:
+                active_name = ""
+                active_level = 0
+            for section_name in section_names:
+                if clean_name == section_name or clean_name.startswith(section_name):
+                    active_name = section_name
+                    active_level = level
+                    sections.setdefault(section_name, [])
+                    break
+            else:
+                if active_name and level <= active_level:
+                    active_name = ""
+                    active_level = 0
+            continue
+        if active_name:
+            sections.setdefault(active_name, []).append(line)
+    return {name: "\n".join(lines) for name, lines in sections.items()}
+
+
+def visible_boundary_issues(markdown: str) -> list[str]:
+    issues: list[str] = []
+    sections = markdown_named_sections(markdown, USER_VISIBLE_RETRY_SECTIONS)
+    for section_name, body in sections.items():
+        for pattern in USER_VISIBLE_BOUNDARY_PATTERNS:
+            if pattern in body:
+                issues.append(f"{section_name}:{pattern}")
+    return issues
+
+
+def should_retry_package(package: dict[str, Any]) -> tuple[bool, str]:
+    status = qa_status_of(package)
+    if status != "revise":
+        return False, f"qa_status={status}"
+    qa_result = str(package.get("qa_result") or "")
+    for pattern in RETRY_QA_PATTERNS:
+        if pattern in qa_result:
+            return True, f"qa_result:{pattern}"
+    boundary_issues = visible_boundary_issues(str(package.get("full_markdown") or ""))
+    if boundary_issues:
+        return True, "visible_boundary:" + ",".join(boundary_issues[:3])
+    return False, "revise_waiting_external_qa"
+
+
 def topic_prompt(topic: dict[str, Any], previous_package: dict[str, Any] | None = None, attempt: int = 1) -> str:
+    script_skill = script_package_skill_name()
+    voice_skill = script_package_voice_skill_name()
     retry_block = ""
     if previous_package:
         retry_block = f"""
@@ -401,16 +510,27 @@ def topic_prompt(topic: dict[str, Any], previous_package: dict[str, Any] | None 
 """
     return f"""你是 Austin AI账号的本地定时脚本生成器。
 
-请使用本机全局 Skill `$austin-no-overtime-scripting` 和 `$austin-voice-scriptwriter` 的方法，基于下面 Topic Card 生成一份完整的 `06 完整脚本与制作包`。
+请使用本机全局 Skill `${script_skill}` 和 `${voice_skill}` 的方法，基于下面 Topic Card 生成一份完整的 `06 完整脚本与制作包`。
 
 硬性要求：
 - 只生成内容，不修改代码、不提交 Git、不调用外部采集。
 - 口播全文要像真人实战分享，不要像课程讲义。
 - 必须保留主观判断、真实犹豫、失败或不完美结果、人工修正点、边界提醒。
 - 不要强行指定用户没有提供的真实案例；可以写“建议用某类案例”，但不要写成已经发生。
+- 保护现有 Austin 口播风格基线：先真实痛点、旧流程、新动作、人工判断和边界，不要另起一套新风格体系。
+- 生成前要围绕当前选题做 2-4 个当前/同类信息检索：同类内容怎么开场、怎么解释、制造什么冲突、哪些产品事实需要核验。检索不到或无法联网时，必须在 `full_markdown` 里说明失败原因和待人工补的来源，不得编造来源、视频内容或产品能力。
+- 对标/同类内容只作为素材：必须写出“搜索来源摘要、表达模式拆解、保留什么、丢弃什么、如何融合进 Austin 账号风格”，不要照搬对标表达。
+- 遇到知识库、RAG、Agent、TTS、Voice Agent、工作流系统、AI 工具等概念/工具型选题，先做生成前判断：用户原来怎么解决、旧方式卡在哪里、为什么现在需要它、用人话怎么解释、当前工具/热点只是哪个落地案例、最后怎么回到用户自己的工作流和证据。
+- 上一条只作为素材组织方式，不是口播模板；不要写成固定段落顺序、固定开头、固定句式或逐条念出来的清单，也不要把用户举例写成固定规则。
+- `口播全文` 和 `分段执行方案` 不能套统一六段、统一“三个动作”或固定章节名；段落标题和推进方式要跟随当前选题的真实旧流程、卡点、证据和拍摄现场变化。
+- 仓库 deterministic fallback 只用于格式、安全和字段兜底，不代表最终 Austin 风格质量验收；真实内容质量以本机测试 Skill / 私有 Skill 生成结果和人工样例为准。
+- 内部状态边界只能留在 `发布前核验`、`QA 风险与防错` 或 `发布前提醒`：例如“如果当天/今天没有生成 06”“没有完整生成到最后一步”“选题系统复盘”。这些句子不得进入开头钩子、拍摄前待办、视频结构、口播全文、分段执行方案、录屏与素材清单、剪辑交接、发布包草稿。
+- `沉淀资产` 是内部抽象词，不得出现在用户可见创作内容中，包括开头钩子、标题/封面、简介、置顶评论、口播、素材清单、分段方案和 QA 通过原因。改成人话：有没有留下来、下次还能不能用、路径有没有串起来、后面能不能复用、资料有没有变成下次能用的东西。
+- 当前仍是测试/返修阶段，`qa_status` 不要自评为 `pass`；应标为草稿、待 PM 验收、待 QA，不能写“可进入拍摄准备”。
+- `qa_status=revise` 可以表示待 PM/QA 人工验收，不等于自动重试；只有 `qa_result` 明确要求重写，或用户可见内容混入内部边界时，runner 才会再生成。
 - 素材、事实核验、发布前回看原文属于提醒；不要因为这些提醒就把可用稿全部判死。
 - 输出必须严格符合 JSON Schema，不要输出 Markdown 代码块，不要输出解释。
-- `full_markdown` 必须是一份完整 Markdown，至少包含：先看结论、核心观点、开头钩子候选、视频结构、口播全文、录屏与素材清单、剪辑交接、发布包草稿、QA 报告。
+- `full_markdown` 必须是一份完整 Markdown，至少包含：先看结论、核心观点、开头钩子候选、视频结构、搜索与表达融合、口播全文、录屏与素材清单、剪辑交接、发布包草稿、QA 报告。
 {retry_block}
 
 Topic Card JSON：
@@ -463,20 +583,49 @@ def generate_package_with_retry(topic: dict[str, Any], timeout_seconds: int) -> 
     attempts: list[dict[str, str]] = []
     previous_package: dict[str, Any] | None = None
     for attempt in range(1, MAX_REVISE_ATTEMPTS + 1):
-        package = run_codex_for_topic(topic, timeout_seconds, previous_package=previous_package, attempt=attempt)
+        try:
+            package = run_codex_for_topic(topic, timeout_seconds, previous_package=previous_package, attempt=attempt)
+        except Exception as exc:
+            retry_error = compact(exc, 1000)
+            attempts.append({
+                "attempt": str(attempt),
+                "qa_status": "error",
+                "qa_result": retry_error,
+                "retry": str(attempt < MAX_REVISE_ATTEMPTS).lower(),
+                "retry_reason": "codex_exec_error",
+            })
+            if attempt < MAX_REVISE_ATTEMPTS:
+                log(json.dumps({
+                    "event": "codex_exec_retry",
+                    "topic_title": topic.get("topic_title"),
+                    "attempt": attempt,
+                    "error": retry_error,
+                }, ensure_ascii=False))
+                previous_package = {
+                    "qa_status": "revise",
+                    "qa_result": f"上一轮 codex exec 失败，需要重试：{retry_error}",
+                }
+                continue
+            raise
         status = qa_status_of(package)
+        should_retry, retry_reason = should_retry_package(package)
+        will_retry = should_retry and attempt < MAX_REVISE_ATTEMPTS
+        history_retry_reason = retry_reason if will_retry or not should_retry else f"max_attempts_reached:{retry_reason}"
         attempts.append({
             "attempt": str(attempt),
             "qa_status": status,
             "qa_result": compact(package.get("qa_result"), 1000),
+            "retry": str(will_retry).lower(),
+            "retry_reason": history_retry_reason,
         })
-        if status != "revise":
+        if not should_retry:
             return package, attempt, attempts
-        if attempt < MAX_REVISE_ATTEMPTS:
+        if will_retry:
             log(json.dumps({
                 "event": "qa_revise_retry",
                 "topic_title": topic.get("topic_title"),
                 "attempt": attempt,
+                "retry_reason": retry_reason,
                 "qa_result": package.get("qa_result"),
             }, ensure_ascii=False))
             previous_package = package
@@ -599,7 +748,7 @@ def script_status(qa_status: str) -> str:
     return "已生成完整脚本包"
 
 
-def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: Path, doc_sync: FeishuDocSyncResult | None = None, attempts: int = 1) -> dict[str, str]:
+def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: Path, doc_sync: FeishuDocSyncResult | None = None, attempts: int = 1) -> dict[str, Any]:
     qa_status = qa_status_of(package)
     qa_result = str(package.get("qa_result") or "待人工确认")
     doc_sync = doc_sync or FeishuDocSyncResult()
@@ -624,12 +773,38 @@ def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: P
     }
 
 
-def create_script_package_record(token: str, app_token: str, table_id: str, row: dict[str, str]) -> str:
+def clickable_link_value(url: str, label: str, field_type: Any) -> Any:
+    clean_url = str(url or "").strip()
+    if not clean_url:
+        return ""
+    try:
+        normalized_type = int(field_type or 0)
+    except (TypeError, ValueError):
+        normalized_type = 0
+    if normalized_type == BITABLE_URL_FIELD_TYPE:
+        return {"link": clean_url, "text": label}
+    return clean_url
+
+
+def format_script_package_record_fields(row: dict[str, Any], field_meta: dict[str, dict[str, Any]]) -> dict[str, Any]:
+    fields = dict(row)
+    for field_name, spec in CLICKABLE_LINK_FIELDS.items():
+        label = spec["label"]
+        value = str(fields.get(field_name) or "").strip()
+        fields[field_name] = clickable_link_value(value, label, field_meta.get(field_name, {}).get("type"))
+        mirror_field = spec["mirror_field"]
+        if mirror_field in field_meta:
+            fields[mirror_field] = clickable_link_value(value, label, field_meta.get(mirror_field, {}).get("type"))
+    return fields
+
+
+def create_script_package_record(token: str, app_token: str, table_id: str, row: dict[str, Any]) -> str:
+    payload_fields = format_script_package_record_fields(row, fields_by_name(token, app_token, table_id))
     payload = feishu.request_json(
         "POST",
         f"/bitable/v1/apps/{app_token}/tables/{table_id}/records",
         token=token,
-        body={"fields": row},
+        body={"fields": payload_fields},
     )
     data = payload.get("data", {})
     record = data.get("record", data)

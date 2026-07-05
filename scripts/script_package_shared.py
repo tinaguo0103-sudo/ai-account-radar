@@ -83,6 +83,18 @@ def require_app_token() -> str:
     return token
 
 
+def env_table_id(name: str) -> str:
+    return os.getenv(name, "").strip()
+
+
+def first_env_table_id(*names: str) -> str:
+    for name in names:
+        value = env_table_id(name)
+        if value:
+            return value
+    return ""
+
+
 def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
     records: list[dict[str, Any]] = []
     page_token = ""
@@ -121,8 +133,9 @@ def ensure_text_fields(token: str, app_token: str, table_id: str, field_names: l
 def feishu_ready_topics(token: str, app_token: str) -> tuple[dict[str, str], list[dict[str, Any]]]:
     by_name = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
     table_ids = {
-        "topic_decision": resolve_table_id(by_name, "topic_decision"),
-        "script_package": resolve_table_id(by_name, "script_package"),
+        "topic_decision": first_env_table_id("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE_ID")
+        or resolve_table_id(by_name, "topic_decision"),
+        "script_package": env_table_id("FEISHU_SCRIPT_PACKAGE_TABLE_ID") or resolve_table_id(by_name, "script_package"),
     }
     missing = [TABLES[key] for key, table_id in table_ids.items() if not table_id]
     if missing:

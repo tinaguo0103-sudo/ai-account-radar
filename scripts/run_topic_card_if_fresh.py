@@ -13,6 +13,9 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
 
+from automation_failure_qa import qa_for_command_failure
+from automation_worktree_guard import check_automation_worktree, guard_failure_summary
+import feishu_idempotency as idempotency
 import push_to_feishu as feishu
 from feishu_table_registry import resolve_table_id
 from local_env import load_local_env
@@ -24,6 +27,7 @@ LATEST_WRITE = ROOT / "output" / "latest_write"
 PIPELINE_LOG_DIR = ROOT / "output" / "logs"
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 TOPIC_STATUS_FILTER = {"待判断", ""}
+TOPIC_CARD_GUARD_KINDS = {"topic_candidate_create", "topic_card_send"}
 
 
 def read_json(path: Path) -> dict[str, Any]:
@@ -140,6 +144,14 @@ def skip_summary(reason: str, run_id: str) -> str:
     )
 
 
+def idempotency_skip_summary(run_id: str, unknowns: list[dict[str, Any]]) -> str:
+    return "\n".join([
+        "10:00 每日选题卡发送已跳过：检测到 Feishu 非幂等写入状态未知。",
+        idempotency.guard_summary(run_id, unknowns),
+        "处理建议：先人工确认 Feishu 04 记录或聊天卡片是否已经发生，再决定恢复或清理；不要绕过守卫重发同一 run_id。",
+    ])
+
+
 def send_failure_summary(run_id: str, returncode: int) -> str:
     return (
         f"任务：10:00 每日选题卡发送\n"
@@ -155,9 +167,32 @@ def main() -> int:
     parser.add_argument("--limit", type=int, default=7)
     parser.add_argument("--send-dry-run", action="store_true")
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu skip/failure notifications.")
+    parser.add_argument(
+        "--allow-non-production-worktree",
+        action="store_true",
+        help="Allow this scheduled-production entrypoint to run outside the configured production worktree.",
+    )
     args = parser.parse_args()
 
     load_local_env()
+    guard = check_automation_worktree(ROOT, allow_non_production=args.allow_non_production_worktree)
+    if not guard.ok:
+        summary = guard_failure_summary(guard, "10:00 每日选题卡发送")
+        if not args.no_notify:
+            notify("AI账号雷达选题卡发送失败", qa_for_command_failure(
+                "10:00 每日选题卡发送",
+                [sys.executable, str(Path(__file__).resolve())],
+                2,
+                stderr=summary,
+            ))
+        print(json.dumps({
+            "ok": False,
+            "sent": False,
+            "reason": guard.reason,
+            "note": "Blocked card sending because the automation entrypoint is not running from the production worktree.",
+        }, ensure_ascii=False, indent=2))
+        return 2
+
     ok, reason, run_id = fresh_collection_status()
     if not ok:
         if not args.no_notify:
@@ -168,6 +203,22 @@ def main() -> int:
             "reason": reason,
             "run_id": run_id,
             "note": "Skipped card sending to avoid reusing stale candidates.",
+        }, ensure_ascii=False, indent=2))
+        return 0
+
+    unknowns = idempotency.blocking_unknowns(run_id=run_id, kinds=TOPIC_CARD_GUARD_KINDS)
+    if unknowns:
+        summary = idempotency_skip_summary(run_id, unknowns)
+        if not args.no_notify:
+            notify("AI账号雷达今日未发选题卡", summary)
+        print(json.dumps({
+            "ok": True,
+            "sent": False,
+            "reason": "feishu_idempotency_unknown_guard",
+            "run_id": run_id,
+            "unknown_count": len(unknowns),
+            "note": "Skipped card sending because a non-idempotent Feishu operation is status-unknown.",
+            "summary": summary,
         }, ensure_ascii=False, indent=2))
         return 0
 

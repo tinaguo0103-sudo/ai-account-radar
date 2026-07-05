@@ -16,6 +16,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 
+import feishu_idempotency as idempotency
 import push_to_feishu as feishu
 from feishu_table_registry import TABLES, resolve_table_id, table_name
 from topic_decision_fields import (
@@ -37,6 +38,7 @@ CONTENT_INBOX_TABLE_KEY = "content_inbox"
 CONTENT_FINGERPRINT_FIELD = "内容指纹"
 RECENT_DEDUPE_DAYS = int(os.getenv("TOPIC_CARD_RECENT_DEDUPE_DAYS", "5"))
 CONTENT_INBOX_SYNC_RATIO = float(os.getenv("CONTENT_INBOX_SYNC_RATIO", "0.8"))
+TOPIC_CREATE_KIND = "topic_candidate_create"
 REQUIRED_FIELDS = [
     *DAILY_WRITE_FIELDS,
 ]
@@ -503,16 +505,170 @@ def dry_run_print(rows: list[dict[str, str]]) -> None:
             print(f"   需补证据: {row['需要补的证据'][:120]}")
 
 
-def batch_create(token: str, app_token: str, table_id: str, rows: list[dict[str, str]]) -> int:
+def topic_create_business_key(row: dict[str, Any]) -> str:
+    run_id = str(row.get("运行批次") or "")
+    date = str(row.get("推荐日期") or "")
+    source_title = str(row.get("原始来源标题") or "").strip()
+    topic_title = str(row.get("选题标题") or "").strip()
+    source_part = f"source:{source_title}" if source_title else f"title:{topic_title}"
+    return "|".join([run_id, date, source_part])
+
+
+def topic_create_payload_digest(row: dict[str, str]) -> str:
+    return idempotency.payload_hash({"fields": {key: row.get(key, "") for key in REQUIRED_FIELDS}})
+
+
+def topic_create_operation(row: dict[str, str]) -> str:
+    return idempotency.operation_id(
+        TOPIC_CREATE_KIND,
+        str(row.get("运行批次") or ""),
+        topic_create_business_key(row),
+        topic_create_payload_digest(row),
+        TABLES[TARGET_TABLE_KEY],
+    )
+
+
+def write_topic_create_ledger(
+    row: dict[str, str],
+    *,
+    status: str,
+    remote_id: str = "",
+    error: str = "",
+    recovery_hint: str = "",
+    match_count: int | None = None,
+) -> dict[str, Any]:
+    metadata: dict[str, Any] = {
+        "title_hash": idempotency.target_hash(str(row.get("选题标题") or "")),
+        "source_hash": idempotency.target_hash(str(row.get("原始来源标题") or "")),
+    }
+    if match_count is not None:
+        metadata["match_count"] = match_count
+    return idempotency.write_ledger_event(
+        kind=TOPIC_CREATE_KIND,
+        run_id=str(row.get("运行批次") or ""),
+        business_key=topic_create_business_key(row),
+        status=status,
+        target=TABLES[TARGET_TABLE_KEY],
+        operation=topic_create_operation(row),
+        payload_digest=topic_create_payload_digest(row),
+        remote_id=remote_id,
+        error=error,
+        recovery_hint=recovery_hint,
+        metadata=metadata,
+    )
+
+
+def records_by_topic_create_key(records: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
+    by_key: dict[str, list[dict[str, Any]]] = {}
+    for record in records:
+        fields = record.get("fields", {})
+        key = topic_create_business_key(fields)
+        if key.strip("|"):
+            by_key.setdefault(key, []).append(record)
+    return by_key
+
+
+def response_record_id(payload: dict[str, Any], index: int) -> str:
+    data = payload.get("data", {})
+    records = data.get("records") or data.get("items") or []
+    if isinstance(records, list) and index < len(records):
+        record = records[index]
+        if isinstance(record, dict):
+            return str(record.get("record_id") or record.get("id") or "")
+    return ""
+
+
+def recover_topic_creates_by_read_back(
+    token: str,
+    app_token: str,
+    table_id: str,
+    rows: list[dict[str, str]],
+    *,
+    error: BaseException,
+) -> tuple[int, list[dict[str, Any]]]:
+    try:
+        records = all_records(token, app_token, table_id)
+    except Exception as read_exc:  # noqa: BLE001 - read-back failure should still block unsafe continuation.
+        unknowns = []
+        for row in rows:
+            unknowns.append(write_topic_create_ledger(
+                row,
+                status="unknown_not_found",
+                error=f"create_status_unknown:{error}; read_back_failed:{read_exc}",
+                recovery_hint="Read-back failed after 04 batch_create status became unknown; manually inspect Feishu 04 before rerun or card send.",
+                match_count=0,
+            ))
+        return 0, unknowns
+
+    by_key = records_by_topic_create_key(records)
+    recovered = 0
+    unknowns: list[dict[str, Any]] = []
+    for row in rows:
+        matches = by_key.get(topic_create_business_key(row), [])
+        if len(matches) == 1:
+            remote_id = str(matches[0].get("record_id") or "")
+            write_topic_create_ledger(
+                row,
+                status="recovered_by_read_back",
+                remote_id=remote_id,
+                error=f"create_status_unknown:{error}",
+                recovery_hint="Unique 04 record found by business key after batch_create status unknown; safe to continue.",
+                match_count=1,
+            )
+            recovered += 1
+        elif not matches:
+            unknowns.append(write_topic_create_ledger(
+                row,
+                status="unknown_not_found",
+                error=f"create_status_unknown:{error}",
+                recovery_hint="No 04 record found by business key after batch_create status unknown; do not send Topic Card until manually confirmed or safely rerun.",
+                match_count=0,
+            ))
+        else:
+            unknowns.append(write_topic_create_ledger(
+                row,
+                status="unknown_ambiguous",
+                error=f"create_status_unknown:{error}",
+                recovery_hint="Multiple 04 records found by business key after batch_create status unknown; manually deduplicate before sending Topic Card.",
+                match_count=len(matches),
+            ))
+    return recovered, unknowns
+
+
+def batch_create(token: str, app_token: str, table_id: str, rows: list[dict[str, str]], run_id: str) -> int:
     total = 0
     for start in range(0, len(rows), 500):
         chunk = rows[start:start + 500]
-        feishu.request_json(
-            "POST",
-            f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/batch_create",
-            token=token,
-            body={"records": [{"fields": row} for row in chunk]},
-        )
+        for row in chunk:
+            write_topic_create_ledger(
+                row,
+                status="pending",
+                recovery_hint="04 candidate create intent recorded before batch_create.",
+            )
+        try:
+            payload = feishu.request_json(
+                "POST",
+                f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/batch_create",
+                token=token,
+                body={"records": [{"fields": row} for row in chunk]},
+            )
+        except Exception as exc:
+            recovered, unknowns = recover_topic_creates_by_read_back(token, app_token, table_id, chunk, error=exc)
+            total += recovered
+            if unknowns:
+                raise RuntimeError(
+                    f"04 batch_create status unknown for run_id={run_id}; "
+                    f"unknown_count={len(unknowns)}. Topic Card must be skipped until manual read-back."
+                ) from exc
+            time.sleep(0.15)
+            continue
+        for index, row in enumerate(chunk):
+            write_topic_create_ledger(
+                row,
+                status="succeeded",
+                remote_id=response_record_id(payload, index),
+                recovery_hint="04 candidate create acknowledged by Feishu batch_create.",
+            )
         total += len(chunk)
         time.sleep(0.15)
     return total
@@ -691,7 +847,7 @@ def main() -> int:
         else:
             to_create.append(row)
             created_titles.append(row["选题标题"])
-    created_records = batch_create(token, app_token, table_id, to_create) if to_create else 0
+    created_records = batch_create(token, app_token, table_id, to_create, run_id) if to_create else 0
     print(json.dumps({
         "ok": True,
         "mode": "write",
