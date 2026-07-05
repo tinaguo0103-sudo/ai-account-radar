@@ -153,3 +153,45 @@ Next safe paths:
 5. Rerun `check_feishu_card_cloud_receiver.py --require-test-card-config --table-key topic_decision`, then run a real test card smoke against the separate test app.
 
 Until a separate test app or explicitly safe test callback binding exists, AR-018 should remain blocked for real button Flow QA even though synthetic receiver writes pass.
+
+## 2026-07-05 AR-013 Direction Card / 06 Pre-Release Boundary
+
+AR-013 pre-release testing needs to cover the path after selecting `生成脚本包`, without letting test clicks leak into the production `06` watcher.
+
+Current isolated resources:
+
+- test app / robot: independent AR-018 test app;
+- test receiver: isolated Tencent SCF test receiver;
+- test `04`: dedicated AR-018 test Base table, configured through `FEISHU_TOPIC_TABLE_ID`;
+- test `06`: `06 完整脚本与制作包__测试`, configured through `FEISHU_SCRIPT_PACKAGE_TABLE_ID`;
+- receive targets: personal/test targets in `.env.staging.local`.
+
+Safe behavior verified with a synthetic test-only event:
+
+- first card selection writes only the dedicated test `04`;
+- selected records become `状态=生成脚本包`;
+- selected records are queued with `制作方向卡状态=待发送`;
+- the explicit queue action sends the production-direction card only to the test target and marks `制作方向卡状态=已发送`;
+- submitting the production-direction card writes `我的制作补充` and `制作方向卡状态=已提交` on test `04`;
+- no `06` record is created by the receiver path.
+
+The `06` runner must use explicit staging table ids. `script_package_shared.feishu_ready_topics()` now prefers `FEISHU_TOPIC_TABLE_ID` / `FEISHU_TOPIC_DECISION_TABLE_ID` before falling back to the production table name. This keeps the runner, sender path, and health check on the same test table semantics.
+
+Recommended pre-release QA path:
+
+1. Send a clearly marked AR-013 test Topic Card from the staging/test app to the personal/test target.
+2. In that card, select one test candidate under `生成脚本包` and submit.
+3. Verify the dedicated test `04` record becomes `状态=生成脚本包` and `制作方向卡状态=待发送`.
+4. Trigger the isolated test receiver queue action for `send_pending_production_direction_cards`.
+5. Verify the test production-direction card arrives at the personal/test target and the same test `04` record becomes `制作方向卡状态=已发送`.
+6. Submit the production-direction card with a short test-only note.
+7. Verify the same test `04` record becomes `制作方向卡状态=已提交` and `我的制作补充` is populated.
+8. For the `06` boundary, run the dev/staging runner with `--skip-codex --include-test-records --record-id <test_record_id>` and confirm it lists exactly the selected test record with `write_feishu=false`.
+
+Do not run real `06` generation as part of this pre-release smoke unless PM/user explicitly authorizes it. Real generation would call Codex and may create test `06` records/documents; that is a separate L4 test, not required to prove AR-013 compensation-card selection and direction-card handoff.
+
+Production safety checks for this boundary:
+
+- production `04` / `06` read-back should have no AR-013 precheck marker;
+- production output paths should have no AR-013 precheck marker;
+- production launchd watcher should remain pointed at the production runtime and should not receive `.env.staging.local` or `--include-test-records`.
