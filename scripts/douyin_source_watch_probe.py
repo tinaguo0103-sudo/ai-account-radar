@@ -180,7 +180,7 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
 def main() -> int:
     parser = argparse.ArgumentParser(description="P1 dry-run Douyin homepage source-watch probe.")
     parser.add_argument("--config", default=str(CONTENT_SOURCES))
-    parser.add_argument("--account-limit", type=int, default=3)
+    parser.add_argument("--account-limit", type=int, default=0, help="0 means all active Douyin competitor accounts.")
     parser.add_argument("--video-limit", type=int, default=3)
     parser.add_argument("--out-dir", default=str(OUT))
     args = parser.parse_args()
@@ -189,7 +189,7 @@ def main() -> int:
     raw_dir = out_dir / "raw"
     raw_dir.mkdir(parents=True, exist_ok=True)
 
-    sources = selected_douyin_sources(Path(args.config), args.account_limit)
+    sources = selected_douyin_sources(Path(args.config), args.account_limit if args.account_limit > 0 else None)
     account_rows: list[dict[str, Any]] = []
     content_items: list[ContentItem] = []
 
@@ -240,6 +240,25 @@ def main() -> int:
 
     print(json.dumps({
         "ok": True,
+        "coverage": {
+            "account_limit": args.account_limit,
+            "planned_accounts": len(sources),
+            "attempted_accounts": len(account_rows),
+            "successful_accounts": sum(1 for row in account_rows if row["status"] == "success"),
+            "failed_accounts": [
+                {
+                    "account_name": row["account_name"],
+                    "status": row["status"],
+                    "failure_reason": row["failure_reason"],
+                }
+                for row in account_rows
+                if row["status"] != "success"
+            ],
+            "per_account_artifact_counts": {
+                row["account_name"]: row["resolved_items"]
+                for row in account_rows
+            },
+        },
         "accounts": len(account_rows),
         "content_items": len(content_items),
         "output": str(out_dir),

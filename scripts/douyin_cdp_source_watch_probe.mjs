@@ -24,7 +24,7 @@ function parseArgs() {
     config: DEFAULT_CONFIG,
     outDir: DEFAULT_OUT,
     cdp: DEFAULT_CDP,
-    accountLimit: 3,
+    accountLimit: 0,
     videoLimit: 3,
     waitMs: 7000,
     retries: 2,
@@ -56,10 +56,10 @@ function selectedSources(sources, limit) {
     .map((name) => name.trim())
     .filter(Boolean));
   const max = Number(limit.accountLimit || 0);
-  return sources
+  const rows = sources
     .filter((source) => source.platform === "抖音" && roles.has(source.source_role))
     .filter((source) => !only.size || only.has(source.account_name || source.name || ""))
-    .slice(0, max);
+  return max > 0 ? rows.slice(0, max) : rows;
 }
 
 async function getJson(url) {
@@ -446,6 +446,23 @@ async function main() {
   const output = {
     ok: true,
     cdp_browser: version.Browser || "",
+    coverage: {
+      account_limit: options.accountLimit,
+      planned_accounts: sources.length,
+      attempted_accounts: rows.length,
+      successful_accounts: rows.filter((row) => row.status === "success").length,
+      failed_accounts: rows
+        .filter((row) => row.status !== "success")
+        .map((row) => ({
+          account_name: row.account_name,
+          status: row.status,
+          failure_reason: row.failure_reason || "",
+        })),
+      per_account_artifact_counts: Object.fromEntries(rows.map((row) => [
+        row.account_name,
+        (row.video_links || []).length,
+      ])),
+    },
     accounts: rows.length,
     discovered_video_links: videoLinks.length,
     resolver: resolverResult,

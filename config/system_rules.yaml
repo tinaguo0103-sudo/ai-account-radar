@@ -25,7 +25,7 @@
   "content_source_rules": [
     {
       "name": "来源角色定义",
-      "rule": "来源池分为 current_main_competitor 当前主对标、current_aux_competitor 当前辅助对标、system_hotspot_source 系统热点源、official_source 官方/技术/工具源、manual_entry 正式手动入口、legacy_manual_entry 旧手动入口。来源角色只回答是否跟进和如何采样，不预设内容栏目；历史参考如重新启用，应改为 current_aux_competitor。"
+      "rule": "来源池分为 current_main_competitor 当前主对标、current_aux_competitor 当前辅助对标、quarantined_source 已隔离污染源、system_hotspot_source 系统热点源、official_source 官方/技术/工具源、manual_entry 正式手动入口、legacy_manual_entry 旧手动入口。来源角色只回答是否跟进和如何采样，不预设内容栏目；历史参考如重新启用，应改为 current_aux_competitor；用户确认的污染来源必须进入 quarantined_source，历史03不物理删除。"
     },
     {
       "name": "新主对标池",
@@ -45,7 +45,7 @@
     },
     {
       "name": "热点与对标统一转译",
-      "rule": "今日候选池既可以来自AIHOT，也可以来自卡兹克公众号文章、卡兹克抖音教程视频或其他抖音对标账号内容拆解，但必须先转成我的账号视角，不能原样搬运。"
+      "rule": "今日候选池以有效对标账号内容为核心来源；AIHOT 只作为低权重热点观察源，15% 是重要性影响力而不是最终数量硬卡。普通 AI 资讯不得压过高适配对标内容；重大模型、产品或行业变化可以凭重大性进入候选，但仍必须转成我的账号视角，不能原样搬运。"
     },
     {
       "name": "系统源不属于对标权重池",
@@ -57,7 +57,7 @@
     },
     {
       "name": "来源表视图",
-      "rule": "01 来源与采样至少包含 当前主对标池、历史参考池、系统/官方源、手动入口 四个视图。默认看 当前主对标池；历史参考池目前作为兼容视图，重新启用的历史账号应进入 current_aux_competitor；系统/官方源不属于对标账号池；02 URL投喂入口 是唯一启用的正式手动入口。"
+      "rule": "01 来源与采样至少包含 当前主对标池、历史参考池、系统/官方源、隔离来源、手动入口 五个视图。默认看 当前主对标池；历史参考池目前作为兼容视图，重新启用的历史账号应进入 current_aux_competitor；隔离来源只用于审计已确认污染源，不参与采样；系统/官方源不属于对标账号池；02 URL投喂入口 是唯一启用的正式手动入口。"
     },
     {
       "name": "URL采样P0支持",
@@ -341,7 +341,7 @@
     {
       "table": "01 来源与采样",
       "field": "来源角色",
-      "purpose": "区分 current_main_competitor、current_aux_competitor、system_hotspot_source、official_source、manual_entry、legacy_manual_entry；不承载内容栏目判断。",
+      "purpose": "区分 current_main_competitor、current_aux_competitor、quarantined_source、system_hotspot_source、official_source、manual_entry、legacy_manual_entry；不承载内容栏目判断。",
       "required": "是",
       "producer": "config/content_sources.yaml",
       "consumer": "用户、content_sampler.py",

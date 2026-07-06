@@ -51,6 +51,10 @@ SOURCE_VIEW_PLANS = {
         "roles": {"system_hotspot_source", "official_source"},
         "visible_fields": ["名称", "来源角色", "平台", "主页链接", "默认启用", "抓取方式", "跟踪频率", "关注重点"],
     },
+    "隔离来源": {
+        "roles": {"quarantined_source"},
+        "visible_fields": ["名称", "来源角色", "平台", "主页链接", "是否参与主采样", "默认启用", "优先级", "备注"],
+    },
     "手动入口": {
         "roles": {"manual_entry", "legacy_manual_entry"},
         "visible_fields": ["名称", "来源角色", "主页链接", "默认启用", "抓取方式", "备注"],
@@ -304,6 +308,8 @@ def main() -> int:
         "mode": "write-feishu" if args.write_feishu else "dry-run",
         "rows": len(rows),
         "current_main_competitors": [row["名称"] for row in rows if row["来源角色"] == "current_main_competitor"],
+        "current_aux_competitors": [row["名称"] for row in rows if row["来源角色"] == "current_aux_competitor"],
+        "quarantined_sources": [row["名称"] for row in rows if row["来源角色"] == "quarantined_source"],
         "legacy_manual_entries": [row["名称"] for row in rows if row["来源角色"] == "legacy_manual_entry"],
         "historical_references": [row["名称"] for row in rows if row["来源角色"] == "historical_reference"],
     }

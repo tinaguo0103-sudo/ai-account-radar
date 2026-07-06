@@ -27,6 +27,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import push_to_feishu as feishu
+import topic_flow_rework as flow
 from feishu_table_registry import resolve_table_id, table_name
 
 
@@ -598,6 +599,9 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
         item.learn_focus = item.learn_focus or source_meta.get("learn_focus", "")
         item.do_not_copy = item.do_not_copy or source_meta.get("do_not_copy", "")
         item.convert_direction = item.convert_direction or source_meta.get("convert_direction", "")
+        if flow.is_quarantined_source(item):
+            logs.append(f"{item.account_name}: skipped_quarantined_source")
+            continue
         items.append(item)
 
     seen: set[str] = set()
@@ -1889,7 +1893,12 @@ def angle_score(item: ContentItem, scene: str) -> int:
 def score_item(item: ContentItem, scene: str) -> int:
     text = item_text(item)
     angle = hotspot_angle(item, scene) if item.source_type == "AIHOT热点" else {}
-    heat = 5 if item.source_type == "AIHOT热点" else 3
+    if item.source_type == "AIHOT热点":
+        heat = 2 if flow.is_major_aihot(item) else 1
+    elif flow.is_competitor_content(item):
+        heat = 5
+    else:
+        heat = 3
     account_angle = angle_score(item, scene)
     business = 5 if any(k in text for k in ["流程", "SOP", "清单", "Brief", "分镜", "Agent", "复盘", "模板", "产品", "工具", "团队"]) else 3
     diff = 5 if account_angle >= 4 else 3
@@ -1905,6 +1914,8 @@ def score_item(item: ContentItem, scene: str) -> int:
     )
     if angle.get("角度类型") == "暂存观察":
         score = min(score, 64)
+    if item.source_type == "AIHOT热点" and not flow.is_major_aihot(item):
+        score = min(score, 64)
     return score
 
 
@@ -1913,6 +1924,8 @@ def recommend_action(item: ContentItem, score: int, scene: str) -> str:
     if item.fetch_status == "failed" or angle < 3:
         return "不做" if score < 60 else "暂存观察"
     if item.source_type == "AIHOT热点":
+        if not flow.is_major_aihot(item):
+            return "暂存观察" if score >= 58 else "不做"
         angle_type = hotspot_angle(item, scene).get("角度类型", "")
         if score >= 90 and angle_type in {"Agent落地", "AI导演流程"}:
             return "生成脚本包"
@@ -2017,7 +2030,7 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
     experiment = workflow_experiment_for(topic_title, item, profile)
     validation = validation_for_experiment(profile)
     evidence_gap = evidence_gap_for(item, profile)
-    return {
+    topic = {
         "我的选题标题": topic_title,
         "选题命题": topic_title,
         "一句话Brief": brief_for_topic(topic_title, profile),
@@ -2083,6 +2096,7 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "是否来自已解析URL复用": item.reused_url,
         "候选来源方式": "URL投喂/复用" if item.fetch_method in {"wechat_public_html_js_content", "douyin_public_router_data", "douyin_paraformer_transcript", "rss_atom_xml", "jina_reader"} else item.source_type,
     }
+    return flow.enrich_topic_record(topic, item)
 
 
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -2868,6 +2882,11 @@ def write_debug_top10(
             "是否有足够内容支撑": topic.get("是否有足够内容支撑", ""),
             "不建议做的原因": topic.get("不建议做的原因", ""),
             "内容可信度": topic.get("内容可信度", ""),
+            "来源权重类型": topic.get("来源权重类型", ""),
+            "来源影响权重": topic.get("来源影响权重", ""),
+            "来源构成": topic.get("来源构成", ""),
+            "对标转译角度": topic.get("对标转译角度", ""),
+            "AIHOT重大性说明": topic.get("AIHOT重大性说明", ""),
             "编辑判断分": topic.get("编辑判断分", ""),
             "标题质量分": topic.get("标题质量分", ""),
             "AI味风险": topic.get("AI味风险", ""),
@@ -2894,6 +2913,11 @@ def write_debug_top10(
         })
     csv_path = output_dir / "debug_today10_generation.csv"
     md_path = output_dir / "debug_today10_generation.md"
+    reverse_path = output_dir / "reverse_topic_evaluation.csv"
+    flow.write_reverse_evaluation(
+        reverse_path,
+        flow.reverse_evaluation_rows(topics, candidates, item_by_fp),
+    )
     write_csv(csv_path, rows)
     lines = [
         f"# 今日候选池生成诊断 {datetime.now().strftime('%Y-%m-%d %H:%M')}",
@@ -2917,6 +2941,10 @@ def write_debug_top10(
             f"- 是否有足够内容支撑：{row['是否有足够内容支撑']}",
             f"- 独特角度：{row['我能讲出的独特角度']}",
             f"- 内容可信度/编辑分/标题分/AI味：{row['内容可信度']} / {row['编辑判断分']} / {row['标题质量分']} / {row['AI味风险']}",
+            f"- 来源权重类型：{row['来源权重类型']}（{row['来源影响权重']}）",
+            f"- 来源构成：{row['来源构成']}",
+            f"- 对标转译角度：{row['对标转译角度']}",
+            f"- AIHOT重大性说明：{row['AIHOT重大性说明']}",
             f"- 主编判断：{row['主编判断']}",
             f"- 模板词命中情况：{row['模板词命中情况']}",
             f"- 是否建议进入制作：{row['是否建议进入制作']} / {row['今日建议级别']}",
@@ -3125,7 +3153,7 @@ def include_in_skill_review_pool(row: dict[str, Any]) -> bool:
     if row.get("候选来源方式") == "URL投喂/复用" or row.get("来源类型") in {"公众号文章", "对标视频"}:
         return editor_score >= 52 or raw_score >= 55
     if row.get("来源类型") == "AIHOT热点":
-        return editor_score >= 55 or raw_score >= 62
+        return flow.is_major_aihot(row) and (editor_score >= 55 or raw_score >= 62)
     return editor_score >= 55 or raw_score >= 58
 
 
@@ -3159,9 +3187,6 @@ def select_skill_review_candidates(candidates: list[dict[str, Any]]) -> list[dic
         source_title = re.sub(r"\s+", "", row.get("来源内容", "")).lower()
         if source_title and source_title in seen_source_titles:
             return False
-        if row.get("来源类型") == "AIHOT热点" and not allow_overflow:
-            if sum(1 for item in selected if item.get("来源类型") == "AIHOT热点") >= 8:
-                return False
         template = title_structure_template(row.get("可发布标题") or row.get("我的选题标题", ""))
         if template != "specific" and template_counts.get(template, 0) >= 2:
             return False
@@ -3303,6 +3328,7 @@ def main() -> int:
         "breakdowns": len(breakdown_rows),
         "today_candidates": len(today10),
         "logs": logs,
+        "source_composition": flow.source_composition(today10),
         "outputs": {
             "content_items": str(output_dir / "content_items.csv"),
             "content_breakdowns": str(output_dir / "content_breakdowns.csv"),
@@ -3310,6 +3336,7 @@ def main() -> int:
             "today_10_markdown": str(md_path),
             "debug_top10_csv": str(output_dir / "debug_today10_generation.csv"),
             "debug_top10_markdown": str(output_dir / "debug_today10_generation.md"),
+            "reverse_topic_evaluation": str(output_dir / "reverse_topic_evaluation.csv"),
         },
     }
     if args.write_feishu:

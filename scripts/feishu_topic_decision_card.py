@@ -226,6 +226,10 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     evidence = compact(fields.get("可展示证据"), 64)
     missing = compact(fields.get("需要补的证据"), 52)
     direction = compact(fields.get("对应方向"), 18)
+    source_mix = compact(fields.get("来源构成"), 48)
+    source_weight = compact(fields.get("来源权重类型"), 24)
+    translation = compact(fields.get("对标转译角度"), 86)
+    aihot_reason = compact(fields.get("AIHOT重大性说明"), 86)
     risk = compact(fields.get("AI味风险"), 8)
     original_date = compact(fields.get("推荐日期"), 10)
     original_run_id = compact(fields.get("运行批次"), 40)
@@ -240,6 +244,13 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
         lines.append(meta)
     if brief:
         lines.append(f"Brief：{brief}")
+    source_line = "｜".join(part for part in [source_mix, source_weight] if part)
+    if source_line:
+        lines.append(f"来源：{source_line}")
+    if translation:
+        lines.append(f"转译：{translation}")
+    if aihot_reason:
+        lines.append(f"重大性：{aihot_reason}")
     if experiment:
         lines.append(f"实验：{experiment}")
     if evidence:
