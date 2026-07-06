@@ -7,6 +7,7 @@ from tempfile import TemporaryDirectory
 
 import content_sampler
 import topic_flow_rework as flow
+import topic_replay_evaluation as replay
 
 
 def item(
@@ -62,8 +63,83 @@ class TopicFlowReworkTests(unittest.TestCase):
         self.assertEqual(topic["来源权重类型"], "有效对标账号核心源")
         self.assertEqual(topic["来源影响权重"], "1.00")
         self.assertIn("有效AI对标账号", topic["市场验证依据"])
-        self.assertIn("自己的", topic["Austin转译角度"])
+        self.assertIn("任务验收", topic["Austin转译角度"])
         self.assertNotIn("必选", topic["Austin转译角度"])
+
+    def test_knowledge_base_mapping_does_not_inherit_unrelated_spreadsheet_angle(self) -> None:
+        knowledge = item(
+            "对标视频",
+            "Codex联动Obsidian，搭建超强知识库",
+            "讲 Codex 和 Obsidian 如何把资料、双链、知识库和内容生产流程串起来，评论很多人收藏。",
+            account="AIGC自修室",
+        )
+        topic = {
+            "来源内容": knowledge.title,
+            "对应方向": "AI导演工作流",
+            "我的蹭热点角度": "我会把它放进自己的运营表格场景，测试重复表格任务。",
+            "推荐理由": "运营表格场景",
+        }
+
+        translation = flow.account_translation_fields(topic, knowledge)
+
+        self.assertEqual(translation["Austin映射方向"], "真实工作流改造")
+        self.assertEqual(translation["主题簇"], "知识库/内容资产流转")
+        self.assertIn("信息雷达", translation["Austin转译角度"])
+        self.assertIn("03 收件箱", translation["Austin转译角度"])
+        self.assertNotIn("运营表格", translation["Austin转译角度"])
+
+    def test_competitor_default_translation_is_source_specific_not_template_phrase(self) -> None:
+        competitor = item(
+            "对标视频",
+            "AIGC 多宫格故事板怎么做",
+            "AI视频 分镜 故事板 短片 成片 返修验收 实战 教程 评论 收藏",
+            account="AIGC自修室",
+        )
+        topic = content_sampler.topic_from_breakdown(content_sampler.breakdown(competitor), competitor)
+
+        self.assertEqual(topic["主题簇"], "AI视频/导演交付")
+        self.assertIn("视频交付", topic["Austin转译角度"])
+        self.assertNotIn("吸收它的选题承诺和结构", topic["Austin转译角度"])
+        self.assertNotIn("转成自己的业务语言", topic["Austin转译角度"])
+
+    def test_major_aihot_selected_has_austin_angle(self) -> None:
+        major = item("AIHOT热点", "GPT-5 发布新的 Agent API", "重大模型能力更新，影响 Agent 工作流、API 和视频生产。")
+        topic = content_sampler.topic_from_breakdown(content_sampler.breakdown(major), major)
+
+        self.assertIn("重大 AI Hot", topic["AIHOT重大性说明"])
+        self.assertTrue(topic["对标转译角度"])
+        self.assertIn(topic["Austin转译质量"], {"具体可转译", "需补重大性落地证据"})
+
+    def test_pm_quality_report_splits_actionable_and_observe_rows(self) -> None:
+        selected = [
+            {
+                "推荐动作": "生成脚本包",
+                "是否建议进入制作": "是",
+                "AI味风险": "低",
+                "Austin转译质量": "具体可转译",
+                "Austin转译角度": "转成 AI 视频交付现场：脚本、分镜和返修验收。",
+                "主题簇": "AI视频/导演交付",
+                "来源类型": "对标视频",
+                "原始来源标题": "多宫格故事板",
+            },
+            {
+                "推荐动作": "暂存观察",
+                "是否建议进入制作": "暂存观察",
+                "AI味风险": "低",
+                "Austin转译质量": "证据不足",
+                "Austin转译质量原因": "缺少真实案例证据",
+                "Austin转译角度": "先暂存观察",
+                "主题簇": "待补证据",
+                "来源类型": "对标视频",
+                "原始来源标题": "泛 AI 增长观点",
+            },
+        ]
+
+        rows = replay.pm_quality_rows(selected)
+
+        self.assertEqual(len(rows["actionable"]), 1)
+        self.assertEqual(len(rows["observe"]), 1)
+        self.assertIn("缺少真实案例证据", rows["observe"][0]["质量/降级说明"])
 
     def test_obvious_non_austin_competitor_content_is_filtered(self) -> None:
         irrelevant = item("对标视频", "26 年职业中专招生信息", "报考 大专 学校 招生 体育 美食推荐")

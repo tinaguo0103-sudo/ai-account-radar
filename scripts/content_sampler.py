@@ -941,6 +941,10 @@ def own_scenario_angle(topic: dict[str, Any], item: ContentItem) -> str:
     lower = text.lower()
     title_lower = (item.title or "").lower()
     title = item.title or topic.get("来源内容", "")
+    theme = flow.source_theme(item)
+    if theme.get("quality") == "具体可转译":
+        translation = flow.account_translation_fields(topic, item)
+        return translation["Austin转译角度"]
     if "mimo claw" in title_lower or ("小米" in title and "Claw" in title) or ("金山办公" in title):
         return "我会拿它测试自己的文档生产场景：一堆资料、表格和旧文档，能不能从整理、提纲到脚本包输入少跑几轮。"
     if "claude code" in lower and any(k in text for k in ["原则", "团队", "工作方式", "项目"]):
@@ -958,9 +962,15 @@ def own_scenario_angle(topic: dict[str, Any], item: ContentItem) -> str:
     if any(k in text for k in ["品牌", "素材", "审核", "带货", "AI假人", "Shein"]):
         return "我会把它放进品牌内容上线前的风控场景：AI生成素材不是能不能做，而是投放前谁检查真实性、风险承诺和品牌一致性。"
     if item.source_type == "公众号文章":
-        return "我会先拆它的判断结构，再转成自己的选题方法：它怎么筛信息、怎么建立信任、怎么证明自己不是搬运资讯。"
+        translation = flow.account_translation_fields(topic, item)
+        if translation.get("Austin转译质量") == "具体可转译":
+            return translation["Austin转译角度"]
+        return "我会先看它的判断结构是否能落到自己的业务现场；如果只有观点，没有案例、工具或流程证据，就先暂存观察。"
     if item.source_type == "对标视频":
-        return "我会先吸收它的选题承诺和结构，再转成自己的业务语言：不露出对标账号，也不照搬表达。"
+        translation = flow.account_translation_fields(topic, item)
+        if translation.get("Austin转译质量") == "具体可转译":
+            return translation["Austin转译角度"]
+        return "我会先看这条对标视频到底对应我的哪一个真实任务；如果只能学到表层钩子，还不能直接推进成 Austin 选题。"
     return f"我会先把《{short_title(title)}》放进一个真实业务场景，判断它能不能改造我的内容生产、AI导演或Agent任务流程。"
 
 

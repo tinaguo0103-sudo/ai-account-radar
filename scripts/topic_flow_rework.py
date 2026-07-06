@@ -78,6 +78,61 @@ IRRELEVANT_TO_AUSTIN_TERMS = [
     "相亲", "星座", "减肥", "穿搭", "娱乐八卦",
 ]
 
+GENERIC_TRANSLATION_PATTERNS = [
+    "吸收它的选题承诺和结构",
+    "转成自己的业务语言",
+    "不露出对标账号",
+    "不照搬表达",
+]
+
+THEME_RULES = [
+    {
+        "key": "knowledge_base",
+        "label": "知识库/内容资产流转",
+        "direction": "真实工作流改造",
+        "terms": ["知识库", "Obsidian", "RAG", "第二大脑", "双链", "资料沉淀", "素材沉淀", "内容资产"],
+        "translation": "转成 Austin 的信息雷达复盘：资料进来以后，能不能从 03 收件箱走到 04 选题、06 脚本和复盘，下次还找得到、用得上。",
+        "needed": "补一条素材从收件箱、选题、脚本到复盘的真实路径截图或字段记录。",
+        "cluster_note": "这类内容看资料如何变成后续可复用的判断，而不是讲搭库教程。",
+    },
+    {
+        "key": "ai_video_workflow",
+        "label": "AI视频/导演交付",
+        "direction": "AI导演工作流",
+        "terms": ["AI视频", "AIGC", "短剧", "短片", "分镜", "故事板", "成片", "剪辑", "镜头", "Storyboard", "清道夫"],
+        "translation": "转成 AI 视频交付现场：脚本、角色、分镜、素材、字幕和返修验收哪些能交给 AI，哪些还必须由人做导演判断。",
+        "needed": "补一个自己的视频题目、分镜草稿、素材截图或返修记录。",
+        "cluster_note": "这类内容看 AI 是否接住视频交付链路，而不是只看工具效果。",
+    },
+    {
+        "key": "agent_workflow",
+        "label": "Agent/自动化任务验收",
+        "direction": "真实工作流改造",
+        "terms": ["Agent", "智能体", "Claude Code", "Codex", "Cursor", "MCP", "Shell", "CI/CD", "Skill", "自动化任务", "工作流执行"],
+        "translation": "转成非技术 Agent 任务验收：旧流程哪一步最卡、工具接住哪一环、输入输出怎么定义、失败时怎么回滚和复核。",
+        "needed": "补一个自己的重复任务、执行日志、失败样例或验收清单。",
+        "cluster_note": "这类内容看任务边界、执行结果和验收方式，而不是只讲工具技巧。",
+    },
+    {
+        "key": "office_workflow",
+        "label": "办公文档/表格交付",
+        "direction": "真实工作流改造",
+        "terms": ["Excel", "表格", "PPT", "Word", "飞书文档", "飞书表格", "可编辑", "办公"],
+        "translation": "转成办公交付现场：原始资料怎么变成可编辑文档、PPT 或表格，人工在哪里复核口径、格式和可交付结果。",
+        "needed": "补一份旧文档/表格输入、一版 AI 输出和人工改动前后对比。",
+        "cluster_note": "这类内容看办公产物能否进入真实交付，而不是只看生成演示。",
+    },
+    {
+        "key": "business_ai",
+        "label": "AI业务定调/增长判断",
+        "direction": "AI业务定调",
+        "terms": ["商业", "增长", "获客", "品牌", "企业", "营销", "转化", "行业", "客户", "产品化"],
+        "translation": "转成业务定调：这条变化到底改变了什么购买理由、信任成本或组织协作，Austin 要用自己的项目判断它是否成立。",
+        "needed": "补一个业务场景、客户/团队判断或上线前检查清单。",
+        "cluster_note": "这类内容看业务判断是否成立，而不是复述宏观趋势。",
+    },
+]
+
 
 def normalize_space(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
@@ -219,8 +274,122 @@ def mapped_direction(value: Any, fallback: str = "") -> str:
     return best if scores[best] > 0 else fallback
 
 
+def contains_term(text: str, term: str) -> bool:
+    return term.lower() in text.lower() or term in text
+
+
+def source_theme(value: Any) -> dict[str, str]:
+    text = source_text(value)
+    best: dict[str, str] | None = None
+    best_score = 0
+    for rule in THEME_RULES:
+        score = sum(1 for term in rule["terms"] if contains_term(text, term))
+        if score > best_score:
+            best_score = score
+            best = rule
+    if best:
+        return {
+            "key": best["key"],
+            "label": best["label"],
+            "direction": best["direction"],
+            "translation": best["translation"],
+            "needed": best["needed"],
+            "cluster_note": best["cluster_note"],
+            "quality": "具体可转译",
+            "quality_reason": f"原始来源命中 {best['label']} 证据，可落到 Austin 的真实场景。",
+        }
+    return {
+        "key": "needs_evidence",
+        "label": "待补证据",
+        "direction": "真实工作流改造",
+        "translation": "",
+        "needed": "补一个 Austin 自己的案例、工具截图或工作流前后对比。",
+        "cluster_note": "当前来源还缺足够具体的 Austin 使用现场。",
+        "quality": "证据不足",
+        "quality_reason": "原始来源没有明显命中知识库、Agent、AI视频、办公交付或业务定调场景。",
+    }
+
+
+def angle_conflicts_with_theme(angle: str, theme: dict[str, str]) -> bool:
+    if not angle or theme["key"] == "needs_evidence":
+        return False
+    if theme["key"] == "knowledge_base" and any(term in angle for term in ["表格", "Excel", "PPT", "运营表格"]):
+        return True
+    if theme["key"] == "ai_video_workflow" and any(term in angle for term in ["知识库", "表格", "Excel"]):
+        return True
+    if theme["key"] == "office_workflow" and any(term in angle for term in ["知识库", "分镜", "短剧"]):
+        return True
+    return False
+
+
+def title_conflicts_with_theme(title: str, theme: dict[str, str]) -> bool:
+    if not title or theme["key"] == "needs_evidence":
+        return False
+    if theme["key"] == "knowledge_base" and any(term in title for term in ["Excel", "表格", "AI视频", "分镜", "导演"]):
+        return True
+    if theme["key"] == "ai_video_workflow" and any(term in title for term in ["知识库", "表格", "Excel"]):
+        return True
+    if theme["key"] == "office_workflow" and any(term in title for term in ["知识库", "分镜", "短剧"]):
+        return True
+    return False
+
+
+def is_generic_translation(text: str) -> bool:
+    compact = normalize_space(text)
+    return any(pattern in compact for pattern in GENERIC_TRANSLATION_PATTERNS)
+
+
+def concrete_translation_angle(topic: dict[str, Any], item: Any, theme: dict[str, str]) -> str:
+    candidate = normalize_space(topic.get("我的蹭热点角度") or topic.get("推荐理由") or "")
+    if candidate and not is_generic_translation(candidate) and not angle_conflicts_with_theme(candidate, theme):
+        return candidate
+    if theme["translation"]:
+        return theme["translation"]
+    title = normalize_space(topic.get("来源内容") or topic.get("原始来源标题") or getattr(item, "title", ""))
+    return f"先暂存观察：目前只能看出《{title[:36]}》可能和 Austin 工作流有关，但还缺具体案例、工具或流程证据。"
+
+
+def theme_topic_title(topic: dict[str, Any], item: Any, theme: dict[str, str]) -> str:
+    original = normalize_space(topic.get("来源内容") or topic.get("原始来源标题") or getattr(item, "title", ""))
+    anchor = re.split(r"[，,。#｜|]", original)[0][:24] or "这条来源"
+    if theme["key"] == "knowledge_base":
+        return f"{anchor}，真正值得看的是资料能不能变成后面能用的内容资产"
+    if theme["key"] == "ai_video_workflow":
+        return f"{anchor}，真正值得看的是 AI 能不能接住视频交付"
+    if theme["key"] == "agent_workflow":
+        return f"{anchor}，真正值得看的是任务边界和结果验收"
+    if theme["key"] == "office_workflow":
+        return f"{anchor}，真正值得看的是文档表格能不能进入交付"
+    if theme["key"] == "business_ai":
+        return f"{anchor}，真正值得看的是业务判断能不能落到真实项目"
+    return normalize_space(topic.get("我的选题标题") or topic.get("选题命题") or anchor)
+
+
+def align_topic_visible_fields(topic: dict[str, Any], item: Any, translation: dict[str, str]) -> None:
+    theme = source_theme(item)
+    if theme["key"] == "needs_evidence":
+        return
+    current_title = normalize_space(topic.get("我的选题标题") or topic.get("选题命题"))
+    if title_conflicts_with_theme(current_title, theme):
+        fixed_title = theme_topic_title(topic, item, theme)
+        topic["我的选题标题"] = fixed_title
+        topic["选题命题"] = fixed_title
+        topic["内部切入角度"] = fixed_title
+        if "一句话Brief" in topic:
+            topic["一句话Brief"] = f"{fixed_title}：重点不是复述来源，而是验证它能不能落到 Austin 的真实流程。"
+    topic["对应方向"] = translation["Austin映射方向"]
+    topic["对应栏目"] = translation["Austin映射方向"]
+    for key in ["我的蹭热点角度", "我的思考点", "我能讲出的独特角度"]:
+        if key in topic and (not topic.get(key) or is_generic_translation(topic.get(key, "")) or angle_conflicts_with_theme(str(topic.get(key, "")), theme)):
+            topic[key] = translation["Austin转译角度"]
+    if topic.get("推荐理由") and (is_generic_translation(topic["推荐理由"]) or angle_conflicts_with_theme(topic["推荐理由"], theme)):
+        topic["推荐理由"] = translation["Austin转译角度"]
+
+
 def account_translation_fields(topic: dict[str, Any], item: Any) -> dict[str, str]:
-    direction = normalize_space(topic.get("对应方向") or topic.get("对应栏目") or mapped_direction(item, "真实工作流改造"))
+    theme = source_theme(item)
+    detected_direction = theme["direction"] if theme["key"] != "needs_evidence" else mapped_direction(item, "真实工作流改造")
+    direction = normalize_space(detected_direction or topic.get("对应方向") or topic.get("对应栏目") or "真实工作流改造")
     original = normalize_space(topic.get("来源内容") or topic.get("原始来源标题") or getattr(item, "title", ""))
     text = source_text(item)
     validation_hits = [term for term in MARKET_VALIDATION_TERMS if term in text]
@@ -229,15 +398,41 @@ def account_translation_fields(topic: dict[str, Any], item: Any) -> dict[str, st
         f"{source_label} 属于有效对标来源，内容已有账号/平台验证；"
         + (f"文本命中 {', '.join(validation_hits[:3])}。" if validation_hits else "需要在发布前补播放/互动或同类账号证据。")
     )
-    angle = normalize_space(topic.get("我的蹭热点角度") or topic.get("推荐理由") or "")
-    needed = normalize_space(topic.get("需要补的证据") or "补一个 Austin 自己的案例、工具截图或工作流前后对比。")
+    angle = concrete_translation_angle(topic, item, theme)
+    needed = normalize_space(topic.get("需要补的证据") or theme["needed"])
     return {
         "原始来源账号": source_label,
         "原始来源标题": original,
         "市场验证依据": validation,
         "Austin映射方向": direction,
-        "Austin转译角度": angle or f"把原内容转成 Austin 自己的 {direction} 现场，不复述原作者。",
+        "Austin转译角度": angle,
         "需要补的案例/工具/工作流": needed,
+        "Austin转译质量": theme["quality"],
+        "Austin转译质量原因": theme["quality_reason"],
+        "主题簇": theme["label"],
+        "主题簇说明": theme["cluster_note"],
+    }
+
+
+def aihot_translation_fields(topic: dict[str, Any], item: Any) -> dict[str, str]:
+    theme = source_theme(item)
+    reason = aihot_significance_reason(item)
+    direction = theme["direction"] if theme["key"] != "needs_evidence" else mapped_direction(item, normalize_space(topic.get("对应方向") or topic.get("对应栏目") or "AI业务定调"))
+    if is_major_aihot(item):
+        angle = theme["translation"] or "作为重大 AI Hot 观察：先判断它改变了什么工作流、接口、成本或行业默认动作，再决定 Austin 是否有自己的项目案例可以讲。"
+        quality = "具体可转译" if theme["key"] != "needs_evidence" else "需补重大性落地证据"
+    else:
+        angle = "普通 AI Hot 只保留观察：除非补到 Austin 的真实工作流影响或重大行业变化，否则不应压过高适配对标内容。"
+        quality = "低权重观察"
+    return {
+        "Austin映射方向": direction,
+        "Austin转译角度": angle,
+        "对标转译角度": angle,
+        "Austin转译质量": quality,
+        "Austin转译质量原因": reason,
+        "主题簇": theme["label"] if theme["key"] != "needs_evidence" else "AI Hot 观察",
+        "主题簇说明": theme["cluster_note"] if theme["key"] != "needs_evidence" else "只凭热点摘要还不能证明适合 Austin，需要重大性和工作流影响。",
+        "需要补的案例/工具/工作流": normalize_space(topic.get("需要补的证据") or "补官方来源、产品事实和 Austin 自己的落地影响判断。"),
     }
 
 
@@ -258,15 +453,23 @@ def enrich_topic_record(topic: dict[str, Any], item: Any) -> dict[str, Any]:
     topic["来源构成"] = f"{topic.get('来源类型', source_type(item))} / {source_name(item) or '未知来源'}"
     if is_aihot(item):
         topic["AIHOT重大性说明"] = aihot_significance_reason(item)
-        topic["对标转译角度"] = ""
+        topic.update(aihot_translation_fields(topic, item))
     elif is_competitor_content(item):
         translation = account_translation_fields(topic, item)
         topic.update(translation)
+        align_topic_visible_fields(topic, item, translation)
         topic["对标转译角度"] = translation["Austin转译角度"]
         topic["AIHOT重大性说明"] = ""
     else:
         topic["AIHOT重大性说明"] = ""
         topic["对标转译角度"] = normalize_space(topic.get("我的蹭热点角度") or topic.get("推荐理由"))
+        theme = source_theme(item)
+        topic.setdefault("Austin映射方向", theme["direction"])
+        topic.setdefault("Austin转译角度", topic["对标转译角度"])
+        topic.setdefault("Austin转译质量", theme["quality"])
+        topic.setdefault("Austin转译质量原因", theme["quality_reason"])
+        topic.setdefault("主题簇", theme["label"])
+        topic.setdefault("主题簇说明", theme["cluster_note"])
     return topic
 
 
