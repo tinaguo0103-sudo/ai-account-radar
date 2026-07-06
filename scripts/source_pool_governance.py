@@ -97,6 +97,40 @@ def write_report(report: dict[str, Any], out_dir: Path) -> Path:
     return path
 
 
+def write_release_sync_plan(report: dict[str, Any], out_dir: Path) -> Path:
+    out_dir.mkdir(parents=True, exist_ok=True)
+    path = out_dir / "polluted_source_release_sync_plan.md"
+    polluted = report.get("governance", {}).get("polluted_matches", [])
+    lines = [
+        "# AR-026 Polluted Source Release Sync Plan",
+        "",
+        "Scope: Feishu 01 source-pool release action only. Do not touch historical 03 records.",
+        "",
+        "## Dry-run Result",
+        f"- polluted_source_count: {len(polluted)}",
+        "- target state: source_role=quarantined_source, default_enabled=false, participates_main_sampling=false, priority=low",
+        "- production write: not performed by this dev tool run",
+        "",
+        "## Sources",
+    ]
+    for row in polluted:
+        lines.append(f"- {row.get('name')} ({row.get('platform')}) current_role={row.get('role')}")
+    lines.extend([
+        "",
+        "## Release Steps",
+        "1. Production/PM runs this tool in read-only mode against Feishu 01 and reviews the JSON report.",
+        "2. Confirm the eight source names match the user-approved screenshot-pollution list exactly.",
+        "3. Run the separately authorized Feishu 01 sync/reconcile path to update only these source rows.",
+        "4. Re-run source governance read-only report and confirm active_competitor_count excludes quarantined sources.",
+        "5. Run collection preview/check without writing 03 to confirm planned account coverage stays full-account.",
+        "",
+        "## Rollback",
+        "If a source is quarantined by mistake, restore source_role/default_enabled/participates_main_sampling from the previous Feishu 01 row values; historical 03 remains untouched.",
+    ])
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="AR-026 source governance dry-run and full-account coverage report.")
     parser.add_argument("--config", default=str(CONFIG))
@@ -122,7 +156,11 @@ def main() -> int:
             "touches_historical_03": False,
         },
     }
-    path = write_report(report, Path(args.out_dir))
+    out_dir = Path(args.out_dir)
+    plan_path = write_release_sync_plan(report, out_dir)
+    report["release_sync_plan"] = str(plan_path)
+    report["output"] = str(out_dir / "source_governance_report.json")
+    path = write_report(report, out_dir)
     report["output"] = str(path)
     print(json.dumps(report, ensure_ascii=False, indent=2))
     return 0

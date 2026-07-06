@@ -91,7 +91,12 @@ def replay(items: list[content_sampler.ContentItem]) -> dict[str, Any]:
     selected = content_sampler.assign_action_quotas(selected)
     selected = content_sampler.apply_editorial_judgement(selected, item_by_fp)
     selected = content_sampler.assign_today_priority(selected)
-    reverse_rows = flow.reverse_evaluation_rows(selected, candidates, item_by_fp)
+    reverse_rows = flow.reverse_evaluation_rows(
+        selected,
+        candidates,
+        item_by_fp,
+        max_selected=content_sampler.MAX_SKILL_REVIEW_CANDIDATES,
+    )
     return {
         "items": item_rows,
         "breakdowns": breakdown_rows,

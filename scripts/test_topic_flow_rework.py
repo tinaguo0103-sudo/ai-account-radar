@@ -2,6 +2,8 @@
 from __future__ import annotations
 
 import unittest
+from pathlib import Path
+from tempfile import TemporaryDirectory
 
 import content_sampler
 import topic_flow_rework as flow
@@ -63,6 +65,22 @@ class TopicFlowReworkTests(unittest.TestCase):
         self.assertIn("自己的", topic["Austin转译角度"])
         self.assertNotIn("必选", topic["Austin转译角度"])
 
+    def test_obvious_non_austin_competitor_content_is_filtered(self) -> None:
+        irrelevant = item("对标视频", "26 年职业中专招生信息", "报考 大专 学校 招生 体育 美食推荐")
+        topic = content_sampler.topic_from_breakdown(content_sampler.breakdown(irrelevant), irrelevant)
+        topic = content_sampler.editorial_judgement(topic, irrelevant)
+
+        self.assertTrue(flow.is_irrelevant_to_austin(topic))
+        self.assertFalse(content_sampler.include_in_skill_review_pool(topic))
+
+    def test_competitor_topics_are_not_coarsely_merged_by_generic_workflow_bucket(self) -> None:
+        first = {"来源类型": "对标视频", "原始来源账号": "AIGC自修室", "来源内容": "多宫格故事板", "内容指纹": "fp1", "业务场景": "AI导演", "热点切入方式": "对标内容拆解", "可沉淀资产": "AI视频Brief与分镜验收清单", "标题生成规则": "douyin"}
+        second = {"来源类型": "对标视频", "原始来源账号": "大伟聊前端", "来源内容": "CI/CD Shell 自动化", "内容指纹": "fp2", "业务场景": "非技术Agent", "热点切入方式": "对标内容拆解", "可沉淀资产": "非技术Agent任务拆解模板", "标题生成规则": "douyin"}
+
+        merged = content_sampler.merge_same_theme([first, second])
+
+        self.assertEqual(len(merged), 2)
+
     def test_reverse_evaluation_flags_unselected_high_fit_competitor(self) -> None:
         selected_item = item("对标视频", "普通候选", "工作流 自动化 工具 视频")
         missed_item = item("对标视频", "更适合Austin的候选", "Codex 飞书 工作流 自动化 PPT 复盘 实战 教程 评论 收藏")
@@ -83,14 +101,34 @@ class TopicFlowReworkTests(unittest.TestCase):
             },
         ]
 
-        rows = flow.reverse_evaluation_rows(selected, candidates, {
-            selected_item.fingerprint: selected_item,
-            missed_item.fingerprint: missed_item,
-        })
+        rows = flow.reverse_evaluation_rows(
+            selected,
+            candidates,
+            {
+                selected_item.fingerprint: selected_item,
+                missed_item.fingerprint: missed_item,
+            },
+            max_selected=1,
+        )
 
         flagged = [row for row in rows if row.potentially_better]
         self.assertEqual(len(flagged), 1)
         self.assertEqual(flagged[0].source_title, "更适合Austin的候选")
+        self.assertNotEqual(flagged[0].reason, "未给出明确未选原因")
+        self.assertIn("候选池上限", flagged[0].reason)
+
+    def test_write_csv_uses_union_fieldnames_for_enriched_rows(self) -> None:
+        with TemporaryDirectory() as tmp:
+            path = Path(tmp) / "rows.csv"
+            content_sampler.write_csv(path, [
+                {"标题": "第一条"},
+                {"标题": "第二条", "Austin转译角度": "转成真实工作流"},
+            ])
+
+            text = path.read_text(encoding="utf-8-sig")
+
+        self.assertIn("Austin转译角度", text.splitlines()[0])
+        self.assertIn("转成真实工作流", text)
 
 
 if __name__ == "__main__":

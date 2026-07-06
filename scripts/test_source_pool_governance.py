@@ -52,6 +52,18 @@ class SourcePoolGovernanceTests(unittest.TestCase):
         self.assertEqual(report["polluted_sources"], ["UDG终极梦想车库"])
         self.assertFalse(report["future_batching"]["enabled_now"])
 
+    def test_csv_probe_stringified_video_links_count_as_items_not_characters(self) -> None:
+        sources = [source("AI账号00")]
+        probe_rows = [{
+            "account_name": "AI账号00",
+            "status": "success",
+            "video_links": "[\"https://example.com/a\", \"https://example.com/b\"]",
+        }]
+
+        report = flow.collection_coverage_report(sources, probe_rows)
+
+        self.assertEqual(report["per_account_artifact_counts"]["AI账号00"], 2)
+
 
 if __name__ == "__main__":
     unittest.main()

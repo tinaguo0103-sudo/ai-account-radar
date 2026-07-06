@@ -2104,8 +2104,15 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     if not rows:
         path.write_text("", encoding="utf-8")
         return
+    fieldnames: list[str] = []
+    seen: set[str] = set()
+    for row in rows:
+        for key in row:
+            if key not in seen:
+                fieldnames.append(key)
+                seen.add(key)
     with path.open("w", encoding="utf-8-sig", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0].keys()))
+        writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
 
@@ -2916,7 +2923,7 @@ def write_debug_top10(
     reverse_path = output_dir / "reverse_topic_evaluation.csv"
     flow.write_reverse_evaluation(
         reverse_path,
-        flow.reverse_evaluation_rows(topics, candidates, item_by_fp),
+        flow.reverse_evaluation_rows(topics, candidates, item_by_fp, max_selected=MAX_SKILL_REVIEW_CANDIDATES),
     )
     write_csv(csv_path, rows)
     lines = [
@@ -3033,10 +3040,10 @@ def similar_asset_key(topic: dict[str, Any]) -> str:
 def topic_theme_key(topic: dict[str, Any]) -> tuple[str, str, str, str]:
     if topic.get("来源类型") != "AIHOT热点":
         return (
-            topic["业务场景"],
-            topic["热点切入方式"],
-            similar_asset_key(topic),
-            topic.get("标题生成规则", ""),
+            topic.get("来源类型", ""),
+            topic.get("原始来源账号", ""),
+            re.sub(r"\s+", "", topic.get("来源内容") or topic.get("原始来源标题", ""))[:80],
+            topic.get("内容指纹", ""),
         )
     return (
         topic["业务场景"],
@@ -3079,10 +3086,22 @@ def ai_risk_rank(topic: dict[str, Any]) -> int:
     return {"低": 3, "中": 2, "高": 0}.get(topic.get("AI味风险", ""), 1)
 
 
-def editorial_sort_key(topic: dict[str, Any]) -> tuple[int, int, int, int, int, int, int]:
+def source_priority_rank(topic: dict[str, Any]) -> int:
+    source_weight = topic.get("来源权重类型", "")
+    if source_weight == "有效对标账号核心源":
+        return 3
+    if topic.get("来源类型") == "AIHOT热点":
+        return 2 if flow.is_major_aihot(topic) else 0
+    if source_weight:
+        return 1
+    return 1
+
+
+def editorial_sort_key(topic: dict[str, Any]) -> tuple[int, int, int, int, int, int, int, int]:
     suggested = 1 if topic.get("是否建议进入制作") == "是" else 0
     return (
         suggested,
+        source_priority_rank(topic),
         int(topic.get("编辑判断分", 0) or 0),
         credibility_rank(topic),
         ai_risk_rank(topic),
@@ -3140,6 +3159,8 @@ def include_in_skill_review_pool(row: dict[str, Any]) -> bool:
     row is 今日最值得做、可选候选、暂存观察 or 不建议制作.
     """
     if not row.get("内容指纹"):
+        return False
+    if flow.is_irrelevant_to_austin(row):
         return False
     if row.get("是否只是资讯搬运") == "是" and int(row.get("编辑判断分", 0) or 0) < 70:
         return False
