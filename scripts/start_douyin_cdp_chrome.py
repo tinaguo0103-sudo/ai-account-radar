@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import subprocess
 import sys
 import time
@@ -20,8 +21,23 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_PROFILE = ROOT / ".local_services" / "douyin-chrome-profile"
 DEFAULT_URL = "https://www.douyin.com/"
-CHROME_APP = "Google Chrome"
-CHROME_BINARY = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+CHROME_BUNDLE_ID = "com.google.Chrome"
+DEFAULT_CHROME_APP = Path("/Applications/Google Chrome.app")
+DEFAULT_CHROME_BINARY = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
+
+
+def chrome_app_path() -> Path:
+    configured = os.getenv("CHROME_APP_PATH", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return DEFAULT_CHROME_APP
+
+
+def chrome_binary() -> Path:
+    configured = os.getenv("CHROME_BINARY", "").strip()
+    if configured:
+        return Path(configured).expanduser()
+    return DEFAULT_CHROME_BINARY
 
 
 def cdp_version(port: int) -> dict | None:
@@ -44,55 +60,76 @@ def open_cdp_target(port: int, url: str) -> dict | None:
 
 def activate_chrome() -> None:
     subprocess.run(
-        ["/usr/bin/osascript", "-e", f'tell application "{CHROME_APP}" to activate'],
+        ["/usr/bin/osascript", "-e", f'tell application id "{CHROME_BUNDLE_ID}" to activate'],
         text=True,
         capture_output=True,
         check=False,
     )
 
 
-def launch_headless_chrome(port: int, profile: Path, url: str) -> tuple[subprocess.Popen, Path]:
-    profile = profile.expanduser().resolve()
-    profile.mkdir(parents=True, exist_ok=True)
-    log_path = ROOT / ".local_services" / f"douyin-chrome-headless-{port}.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
+def chrome_arg_list(port: int, profile: Path, url: str, mode: str) -> list[str]:
     cmd = [
-        str(CHROME_BINARY),
-        "--headless=new",
-        "--disable-gpu",
-        "--disable-dev-shm-usage",
-        "--disable-background-networking",
         "--remote-allow-origins=*",
         f"--remote-debugging-port={port}",
         f"--user-data-dir={profile}",
         "--no-first-run",
         "--no-default-browser-check",
-        url,
     ]
+    if mode == "headless":
+        cmd.extend([
+            "--headless=new",
+            "--disable-gpu",
+            "--disable-dev-shm-usage",
+            "--disable-background-networking",
+        ])
+    elif mode == "hidden":
+        cmd.append("--start-minimized")
+    cmd.append(url)
+    return cmd
+
+
+def chrome_launch_command(binary: Path, port: int, profile: Path, url: str, mode: str) -> list[str]:
+    return [str(binary), *chrome_arg_list(port, profile, url, mode)]
+
+
+def chrome_app_launch_command(app_path: Path, port: int, profile: Path, url: str, mode: str) -> list[str]:
+    cmd = ["/usr/bin/open", "-n"]
+    if mode == "hidden":
+        # -g avoids stealing focus; -j asks LaunchServices to hide the app at launch.
+        cmd.extend(["-g", "-j"])
+    cmd.extend(["-a", str(app_path), "--args", *chrome_arg_list(port, profile, url, mode)])
+    return cmd
+
+
+def launch_headless_chrome(binary: Path, port: int, profile: Path, url: str) -> tuple[subprocess.Popen, Path]:
+    profile = profile.expanduser().resolve()
+    profile.mkdir(parents=True, exist_ok=True)
+    log_path = ROOT / ".local_services" / f"douyin-chrome-headless-{port}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = chrome_launch_command(binary, port, profile, url, "headless")
     handle = log_path.open("ab")
     proc = subprocess.Popen(cmd, cwd=ROOT, stdout=handle, stderr=handle)
     return proc, log_path
 
 
-def launch_chrome(port: int, profile: Path, url: str, mode: str) -> subprocess.CompletedProcess:
+def launch_chrome(port: int, profile: Path, url: str, mode: str) -> tuple[subprocess.CompletedProcess, Path]:
     profile = profile.expanduser().resolve()
     profile.mkdir(parents=True, exist_ok=True)
-    cmd = ["/usr/bin/open"]
-    if mode == "hidden":
-        # -g avoids stealing focus; -j asks LaunchServices to hide the app at launch.
-        cmd.extend(["-g", "-j"])
-    cmd.extend([
-        "-na",
-        CHROME_APP,
-        "--args",
-        f"--remote-debugging-port={port}",
-        f"--user-data-dir={profile}",
-        "--no-first-run",
-        "--no-default-browser-check",
-        "--start-minimized",
-        url,
-    ])
-    return subprocess.run(cmd, text=True, capture_output=True, check=False)
+    log_path = ROOT / ".local_services" / f"douyin-chrome-{mode}-{port}.log"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    cmd = chrome_app_launch_command(chrome_app_path(), port, profile, url, mode)
+    proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=False)
+    log_path.write_text(
+        "\n".join([
+            f"command: {' '.join(cmd)}",
+            f"returncode: {proc.returncode}",
+            f"stdout: {proc.stdout[-2000:]}",
+            f"stderr: {proc.stderr[-2000:]}",
+            "",
+        ]),
+        encoding="utf-8",
+    )
+    return proc, log_path
 
 
 def main() -> int:
@@ -144,22 +181,43 @@ def main() -> int:
         }, ensure_ascii=False, indent=2))
         return 2
 
+    binary = chrome_binary()
+    app_path = chrome_app_path()
+    if args.mode != "headless" and not app_path.exists():
+        print(json.dumps({
+            "ok": False,
+            "status": "chrome_app_not_found",
+            "chrome_app_path": str(app_path),
+            "default_chrome_app_path": str(DEFAULT_CHROME_APP),
+            "env_var": "CHROME_APP_PATH",
+            "next_step": "Set CHROME_APP_PATH to Google Chrome.app or install Google Chrome in /Applications.",
+        }, ensure_ascii=False, indent=2))
+        return 1
+    if args.mode == "headless" and not binary.exists():
+        print(json.dumps({
+            "ok": False,
+            "status": "chrome_binary_not_found",
+            "chrome_binary": str(binary),
+            "default_chrome_binary": str(DEFAULT_CHROME_BINARY),
+            "env_var": "CHROME_BINARY",
+            "next_step": "Set CHROME_BINARY to the Google Chrome executable path or install Google Chrome in /Applications.",
+        }, ensure_ascii=False, indent=2))
+        return 1
+
+    launch_error = ""
     if args.mode == "headless":
-        if not CHROME_BINARY.exists():
-            print(json.dumps({
-                "ok": False,
-                "status": "chrome_binary_not_found",
-                "path": str(CHROME_BINARY),
-                "next_step": "Use --mode hidden or install Google Chrome in /Applications.",
-            }, ensure_ascii=False, indent=2))
-            return 1
-        proc, log_path = launch_headless_chrome(args.port, profile_path, args.url)
+        proc, log_path = launch_headless_chrome(binary, args.port, profile_path, args.url)
         stdout = ""
         stderr = f"headless log: {log_path}"
     else:
-        proc = launch_chrome(args.port, profile_path, args.url, args.mode)
-        stdout = proc.stdout[-1000:]
-        stderr = proc.stderr[-1000:]
+        try:
+            proc, log_path = launch_chrome(args.port, profile_path, args.url, args.mode)
+        except OSError as exc:
+            launch_error = str(exc)
+            proc = None
+            log_path = ROOT / ".local_services" / f"douyin-chrome-{args.mode}-{args.port}.log"
+        stdout = (getattr(proc, "stdout", "") or "")[-1000:]
+        stderr = ((getattr(proc, "stderr", "") or "")[-1000:]) if not launch_error else launch_error
     time.sleep(args.wait_seconds)
     version = cdp_version(args.port)
     ok = version is not None
@@ -170,10 +228,14 @@ def main() -> int:
         "browser": (version or {}).get("Browser", ""),
         "profile": str(profile_path),
         "mode": args.mode,
+        "launch_strategy": "app_path" if args.mode != "headless" else "chrome_binary",
+        "chrome_app_path": str(app_path),
+        "chrome_bundle_id": CHROME_BUNDLE_ID,
+        "chrome_binary": str(binary),
         "pid": getattr(proc, "pid", None),
         "stdout": stdout,
         "stderr": stderr,
-        "log_path": str(log_path) if args.mode == "headless" else "",
+        "log_path": str(log_path),
         "login_note": "Default hidden mode starts the dedicated Chrome in the background. If Douyin asks for login/verification, rerun with --foreground. Do not share QR/cookie/token in chat.",
         "next_probe": f"node scripts/douyin_cdp_source_watch_probe.mjs --cdp http://127.0.0.1:{args.port} --account-limit 3 --video-limit 3",
     }, ensure_ascii=False, indent=2))
