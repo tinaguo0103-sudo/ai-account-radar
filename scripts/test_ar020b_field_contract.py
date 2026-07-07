@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import unittest
+from unittest.mock import patch
 
 import editorial_skill_runner
 import push_today10_to_feishu
@@ -129,6 +130,34 @@ class AR020BFieldContractTests(unittest.TestCase):
         self.assertEqual(fallback["not_editorial_quality"], "true")
         self.assertEqual(visible, [])
         self.assertEqual(omitted, 1)
+
+    def test_04_writer_prefers_explicit_staging_topic_table_id(self) -> None:
+        with patch.dict("os.environ", {"FEISHU_TOPIC_TABLE_ID": "tbl_ar020b_l3_test"}), \
+                patch.object(push_today10_to_feishu, "list_tables", side_effect=AssertionError("list_tables should not be called")):
+            table_id, source = push_today10_to_feishu.get_topic_table("token", "app")
+
+        self.assertEqual(table_id, "tbl_ar020b_l3_test")
+        self.assertEqual(source, "FEISHU_TOPIC_TABLE_ID")
+
+    def test_04_writer_maps_skill_action_and_title_permission_to_feishu_fields(self) -> None:
+        row = {
+            "选题命题": "Codex 联动 Obsidian 后先测资料回流",
+            "推荐动作": "补证据",
+            "title_permission": "内部测试标题",
+            "可发布标题": "",
+            "今日建议级别": "可选候选",
+            "AI味风险": "低",
+            "对应方向": "真实工作流改造",
+            "来源构成": "对标视频 / xuan酱",
+            "一句话Brief": "测试资料能不能回到选题台。",
+            "我要做的实验": "拿5条资料测试回流。",
+        }
+
+        mapped = push_today10_to_feishu.map_row(row, 1, "2026-07-07", "ar020b_l3")
+
+        self.assertEqual(mapped["推荐动作"], "补证据")
+        self.assertEqual(mapped["title_permission"], "内部测试标题")
+        self.assertEqual(mapped["今日建议级别"], "可选候选")
 
 
 if __name__ == "__main__":

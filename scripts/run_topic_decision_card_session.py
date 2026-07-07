@@ -24,6 +24,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--run-id", default="latest")
     parser.add_argument("--limit", type=int, default=7)
     parser.add_argument("--include-decided", action="store_true")
+    parser.add_argument("--strict-run-id", action="store_true", help="Only include records whose 运行批次 exactly matches --run-id; useful for isolated staging QA.")
+    parser.add_argument("--record-id", action="append", default=[], help="Limit card to a specific Feishu record_id. Can be repeated.")
     parser.add_argument("--send-dry-run", action="store_true", help="Build the card and print send preview without sending.")
     parser.add_argument(
         "--receive-target",
@@ -49,6 +51,10 @@ def main() -> int:
     ]
     if args.include_decided:
         send_cmd.append("--include-decided")
+    if args.strict_run_id:
+        send_cmd.append("--strict-run-id")
+    for record_id in args.record_id:
+        send_cmd.extend(["--record-id", record_id])
     if args.send_dry_run:
         send_cmd.append("--dry-run")
     for receive_target in args.receive_target:

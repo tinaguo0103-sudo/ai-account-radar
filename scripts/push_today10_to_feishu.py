@@ -20,6 +20,7 @@ import feishu_idempotency as idempotency
 import push_to_feishu as feishu
 import topic_field_contract as field_contract
 from feishu_table_registry import TABLES, resolve_table_id, table_name
+from local_env import load_local_env
 from topic_decision_fields import (
     CORE_VISIBLE_FIELDS,
     DAILY_WRITE_FIELDS,
@@ -35,6 +36,7 @@ TODAY10 = OUT / "today_10_topics.csv"
 LATEST_WRITE_TODAY10 = OUT / "latest_write" / "today_10_topics.csv"
 LEGACY_LOG = OUT / "content_sampler_log.json"
 TARGET_TABLE_KEY = "topic_decision"
+TOPIC_TABLE_ID_ENV_KEYS = ("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE_ID")
 TOPIC_CREATE_KIND = "topic_candidate_create"
 REQUIRED_FIELDS = [
     *DAILY_WRITE_FIELDS,
@@ -340,6 +342,9 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "选题标题": display_title,
         "状态": status,
         "今日建议级别": level,
+        "推荐动作": row.get("推荐动作", ""),
+        "title_permission": row.get("title_permission", ""),
+        "可发布标题": row.get("可发布标题", ""),
         "AI味风险": row.get("AI味风险", ""),
         "推荐日期": date,
         "今日排名": str(rank),
@@ -367,6 +372,25 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
     }
     mapped["卡片速读"] = card_summary_from_fields(mapped)
     return mapped
+
+
+def explicit_topic_table_id() -> tuple[str, str]:
+    for key in TOPIC_TABLE_ID_ENV_KEYS:
+        value = os.getenv(key, "").strip()
+        if value:
+            return value, key
+    return "", ""
+
+
+def get_topic_table(token: str, app_token: str) -> tuple[str, str]:
+    explicit_table_id, source = explicit_topic_table_id()
+    if explicit_table_id:
+        return explicit_table_id, source
+    tables = list_tables(token, app_token)
+    table_id = resolve_table_id(tables, TARGET_TABLE_KEY)
+    if not table_id:
+        raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
+    return table_id, "table_name"
 
 
 def dry_run_print(rows: list[dict[str, str]]) -> None:
@@ -653,6 +677,7 @@ def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: s
 
 
 def main() -> int:
+    load_local_env()
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true", help="Actually write to Feishu. Default is dry-run only.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
@@ -682,10 +707,7 @@ def main() -> int:
     if not app_token:
         raise SystemExit("FEISHU_BASE_APP_TOKEN is required")
     token = feishu.tenant_token()
-    tables = list_tables(token, app_token)
-    table_id = resolve_table_id(tables, TARGET_TABLE_KEY)
-    if not table_id:
-        raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
+    table_id, table_id_source = get_topic_table(token, app_token)
     created_fields = ensure_fields(token, app_token, table_id)
 
     existing = all_records(token, app_token, table_id)
@@ -720,6 +742,8 @@ def main() -> int:
         "ok": True,
         "mode": "write",
         "table": TABLES[TARGET_TABLE_KEY],
+        "table_id": table_id,
+        "table_id_source": table_id_source,
         "run_id": run_id,
         "input": str(input_path),
         "created_fields": created_fields,
