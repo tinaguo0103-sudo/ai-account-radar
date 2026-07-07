@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 import content_sampler
+import topic_field_contract as field_contract
 import topic_flow_rework as flow
 
 
@@ -129,6 +130,9 @@ def is_observe_topic(row: dict[str, Any]) -> bool:
 
 def quality_flag_reasons(row: dict[str, Any], theme_counts: collections.Counter[str]) -> list[str]:
     reasons: list[str] = []
+    contract_issues = field_contract.validate_field_contract(row)
+    if contract_issues:
+        reasons.append("字段契约失败：" + field_contract.issue_messages(contract_issues))
     translation = str(row.get("Austin转译角度") or row.get("对标转译角度") or row.get("我的蹭热点角度") or "")
     if any(pattern in translation for pattern in GENERIC_QUALITY_PATTERNS):
         reasons.append("转译解释仍偏模板化或缺少来源特异性")
