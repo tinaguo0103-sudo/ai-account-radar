@@ -82,7 +82,8 @@ def classify_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]
         "contract_failures": [],
         "fallback_rows": [],
     }
-    for row in rows:
+    guarded_rows = field_contract.apply_batch_quality_guards(rows)
+    for row in guarded_rows:
         issues = field_contract.validate_field_contract(row)
         row_with_status = field_contract.mark_contract_result(row, issues)
         if row_with_status.get("fallback_only") == "true" or row_with_status.get("not_editorial_quality") == "true":
@@ -102,6 +103,36 @@ def classify_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]
         else:
             outputs["rejected"].append(row_with_status)
     return outputs
+
+
+def title_body_check_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    checked = field_contract.apply_batch_quality_guards(rows)
+    out: list[dict[str, Any]] = []
+    for row in checked:
+        out.append({
+            "原始来源标题": row.get("原始来源标题") or row.get("来源内容", ""),
+            "原始来源账号": row.get("原始来源账号") or row.get("账号名/公众号名", ""),
+            "推荐动作": row.get("推荐动作", ""),
+            "今日建议级别": row.get("今日建议级别") or row.get("候选状态", ""),
+            "可发布标题": row.get("可发布标题", ""),
+            "选题命题": row.get("选题命题") or row.get("选题标题", ""),
+            "title_pattern_family": row.get("title_pattern_family", ""),
+            "title_quality_status": row.get("title_quality_status", ""),
+            "title_quality_issues": row.get("title_quality_issues", ""),
+            "主编判断摘要": row.get("主编判断摘要", ""),
+            "标题思路": row.get("标题思路", ""),
+            "field_contract_status": row.get("field_contract_status", ""),
+            "field_contract_issues": row.get("field_contract_issues", ""),
+        })
+    return out
+
+
+def near_miss_rows(reverse_rows: list[Any]) -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for row in reverse_rows:
+        if getattr(row, "potentially_better", False):
+            rows.append(row.__dict__)
+    return rows
 
 
 def sample_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -129,6 +160,8 @@ def sample_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "source_title": row.get("原始来源标题") or row.get("来源内容", ""),
                     "source_account": row.get("原始来源账号") or row.get("账号名/公众号名", ""),
                     "skill_decision": row.get("主编筛选") or row.get("主编判断", ""),
+                    "editorial_trace": row.get("主编判断摘要", ""),
+                    "title_thinking": row.get("标题思路", ""),
                     "topic": row.get("选题命题") or row.get("选题标题", ""),
                     "brief": row.get("一句话Brief", ""),
                     "experiment": row.get("我要做的实验", ""),
@@ -146,7 +179,7 @@ def sample_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
 
 def write_markdown_report(out_dir: Path, summary: dict[str, Any], samples: list[dict[str, Any]]) -> None:
     lines = [
-        "# AR-020B Skill Replay Report",
+        "# AR-020C Skill Thinking Replay Report",
         "",
         "本报告只读生产内容 CSV，不写飞书、不发 Topic Card、不触发 06。",
         "",
@@ -163,20 +196,32 @@ def write_markdown_report(out_dir: Path, summary: dict[str, Any], samples: list[
         "rejected_count",
         "contract_failure_count",
         "fallback_row_count",
+        "title_quality_failure_count",
+        "near_miss_count",
     ]:
         lines.append(f"- {key}: {summary.get(key)}")
-    lines.extend(["", "## Samples"])
+    lines.extend(["", "## PM Sample Rows"])
     for row in samples:
         lines.extend([
             f"- {row['sample_key']} | {row['source_title'][:90]}",
             f"  - account: {row['source_account']}",
             f"  - status/action: {row['status']} / {row['action']}",
             f"  - direction: {row['direction']}",
+            f"  - editorial trace: {row.get('editorial_trace', '')}",
+            f"  - title thinking: {row.get('title_thinking', '')}",
             f"  - topic: {row['topic']}",
             f"  - experiment: {row['experiment']}",
             f"  - contract: {row['contract_status']} {row['contract_issues']}",
         ])
-    (out_dir / "skill_replay_report.md").write_text("\n".join(lines), encoding="utf-8")
+    lines.extend([
+        "",
+        "## Output Tables",
+        f"- actionable: {summary.get('outputs', {}).get('skill_actionable')}",
+        f"- observe: {summary.get('outputs', {}).get('skill_observe')}",
+        f"- near_miss_high_fit_unselected: {summary.get('outputs', {}).get('near_miss_high_fit_unselected')}",
+        f"- title_body_check: {summary.get('outputs', {}).get('title_body_check')}",
+    ])
+    (out_dir / "ar020c_user_sample_summary.md").write_text("\n".join(lines), encoding="utf-8")
 
 
 def main() -> int:
@@ -197,8 +242,10 @@ def main() -> int:
     items = deterministic_replay.load_items(csv_paths, since)
     pre = build_pre_skill_pool(items, args.max_skill_candidates)
     write_csv(out_dir / "pre_skill_candidates.csv", pre["pre_skill_pool"])
+    write_csv(out_dir / "candidate_universe.csv", pre["candidates"])
 
     skill_rows, engine_meta, engine = run_skill(pre["pre_skill_pool"], args)
+    skill_rows = field_contract.apply_batch_quality_guards(skill_rows)
     classified = classify_rows(skill_rows)
     for name, rows in classified.items():
         write_csv(out_dir / f"skill_{name}.csv", rows)
@@ -211,6 +258,9 @@ def main() -> int:
         max_selected=args.max_skill_candidates,
     )
     flow.write_reverse_evaluation(out_dir / "skill_reverse_evaluation.csv", reverse_rows)
+    write_csv(out_dir / "near_miss_high_fit_unselected.csv", near_miss_rows(reverse_rows))
+    title_rows = title_body_check_rows(skill_rows)
+    write_csv(out_dir / "title_body_check.csv", title_rows)
 
     samples = sample_rows(skill_rows)
     write_csv(out_dir / "skill_sample_table.csv", samples)
@@ -230,8 +280,12 @@ def main() -> int:
         "contract_failure_count": len(classified["contract_failures"]),
         "fallback_row_count": len(classified["fallback_rows"]),
         "reverse_flags": sum(1 for row in reverse_rows if row.potentially_better),
+        "near_miss_count": len(near_miss_rows(reverse_rows)),
+        "title_quality_failure_count": sum(1 for row in title_rows if row.get("title_quality_status") == "fail"),
+        "title_quality_warning_count": sum(1 for row in title_rows if row.get("title_quality_status") == "warn"),
         "writes_feishu": False,
         "outputs": {
+            "candidate_universe": str(out_dir / "candidate_universe.csv"),
             "pre_skill_candidates": str(out_dir / "pre_skill_candidates.csv"),
             "skill_replay_rows": str(out_dir / "skill_replay_rows.csv"),
             "skill_actionable": str(out_dir / "skill_actionable.csv"),
@@ -239,8 +293,10 @@ def main() -> int:
             "skill_rejected": str(out_dir / "skill_rejected.csv"),
             "skill_contract_failures": str(out_dir / "skill_contract_failures.csv"),
             "skill_reverse_evaluation": str(out_dir / "skill_reverse_evaluation.csv"),
+            "near_miss_high_fit_unselected": str(out_dir / "near_miss_high_fit_unselected.csv"),
+            "title_body_check": str(out_dir / "title_body_check.csv"),
             "skill_sample_table": str(out_dir / "skill_sample_table.csv"),
-            "skill_replay_report": str(out_dir / "skill_replay_report.md"),
+            "user_sample_summary": str(out_dir / "ar020c_user_sample_summary.md"),
         },
     }
     write_markdown_report(out_dir, summary, samples)

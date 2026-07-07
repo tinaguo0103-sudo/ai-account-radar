@@ -213,7 +213,8 @@ def read_today10(path: Path) -> list[dict[str, str]]:
 def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], int]:
     visible: list[dict[str, str]] = []
     omitted = 0
-    for row in rows:
+    guarded_rows = field_contract.apply_batch_quality_guards(rows)
+    for row in guarded_rows:
         if row.get("editorial_engine") != "codex" or row.get("fallback_only") == "true" or row.get("not_editorial_quality") == "true":
             omitted += 1
             continue
@@ -354,6 +355,9 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "原始来源标题": row.get("来源内容") or row.get("原始来源标题", ""),
         "来源链接": row.get("来源链接", ""),
         "一句话Brief": row.get("一句话Brief", ""),
+        "主编判断摘要": row.get("主编判断摘要", ""),
+        "标题思路": row.get("标题思路", ""),
+        "标题体感风险": row.get("标题体感风险", ""),
         "推荐理由": recommendation_reason,
         "对标转译角度": row.get("对标转译角度", "") or row.get("Austin转译角度", ""),
         "AIHOT重大性说明": row.get("AIHOT重大性说明", ""),
@@ -368,6 +372,8 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "我的思考点": row.get("我的思考点", ""),
         "可展示证据": row.get("可展示证据") or row.get("可展示结果", ""),
         "需要补的证据": row.get("需要补的证据", ""),
+        "title_quality_status": row.get("title_quality_status", ""),
+        "title_quality_issues": row.get("title_quality_issues", ""),
         "运行批次": run_id,
     }
     mapped["卡片速读"] = card_summary_from_fields(mapped)

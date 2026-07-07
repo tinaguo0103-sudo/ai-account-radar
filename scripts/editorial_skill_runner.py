@@ -56,6 +56,15 @@ EXTRA_FIELDS = [
     "主编自由稿",
     "标题工作坊",
     "标题自审",
+    "editorial_thinking_json",
+    "field_mapping_json",
+    "主编判断摘要",
+    "标题思路",
+    "标题体感风险",
+    "title_pattern_family",
+    "title_quality_status",
+    "title_quality_issues",
+    "hint_leak_risk",
     "点击钩子",
     "观众为什么会点",
     "title_permission",
@@ -108,6 +117,11 @@ EXTRA_FIELDS = [
 SKILL_FIELDS = [
     "主编筛选",
     "主编自由稿",
+    "editorial_thinking_json",
+    "field_mapping_json",
+    "主编判断摘要",
+    "标题思路",
+    "标题体感风险",
     "点击钩子",
     "观众为什么会点",
     "title_permission",
@@ -159,6 +173,35 @@ SKILL_FIELDS = [
     "标题质量分",
     "AI味风险",
 ]
+
+NON_AUTHORITATIVE_HINT_FIELDS = {
+    "对标转译角度",
+    "Austin映射方向",
+    "Austin转译角度",
+    "Austin转译质量",
+    "Austin转译质量原因",
+    "主题簇",
+    "主题簇说明",
+    "需要补的案例/工具/工作流",
+    "内部切入角度",
+    "我的蹭热点角度",
+    "我能讲出的独特角度",
+    "推荐理由",
+}
+
+EXISTING_VISIBLE_FIELD_FIELDS = {
+    "我的选题标题",
+    "选题命题",
+    "我要做的实验",
+    "我的工作流痛点",
+    "可发布标题",
+    "旧流程痛点",
+    "AI介入点",
+    "可展示结果",
+    "可沉淀资产",
+    "推荐动作",
+    "今日建议级别",
+}
 
 CANDIDATE_CONTEXT_FIELDS = [
     "我的选题标题",
@@ -716,6 +759,57 @@ def humanize_publishable_title(row: dict[str, str], title: str) -> str:
     return " ".join(cleaned.split())
 
 
+def parse_json_object(value: str) -> dict[str, Any]:
+    if not value:
+        return {}
+    try:
+        data = json.loads(value)
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
+def compact_public_trace(parts: list[str], limit: int = 180) -> str:
+    text = "；".join(part.strip("； ") for part in parts if part and part.strip())
+    text = " ".join(text.split())
+    if len(text) <= limit:
+        return text
+    return text[:limit].rstrip() + "..."
+
+
+def derive_editorial_summary(row: dict[str, str]) -> str:
+    thinking = parse_json_object(row.get("editorial_thinking_json", ""))
+    if thinking:
+        return compact_public_trace([
+            str(thinking.get("source_read") or ""),
+            str(thinking.get("why_i_would_choose") or ""),
+            str(thinking.get("why_i_would_not_choose") or thinking.get("tradeoff") or ""),
+            str(thinking.get("decision") or ""),
+        ])
+    return compact_public_trace([
+        row.get("主编自由稿", ""),
+        row.get("主编判断", ""),
+        row.get("推荐理由", ""),
+        row.get("不建议做的原因", ""),
+    ])
+
+
+def derive_title_thinking(row: dict[str, str]) -> str:
+    thinking = parse_json_object(row.get("editorial_thinking_json", ""))
+    if thinking:
+        options = thinking.get("angle_options")
+        if isinstance(options, list):
+            options_text = " / ".join(str(item) for item in options[:3])
+        else:
+            options_text = str(options or "")
+        return compact_public_trace([
+            str(thinking.get("chosen_angle") or ""),
+            str(thinking.get("title_thinking") or ""),
+            options_text,
+        ], limit=160)
+    return compact_public_trace([row.get("标题工作坊", ""), row.get("标题自审", "")], limit=160)
+
+
 def normalize_level(value: str) -> str:
     cleaned = (value or "").strip()
     if cleaned in ALLOWED_LEVELS:
@@ -739,6 +833,10 @@ def normalize_level(value: str) -> str:
 def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     out = dict(row)
     def finalize(candidate: dict[str, str]) -> dict[str, str]:
+        if not candidate.get("主编判断摘要"):
+            candidate["主编判断摘要"] = derive_editorial_summary(candidate)
+        if not candidate.get("标题思路"):
+            candidate["标题思路"] = derive_title_thinking(candidate)
         sanitized = sanitize_visible_language(candidate)
         return field_contract.downgrade_for_contract(sanitized, field_contract.validate_field_contract(sanitized))  # type: ignore[return-value]
 
@@ -760,6 +858,8 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
         if not out.get("选题命题"):
             out["选题命题"] = proposition_for(out)
     else:
+        out["主编判断摘要"] = out.get("主编判断摘要") or "fallback_only：离线兜底只补字段完整性，不能作为主编质量证据。"
+        out["标题思路"] = out.get("标题思路") or "fallback_only：不生成可发布标题判断。"
         out["热点触发点"] = workflow_trigger_for(out)
         out["我的工作流痛点"] = workflow_pain_for(out)
         out["旧流程痛点"] = old_flow_pain_for(out)
@@ -897,6 +997,7 @@ def sanitize_visible_language(row: dict[str, str]) -> dict[str, str]:
         "选题命题", "我要做的实验", "热点触发点", "我的工作流痛点", "我的真实矛盾", "选题判断", "原始钩子", "我的切入", "我准备怎么讲", "可展示证据",
         "推荐理由", "主编判断", "一句话Brief", "我的场景拆解", "我的思考点", "重点体现",
         "旧流程痛点", "AI介入点", "验证方式", "可发布标题", "标题备选", "我的选题标题", "选题标题", "内部切入角度",
+        "主编判断摘要", "标题思路",
     ]
     for field in fields:
         value = out.get(field, "")
@@ -935,7 +1036,8 @@ def normalize_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
             replacement = context_specific_asset(row)
             if replacement and replacement != asset:
                 row["可沉淀资产"] = replacement
-    return [sanitize_visible_language(row) for row in normalized]
+    guarded = field_contract.apply_batch_quality_guards(normalized)
+    return [sanitize_visible_language(row) for row in guarded]
 
 
 def blob(row: dict[str, str]) -> str:
@@ -1297,15 +1399,36 @@ def fieldnames_for(rows: list[dict[str, str]], original: list[str]) -> list[str]
 
 def compact_candidate(row: dict[str, str], index: int) -> dict[str, str | int]:
     payload: dict[str, str | int] = {"index": index}
+    non_authoritative_hints: dict[str, str] = {}
+    existing_visible_fields: dict[str, str] = {}
     for field in CANDIDATE_CONTEXT_FIELDS:
         value = row.get(field, "")
         if field == "可沉淀资产" and is_generic_asset(value):
             payload["旧可沉淀资产_不可沿用"] = value[:1800]
             continue
         if value:
+            if field in NON_AUTHORITATIVE_HINT_FIELDS:
+                non_authoritative_hints[field] = value[:1200]
+                continue
+            if field in EXISTING_VISIBLE_FIELD_FIELDS:
+                existing_visible_fields[field] = value[:1200]
+                continue
             payload[field] = value[:1800]
     payload["主编字段所有权"] = "Skill 输出为 04/Topic Card/06 主字段唯一质量来源；代码字段仅作来源事实、候选池治理和一致性校验。"
     payload["fallback_boundary"] = "若候选里已有 deterministic 主字段，只能作为参考或反例；最终可见主字段必须由本轮 Skill 判断重写或确认。"
+    payload["source_facts"] = json.dumps({
+        "source_title": row.get("原始来源标题") or row.get("来源内容") or row.get("来源标题") or "",
+        "source_account": row.get("原始来源账号") or row.get("账号名/公众号名") or "",
+        "source_link": row.get("来源链接") or "",
+        "source_type": row.get("来源类型") or "",
+        "source_weight_label": row.get("来源权重类型") or row.get("来源类型") or "",
+        "source_influence_weight": row.get("来源影响权重") or "",
+        "source_composition": row.get("来源构成") or "",
+        "aihot_major_news": row.get("AIHOT重大性说明") or "",
+        "market_validation": row.get("市场验证依据") or "",
+    }, ensure_ascii=False)
+    payload["non_authoritative_hints"] = json.dumps(non_authoritative_hints, ensure_ascii=False)
+    payload["existing_fields_do_not_copy"] = json.dumps(existing_visible_fields, ensure_ascii=False)
     payload["source_governance_evidence"] = json.dumps({
         "source_weight_label": row.get("来源权重类型") or row.get("来源类型") or "",
         "source_influence_weight": row.get("来源影响权重") or "",
@@ -1322,6 +1445,8 @@ def compact_candidate(row: dict[str, str], index: int) -> dict[str, str | int]:
         "aihot_actionable_requires_major_news_and_austin_angle": True,
         "generate_script_requires_experiment_validation_and_title_permission": True,
         "topic_direction_experiment_pain_and_evidence_must_agree": True,
+        "non_authoritative_hints_must_not_author_visible_fields": True,
+        "generated_titles_with_repeated_skeletons_are_blocked": True,
     }, ensure_ascii=False)
     payload["关联母场景候选"] = json.dumps(matched_mother_scenes(row), ensure_ascii=False)
     payload["热点钩子候选"] = hot_hook(row)
@@ -1375,7 +1500,15 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
     candidates = [compact_candidate(row, idx) for idx, row in enumerate(rows)]
     return f"""你现在按下面嵌入的主编规则文本做判断；不要再触发或审查外部 Skill，规则、底稿和候选已经完整提供。
 
-这是一次生产管线里的批量选题筛选，不是标题润色。请把候选先过“能不能成为用户自己的内容”的门，再写成 `工作流实验命题卡`，最后才决定是否允许生成可发布标题。
+这是一次生产管线里的批量选题筛选，不是标题润色，也不是代码 hint 的字段补全。请先像 Austin 本人做主编判断，再把判断映射成 04 / Topic Card / 06 主字段。
+
+AR-020C 两段式输出：
+1. `editorial_thinking_json`：写公开可展示的主编决策摘要，不要写隐藏推理链。它至少包含 `source_read`、`why_i_would_choose`、`why_i_would_not_choose`、`account_fit`、`source_to_me_translation`、`angle_options`、`chosen_angle`、`title_thinking`、`decision`、`near_miss_reason`。这些字段要让 PM/用户看得懂：我为什么会选、为什么不选、从什么角度切、标题为什么这样取。
+2. `field_mapping_json`：说明第一段判断如何映射到主字段，包括 `选题命题`、`一句话Brief`、`我要做的实验`、`我的工作流痛点`、`旧流程痛点`、`AI介入点`、`验证方式`、`可沉淀资产`、`对应方向`、`推荐动作`、`今日建议级别`、`title_permission`、`可发布标题`。
+
+同时必须填两个紧凑用户可见字段：
+- `主编判断摘要`：80-180 字，必须提到来源证据、Austin 场景、动作/实验和一个取舍或风险。
+- `标题思路`：40-160 字，说明标题/命题为什么这样切；如果不能给可发布标题，也要说明卡在哪里。
 
 总边界：
 - 不要在选题筛选阶段生成完整成稿；这里只产出工作流实验命题卡。
@@ -1388,16 +1521,26 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 
 AR-020B 字段契约：
 - 你是 04 / Topic Card / 06 用户可见主字段的质量 owner。`选题命题`、`一句话Brief`、`我要做的实验`、`我的工作流痛点`、`旧流程痛点`、`AI介入点`、`验证方式`、`可沉淀资产`、`我的思考点`、`重点体现`、`对应方向`、`推荐动作`、`今日建议级别`、`title_permission`、`可发布标题` 必须由你重写或确认。
-- 候选里的 `source_governance_evidence`、`来源权重类型`、`来源构成`、`原始来源标题`、`原始来源账号`、`AIHOT重大性说明`、`市场验证依据` 是事实证据；可以引用、吸收和校验。
-- 候选里的 `Austin映射方向`、`Austin转译角度`、`主题簇`、`Austin转译质量` 只是代码在 Skill 之前给出的 hint。它们不能替代你的主编判断；如果 hint 和来源证据冲突，以来源证据和用户账号现场为准。
-- 候选里已有的 `我的工作流痛点`、`我要做的实验`、`重点体现` 可能来自旧 deterministic prefill，不能默认沿用。你必须检查它是否和原始来源一致；不一致就重写或降级。
+- 候选里的 `source_facts` / `source_governance_evidence`、`来源权重类型`、`来源构成`、`原始来源标题`、`原始来源账号`、`AIHOT重大性说明`、`市场验证依据` 是事实证据；可以引用、吸收和校验。
+- 候选里的 `non_authoritative_hints` 只是代码在 Skill 之前给出的主题、转译、母场景线索。它们不能替代你的主编判断；不能原样复制进标题、命题、Brief、实验动作、主编判断摘要。若采用某个 hint，必须在 `source_to_me_translation` / `chosen_angle` / `主编判断摘要` 里说明它为什么和来源证据一致。
+- 候选里的 `existing_fields_do_not_copy` 是旧 deterministic prefill 或上游字段，只能作为参考或反例，不能默认沿用。你必须检查它是否和原始来源一致；不一致就重写或降级。
 - 知识库 / Obsidian / RAG / 内容资产来源，不能在主字段里写成 AI 视频、分镜、成片验收，除非原始来源本身就是 AI 视频知识库。
 - AI 视频 / AIGC / 分镜来源，不能写成纯知识库或办公表格选题，除非来源明确在讲视频素材管理知识库。
 - AI Hot 只有在有重大模型/产品/行业变化，并且能落到 Austin 的工作流影响时，才可以进入可行动候选；普通 AI Hot 只观察。
 - `推荐动作=生成脚本包` 必须有可执行的 `我要做的实验`、`验证方式` 和不为 `不生成标题` 的 `title_permission`。否则请降级为 `暂存观察` 或 `不建议制作`。
 - 如果你无法从来源证据写出具体 Austin 现场，不要用空泛句凑字段；直接标 `暂存观察`，写清缺什么证据。
+- 不要批量使用同一标题骨架。尤其 `我想用 X 测试 Y 能不能 Z`、`先拿 X 验证 Y`、`X 能不能进入 Y`、`先测/验收/试一遍` 等骨架只能少量自然出现；如果一批候选都长这样，请重写或降级。
 
-核心流程只有三步：
+执行顺序：
+0. `editorial_thinking / 主编自由判断`
+   先不填字段，先用公开摘要判断：这条来源到底讲什么；它为什么和 Austin 的账号方向有关或无关；如果要选，我会从哪个真实工作现场切；如果不选，卡在证据、案例、工具、工作流还是标题表达；标题应该避免哪种模板。
+   输出 `editorial_thinking_json`、`主编判断摘要`、`标题思路`。这一步是质量来源。
+
+1. `field_mapping / 字段映射`
+   只把上一步已经成立的判断映射到结构化字段。字段映射不能发明新角度，不能把 `non_authoritative_hints` 或 `existing_fields_do_not_copy` 直接写成用户可见主字段。
+   输出 `field_mapping_json` 和下面所有主字段。
+
+安全检查仍按以下旧三段理解，但它们是 guardrail，不是标题模板：
 1. `gate / 主编门控`
    先回答：这条和我的人设、四个方向、真实/相邻业务现场有没有关系？证据够不够？我能不能讲出旧流程痛点、AI介入点、人保留的判断、可展示结果、可带走资产？
    输出 `主编筛选`、`主编自由稿`、`我的真实矛盾`、`场景依据`、`证据强度`、`候选状态`、`推荐等级`、`推荐动作`、`title_permission`。

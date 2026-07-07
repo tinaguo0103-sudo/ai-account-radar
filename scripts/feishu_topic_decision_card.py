@@ -264,6 +264,8 @@ def candidate_caveat(fields: dict[str, Any]) -> str:
 def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     title = compact(fields.get("选题标题"), 50) or f"候选 {index}"
     brief = compact(fields.get("一句话Brief"), 88)
+    editorial_trace = compact(fields.get("主编判断摘要"), 96)
+    title_thinking = compact(fields.get("标题思路"), 82)
     experiment = compact(fields.get("我要做的实验"), 76)
     evidence = compact(fields.get("可展示证据"), 64)
     missing = compact(fields.get("需要补的证据"), 52)
@@ -273,6 +275,7 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     translation = compact(fields.get("对标转译角度"), 86)
     aihot_reason = compact(fields.get("AIHOT重大性说明"), 86)
     risk = compact(fields.get("AI味风险"), 8)
+    title_quality_issues = compact(fields.get("title_quality_issues"), 70)
     original_date = compact(fields.get("推荐日期"), 10)
     original_run_id = compact(fields.get("运行批次"), 40)
     lines = [f"**{index}. {title}**"]
@@ -286,6 +289,10 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
         lines.append(meta)
     if brief:
         lines.append(f"Brief：{brief}")
+    if editorial_trace:
+        lines.append(f"主编：{editorial_trace}")
+    if title_thinking:
+        lines.append(f"标题思路：{title_thinking}")
     source_line = "｜".join(part for part in [source_mix, source_weight] if part)
     if source_line:
         lines.append(f"来源：{source_line}")
@@ -299,6 +306,8 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
         lines.append(f"证据：{evidence}")
     if missing:
         lines.append(f"缺口：{missing}")
+    if title_quality_issues:
+        lines.append(f"标题风险：{title_quality_issues}")
     caveat = candidate_caveat(fields)
     if caveat:
         lines.append(caveat)

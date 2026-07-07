@@ -26,6 +26,9 @@ DAILY_WRITE_FIELDS = [
     "原始来源标题",
     "来源链接",
     "一句话Brief",
+    "主编判断摘要",
+    "标题思路",
+    "标题体感风险",
     "推荐理由",
     "对标转译角度",
     "AIHOT重大性说明",
@@ -40,6 +43,8 @@ DAILY_WRITE_FIELDS = [
     "我的思考点",
     "可展示证据",
     "需要补的证据",
+    "title_quality_status",
+    "title_quality_issues",
     "运行批次",
 ]
 
@@ -75,6 +80,9 @@ CORE_VISIBLE_FIELDS = [
     "来源构成",
     "来源权重类型",
     "一句话Brief",
+    "主编判断摘要",
+    "标题思路",
+    "标题体感风险",
     "我要做的实验",
     "热点触发点",
     "我的工作流痛点",
@@ -87,6 +95,8 @@ CORE_VISIBLE_FIELDS = [
     "需要补的证据",
     "推荐理由",
     "不建议做的原因",
+    "title_quality_status",
+    "title_quality_issues",
 ]
 
 DETAIL_VISIBLE_FIELDS = CORE_VISIBLE_FIELDS + [
@@ -195,6 +205,8 @@ def card_summary_from_fields(fields: dict) -> str:
     ]
     summary_specs = [
         ("Brief", "一句话Brief", 76),
+        ("主编", "主编判断摘要", 92),
+        ("标题思路", "标题思路", 76),
         ("实验", "我要做的实验", 76),
         ("来源", "来源构成", 62),
         ("转译", "对标转译角度", 76),
@@ -204,6 +216,7 @@ def card_summary_from_fields(fields: dict) -> str:
         ("证据", "可展示证据", 62),
         ("缺口", "需要补的证据", 62),
         ("资产", "可沉淀资产", 52),
+        ("标题风险", "title_quality_issues", 62),
     ]
     for label, field_name, limit in summary_specs:
         value = compact_card_value(fields.get(field_name), limit)

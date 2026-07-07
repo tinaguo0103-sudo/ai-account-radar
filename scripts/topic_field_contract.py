@@ -30,6 +30,8 @@ SKILL_OWNED_MAIN_FIELDS = [
     "今日建议级别",
     "title_permission",
     "可发布标题",
+    "主编判断摘要",
+    "标题思路",
 ]
 
 SOURCE_EVIDENCE_FIELDS = [
@@ -65,6 +67,8 @@ MAIN_CONTRACT_FIELDS = [
     "今日建议级别",
     "对标转译角度",
     "Austin转译角度",
+    "主编判断摘要",
+    "标题思路",
 ]
 
 EXPERIMENT_ACTION_TERMS = [
@@ -81,6 +85,46 @@ AIHOT_MAJOR_TERMS = ["重大", "发布", "模型", "多模态", "Agent", "智能
 AIHOT_SOURCE_LABELS = {"AIHOT热点", "AI Hot 低权重热点源"}
 ACTIONABLE_ACTIONS = {"生成脚本包", "立即蹭热点"}
 ACTIONABLE_LEVELS = {"今日最值得做", "可选候选"}
+VISIBLE_REASON_FIELDS = [
+    "主编判断摘要",
+    "标题思路",
+    "主编自由稿",
+    "主编判断",
+    "推荐理由",
+    "不建议做的原因",
+]
+HINT_FIELDS = ["Austin映射方向", "Austin转译角度", "对标转译角度", "主题簇", "主题簇说明"]
+VISIBLE_MAIN_FIELDS = [
+    "选题标题",
+    "我的选题标题",
+    "选题命题",
+    "一句话Brief",
+    "我要做的实验",
+    "我的工作流痛点",
+    "旧流程痛点",
+    "AI介入点",
+    "验证方式",
+    "重点体现",
+]
+GENERIC_REASON_PATTERNS = [
+    "吸收它的选题承诺和结构",
+    "转成自己的业务语言",
+    "落到我的真实流程",
+    "形成可执行动作",
+    "适合 Austin",
+    "有一定参考价值",
+]
+SOURCE_EVIDENCE_MARKERS = ["来源", "原始", "对标", "账号", "热点", "这条", "内容", "证据", "标题"]
+AUSTIN_SCENE_MARKERS = ["我", "Austin", "工作流", "业务", "交付", "内容", "选题", "脚本", "飞书", "视频"]
+ACTION_MARKERS = EXPERIMENT_ACTION_TERMS + ["动作", "实验", "验证", "生成", "补证据"]
+TRADEOFF_MARKERS = ["但", "不过", "风险", "缺", "不能", "先", "如果", "边界", "取舍", "暂存", "补"]
+TITLE_TEMPLATE_PATTERNS = [
+    ("test_can", re.compile(r"(想用|准备用|用|拿).{0,18}(测试|验证).{0,28}能不能")),
+    ("first_test", re.compile(r"(先|先拿|先用).{0,28}(测试|验证|过一遍|跑一轮)")),
+    ("acceptance", re.compile(r"(验收|返修|交付).{0,18}(能不能|能否|可不可以)")),
+    ("can_or_not", re.compile(r"能不能|能否|可不可以")),
+    ("try_once", re.compile(r"试一次|试一遍|跑一轮")),
+]
 
 
 @dataclass
@@ -124,6 +168,82 @@ def is_aihot(row: dict[str, Any]) -> bool:
 
 def issue_messages(issues: list[ContractIssue]) -> str:
     return "；".join(issue.message for issue in issues)
+
+
+def blocking_issues(issues: list[ContractIssue]) -> list[ContractIssue]:
+    return [issue for issue in issues if issue.severity == "block"]
+
+
+def warning_issues(issues: list[ContractIssue]) -> list[ContractIssue]:
+    return [issue for issue in issues if issue.severity != "block"]
+
+
+def title_for_quality(row: dict[str, Any]) -> str:
+    return normalize_space(
+        row.get("可发布标题")
+        or row.get("我的选题标题")
+        or row.get("选题命题")
+        or row.get("选题标题")
+    )
+
+
+def title_pattern_family(title: str) -> str:
+    text = normalize_space(title)
+    if not text:
+        return "empty"
+    for family, pattern in TITLE_TEMPLATE_PATTERNS:
+        if pattern.search(text):
+            return family
+    if "：" in text or ":" in text:
+        return "colon_split"
+    if "？" in text or "?" in text:
+        return "question"
+    return "freeform"
+
+
+def visible_reason_quality_issues(row: dict[str, Any]) -> list[ContractIssue]:
+    """Check that the public editorial trace is concrete enough for users."""
+    if not is_actionable(row):
+        return []
+    reason = joined_text(row, VISIBLE_REASON_FIELDS)
+    if not reason:
+        return [ContractIssue("missing_editorial_trace", "缺少主编判断摘要/标题思路，用户看不到为什么选这条")]
+    if any(pattern in reason for pattern in GENERIC_REASON_PATTERNS):
+        return [ContractIssue("generic_editorial_trace", "主编判断摘要仍是模板化泛话，没有说明来源证据、Austin 场景和取舍")]
+    checks = {
+        "source": contains_any(reason, SOURCE_EVIDENCE_MARKERS),
+        "scene": contains_any(reason, AUSTIN_SCENE_MARKERS),
+        "action": contains_any(reason, ACTION_MARKERS) or has_experiment_action(normalize_space(row.get("我要做的实验"))),
+        "tradeoff": contains_any(reason, TRADEOFF_MARKERS),
+    }
+    missing = [name for name, ok in checks.items() if not ok]
+    if missing:
+        return [ContractIssue(
+            "blackbox_editorial_trace",
+            f"主编判断摘要缺少可审查要素：{','.join(missing)}",
+        )]
+    return []
+
+
+def hint_leak_issues(row: dict[str, Any]) -> list[ContractIssue]:
+    """Prevent deterministic hints from becoming visible fields without Skill trace."""
+    thinking = normalize_space(row.get("editorial_thinking_json") or row.get("主编判断摘要") or row.get("标题思路"))
+    if not thinking:
+        return []
+    visible = joined_text(row, VISIBLE_MAIN_FIELDS)
+    issues: list[ContractIssue] = []
+    for field in HINT_FIELDS:
+        hint = normalize_space(row.get(field))
+        if len(hint) < 18:
+            continue
+        snippet = hint[:24]
+        if snippet in visible and snippet not in thinking:
+            issues.append(ContractIssue(
+                "hint_leak_without_skill_trace",
+                f"{field} 的 pre-Skill hint 直接进入可见主字段，但主编判断摘要没有解释为什么采用",
+            ))
+            break
+    return issues
 
 
 def validate_field_contract(row: dict[str, Any]) -> list[ContractIssue]:
@@ -191,12 +311,19 @@ def validate_field_contract(row: dict[str, Any]) -> list[ContractIssue]:
         if permission == "不生成标题":
             issues.append(ContractIssue("script_title_not_ready", "生成脚本包不能同时标记 title_permission=不生成标题"))
 
+    issues.extend(visible_reason_quality_issues(row))
+    issues.extend(hint_leak_issues(row))
     return issues
 
 
 def mark_contract_result(row: dict[str, Any], issues: list[ContractIssue]) -> dict[str, Any]:
     out = dict(row)
-    out["field_contract_status"] = "fail" if issues else "pass"
+    if blocking_issues(issues):
+        out["field_contract_status"] = "fail"
+    elif warning_issues(issues):
+        out["field_contract_status"] = "warn"
+    else:
+        out["field_contract_status"] = "pass"
     out["field_contract_issues"] = issue_messages(issues)
     out["field_contract_owner"] = "ai-account-editorial-director"
     return out
@@ -205,9 +332,10 @@ def mark_contract_result(row: dict[str, Any], issues: list[ContractIssue]) -> di
 def downgrade_for_contract(row: dict[str, Any], issues: list[ContractIssue]) -> dict[str, Any]:
     """Make contract failures visible and prevent unsafe promotion."""
     out = mark_contract_result(row, issues)
-    if not issues:
+    blockers = blocking_issues(issues)
+    if not blockers:
         return out
-    reason = issue_messages(issues)
+    reason = issue_messages(blockers)
     existing = normalize_space(out.get("不建议做的原因") or out.get("降级原因"))
     out["今日建议级别"] = "暂存观察"
     out["候选状态"] = "暂存观察"
@@ -220,3 +348,69 @@ def downgrade_for_contract(row: dict[str, Any], issues: list[ContractIssue]) -> 
     out["不建议做的原因"] = out["降级原因"]
     return out
 
+
+def title_quality_issues(rows: list[dict[str, Any]]) -> dict[int, list[ContractIssue]]:
+    """Batch-level title/template checks.
+
+    Generated/actionable rows are blocked when too many share the same title
+    skeleton. Observe rows are only flagged, because weak-but-visible wording is
+    still useful for PM review as long as it is not presented as ready to make.
+    """
+    issues_by_index: dict[int, list[ContractIssue]] = {idx: [] for idx, _row in enumerate(rows)}
+    actionable: list[tuple[int, str]] = []
+    observe_reason_counts: dict[str, list[int]] = {}
+    for idx, row in enumerate(rows):
+        title = title_for_quality(row)
+        family = title_pattern_family(title)
+        if normalize_space(row.get("推荐动作")) == "生成脚本包":
+            actionable.append((idx, family))
+        else:
+            reason = normalize_space(row.get("主编判断摘要") or row.get("不建议做的原因") or row.get("推荐理由"))
+            if reason:
+                observe_reason_counts.setdefault(reason[:40], []).append(idx)
+        rows[idx]["title_pattern_family"] = family
+
+    if actionable:
+        counts: dict[str, list[int]] = {}
+        for idx, family in actionable:
+            counts.setdefault(family, []).append(idx)
+        for family, indices in counts.items():
+            ratio = len(indices) / max(1, len(actionable))
+            if family != "freeform" and len(indices) > 1 and ratio > 0.30:
+                for idx in indices:
+                    issues_by_index[idx].append(ContractIssue(
+                        "title_skeleton_collision",
+                        f"生成脚本包标题骨架重复过高：{family} 占 {ratio:.0%}",
+                    ))
+        phrase_hits = [
+            idx for idx, _family in actionable
+            if contains_any(title_for_quality(rows[idx]), ["能不能", "测试", "验证", "验收", "试一次", "试一遍"])
+        ]
+        if len(phrase_hits) / max(1, len(actionable)) > 0.40 and len(phrase_hits) > 1:
+            for idx in phrase_hits:
+                issues_by_index[idx].append(ContractIssue(
+                    "title_template_phrase_family",
+                    "生成脚本包标题里测试/验证/能不能类骨架占比过高",
+                ))
+
+    for reason, indices in observe_reason_counts.items():
+        if len(indices) > 2:
+            for idx in indices:
+                issues_by_index[idx].append(ContractIssue(
+                    "observe_placeholder_repeat",
+                    "观察/补证据候选主编判断摘要重复，存在模板化风险",
+                    severity="warn",
+                ))
+    return issues_by_index
+
+
+def apply_batch_quality_guards(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    guarded = [dict(row) for row in rows]
+    batch_issues = title_quality_issues(guarded)
+    out: list[dict[str, Any]] = []
+    for idx, row in enumerate(guarded):
+        issues = validate_field_contract(row) + batch_issues.get(idx, [])
+        row["title_quality_status"] = "fail" if blocking_issues(batch_issues.get(idx, [])) else ("warn" if batch_issues.get(idx) else "pass")
+        row["title_quality_issues"] = issue_messages(batch_issues.get(idx, []))
+        out.append(downgrade_for_contract(row, issues))
+    return out

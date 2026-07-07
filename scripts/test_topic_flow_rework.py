@@ -88,6 +88,30 @@ class TopicFlowReworkTests(unittest.TestCase):
         self.assertIn("03 收件箱", translation["Austin转译角度"])
         self.assertNotIn("运营表格", translation["Austin转译角度"])
 
+    def test_competitor_enrichment_does_not_author_visible_main_fields(self) -> None:
+        knowledge = item(
+            "对标视频",
+            "Codex联动Obsidian，搭建超强知识库",
+            "讲 Codex 和 Obsidian 如何把资料、双链、知识库和内容生产流程串起来。",
+            account="AIGC自修室",
+        )
+        topic = {
+            "来源内容": knowledge.title,
+            "我的选题标题": "原始候选标题",
+            "选题命题": "原始候选命题",
+            "一句话Brief": "原始 Brief",
+            "我要做的实验": "原始实验动作",
+        }
+
+        enriched = flow.enrich_topic_record(topic, knowledge)
+
+        self.assertEqual(enriched["我的选题标题"], "原始候选标题")
+        self.assertEqual(enriched["选题命题"], "原始候选命题")
+        self.assertEqual(enriched["一句话Brief"], "原始 Brief")
+        self.assertEqual(enriched["我要做的实验"], "原始实验动作")
+        self.assertEqual(enriched["对标转译角度"], "")
+        self.assertIn("仅供", enriched["non_authoritative_hint_note"])
+
     def test_competitor_default_translation_is_source_specific_not_template_phrase(self) -> None:
         competitor = item(
             "对标视频",

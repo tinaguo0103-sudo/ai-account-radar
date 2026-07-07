@@ -454,18 +454,19 @@ def enrich_topic_record(topic: dict[str, Any], item: Any) -> dict[str, Any]:
     if is_aihot(item):
         topic["AIHOT重大性说明"] = aihot_significance_reason(item)
         topic.update(aihot_translation_fields(topic, item))
+        topic["对标转译角度"] = normalize_space(topic.get("对标转译角度", ""))
     elif is_competitor_content(item):
         translation = account_translation_fields(topic, item)
         topic.update(translation)
-        align_topic_visible_fields(topic, item, translation)
-        topic["对标转译角度"] = translation["Austin转译角度"]
+        topic["non_authoritative_hint_note"] = "Austin映射方向/Austin转译角度/主题簇仅供 ai-account-editorial-director 判断参考，不直接写入可见主字段。"
+        topic["对标转译角度"] = ""
         topic["AIHOT重大性说明"] = ""
     else:
         topic["AIHOT重大性说明"] = ""
-        topic["对标转译角度"] = normalize_space(topic.get("我的蹭热点角度") or topic.get("推荐理由"))
+        topic["对标转译角度"] = ""
         theme = source_theme(item)
         topic.setdefault("Austin映射方向", theme["direction"])
-        topic.setdefault("Austin转译角度", topic["对标转译角度"])
+        topic.setdefault("Austin转译角度", normalize_space(topic.get("我的蹭热点角度") or topic.get("推荐理由")))
         topic.setdefault("Austin转译质量", theme["quality"])
         topic.setdefault("Austin转译质量原因", theme["quality_reason"])
         topic.setdefault("主题簇", theme["label"])
