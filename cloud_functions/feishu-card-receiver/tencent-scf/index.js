@@ -48,6 +48,7 @@ const SUPPORTED_SUBMIT_ACTIONS = new Set([
 const TOKEN_CACHE_SAFETY_SECONDS = 300;
 const DEFAULT_CARD_EXPIRE_DAYS = 5;
 const DEFAULT_DIRECTION_CARD_STUCK_MINUTES = 15;
+const DEFAULT_FEISHU_API_TIMEOUT_MS = 8000;
 const OPEN_SELECTION_STATUSES = new Set(["", "待判断"]);
 
 let cachedTenantToken = { value: "", expiresAt: 0 };
@@ -154,14 +155,49 @@ function apiBaseUrl() {
   return host.endsWith("/open-apis") ? host : `${host}/open-apis`;
 }
 
+function feishuApiTimeoutMs() {
+  const raw = Number(envValue("FEISHU_API_TIMEOUT_MS") || envValue("FEISHU_REQUEST_TIMEOUT_MS") || DEFAULT_FEISHU_API_TIMEOUT_MS);
+  if (!Number.isFinite(raw) || raw <= 0) return DEFAULT_FEISHU_API_TIMEOUT_MS;
+  return Math.min(Math.max(raw, 50), 60000);
+}
+
+async function fetchWithTimeout(url, init) {
+  const timeoutMs = feishuApiTimeoutMs();
+  const controller = typeof AbortController !== "undefined" ? new AbortController() : null;
+  let timer;
+  const timeout = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      if (controller) controller.abort();
+      reject(new Error(`Feishu API request timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+  try {
+    return await Promise.race([
+      fetch(url, {
+        ...init,
+        ...(controller ? { signal: controller.signal } : {}),
+      }),
+      timeout,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 async function requestJson(method, path, { token = "", body = undefined } = {}) {
   const headers = { "content-type": "application/json; charset=utf-8" };
   if (token) headers.authorization = `Bearer ${token}`;
-  const response = await fetch(`${apiBaseUrl()}${path}`, {
-    method,
-    headers,
-    body: body == null ? undefined : JSON.stringify(body),
-  });
+  let response;
+  try {
+    response = await fetchWithTimeout(`${apiBaseUrl()}${path}`, {
+      method,
+      headers,
+      body: body == null ? undefined : JSON.stringify(body),
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    throw new Error(`${method} ${path} request failed: ${message}`);
+  }
   const text = await response.text();
   let payload;
   try {
