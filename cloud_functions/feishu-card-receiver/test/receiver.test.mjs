@@ -80,6 +80,23 @@ function makeFilterRejectingFetch(records, calls) {
   };
 }
 
+function makeHangingDirectionMessageFetch(records, calls) {
+  const baseFetch = makeMockFetch(records, calls);
+  return async (url, init = {}) => {
+    const parsed = new URL(url);
+    const path = parsed.pathname + parsed.search;
+    if (path.includes("/im/v1/messages")) {
+      calls.push({ method: init.method || "GET", path, body: init.body ? JSON.parse(init.body) : undefined });
+      return new Promise((resolve, reject) => {
+        if (init.signal) {
+          init.signal.addEventListener("abort", () => reject(new Error("aborted by timeout")), { once: true });
+        }
+      });
+    }
+    return baseFetch(url, init);
+  };
+}
+
 test("returns Feishu challenge", async () => {
   const response = await handlePayload({ challenge: "abc123" }, env);
   assert.equal(response.status, 200);
@@ -413,6 +430,46 @@ test("falls back to local queue filtering when Feishu rejects record filters", a
   assert.equal(fallbackReads.length, 1);
   const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
   assert.equal(sends.length, 1);
+});
+
+test("marks direction card send timeout as failed instead of leaving sending", { timeout: 1000 }, async () => {
+  const records = [
+    {
+      record_id: "rec_a",
+      fields: {
+        "选题标题": "A",
+        "一句话Brief": "A brief",
+        "我要做的实验": "A experiment",
+        "运行批次": "run_1",
+        "状态": "生成脚本包",
+        "制作方向卡状态": "待发送",
+        "选择提交批次": "run_1:abc",
+        "选择提交时间": "2026-06-29T01:00:00.000Z",
+      },
+    },
+  ];
+  const calls = [];
+  const response = await handlePayload(
+    { action: "send_pending_production_direction_cards" },
+    {
+      ...env,
+      SEND_PRODUCTION_DIRECTION_CARD: "true",
+      FEISHU_CARD_RECEIVE_TARGETS: "open_id:ou_follow",
+      FEISHU_API_TIMEOUT_MS: "5",
+      FEISHU_PRODUCTION_DIRECTION_ALERTS: "false",
+    },
+    { fetchImpl: makeHangingDirectionMessageFetch(records, calls), nowMs: Date.parse("2026-06-29T02:00:00.000Z") },
+  );
+  const body = await response.json();
+  assert.equal(body.ok, false);
+  assert.equal(body.failed.length, 1);
+  assert.match(body.failed[0].error, /request failed/);
+  assert.match(body.failed[0].error, /timed out|aborted/);
+  const puts = calls.filter((call) => call.method === "PUT");
+  assert.equal(puts.filter((call) => call.body.fields["制作方向卡状态"] === "发送中").length, 1);
+  const failedPut = puts.find((call) => call.body.fields["制作方向卡状态"] === "发送失败");
+  assert.ok(failedPut);
+  assert.match(failedPut.body.fields["制作方向卡错误"], /request failed/);
 });
 
 test("marks stale sending direction cards as failed and sends alert", async () => {
