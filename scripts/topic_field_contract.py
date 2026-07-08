@@ -389,7 +389,7 @@ def title_quality_issues(rows: list[dict[str, Any]]) -> dict[int, list[ContractI
                 for idx in indices:
                     issues_by_index[idx].append(ContractIssue(
                         "title_skeleton_collision",
-                        f"生成脚本包标题骨架重复过高：{family} 占 {ratio:.0%}",
+                        f"标题骨架重复过高：{family} 占 {ratio:.0%}；该风险会阻止进入生成脚本包",
                     ))
         phrase_hits = [
             idx for idx, _family in actionable
@@ -399,7 +399,7 @@ def title_quality_issues(rows: list[dict[str, Any]]) -> dict[int, list[ContractI
             for idx in phrase_hits:
                 issues_by_index[idx].append(ContractIssue(
                     "title_template_phrase_family",
-                    "生成脚本包标题里测试/验证/能不能类骨架占比过高",
+                    "标题里测试/验证/能不能类骨架占比过高；该风险会阻止进入生成脚本包",
                 ))
 
     for reason, indices in observe_reason_counts.items():

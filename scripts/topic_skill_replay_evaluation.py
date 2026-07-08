@@ -470,18 +470,19 @@ def classify_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]
         "contract_failures": [],
         "fallback_rows": [],
     }
-    guarded_rows = field_contract.apply_batch_quality_guards(rows)
-    for row in guarded_rows:
-        issues = field_contract.validate_field_contract(row)
-        row_with_status = field_contract.mark_contract_result(row, issues)
+    for row in rows:
+        row_with_status = dict(row)
+        if not row_with_status.get("field_contract_status"):
+            issues = field_contract.validate_field_contract(row_with_status)
+            row_with_status = field_contract.mark_contract_result(row_with_status, issues)
         if row_with_status.get("fallback_only") == "true" or row_with_status.get("not_editorial_quality") == "true":
             outputs["fallback_rows"].append(row_with_status)
-        if issues:
+        if row_with_status.get("field_contract_status") == "fail":
             outputs["contract_failures"].append(row_with_status)
         level = row_with_status.get("今日建议级别") or row_with_status.get("候选状态")
         if (
             str(row_with_status.get("推荐动作") or "") in field_contract.ACTIONABLE_ACTIONS
-            and not issues
+            and row_with_status.get("field_contract_status") != "fail"
             and row_with_status.get("fallback_only") != "true"
             and row_with_status.get("not_editorial_quality") != "true"
         ):
@@ -494,7 +495,7 @@ def classify_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]
 
 
 def title_body_check_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    checked = field_contract.apply_batch_quality_guards(rows)
+    checked = rows if any(row.get("title_quality_status") or row.get("field_contract_status") for row in rows) else field_contract.apply_batch_quality_guards(rows)
     out: list[dict[str, Any]] = []
     for row in checked:
         out.append({
@@ -651,10 +652,16 @@ def aggregate_replay_outputs(
         samples = sample_rows(skill_rows)
         write_csv(out_dir / "skill_sample_table.csv", samples)
         failed_batch_count = int(engine_meta.get("failed_batch_count", 0) or 0)
+        contract_failure_count = len(classified["contract_failures"])
+        fallback_row_count = len(classified["fallback_rows"])
+        title_quality_failure_count = sum(1 for row in title_rows if row.get("title_quality_status") == "fail")
+        title_quality_warning_count = sum(1 for row in title_rows if row.get("title_quality_status") == "warn")
+        replay_completed_ok = completed and failed_batch_count == 0
         summary = {
-            "ok": completed and failed_batch_count == 0,
-            "completed": completed and failed_batch_count == 0,
-            "stage": "aggregate_success" if completed and failed_batch_count == 0 else "partial_batch_replay",
+            "ok": replay_completed_ok,
+            "completed": replay_completed_ok,
+            "stage": "aggregate_success" if replay_completed_ok else "partial_batch_replay",
+            "quality_gate_ok": contract_failure_count == 0 and fallback_row_count == 0 and title_quality_failure_count == 0,
             "engine": engine,
             "engine_meta": engine_meta,
             "since": args.since,
@@ -668,12 +675,12 @@ def aggregate_replay_outputs(
             "actionable_count": len(classified["actionable"]),
             "observe_count": len(classified["observe"]),
             "rejected_count": len(classified["rejected"]),
-            "contract_failure_count": len(classified["contract_failures"]),
-            "fallback_row_count": len(classified["fallback_rows"]),
+            "contract_failure_count": contract_failure_count,
+            "fallback_row_count": fallback_row_count,
             "reverse_flags": sum(1 for row in reverse_rows if row.potentially_better),
             "near_miss_count": len(near_misses),
-            "title_quality_failure_count": sum(1 for row in title_rows if row.get("title_quality_status") == "fail"),
-            "title_quality_warning_count": sum(1 for row in title_rows if row.get("title_quality_status") == "warn"),
+            "title_quality_failure_count": title_quality_failure_count,
+            "title_quality_warning_count": title_quality_warning_count,
             "writes_feishu": False,
             "outputs": {
                 "candidate_universe": str(out_dir / "candidate_universe.csv"),

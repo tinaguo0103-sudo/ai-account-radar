@@ -137,6 +137,68 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
         self.assertEqual(run_skill.call_count, 1)
         self.assertIn("batch_skip_completed", {row["status"] for row in progress_rows})
 
+    def test_aggregate_keeps_contract_and_title_failures_consistent(self) -> None:
+        rows = []
+        for index, title in enumerate([
+            "我想用 Codex 测试知识库能不能进入选题复盘",
+            "我想用 Mx-Shell 测试任务能不能进入交付验收",
+            "我想用 Storyboard 测试分镜能不能进入返修流程",
+        ]):
+            rows.append({
+                "内容指纹": f"fp_{index}",
+                "来源类型": "对标视频",
+                "原始来源标题": f"source {index}",
+                "选题命题": title,
+                "我的选题标题": title,
+                "我要做的实验": "输入一条真实素材，测试并记录输出物。",
+                "验证方式": "输入素材，输出记录表并检查通过/失败标准。",
+                "推荐动作": "生成脚本包",
+                "今日建议级别": "可选候选",
+                "title_permission": "可发布标题",
+                "可发布标题": title,
+                "主编判断摘要": "这条来源来自对标账号，我会放进自己的工作流实验，但先保留证据边界。",
+                "标题思路": "标题先说明来源触发的具体动作，但避免复述工具教程。",
+            })
+        args = SimpleNamespace(
+            engine="codex",
+            codex_model="",
+            timeout=30,
+            batch_timeout_seconds=3,
+            batch_size=3,
+            resume=False,
+            since="2026-07-01",
+            max_skill_candidates=3,
+        )
+
+        with TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            summary = replay.aggregate_replay_outputs(
+                out_dir,
+                args,
+                csv_paths=[],
+                items=[],
+                pre={"candidates": rows, "pre_skill_pool": rows, "item_by_fp": {}},
+                skill_rows=rows,
+                engine_meta={"failed_batch_count": 0},
+                engine="codex",
+                completed=True,
+            )
+            with (out_dir / "skill_replay_rows.csv").open(encoding="utf-8-sig") as handle:
+                replay_rows = list(csv.DictReader(handle))
+            with (out_dir / "title_body_check.csv").open(encoding="utf-8-sig") as handle:
+                title_rows = list(csv.DictReader(handle))
+            with (out_dir / "skill_contract_failures.csv").open(encoding="utf-8-sig") as handle:
+                failure_rows = list(csv.DictReader(handle))
+
+        self.assertEqual(summary["contract_failure_count"], 3)
+        self.assertEqual(summary["title_quality_failure_count"], 3)
+        self.assertFalse(summary["quality_gate_ok"])
+        self.assertEqual(sum(1 for row in replay_rows if row["field_contract_status"] == "fail"), 3)
+        self.assertEqual(sum(1 for row in title_rows if row["title_quality_status"] == "fail"), 3)
+        self.assertEqual(len(failure_rows), 3)
+        self.assertTrue(all("生成脚本包标题" not in row["title_quality_issues"] for row in title_rows))
+        self.assertTrue(all("阻止进入生成脚本包" in row["title_quality_issues"] for row in title_rows))
+
 
 if __name__ == "__main__":
     unittest.main()
