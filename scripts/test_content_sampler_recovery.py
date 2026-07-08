@@ -148,7 +148,7 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
             self.assertTrue((tmp_root / "output" / "content_sampler_log.json").exists())
             self.assertTrue((tmp_root / "output" / "latest_write" / "content_sampler_log.json").exists())
 
-    def test_feishu_visible_rows_infers_missing_level_for_script_candidates(self) -> None:
+    def test_feishu_visible_rows_infers_missing_level_for_publishable_script_candidates(self) -> None:
         rows = [
             {
                 "editorial_engine": "codex",
@@ -160,7 +160,10 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
                 "今日建议级别": "",
                 "我要做的实验": "拿一条真实材料跑一轮脚本包生成并记录结果",
                 "验证方式": "输入真实材料，检查是否能输出脚本包草稿和通过/失败记录",
-                "title_permission": "内部测试标题",
+                "title_permission": "可发布标题",
+                "可发布标题": "值得推进的测试标题",
+                "主编判断摘要": "来源证据来自真实材料，我会接到 Austin 的脚本包恢复链路；但仍要记录恢复边界。",
+                "标题思路": "标题先写恢复链路的真实动作，不写成泛工具教程。",
             },
             {
                 "editorial_engine": "codex",
@@ -181,6 +184,29 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
         self.assertEqual(len(visible), 1)
         self.assertEqual(omitted, 1)
         self.assertEqual(visible[0]["今日建议级别"], "今日最值得做")
+
+    def test_feishu_visible_rows_omits_internal_title_script_candidates(self) -> None:
+        rows = [
+            {
+                "editorial_engine": "codex",
+                "fallback_only": "false",
+                "not_editorial_quality": "false",
+                "我的选题标题": "内部测试标题候选",
+                "推荐动作": "生成脚本包",
+                "是否建议进入制作": "是",
+                "今日建议级别": "",
+                "我要做的实验": "拿一条真实材料跑一轮脚本包生成并记录结果",
+                "验证方式": "输入真实材料，检查是否能输出脚本包草稿和通过/失败记录",
+                "title_permission": "内部测试标题",
+                "主编判断摘要": "来源证据来自真实材料，我会接到 Austin 的脚本包恢复链路；但标题仍缺发布表达。",
+                "标题思路": "还只是内部测试标题，不能进入生成脚本包列表。",
+            },
+        ]
+
+        visible, omitted = push_today10_to_feishu.feishu_visible_rows(rows)
+
+        self.assertEqual(visible, [])
+        self.assertEqual(omitted, 1)
 
     def test_legacy_script_candidate_gets_executable_experiment(self) -> None:
         row = {

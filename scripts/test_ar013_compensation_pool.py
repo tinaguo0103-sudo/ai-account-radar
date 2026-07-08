@@ -1,8 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
+import io
+import json
+import sys
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from datetime import date
 from pathlib import Path
 from unittest.mock import patch
@@ -301,6 +305,33 @@ class TopicCardTableIsolationTest(unittest.TestCase):
             _token, _app, _table, selected = card.fetch_candidates_for_card("run_20260704_080730", 7, strict_run_id=True, record_ids={"rec_b"})
 
         self.assertEqual([item["record_id"] for item in selected], ["rec_b"])
+
+    def test_send_strict_run_id_empty_card_blocks_without_sender(self) -> None:
+        stdout = io.StringIO()
+        argv = [
+            "feishu_topic_decision_card.py",
+            "send",
+            "--run-id",
+            "ar020c_l3_empty",
+            "--strict-run-id",
+            "--receive-target",
+            "open_id:ou_test",
+        ]
+        with patch.object(sys, "argv", argv), \
+                patch.object(card, "load_local_env", return_value=None), \
+                patch.object(card, "fetch_candidates_for_card", return_value=("token", "app", "table", [])), \
+                patch.object(card, "write_card_preview", return_value=Path("/private/tmp/ar020c_empty_card.json")), \
+                patch.object(card, "ensure_no_blocking_unknown_for_card_send", side_effect=AssertionError("empty strict card must block before idempotency/send")), \
+                patch.object(card, "send_card", side_effect=AssertionError("empty strict card must not call sender")), \
+                redirect_stdout(stdout):
+            rc = card.main()
+
+        payload = json.loads(stdout.getvalue())
+        self.assertEqual(rc, 2)
+        self.assertFalse(payload["ok"])
+        self.assertFalse(payload["sent"])
+        self.assertEqual(payload["send"], "blocked_empty_strict_run_id")
+        self.assertEqual(payload["record_count"], 0)
 
 
 if __name__ == "__main__":

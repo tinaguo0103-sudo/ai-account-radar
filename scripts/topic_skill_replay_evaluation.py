@@ -11,7 +11,8 @@ import argparse
 import collections
 import csv
 import json
-from datetime import date
+import traceback
+from datetime import date, datetime
 from pathlib import Path
 from typing import Any
 
@@ -33,6 +34,15 @@ SAMPLE_KEYWORDS = {
 }
 
 
+def now_iso() -> str:
+    return datetime.now().isoformat(timespec="seconds")
+
+
+def write_json(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+
+
 def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     fieldnames: list[str] = []
@@ -44,6 +54,88 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer = csv.DictWriter(handle, fieldnames=fieldnames, extrasaction="ignore")
         writer.writeheader()
         writer.writerows(rows)
+
+
+def progress_rows(pool: list[dict[str, Any]], status: str, note: str = "") -> list[dict[str, Any]]:
+    rows: list[dict[str, Any]] = []
+    for index, row in enumerate(pool):
+        rows.append({
+            "candidate_index": index,
+            "status": status,
+            "updated_at": now_iso(),
+            "note": note,
+            "内容指纹": row.get("内容指纹", ""),
+            "原始来源标题": row.get("原始来源标题") or row.get("来源内容", ""),
+            "原始来源账号": row.get("原始来源账号") or row.get("账号名/公众号名", ""),
+            "来源权重类型": row.get("来源权重类型", ""),
+            "主题簇": row.get("主题簇", ""),
+        })
+    return rows
+
+
+def write_progress(out_dir: Path, pool: list[dict[str, Any]], status: str, note: str = "") -> None:
+    write_csv(out_dir / "skill_replay_progress.csv", progress_rows(pool, status, note))
+
+
+def write_error_artifacts(
+    out_dir: Path,
+    args: argparse.Namespace,
+    stage: str,
+    error: BaseException,
+    *,
+    csv_paths: list[Path],
+    content_items: int = 0,
+    candidate_count: int = 0,
+    pre_skill_pool: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
+    error_text = str(error)
+    payload = {
+        "ok": False,
+        "completed": False,
+        "stage": stage,
+        "error_type": type(error).__name__,
+        "error": error_text,
+        "traceback_tail": traceback.format_exc()[-4000:],
+        "generated_at": now_iso(),
+        "engine": args.engine,
+        "since": args.since,
+        "timeout_seconds": args.timeout,
+        "input_files": [str(path) for path in csv_paths if path.exists()],
+        "content_items": content_items,
+        "candidate_count": candidate_count,
+        "pre_skill_pool_count": len(pre_skill_pool or []),
+        "writes_feishu": False,
+        "outputs": {
+            "candidate_universe": str(out_dir / "candidate_universe.csv"),
+            "pre_skill_candidates": str(out_dir / "pre_skill_candidates.csv"),
+            "skill_replay_progress": str(out_dir / "skill_replay_progress.csv"),
+            "skill_replay_error": str(out_dir / "skill_replay_error.json"),
+            "skill_replay_error_report": str(out_dir / "skill_replay_error.md"),
+            "skill_replay_summary": str(out_dir / "skill_replay_summary.json"),
+        },
+    }
+    write_json(out_dir / "skill_replay_error.json", payload)
+    write_json(out_dir / "skill_replay_summary.json", payload)
+    lines = [
+        "# AR-020C Skill Replay Error",
+        "",
+        "本报告表示 replay 未完整完成；不写飞书、不发 Topic Card、不触发 06。",
+        "",
+        f"- stage: {stage}",
+        f"- error_type: {type(error).__name__}",
+        f"- error: {error_text}",
+        f"- timeout_seconds: {args.timeout}",
+        f"- content_items: {content_items}",
+        f"- candidate_count: {candidate_count}",
+        f"- pre_skill_pool_count: {len(pre_skill_pool or [])}",
+        "",
+        "## Action",
+        "- 检查 `skill_replay_progress.csv` 判断是否卡在 Skill 执行前、执行中或输出后。",
+        "- 如为 timeout，先用较小 `--max-skill-candidates` 复现，再回到完整候选池。",
+        "- 不要用 deterministic fallback 代替 real Skill replay 作为内容质量证据。",
+    ]
+    (out_dir / "skill_replay_error.md").write_text("\n".join(lines), encoding="utf-8")
+    return payload
 
 
 def build_pre_skill_pool(items: list[content_sampler.ContentItem], max_candidates: int) -> dict[str, Any]:
@@ -231,7 +323,7 @@ def main() -> int:
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT))
     parser.add_argument("--engine", choices=["codex", "deterministic"], default="codex")
     parser.add_argument("--codex-model", default="")
-    parser.add_argument("--timeout", type=int, default=900)
+    parser.add_argument("--timeout", type=int, default=900, help="Timeout seconds for real codex Skill replay. Error artifacts are written on timeout/failure.")
     parser.add_argument("--max-skill-candidates", type=int, default=content_sampler.MAX_SKILL_REVIEW_CANDIDATES)
     args = parser.parse_args()
 
@@ -239,12 +331,32 @@ def main() -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
     since = date.fromisoformat(args.since)
     csv_paths = deterministic_replay.discover_content_csvs(args.content_csv)
-    items = deterministic_replay.load_items(csv_paths, since)
-    pre = build_pre_skill_pool(items, args.max_skill_candidates)
-    write_csv(out_dir / "pre_skill_candidates.csv", pre["pre_skill_pool"])
-    write_csv(out_dir / "candidate_universe.csv", pre["candidates"])
+    items: list[content_sampler.ContentItem] = []
+    pre: dict[str, Any] = {"candidates": [], "pre_skill_pool": [], "item_by_fp": {}}
+    try:
+        items = deterministic_replay.load_items(csv_paths, since)
+        pre = build_pre_skill_pool(items, args.max_skill_candidates)
+        write_csv(out_dir / "pre_skill_candidates.csv", pre["pre_skill_pool"])
+        write_csv(out_dir / "candidate_universe.csv", pre["candidates"])
+        write_progress(out_dir, pre["pre_skill_pool"], "queued_for_real_skill", f"engine={args.engine}; timeout={args.timeout}s")
 
-    skill_rows, engine_meta, engine = run_skill(pre["pre_skill_pool"], args)
+        skill_rows, engine_meta, engine = run_skill(pre["pre_skill_pool"], args)
+    except Exception as exc:
+        if pre.get("pre_skill_pool"):
+            write_progress(out_dir, pre["pre_skill_pool"], "skill_replay_failed", f"{type(exc).__name__}: {str(exc)[:240]}")
+        payload = write_error_artifacts(
+            out_dir,
+            args,
+            "real_skill_replay" if args.engine == "codex" else "deterministic_replay",
+            exc,
+            csv_paths=csv_paths,
+            content_items=len(items),
+            candidate_count=len(pre.get("candidates", [])),
+            pre_skill_pool=pre.get("pre_skill_pool", []),
+        )
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
+        return 1
+    write_progress(out_dir, pre["pre_skill_pool"], "real_skill_completed", f"engine={engine}; rows={len(skill_rows)}")
     skill_rows = field_contract.apply_batch_quality_guards(skill_rows)
     classified = classify_rows(skill_rows)
     for name, rows in classified.items():

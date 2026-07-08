@@ -1130,6 +1130,7 @@ def parse_args() -> argparse.Namespace:
     send.add_argument("--receive-id-type", default=os.getenv("FEISHU_CARD_RECEIVE_ID_TYPE", "open_id"))
     send.add_argument("--receive-target", action="append", default=[], help="Receive target in type:id form. Can be repeated. Env FEISHU_CARD_RECEIVE_TARGETS also supports comma-separated type:id values.")
     send.add_argument("--dry-run", action="store_true")
+    send.add_argument("--allow-empty", action="store_true", help="Allow sending an empty strict-run-id card. Intended only for explicit manual diagnostics.")
 
     apply = sub.add_parser("apply", help="Apply submitted form_value JSON back to Feishu 04.")
     apply.add_argument("--run-id", default="latest")
@@ -1180,6 +1181,16 @@ def main() -> int:
             "latest_preview_path": str(OUT / "latest_topic_decision_card.json"),
         }
         if args.command == "send":
+            if args.strict_run_id and not records and not args.allow_empty:
+                summary.update({
+                    "ok": False,
+                    "sent": False,
+                    "send": "blocked_empty_strict_run_id",
+                    "reason": "strict_run_id_empty_card",
+                    "note": "Strict run-id send found 0 records. Build/preview is allowed, but sending an empty validation card is blocked unless --allow-empty is explicit.",
+                })
+                print(json.dumps(summary, ensure_ascii=False, indent=2))
+                return 2
             if args.dry_run:
                 target_inputs = [os.getenv("FEISHU_CARD_RECEIVE_TARGETS", ""), *args.receive_target]
                 if args.receive_id or any(part.strip() for raw in target_inputs for part in raw.split(",")):

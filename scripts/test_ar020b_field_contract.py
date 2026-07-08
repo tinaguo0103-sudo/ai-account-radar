@@ -183,6 +183,30 @@ class AR020BFieldContractTests(unittest.TestCase):
         self.assertTrue(all("标题骨架重复" in row["field_contract_issues"] or "标题里测试" in row["field_contract_issues"] for row in guarded))
         self.assertTrue(all(row["推荐动作"] == "暂存观察" for row in guarded))
 
+    def test_observe_placeholder_experiment_is_flagged_as_title_body_risk(self) -> None:
+        rows = [
+            {
+                "推荐动作": "补证据",
+                "今日建议级别": "可选候选",
+                "选题命题": "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。",
+                "我要做的实验": "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。",
+                "主编判断摘要": "来源证据不足，我会先补 Austin 场景；但暂时不能生成。",
+            },
+            {
+                "推荐动作": "观察",
+                "今日建议级别": "暂存观察",
+                "选题命题": "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。",
+                "我要做的实验": "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。",
+                "主编判断摘要": "来源证据不足，我会先补 Austin 场景；但暂时不能生成。",
+            },
+        ]
+
+        guarded = contract.apply_batch_quality_guards(rows)
+
+        self.assertTrue(all(row["title_quality_status"] == "warn" for row in guarded))
+        self.assertTrue(all("待补实验动作" in row["title_quality_issues"] for row in guarded))
+        self.assertTrue(all(row["推荐动作"] in {"补证据", "观察"} for row in guarded))
+
     def test_hint_leak_without_skill_trace_is_blocked(self) -> None:
         row = {
             "来源类型": "对标视频",

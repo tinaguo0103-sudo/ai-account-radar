@@ -114,6 +114,11 @@ GENERIC_REASON_PATTERNS = [
     "适合 Austin",
     "有一定参考价值",
 ]
+OBSERVE_PLACEHOLDER_PATTERNS = [
+    "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。",
+    "待补实验动作",
+    "写清输入材料、1-2个动作、输出物和通过/失败标准",
+]
 SOURCE_EVIDENCE_MARKERS = ["来源", "原始", "对标", "账号", "热点", "这条", "内容", "证据", "标题"]
 AUSTIN_SCENE_MARKERS = ["我", "Austin", "工作流", "业务", "交付", "内容", "选题", "脚本", "飞书", "视频"]
 ACTION_MARKERS = EXPERIMENT_ACTION_TERMS + ["动作", "实验", "验证", "生成", "补证据"]
@@ -308,8 +313,8 @@ def validate_field_contract(row: dict[str, Any]) -> list[ContractIssue]:
             issues.append(ContractIssue("script_missing_experiment", "生成脚本包缺少可执行实验动作"))
         if not validation or not has_experiment_action(validation):
             issues.append(ContractIssue("script_missing_validation", "生成脚本包缺少可执行验证方式"))
-        if permission == "不生成标题":
-            issues.append(ContractIssue("script_title_not_ready", "生成脚本包不能同时标记 title_permission=不生成标题"))
+        if permission != "可发布标题":
+            issues.append(ContractIssue("script_title_not_ready", "生成脚本包需要 title_permission=可发布标题，内部测试标题只能补证据或观察"))
 
     issues.extend(visible_reason_quality_issues(row))
     issues.extend(hint_leak_issues(row))
@@ -359,6 +364,7 @@ def title_quality_issues(rows: list[dict[str, Any]]) -> dict[int, list[ContractI
     issues_by_index: dict[int, list[ContractIssue]] = {idx: [] for idx, _row in enumerate(rows)}
     actionable: list[tuple[int, str]] = []
     observe_reason_counts: dict[str, list[int]] = {}
+    observe_placeholder_indices: list[int] = []
     for idx, row in enumerate(rows):
         title = title_for_quality(row)
         family = title_pattern_family(title)
@@ -368,6 +374,9 @@ def title_quality_issues(rows: list[dict[str, Any]]) -> dict[int, list[ContractI
             reason = normalize_space(row.get("主编判断摘要") or row.get("不建议做的原因") or row.get("推荐理由"))
             if reason:
                 observe_reason_counts.setdefault(reason[:40], []).append(idx)
+            observe_text = joined_text(row, ["选题命题", "我的选题标题", "选题标题", "我要做的实验", "验证方式", "标题思路"])
+            if contains_any(observe_text, OBSERVE_PLACEHOLDER_PATTERNS):
+                observe_placeholder_indices.append(idx)
         rows[idx]["title_pattern_family"] = family
 
     if actionable:
@@ -401,6 +410,14 @@ def title_quality_issues(rows: list[dict[str, Any]]) -> dict[int, list[ContractI
                     "观察/补证据候选主编判断摘要重复，存在模板化风险",
                     severity="warn",
                 ))
+    if len(observe_placeholder_indices) >= 1:
+        repeated = len(observe_placeholder_indices) > 1
+        for idx in observe_placeholder_indices:
+            issues_by_index[idx].append(ContractIssue(
+                "observe_placeholder_title_or_body",
+                "观察/补证据候选仍含待补实验动作占位文案" + ("，且批内重复" if repeated else ""),
+                severity="warn",
+            ))
     return issues_by_index
 
 
