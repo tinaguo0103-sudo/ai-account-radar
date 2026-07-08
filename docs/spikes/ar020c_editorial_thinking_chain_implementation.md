@@ -67,6 +67,53 @@ Output package:
 - `/private/tmp/ar020c_skill_replay_20260707_dev/title_body_check.csv`
 - `/private/tmp/ar020c_skill_replay_20260707_dev/skill_replay_summary.json`
 
+## Full Replay Batch Strategy
+
+2026-07-08 QA proved the old full replay command could still time out when the real Skill received the full 2026-07-01+ candidate pool in one request. The replay tool now supports durable batch execution and resumable aggregation:
+
+```bash
+PYTHONPATH=scripts PYTHONPYCACHEPREFIX=/private/tmp/ai_account_radar_pycache python3 scripts/topic_skill_replay_evaluation.py \
+  --engine codex \
+  --since 2026-07-01 \
+  --batch-size 3 \
+  --batch-timeout-seconds 300 \
+  --out-dir /private/tmp/ar020c_full_replay_qa
+```
+
+If one batch times out, do not delete the output directory. Continue from existing successful batch artifacts:
+
+```bash
+PYTHONPATH=scripts PYTHONPYCACHEPREFIX=/private/tmp/ai_account_radar_pycache python3 scripts/topic_skill_replay_evaluation.py \
+  --engine codex \
+  --since 2026-07-01 \
+  --batch-size 3 \
+  --batch-timeout-seconds 300 \
+  --resume \
+  --out-dir /private/tmp/ar020c_full_replay_qa
+```
+
+To regenerate PM-facing summary tables from completed batches without calling the Skill again:
+
+```bash
+PYTHONPATH=scripts PYTHONPYCACHEPREFIX=/private/tmp/ai_account_radar_pycache python3 scripts/topic_skill_replay_evaluation.py \
+  --engine codex \
+  --since 2026-07-01 \
+  --aggregate-only \
+  --out-dir /private/tmp/ar020c_full_replay_qa
+```
+
+Key artifacts:
+
+- `skill_replay_progress.csv`: append-only phase history covering candidate build, pre-skill selection, batch start/success/fail/skip, and aggregate start/success/fail.
+- `batches/batch_*/input.csv`: exact candidate input for each Skill call.
+- `batches/batch_*/skill_rows.csv`: successful Skill output for that batch.
+- `batches/batch_*/meta.json`: start/end time, duration, status, timeout, and engine metadata.
+- `batches/batch_*/error.json`: per-batch error evidence when a batch fails.
+- `skill_replay_batches.json`: aggregate batch status.
+- `skill_replay_summary.json` plus `skill_actionable.csv`, `skill_observe.csv`, `near_miss_high_fit_unselected.csv`, `title_body_check.csv`, and `ar020c_user_sample_summary.md`: final PM/QA sample package.
+
+Deterministic mode is still only for execution-path probes. It must not replace real Skill replay as AR-020C content-quality evidence.
+
 ## QA Focus
 
 QA should verify the actual downstream fields, not only the summary report:
