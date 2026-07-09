@@ -207,6 +207,91 @@ class AR020BFieldContractTests(unittest.TestCase):
         self.assertTrue(all("待补实验动作" in row["title_quality_issues"] for row in guarded))
         self.assertTrue(all(row["推荐动作"] in {"补证据", "观察"} for row in guarded))
 
+    def test_repeated_observe_task_tone_titles_are_flagged_with_observe_wording(self) -> None:
+        rows = [
+            {
+                "推荐动作": "观察",
+                "今日建议级别": "暂存观察",
+                "选题命题": "Agent到底有没有用，先拿选题台测它会不会留记录",
+                "主编判断摘要": "来源是 Agent 能力讨论，但还缺 Austin 自己的流程截图和可展示记录。",
+                "标题思路": "先保留为观察，因为来源证据不足。",
+            },
+            {
+                "推荐动作": "补证据",
+                "今日建议级别": "可选候选",
+                "选题命题": "Claude Cowork 先接进选题台看它会不会留记录",
+                "主编判断摘要": "来源是 AI 同事热点，但缺任务回写细节和失败样例。",
+                "标题思路": "先不生成可发布标题。",
+            },
+            {
+                "推荐动作": "观察",
+                "今日建议级别": "暂存观察",
+                "选题命题": "PPT 自动化先做一次方案交付验收",
+                "主编判断摘要": "来源是 PPT 工具教程，暂时只有办公效率证据。",
+                "标题思路": "需要补客户方案场景。",
+            },
+        ]
+
+        guarded = contract.apply_batch_quality_guards(rows)
+
+        self.assertTrue(all(row["title_quality_status"] == "fail" for row in guarded))
+        self.assertTrue(all("观察/补证据标题仍像内部测试任务或同构反思壳" in row["title_quality_issues"] for row in guarded))
+        self.assertTrue(all("生成脚本包标题" not in row["title_quality_issues"] for row in guarded))
+
+    def test_repeated_observe_reflection_shell_titles_are_flagged(self) -> None:
+        rows = [
+            {
+                "推荐动作": "观察",
+                "今日建议级别": "暂存观察",
+                "选题命题": "CI/CD和Shell给我的提醒：Agent执行任务前，发布边界要先写清",
+                "主编判断摘要": "来源只有前端部署标题，缺 Austin 自动化失败样例。",
+                "标题思路": "证据不足，不生成可发布标题。",
+            },
+            {
+                "推荐动作": "观察",
+                "今日建议级别": "暂存观察",
+                "选题命题": "Agent Runtime给我的提醒：Agent需要一个可追踪的任务现场",
+                "主编判断摘要": "来源只有 Runtime 概念，缺任务状态样例。",
+                "标题思路": "暂时只做概念观察。",
+            },
+            {
+                "推荐动作": "观察",
+                "今日建议级别": "暂存观察",
+                "选题命题": "AI落地拼到最后，我会把FDE翻译成项目里的现场角色",
+                "主编判断摘要": "来源是 FDE 观点，缺真实项目记录。",
+                "标题思路": "暂不写可发布标题。",
+            },
+        ]
+
+        guarded = contract.apply_batch_quality_guards(rows)
+
+        self.assertTrue(all(row["title_quality_status"] == "fail" for row in guarded))
+        self.assertTrue(all("同构反思壳" in row["title_quality_issues"] for row in guarded))
+        self.assertTrue(all("生成脚本包标题" not in row["title_quality_issues"] for row in guarded))
+
+    def test_observe_domain_terms_without_task_skeleton_do_not_fail(self) -> None:
+        rows = [
+            {
+                "推荐动作": "观察",
+                "今日建议级别": "暂存观察",
+                "选题命题": "线下小班课说明非技术人有 Agent 学习需求，但还缺我的任务验收样例",
+                "主编判断摘要": "来源能说明市场需求，但缺 Austin 自己的任务案例。",
+                "标题思路": "观察标题落在证据缺口，不包装成可生成命题。",
+            },
+            {
+                "推荐动作": "观察",
+                "今日建议级别": "暂存观察",
+                "选题命题": "Agent开发三技能这类教程，真正能借的是任务边界和验收字段",
+                "主编判断摘要": "来源是教程向内容，暂时只保留任务边界启发。",
+                "标题思路": "观察标题说明可借的业务字段，不用测试骨架。",
+            },
+        ]
+
+        guarded = contract.apply_batch_quality_guards(rows)
+
+        self.assertTrue(all(row["title_quality_status"] == "pass" for row in guarded))
+        self.assertTrue(all("内部测试任务" not in row["title_quality_issues"] for row in guarded))
+
     def test_hint_leak_without_skill_trace_is_blocked(self) -> None:
         row = {
             "来源类型": "对标视频",

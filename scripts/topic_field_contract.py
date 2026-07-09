@@ -127,9 +127,26 @@ TITLE_TEMPLATE_PATTERNS = [
     ("test_can", re.compile(r"(想用|准备用|用|拿).{0,18}(测试|验证).{0,28}能不能")),
     ("first_test", re.compile(r"(先|先拿|先用).{0,28}(测试|验证|过一遍|跑一轮)")),
     ("acceptance", re.compile(r"(验收|返修|交付).{0,18}(能不能|能否|可不可以)")),
-    ("can_or_not", re.compile(r"能不能|能否|可不可以")),
+    ("can_or_not", re.compile(r"能不能|能否|会不会|可不可以")),
     ("try_once", re.compile(r"试一次|试一遍|跑一轮")),
 ]
+TITLE_TASK_TONE_TERMS = [
+    "先看",
+    "先拿",
+    "先用",
+    "先从",
+    "先接",
+    "先做",
+    "我先",
+    "先把",
+    "测试",
+    "验证",
+    "能不能",
+    "会不会",
+    "试一次",
+    "试一遍",
+]
+TITLE_REFLECTION_SHELL_TERMS = ["给我的提醒", "只能提醒我", "我会把", "我先把", "翻译成", "放进"]
 
 
 @dataclass
@@ -365,18 +382,28 @@ def title_quality_issues(rows: list[dict[str, Any]]) -> dict[int, list[ContractI
     actionable: list[tuple[int, str]] = []
     observe_reason_counts: dict[str, list[int]] = {}
     observe_placeholder_indices: list[int] = []
+    observe_template_indices: list[int] = []
+    observe_count = 0
     for idx, row in enumerate(rows):
         title = title_for_quality(row)
         family = title_pattern_family(title)
         if normalize_space(row.get("推荐动作")) == "生成脚本包":
             actionable.append((idx, family))
         else:
+            observe_count += 1
             reason = normalize_space(row.get("主编判断摘要") or row.get("不建议做的原因") or row.get("推荐理由"))
             if reason:
                 observe_reason_counts.setdefault(reason[:40], []).append(idx)
             observe_text = joined_text(row, ["选题命题", "我的选题标题", "选题标题", "我要做的实验", "验证方式", "标题思路"])
-            if contains_any(observe_text, OBSERVE_PLACEHOLDER_PATTERNS):
+            has_placeholder = contains_any(observe_text, OBSERVE_PLACEHOLDER_PATTERNS)
+            if has_placeholder:
                 observe_placeholder_indices.append(idx)
+            if not has_placeholder and (
+                family != "freeform"
+                or contains_any(title, TITLE_TASK_TONE_TERMS)
+                or contains_any(title, TITLE_REFLECTION_SHELL_TERMS)
+            ):
+                observe_template_indices.append(idx)
         rows[idx]["title_pattern_family"] = family
 
     if actionable:
@@ -417,6 +444,14 @@ def title_quality_issues(rows: list[dict[str, Any]]) -> dict[int, list[ContractI
                 "observe_placeholder_title_or_body",
                 "观察/补证据候选仍含待补实验动作占位文案" + ("，且批内重复" if repeated else ""),
                 severity="warn",
+            ))
+    if observe_template_indices:
+        severity = "block" if len(observe_template_indices) > 2 or (len(observe_template_indices) / max(1, observe_count)) > 0.30 else "warn"
+        for idx in observe_template_indices:
+            issues_by_index[idx].append(ContractIssue(
+                "observe_title_task_tone",
+                "观察/补证据标题仍像内部测试任务或同构反思壳，请改成来源矛盾、Austin 场景或缺证据摘要",
+                severity=severity,
             ))
     return issues_by_index
 
