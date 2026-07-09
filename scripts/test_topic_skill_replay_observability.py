@@ -199,6 +199,46 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
         self.assertTrue(all("生成脚本包标题" not in row["title_quality_issues"] for row in title_rows))
         self.assertTrue(all("阻止进入生成脚本包" in row["title_quality_issues"] for row in title_rows))
 
+    def test_sample_summary_separates_internal_label_title_and_excerpt(self) -> None:
+        rows = [{
+            "内容指纹": "fp_kb",
+            "原始来源标题": "Codex联动Obsidian，搭建超强知识库，手把手教程 用Codex+Obsidian 搭建可以“自生长”的知识库 帮你把信息的利用效率 直接拉高到next level 它能定时抓取热点 #AI新星计划 #知识库",
+            "原始来源账号": "xuan酱",
+            "选题命题": "Codex+Obsidian 搭知识库，最值钱的是留下为什么选它",
+            "一句话Brief": "Brief",
+            "我要做的实验": "实验",
+            "我的工作流痛点": "痛点",
+            "重点体现": "重点",
+            "主编判断摘要": "来源是 Codex+Obsidian 知识库标题，我借工具组合入口，但落到选题判断留存。",
+            "标题思路": "借原始标题里的工具组合和知识库结果承诺，改成 Austin 的选题台长期记忆。",
+            "Austin改写理由": "保留 Codex+Obsidian 和知识库入口，舍弃手把手教程口吻。",
+            "推荐动作": "生成脚本包",
+            "今日建议级别": "今日最值得做",
+            "对应方向": "真实工作流改造",
+            "field_contract_status": "pass",
+            "field_contract_issues": "",
+            "fallback_only": "false",
+        }]
+
+        with TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            samples = replay.sample_rows(rows)
+            replay.write_markdown_report(
+                out_dir,
+                {"engine": "codex", "outputs": {}, "content_items": 1, "candidate_count": 1, "pre_skill_pool_count": 1, "skill_rows": 1},
+                samples,
+            )
+            markdown = (out_dir / "ar020c_user_sample_summary.md").read_text(encoding="utf-8")
+
+        self.assertEqual(samples[0]["sample_label"], "知识库 / 信息资产")
+        self.assertEqual(samples[0]["source_title"], "Codex联动Obsidian，搭建超强知识库，手把手教程")
+        self.assertIn("工具组合", samples[0]["source_title_hook"])
+        self.assertIn("原始标题：Codex联动Obsidian，搭建超强知识库，手把手教程", markdown)
+        self.assertIn("原始标题钩子：工具组合 / 结果承诺 / 学习入口", markdown)
+        self.assertIn("Austin rewrite reason: 保留 Codex+Obsidian", markdown)
+        self.assertNotIn("knowledge_base |", markdown)
+        self.assertNotIn("直接拉高到next level 它能定", markdown)
+
 
 if __name__ == "__main__":
     unittest.main()

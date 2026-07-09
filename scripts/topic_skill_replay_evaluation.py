@@ -11,6 +11,7 @@ import argparse
 import collections
 import csv
 import json
+import re
 import traceback
 from datetime import date, datetime
 from pathlib import Path
@@ -34,6 +35,14 @@ SAMPLE_KEYWORDS = {
     "technical_automation": ["CI/CD", "Shell", "自动化", "大伟聊前端"],
     "broad_aihot_or_growth": ["企业", "增长", "AI Hot", "融资", "行业"],
 }
+SAMPLE_LABELS = {
+    "knowledge_base": "知识库 / 信息资产",
+    "ai_director": "AI导演 / 视频交付",
+    "tooling_skill": "工具 Skill / 工作流复用",
+    "technical_automation": "技术自动化 / 发布边界",
+    "broad_aihot_or_growth": "AI Hot / 业务增长观察",
+}
+HASHTAG_PATTERN = re.compile(r"\s*#[^\s#]+")
 
 
 def now_iso() -> str:
@@ -63,6 +72,56 @@ def read_csv(path: Path) -> list[dict[str, str]]:
         return []
     with path.open(encoding="utf-8-sig", newline="") as handle:
         return list(csv.DictReader(handle))
+
+
+def clean_source_text(value: Any) -> str:
+    text = str(value or "")
+    text = text.replace("\u200b", " ").replace("\ufeff", " ")
+    text = re.sub(r"https?://\S+", "", text)
+    text = HASHTAG_PATTERN.sub("", text)
+    return re.sub(r"\s+", " ", text).strip(" ，,。；;：:|-")
+
+
+def truncate_on_sentence(value: str, limit: int) -> str:
+    text = clean_source_text(value)
+    if len(text) <= limit:
+        return text
+    window = text[:limit]
+    cut = max(window.rfind(mark) for mark in ["。", "！", "？", "；", ";", "，", ","])
+    if cut >= max(18, limit // 2):
+        return window[: cut + 1].rstrip()
+    return window.rstrip(" ，,。；;：:") + "..."
+
+
+def extract_original_title(value: Any) -> str:
+    text = clean_source_text(value)
+    if not text:
+        return ""
+    first_sentence = re.split(r"[。！？!?]\s*", text, maxsplit=1)[0].strip()
+    if 8 <= len(first_sentence) <= 56:
+        return first_sentence
+    first_chunk = first_sentence.split(" ", 1)[0].strip()
+    if 8 <= len(first_chunk) <= 42:
+        return first_chunk
+    return truncate_on_sentence(first_sentence or text, 56)
+
+
+def original_title_hook(row: dict[str, Any]) -> str:
+    if row.get("原始标题钩子"):
+        return clean_source_text(row.get("原始标题钩子"))
+    source = row.get("原始来源标题") or row.get("来源内容") or row.get("来源标题")
+    title = extract_original_title(source)
+    if not title:
+        return ""
+    hook_terms: list[str] = []
+    if any(term in title for term in ["Codex", "Obsidian", "PPT", "Mx-Shell", "Skill", "Claude", "Agent", "MIRA"]):
+        hook_terms.append("工具组合")
+    if any(term in title for term in ["知识库", "可编辑", "一键", "简单", "无需", "开放公测", "联动", "搭建"]):
+        hook_terms.append("结果承诺")
+    if any(term in title for term in ["教程", "实战", "手把手", "5步", "必备"]):
+        hook_terms.append("学习入口")
+    label = " / ".join(hook_terms) if hook_terms else "来源表达"
+    return f"{label}：{title}"
 
 
 def append_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -544,13 +603,21 @@ def sample_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 if fp in seen:
                     continue
                 seen.add(fp)
+                source_raw = row.get("原始来源标题") or row.get("来源内容", "")
+                source_title = extract_original_title(source_raw)
+                source_excerpt = truncate_on_sentence(source_raw, 70)
                 samples.append({
                     "sample_key": sample_key,
-                    "source_title": row.get("原始来源标题") or row.get("来源内容", ""),
+                    "sample_label": SAMPLE_LABELS.get(sample_key, sample_key),
+                    "source_title": source_title,
+                    "source_excerpt": source_excerpt,
+                    "source_title_hook": original_title_hook(row),
+                    "austin_rewrite_reason": row.get("Austin改写理由") or row.get("标题思路", ""),
                     "source_account": row.get("原始来源账号") or row.get("账号名/公众号名", ""),
                     "skill_decision": row.get("主编筛选") or row.get("主编判断", ""),
                     "editorial_trace": row.get("主编判断摘要", ""),
                     "title_thinking": row.get("标题思路", ""),
+                    "publish_title": row.get("可发布标题", ""),
                     "topic": row.get("选题命题") or row.get("选题标题", ""),
                     "brief": row.get("一句话Brief", ""),
                     "experiment": row.get("我要做的实验", ""),
@@ -592,15 +659,21 @@ def write_markdown_report(out_dir: Path, summary: dict[str, Any], samples: list[
     lines.extend(["", "## PM Sample Rows"])
     for row in samples:
         lines.extend([
-            f"- {row['sample_key']} | {row['source_title'][:90]}",
-            f"  - account: {row['source_account']}",
+            f"### 内部分类：{row.get('sample_label') or row['sample_key']}",
+            f"- 原始账号：{row['source_account']}",
+            f"- 原始标题：{row.get('source_title') or '（无可用标题）'}",
+            f"- 原始来源摘录：{row.get('source_excerpt') or '（无摘录）'}",
+            f"- 原始标题钩子：{row.get('source_title_hook') or '（未识别）'}",
             f"  - status/action: {row['status']} / {row['action']}",
             f"  - direction: {row['direction']}",
             f"  - editorial trace: {row.get('editorial_trace', '')}",
             f"  - title thinking: {row.get('title_thinking', '')}",
+            f"  - Austin rewrite reason: {row.get('austin_rewrite_reason', '')}",
+            f"  - publish title: {row.get('publish_title', '')}",
             f"  - topic: {row['topic']}",
             f"  - experiment: {row['experiment']}",
             f"  - contract: {row['contract_status']} {row['contract_issues']}",
+            "",
         ])
     lines.extend([
         "",

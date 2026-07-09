@@ -60,6 +60,8 @@ EXTRA_FIELDS = [
     "field_mapping_json",
     "主编判断摘要",
     "标题思路",
+    "原始标题钩子",
+    "Austin改写理由",
     "标题体感风险",
     "title_pattern_family",
     "title_quality_status",
@@ -121,6 +123,8 @@ SKILL_FIELDS = [
     "field_mapping_json",
     "主编判断摘要",
     "标题思路",
+    "原始标题钩子",
+    "Austin改写理由",
     "标题体感风险",
     "点击钩子",
     "观众为什么会点",
@@ -531,6 +535,43 @@ def source_title_values(row: dict[str, str]) -> list[str]:
         if value:
             values.append(value)
     return values
+
+
+def clean_source_text(value: Any) -> str:
+    text = str(value or "")
+    text = text.replace("\u200b", " ").replace("\ufeff", " ")
+    text = re.sub(r"https?://\S+", "", text)
+    text = re.sub(r"\s*#[^\s#]+", "", text)
+    return re.sub(r"\s+", " ", text).strip(" ，,。；;：:|-")
+
+
+def extract_original_title(value: Any) -> str:
+    text = clean_source_text(value)
+    if not text:
+        return ""
+    first_sentence = re.split(r"[。！？!?]\s*", text, maxsplit=1)[0].strip()
+    if 8 <= len(first_sentence) <= 56:
+        return first_sentence
+    first_chunk = first_sentence.split(" ", 1)[0].strip()
+    if 8 <= len(first_chunk) <= 42:
+        return first_chunk
+    source = first_sentence or text
+    return source[:56].rstrip(" ，,。；;：:") + ("..." if len(source) > 56 else "")
+
+
+def original_title_hook_from(row: dict[str, str]) -> str:
+    title = extract_original_title(row.get("原始来源标题") or row.get("来源内容") or row.get("来源标题"))
+    if not title:
+        return ""
+    hook_terms: list[str] = []
+    if any(term in title for term in ["Codex", "Obsidian", "PPT", "Mx-Shell", "Skill", "Claude", "Agent", "MIRA"]):
+        hook_terms.append("工具组合")
+    if any(term in title for term in ["知识库", "可编辑", "一键", "简单", "无需", "开放公测", "联动", "搭建"]):
+        hook_terms.append("结果承诺")
+    if any(term in title for term in ["教程", "实战", "手把手", "5步", "必备"]):
+        hook_terms.append("学习入口")
+    label = " / ".join(hook_terms) if hook_terms else "来源表达"
+    return f"{label}：{title}"
 
 
 def has_experiment_action(value: str) -> bool:
@@ -1216,6 +1257,9 @@ def editorial_judgement(row: dict[str, str]) -> str:
 
 
 def original_hook(row: dict[str, str]) -> str:
+    source_hook = row.get("原始标题钩子") or original_title_hook_from(row)
+    if source_hook:
+        return source_hook
     hook = hot_hook(row)
     if hook:
         return hook
@@ -1338,6 +1382,8 @@ def enrich(row: dict[str, str]) -> dict[str, str]:
     out["主编筛选"] = row.get("主编筛选") or editorial_judgement(row)
     out["标题工作坊"] = row.get("标题工作坊", "")
     out["标题自审"] = row.get("标题自审", "")
+    out["原始标题钩子"] = row.get("原始标题钩子") or original_title_hook_from(row)
+    out["Austin改写理由"] = row.get("Austin改写理由") or "fallback_only：只记录可借来源钩子，不能作为标题质量证据。"
     out["点击钩子"] = row.get("点击钩子") or original_hook(row)
     out["观众为什么会点"] = row.get("观众为什么会点") or "这条要让人看到自己的真实工作卡点，而不是只看到一个AI工具更新。"
     out["我的真实矛盾"] = row.get("我的真实矛盾") or real_tension(row)
@@ -1414,10 +1460,14 @@ def compact_candidate(row: dict[str, str], index: int) -> dict[str, str | int]:
                 existing_visible_fields[field] = value[:1200]
                 continue
             payload[field] = value[:1800]
+    source_title_hook = row.get("原始标题钩子") or original_title_hook_from(row)
+    if source_title_hook:
+        payload["原始标题钩子"] = source_title_hook[:800]
     payload["主编字段所有权"] = "Skill 输出为 04/Topic Card/06 主字段唯一质量来源；代码字段仅作来源事实、候选池治理和一致性校验。"
     payload["fallback_boundary"] = "若候选里已有 deterministic 主字段，只能作为参考或反例；最终可见主字段必须由本轮 Skill 判断重写或确认。"
     payload["source_facts"] = json.dumps({
         "source_title": row.get("原始来源标题") or row.get("来源内容") or row.get("来源标题") or "",
+        "source_title_hook": source_title_hook,
         "source_account": row.get("原始来源账号") or row.get("账号名/公众号名") or "",
         "source_link": row.get("来源链接") or "",
         "source_type": row.get("来源类型") or "",
@@ -1436,6 +1486,7 @@ def compact_candidate(row: dict[str, str], index: int) -> dict[str, str | int]:
         "aihot_major_news": row.get("AIHOT重大性说明") or "",
         "competitor_account": row.get("原始来源账号") or row.get("账号名/公众号名") or "",
         "market_validation": row.get("市场验证依据") or "",
+        "source_title_hook": source_title_hook,
         "theme_hint": row.get("主题簇") or "",
         "translation_hint": row.get("Austin转译角度") or row.get("对标转译角度") or "",
         "translation_quality": row.get("Austin转译质量") or "",
@@ -1509,6 +1560,8 @@ AR-020C 两段式输出：
 同时必须填两个紧凑用户可见字段：
 - `主编判断摘要`：80-180 字，必须提到来源证据、Austin 场景、动作/实验和一个取舍或风险。
 - `标题思路`：40-160 字，说明标题/命题为什么这样切；如果不能给可发布标题，也要说明卡在哪里。
+- `原始标题钩子`：从来源标题里提取可借的市场表达资产，例如工具组合、结果承诺、场景词、学习入口、强冲突或用户利益。
+- `Austin改写理由`：说明你借用了哪个原始标题钩子，又如何转成 Austin 的业务现场判断；必须能看出不是照抄。
 
 总边界：
 - 不要在选题筛选阶段生成完整成稿；这里只产出工作流实验命题卡。
@@ -1532,6 +1585,9 @@ AR-020B 字段契约：
 - 不要批量使用同一标题骨架。尤其 `我想用 X 测试 Y 能不能 Z`、`先拿 X 验证 Y`、`X 能不能进入 Y`、`先测/验收/试一遍` 等骨架只能少量自然出现；如果一批候选都长这样，请重写或降级。
 
 标题表达升级：
+- 原始标题不是噪声。对标账号标题通常包含市场验证过的入口：工具组合、结果承诺、场景词、学习承诺、强冲突、用户利益。你应该先提取 `原始标题钩子`，再决定哪些可借、哪些要舍弃。
+- 可发布标题优先融合“原始标题入口 + Austin 判断”。例如来源是 `Codex联动Obsidian，搭建超强知识库，手把手教程`，可以借 `Codex+Obsidian`、`搭知识库`、`手把手` 的入口，但落点必须变成我的选题台、长期记忆、判断留存或资料复用，而不是照抄教程标题。
+- 不能直接复制原始标题，不能变回工具教程号、热点搬运号或保姆级教程号。`标题思路` / `Austin改写理由` 必须说清借了什么、改了什么、为什么这样更像 Austin。
 - `选题命题`、`我的选题标题`、`可发布标题` 是用户会看的判断句，不是内部实验任务名。`测试 / 验证 / 验收 / 能不能 / 会不会 / 先试一遍` 这类词优先放进 `我要做的实验` 或 `验证方式`，不要集中出现在标题层。
 - 每条标题先从四种素材里选一个钩子：来源承诺、我的真实矛盾、缺失证据、最终能留下的资产。一个批次里不要连续使用同一种钩子。
 - 观察 / 补证据候选也要有人能读懂的观察标题。不要写成“先测它会不会...”的内部测试口吻；如果证据不足，就写清“这条暂时卡在什么证据/场景”，而不是包装成可生成命题。

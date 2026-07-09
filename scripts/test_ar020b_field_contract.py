@@ -27,6 +27,8 @@ class AR020BFieldContractTests(unittest.TestCase):
         self.assertIn("主编字段所有权", payload)
         self.assertIn("field_contract_guardrails", payload)
         self.assertIn("AIGC自修室", str(payload["source_governance_evidence"]))
+        self.assertIn("原始标题钩子", payload)
+        self.assertIn("工具组合", str(payload["source_governance_evidence"]))
 
     def test_skill_output_schema_includes_all_core_main_fields(self) -> None:
         required = {
@@ -49,6 +51,8 @@ class AR020BFieldContractTests(unittest.TestCase):
             "今日建议级别",
             "title_permission",
             "可发布标题",
+            "原始标题钩子",
+            "Austin改写理由",
         }
 
         self.assertTrue(required.issubset(set(editorial_skill_runner.SKILL_FIELDS)))
