@@ -17,6 +17,28 @@
 
 PM 的架构选择建议：继续走 `Editorial Thinking -> Field Mapping`，但要把它做成可审计的两阶段证据，而不是在一个 prompt 里同时“自由判断 + 填表”。第一阶段必须产出可读的 Austin 主编判断和标题仿写依据；第二阶段只能映射字段。验收时要证明第一阶段已经自然、具体、案例驱动，而不是靠第二阶段 guard 把坏标题拦掉。
 
+## 根因分类
+
+### Confirmed root cause
+
+1. **运行时 contract owner 不一致。** `editorial_skill_runner.py` 默认加载 global private Skill，而不是 repo mirror。repo mirror 已经加入 AR-020C 两段式 contract，但 default runtime 仍嵌入 global private Skill 文本；global Skill 的主流程仍是 `Gate -> Workflow Experiment Card -> Title Packaging`。因此“repo mirror 看起来正确”不能证明真实 replay 的 contract 已更新。
+2. **自由主编判断与字段映射在同一 prompt/schema 内被同时要求。** runner 要求 `editorial_thinking_json`、`field_mapping_json` 和全部 `SKILL_FIELDS` 一次性产出，同时保留命题、实验、验证、资产、标题包装等字段。模型会自然把 public proposition 先压成 workflow experiment card。
+3. **Pre-Skill deterministic shaping 过重。** `topic_flow_rework.py`、`content_sampler.py` 和 runner 的 mother-scene/hint 机制虽然被标注为 `non_authoritative_hints`，但它们在 prompt 中仍是高密度、近距离的主题/措辞/场景材料，容易把 Skill 引向 `验收 / 交付 / 能不能 / 先看` 的旧表达。
+4. **质量 guard 是后置拦截，不是自然表达生成器。** `topic_field_contract.py` 能 downgrade/fail，但不能把已经生成的任务壳重新写成自然公开判断。
+5. **persona/case-library grounding 是弱证明。** runner 嵌入 `persona-brief.md`，但完整 `persona-and-cases.md` 主要以路径形式出现，没有 candidate-level retrieval artifact。用户案例库还没有成为标题/命题生成的第一层证据。
+
+### Likely contributor
+
+1. **严格 schema 与批量输出放大同构。** `additionalProperties=false` 和全字段 required 有利于机器处理，但在一批候选中会放大相同字段顺序和句法骨架。
+2. **观察/补证据候选的 title-quality scan 曾混入工作字段。** Agent 例子显示，标题本身自然时，`我要做的实验 / 验证方式 / 标题思路` 的工作语言也可能污染 title-quality 结论。这是 validator 误伤来源，不是模板生成根因。
+3. **PM sample package 可以改善展示，但不能修复主字段。** report 能拆开原始标题、摘录、hook、rewrite reason；它能减少误读，但如果 `field_mapping_json` 已经产出任务壳，report 不能证明内容质量。
+
+### Not a root cause
+
+1. **04 / Topic Card consumer 不是任务壳首发点。** 04 和 Topic Card 主要展示上游字段；它们会放大用户可见影响，但没有发明 Storyboard、Claude Cowork、MIRA 的任务壳。
+2. **deterministic fallback 不是本轮失败的接受路径。** fresh QA rows 为 real Skill output，`fallback_row_count=0`。问题不是 fallback 被误当质量通过，而是 real Skill 被结构化 prompt/schema 拉回旧表达。
+3. **原始标题钩子不是纯报告装饰。** hook 已进入 candidate payload 和真实 Skill 输出；问题是它被放在字段映射压力之前，最后变成 `市场钩子 + workflow gate`，而不是 `市场钩子 + Austin 人格判断`。
+
 ## 真实运行时加载链路
 
 ### 运行入口
@@ -349,7 +371,34 @@ Codex生成可编辑PPT，按这5步就够了；Word 文档生成高级可编辑
 
 ## 建议的结构改造方向
 
-### 推荐方案：两阶段 Skill 运行
+### 方案 A：persona/case-library retrieval-first + free editorial judgment + field mapping
+
+推荐作为产品方向。
+
+流程：
+
+1. 先从 private case library 里按 source hook、账号方向、市场表达、候选类型检索 3-5 条相关案例片段。
+2. 第一阶段只让 Skill 输出 public editorial judgment：`source_read`、`source_title_hook`、`case_anchor_used`、`why_i_would_choose`、`why_i_would_not_choose`、`chosen_austin_angle`、`public_title_direction`、`near_miss_reason`。
+3. 第二阶段再把第一阶段结果映射到 04 / Topic Card / 06 字段。
+4. replay artifact 必须保留 retrieved case snippets / case ids，让 PM 能看到人格案例如何影响判断。
+
+用户可见效果：
+
+- 标题更像 Austin 根据真实案例和账号人格作判断，而不是把来源塞进一个流程验收卡。
+- 原始标题钩子仍可借用，但会先和 Austin 案例发生关系，再进入字段映射。
+
+迁移风险：
+
+- 需要更新 global private Skill 与 repo mirror 的同步策略。
+- token/runtime 成本上升；需要继续依赖 batch/resume replay。
+- case retrieval 质量会成为新风险，需要 artifact 证明。
+
+测试证据：
+
+- 每条强候选有 `case_anchor_used` 和 hook-to-angle trace。
+- Storyboard、Claude Cowork、MIRA、Agent、Codex+Obsidian、Codex PPT 六类反例必须 fresh replay 通过。
+
+### 方案 B：两次 Skill 运行，强隔离 judgment 与 mapper
 
 第一阶段：`editorial_thinking_only`
 
@@ -364,6 +413,8 @@ Codex生成可编辑PPT，按这5步就够了；Word 文档生成高级可编辑
 - 强约束：不得发明第一阶段没有的角度；不得复制旧 deterministic fields；不得把实验句写到标题面。
 
 ### 可接受的轻量方案
+
+### 方案 C：单次调用但硬分区 prompt/schema
 
 如果不拆两次 Codex exec，也至少在一个 prompt 中用严格 JSON 分区：
 
