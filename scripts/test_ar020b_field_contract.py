@@ -296,6 +296,36 @@ class AR020BFieldContractTests(unittest.TestCase):
         self.assertTrue(all(row["title_quality_status"] == "pass" for row in guarded))
         self.assertTrue(all("内部测试任务" not in row["title_quality_issues"] for row in guarded))
 
+    def test_observe_public_titles_cannot_use_private_task_shells(self) -> None:
+        rows = [
+            {
+                "推荐动作": "观察",
+                "今日建议级别": "暂存观察",
+                "选题命题": "故事板可以进我的返修流程，但不能只看一键成片",
+                "主编判断摘要": "来源有故事板结果承诺，但缺商业短片返修样例。",
+                "标题思路": "保留为观察。",
+            },
+            {
+                "推荐动作": "补证据",
+                "今日建议级别": "可选候选",
+                "选题命题": "Codex 做 PPT 这件事，我想看的是 Word Brief 能不能变成方案资产",
+                "主编判断摘要": "来源有 Word 到 PPT 入口，但缺我的方案交付样例。",
+                "标题思路": "暂不给可发布标题。",
+            },
+            {
+                "推荐动作": "观察",
+                "今日建议级别": "暂存观察",
+                "选题命题": "MIRA 的实时世界模型很抓人，我会先把它放进互动场景里看",
+                "主编判断摘要": "来源有实时世界模型钩子，但缺商业交付证据。",
+                "标题思路": "观察标题不包装成可生成命题。",
+            },
+        ]
+
+        guarded = contract.apply_batch_quality_guards(rows)
+
+        self.assertTrue(all(row["title_quality_status"] == "fail" for row in guarded))
+        self.assertTrue(all("观察/补证据标题仍像内部测试任务或同构反思壳" in row["title_quality_issues"] for row in guarded))
+
     def test_hint_leak_without_skill_trace_is_blocked(self) -> None:
         row = {
             "来源类型": "对标视频",

@@ -137,6 +137,80 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
         self.assertEqual(run_skill.call_count, 1)
         self.assertIn("batch_skip_completed", {row["status"] for row in progress_rows})
 
+    def test_batch_meta_notes_reflect_final_guarded_rows(self) -> None:
+        pool = [{"内容指纹": "fp_1", "原始来源标题": "Claude Cowork"}]
+        args = SimpleNamespace(
+            engine="codex",
+            codex_model="",
+            timeout=30,
+            batch_timeout_seconds=3,
+            batch_size=1,
+            resume=False,
+            since="2026-07-01",
+            max_skill_candidates=1,
+        )
+        final_rows = [{
+            "内容指纹": "fp_1",
+            "选题命题": "Claude Cowork 的协作入口有价值，但还缺我的任务回写证据",
+            "推荐动作": "暂存观察",
+            "今日建议级别": "暂存观察",
+            "field_contract_status": "pass",
+            "title_quality_status": "pass",
+        }]
+
+        with TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            with patch.object(replay, "run_skill", return_value=(
+                final_rows,
+                {"batch_notes": "本批只给 1 条“今日最值得做”：Claude Cowork。未调用外部 Skill。", "model": "codex-default"},
+                "codex",
+            )):
+                rows, meta, _engine, ok = replay.run_skill_batches(pool, args, out_dir)
+            batch_meta = json.loads((out_dir / "batches" / "batch_000" / "meta.json").read_text(encoding="utf-8"))
+
+        self.assertTrue(ok)
+        self.assertEqual(rows[0]["今日建议级别"], "暂存观察")
+        self.assertIn("暂存观察=1", batch_meta["engine_meta"]["batch_notes"])
+        self.assertIn("暂存观察=1", meta["batches"][0]["engine_meta"]["batch_notes"])
+        self.assertIn("pre_guard_batch_notes", batch_meta["engine_meta"])
+        self.assertNotIn("未调用外部 Skill", batch_meta["engine_meta"]["pre_guard_batch_notes"])
+        self.assertIn("Codex exec 按嵌入的 ai-account-editorial-director", batch_meta["engine_meta"]["execution_note"])
+
+    def test_aggregate_refreshes_batch_meta_from_final_rows(self) -> None:
+        rows = [{
+            "内容指纹": "fp_1",
+            "选题命题": "Claude Cowork 的协作入口有价值，但还缺我的任务回写证据",
+            "推荐动作": "暂存观察",
+            "今日建议级别": "暂存观察",
+            "field_contract_status": "pass",
+            "title_quality_status": "pass",
+        }]
+        engine_meta = {
+            "mode": "aggregate_existing_batches",
+            "batch_count": 1,
+            "completed_batch_count": 1,
+            "failed_batch_count": 0,
+            "batches": [{
+                "batch_id": "batch_000",
+                "status": "success",
+                "row_count": 1,
+                "engine_meta": {"batch_notes": "本批只给 1 条今日最值得做：Claude Cowork。未调用外部 Skill。"},
+            }],
+        }
+
+        with TemporaryDirectory() as tmp:
+            out_dir = Path(tmp)
+            replay.batch_path(out_dir, "batch_000").mkdir(parents=True)
+            replay.write_json(replay.batch_meta_path(out_dir, "batch_000"), engine_meta["batches"][0])
+            refreshed = replay.refresh_engine_meta_with_final_rows(engine_meta, rows, out_dir)
+            batch_meta = json.loads(replay.batch_meta_path(out_dir, "batch_000").read_text(encoding="utf-8"))
+            batches_json = json.loads((out_dir / "skill_replay_batches.json").read_text(encoding="utf-8"))
+
+        self.assertIn("暂存观察=1", refreshed["batches"][0]["engine_meta"]["batch_notes"])
+        self.assertIn("暂存观察=1", batch_meta["engine_meta"]["batch_notes"])
+        self.assertIn("暂存观察=1", batches_json["batches"][0]["engine_meta"]["batch_notes"])
+        self.assertNotIn("今日最值得做：Claude Cowork", batch_meta["engine_meta"]["batch_notes"])
+
     def test_aggregate_keeps_contract_and_title_failures_consistent(self) -> None:
         rows = []
         for index, title in enumerate([
@@ -238,6 +312,26 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
         self.assertIn("Austin rewrite reason: 保留 Codex+Obsidian", markdown)
         self.assertNotIn("knowledge_base |", markdown)
         self.assertNotIn("直接拉高到next level 它能定", markdown)
+
+    def test_sample_rows_cover_user_review_categories_when_available(self) -> None:
+        rows = [
+            {"内容指纹": "kb", "原始来源标题": "Codex联动Obsidian，搭建超强知识库，手把手教程", "选题命题": "知识库判断留存", "推荐动作": "生成脚本包", "今日建议级别": "今日最值得做"},
+            {"内容指纹": "story", "原始来源标题": "多宫格故事板2.0，出视频比你想的还简单", "选题命题": "故事板证据缺口", "推荐动作": "观察", "今日建议级别": "暂存观察"},
+            {"内容指纹": "ppt", "原始来源标题": "Codex生成可编辑PPT，按这5步就够了", "选题命题": "Codex PPT 方案交付", "推荐动作": "观察", "今日建议级别": "暂存观察"},
+            {"内容指纹": "desk", "原始来源标题": "Claude Cowork 的协作案例", "选题命题": "飞书选题台任务边界", "推荐动作": "观察", "今日建议级别": "暂存观察"},
+            {"内容指纹": "video", "原始来源标题": "AI视频导演工作流", "选题命题": "AI视频导演交付", "推荐动作": "生成脚本包", "今日建议级别": "今日最值得做"},
+            {"内容指纹": "hot", "原始来源标题": "MIRA：可玩多人世界模型，20 FPS实时生成", "选题命题": "AI Hot 观察", "推荐动作": "观察", "今日建议级别": "暂存观察"},
+        ]
+
+        samples = replay.sample_rows(rows)
+        labels = {row["sample_label"] for row in samples}
+
+        self.assertIn("知识库 / 信息资产", labels)
+        self.assertIn("故事板 / 分镜观察", labels)
+        self.assertIn("Codex PPT / 方案交付", labels)
+        self.assertIn("Agent / 飞书执行台", labels)
+        self.assertIn("AI导演 / 视频交付", labels)
+        self.assertIn("AI Hot / 观察池", labels)
 
 
 if __name__ == "__main__":

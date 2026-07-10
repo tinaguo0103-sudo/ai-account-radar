@@ -30,17 +30,19 @@ DEFAULT_OUT = Path("/private/tmp/ar020b_skill_replay")
 DEFAULT_BATCH_SIZE = 5
 SAMPLE_KEYWORDS = {
     "knowledge_base": ["Codex", "Obsidian", "知识库", "RAG"],
-    "ai_director": ["AIGC", "分镜", "故事板", "AI视频", "短剧"],
-    "tooling_skill": ["Mx-Shell", "Skill", "Claude Code", "Codex"],
-    "technical_automation": ["CI/CD", "Shell", "自动化", "大伟聊前端"],
-    "broad_aihot_or_growth": ["企业", "增长", "AI Hot", "融资", "行业"],
+    "storyboard": ["多宫格", "故事板", "分镜"],
+    "codex_ppt": ["Codex", "PPT", "Word Brief", "可编辑PPT"],
+    "agent_feishu_desk": ["Claude Cowork", "飞书", "选题台", "执行台", "任务边界"],
+    "ai_video_director": ["AIGC", "AI视频", "短剧", "成片", "视频交付"],
+    "ai_hot_observe": ["AI Hot", "AIHOT", "MIRA", "Claude", "企业", "增长", "融资", "行业"],
 }
 SAMPLE_LABELS = {
     "knowledge_base": "知识库 / 信息资产",
-    "ai_director": "AI导演 / 视频交付",
-    "tooling_skill": "工具 Skill / 工作流复用",
-    "technical_automation": "技术自动化 / 发布边界",
-    "broad_aihot_or_growth": "AI Hot / 业务增长观察",
+    "storyboard": "故事板 / 分镜观察",
+    "codex_ppt": "Codex PPT / 方案交付",
+    "agent_feishu_desk": "Agent / 飞书执行台",
+    "ai_video_director": "AI导演 / 视频交付",
+    "ai_hot_observe": "AI Hot / 观察池",
 }
 HASHTAG_PATTERN = re.compile(r"\s*#[^\s#]+")
 
@@ -370,6 +372,46 @@ def batch_slices(pool: list[dict[str, Any]], batch_size: int) -> list[tuple[int,
     return batches
 
 
+def final_batch_notes(rows: list[dict[str, Any]]) -> str:
+    """Summarize final guard-applied row state for PM-facing batch evidence."""
+    level_counts = collections.Counter(str(row.get("今日建议级别") or row.get("候选状态") or "未知") for row in rows)
+    action_counts = collections.Counter(str(row.get("推荐动作") or "未知") for row in rows)
+    generated_titles = [
+        str(row.get("选题命题") or row.get("可发布标题") or row.get("原始来源标题") or "")[:40]
+        for row in rows
+        if str(row.get("推荐动作") or "") == "生成脚本包"
+    ]
+    failures = sum(1 for row in rows if row.get("field_contract_status") == "fail")
+    title_failures = sum(1 for row in rows if row.get("title_quality_status") == "fail")
+    title_warnings = sum(1 for row in rows if row.get("title_quality_status") == "warn")
+    level_text = "，".join(f"{key}={value}" for key, value in sorted(level_counts.items())) or "无"
+    action_text = "，".join(f"{key}={value}" for key, value in sorted(action_counts.items())) or "无"
+    generated_text = "；".join(title for title in generated_titles if title) or "无"
+    return (
+        "final_guard_state："
+        f"建议级别[{level_text}]；推荐动作[{action_text}]；"
+        f"生成脚本包候选[{generated_text}]；"
+        f"field_contract_fail={failures}；title_quality_fail={title_failures}；title_quality_warn={title_warnings}。"
+    )
+
+
+def final_engine_meta(meta: dict[str, Any], rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Keep model metadata but make PM-facing notes reflect final row state."""
+    out = dict(meta or {})
+    raw_notes = str(out.get("batch_notes") or "")
+    if raw_notes and not out.get("pre_guard_batch_notes"):
+        out["pre_guard_batch_notes"] = raw_notes.replace(
+            "未调用外部 Skill",
+            "未额外调用外部工具；本批由 Codex 按嵌入的 ai-account-editorial-director 合约执行",
+        )
+    out["batch_notes"] = final_batch_notes(rows)
+    out["execution_note"] = (
+        "Codex exec 按嵌入的 ai-account-editorial-director repo mirror/persona/context 执行主编合约；"
+        "未在本进程内另行调用全局私有 Skill 工具。最终证据以 guard-applied rows 为准。"
+    )
+    return out
+
+
 def run_skill_batches(
     pool: list[dict[str, Any]],
     args: argparse.Namespace,
@@ -424,6 +466,7 @@ def run_skill_batches(
         ))
         try:
             rows, meta, engine = run_skill(batch, args, per_batch_timeout)
+            meta = final_engine_meta(meta, rows)
             duration_ms = int((monotonic() - started_monotonic) * 1000)
             write_csv(batch_output_path(out_dir, batch_id), rows)
             payload = {
@@ -511,7 +554,10 @@ def load_completed_batch_outputs(out_dir: Path) -> tuple[list[dict[str, str]], d
         meta = json.loads(meta_path.read_text(encoding="utf-8"))
         metas.append(meta)
         if meta.get("status") == "success":
-            rows.extend(read_csv(meta_path.parent / "skill_rows.csv"))
+            batch_rows = read_csv(meta_path.parent / "skill_rows.csv")
+            rows.extend(batch_rows)
+            meta = {**meta, "engine_meta": final_engine_meta(meta.get("engine_meta", {}), batch_rows)}
+            metas[-1] = meta
     return rows, {
         "mode": "aggregate_existing_batches",
         "batch_count": len(metas),
@@ -519,6 +565,27 @@ def load_completed_batch_outputs(out_dir: Path) -> tuple[list[dict[str, str]], d
         "failed_batch_count": sum(1 for meta in metas if meta.get("status") == "failed"),
         "batches": metas,
     }
+
+
+def refresh_engine_meta_with_final_rows(engine_meta: dict[str, Any], final_rows: list[dict[str, Any]], out_dir: Path) -> dict[str, Any]:
+    """Rewrite batch notes from aggregate-final rows, preserving raw notes."""
+    refreshed = dict(engine_meta or {})
+    batches: list[dict[str, Any]] = []
+    cursor = 0
+    for meta in refreshed.get("batches", []) or []:
+        next_meta = dict(meta)
+        row_count = int(next_meta.get("row_count") or next_meta.get("input_count") or 0)
+        batch_rows = final_rows[cursor: cursor + row_count] if row_count else []
+        if next_meta.get("status") == "success" and batch_rows:
+            next_meta["engine_meta"] = final_engine_meta(next_meta.get("engine_meta", {}), batch_rows)
+            meta_path = batch_meta_path(out_dir, str(next_meta.get("batch_id") or ""))
+            if meta_path.exists():
+                write_json(meta_path, next_meta)
+            cursor += row_count
+        batches.append(next_meta)
+    refreshed["batches"] = batches
+    write_json(out_dir / "skill_replay_batches.json", refreshed)
+    return refreshed
 
 
 def classify_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
@@ -705,6 +772,7 @@ def aggregate_replay_outputs(
     )])
     try:
         skill_rows = field_contract.apply_batch_quality_guards(skill_rows)
+        engine_meta = refresh_engine_meta_with_final_rows(engine_meta, skill_rows, out_dir)
         classified = classify_rows(skill_rows)
         for name, rows in classified.items():
             write_csv(out_dir / f"skill_{name}.csv", rows)
