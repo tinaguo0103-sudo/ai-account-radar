@@ -29,20 +29,22 @@ ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_OUT = Path("/private/tmp/ar020b_skill_replay")
 DEFAULT_BATCH_SIZE = 5
 SAMPLE_KEYWORDS = {
-    "knowledge_base": ["Codex", "Obsidian", "知识库", "RAG"],
-    "storyboard": ["多宫格", "故事板", "分镜"],
-    "codex_ppt": ["Codex", "PPT", "Word Brief", "可编辑PPT"],
-    "agent_feishu_desk": ["Claude Cowork", "飞书", "选题台", "执行台", "任务边界"],
-    "ai_video_director": ["AIGC", "AI视频", "短剧", "成片", "视频交付"],
-    "ai_hot_observe": ["AI Hot", "AIHOT", "MIRA", "Claude", "企业", "增长", "融资", "行业"],
+    "codex_obsidian": ["Codex联动Obsidian", "Obsidian", "知识库"],
+    "storyboard": ["多宫格故事板", "故事板2.0", "多宫格"],
+    "codex_ppt": ["Codex生成可编辑PPT", "可编辑 PPT", "ai生成ppt"],
+    "claude_cowork": ["Claude Cowork"],
+    "ai_video_director": ["AIGC", "AI视频导演", "AI视频", "短剧", "成片", "视频交付"],
+    "mira_world_model": ["MIRA", "实时世界模型", "20 FPS"],
+    "agent_execution": ["我们到底在用 agent 的什么能力", "Agent真正有用", "企业用 Agent，真正买的不是聊天能力"],
 }
 SAMPLE_LABELS = {
-    "knowledge_base": "知识库 / 信息资产",
+    "codex_obsidian": "知识库 / 信息资产",
     "storyboard": "故事板 / 分镜观察",
     "codex_ppt": "Codex PPT / 方案交付",
-    "agent_feishu_desk": "Agent / 飞书执行台",
+    "claude_cowork": "Agent / 飞书执行台",
     "ai_video_director": "AI导演 / 视频交付",
-    "ai_hot_observe": "AI Hot / 观察池",
+    "mira_world_model": "AI Hot / 观察池",
+    "agent_execution": "Agent / 业务执行边界",
 }
 HASHTAG_PATTERN = re.compile(r"\s*#[^\s#]+")
 
@@ -324,10 +326,16 @@ def run_skill(
     pool: list[dict[str, Any]],
     args: argparse.Namespace,
     timeout: int | None = None,
+    artifact_dir: Path | None = None,
 ) -> tuple[list[dict[str, str]], dict[str, Any], str]:
     rows = [{key: str(value or "") for key, value in row.items()} for row in pool]
     if args.engine == "codex":
-        enriched, meta = editorial_skill_runner.run_codex_skill(rows, args.codex_model, timeout or args.timeout)
+        enriched, meta = editorial_skill_runner.run_codex_skill(
+            rows,
+            args.codex_model,
+            timeout or args.timeout,
+            artifact_dir=artifact_dir,
+        )
         return enriched, meta, "codex"
     enriched = editorial_skill_runner.normalize_batch([editorial_skill_runner.enrich(row) for row in rows])
     return enriched, {"mode": "explicit_deterministic", "fallback_only": True, "not_editorial_quality": True}, "deterministic"
@@ -465,7 +473,7 @@ def run_skill_batches(
             start_candidate_index=start_index,
         ))
         try:
-            rows, meta, engine = run_skill(batch, args, per_batch_timeout)
+            rows, meta, engine = run_skill(batch, args, per_batch_timeout, artifact_dir=directory)
             meta = final_engine_meta(meta, rows)
             duration_ms = int((monotonic() - started_monotonic) * 1000)
             write_csv(batch_output_path(out_dir, batch_id), rows)
@@ -588,6 +596,25 @@ def refresh_engine_meta_with_final_rows(engine_meta: dict[str, Any], final_rows:
     return refreshed
 
 
+def aggregate_provenance(engine_meta: dict[str, Any], engine: str) -> dict[str, Any]:
+    manifests: list[dict[str, Any]] = []
+    for meta in engine_meta.get("batches", []) or []:
+        manifest = ((meta.get("engine_meta") or {}).get("provenance_manifest") or {})
+        if manifest:
+            manifests.append(manifest)
+    first = manifests[0] if manifests else editorial_skill_runner.runtime_provenance(
+        fallback_state="true" if engine != "codex" else "unknown"
+    )
+    return {
+        **first,
+        "engine": engine,
+        "batch_manifest_count": len(manifests),
+        "all_batches_same_skill_hash": len({m.get("skill_md_sha256") for m in manifests if m.get("skill_md_sha256")}) <= 1,
+        "all_batches_same_persona_style_hash": len({m.get("persona_style_sha256") for m in manifests if m.get("persona_style_sha256")}) <= 1,
+        "case_anchor_policy": "persona/style reference only; no row may cite cases as source evidence",
+    }
+
+
 def classify_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]:
     outputs = {
         "actionable": [],
@@ -700,6 +727,31 @@ def sample_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return samples
 
 
+def sample_stage_artifacts(sample: dict[str, Any], batches: list[dict[str, Any]]) -> dict[str, str]:
+    source_title = clean_source_text(sample.get("source_title") or "")
+    if not source_title:
+        return {}
+    for batch in batches:
+        outputs = batch.get("outputs") or {}
+        input_value = outputs.get("input") or ""
+        if not input_value:
+            continue
+        input_path = Path(input_value)
+        if not input_path.exists():
+            continue
+        input_text = input_path.read_text(encoding="utf-8-sig")
+        if source_title in input_text:
+            batch_dir = Path(outputs.get("meta", "")).parent if outputs.get("meta") else input_path.parent
+            return {
+                "batch_id": str(batch.get("batch_id", "")),
+                "stage1_input_sanitized": str(batch_dir / "stage1_input_sanitized.json"),
+                "stage1_output": str(batch_dir / "stage1_editorial_decision_output.json"),
+                "stage2_input_sanitized": str(batch_dir / "stage2_input_sanitized.json"),
+                "stage2_output": str(batch_dir / "stage2_field_mapping_output.json"),
+            }
+    return {}
+
+
 def write_markdown_report(out_dir: Path, summary: dict[str, Any], samples: list[dict[str, Any]]) -> None:
     lines = [
         "# AR-020C Skill Thinking Replay Report",
@@ -753,6 +805,90 @@ def write_markdown_report(out_dir: Path, summary: dict[str, Any], samples: list[
     (out_dir / "ar020c_user_sample_summary.md").write_text("\n".join(lines), encoding="utf-8")
 
 
+def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], samples: list[dict[str, Any]]) -> None:
+    provenance = summary.get("provenance_manifest", {}) or {}
+    engine_meta = summary.get("engine_meta", {}) or {}
+    batches = engine_meta.get("batches", []) or []
+    lines = [
+        "# AR-020D Developer Architecture Self-Validation",
+        "",
+        "本报告由 replay aggregate 自动生成，只读 content_items.csv；不写飞书、不发 Topic Card、不触发 06。",
+        "",
+        "## Required Result",
+        f"- completed: {summary.get('completed')}",
+        f"- quality_gate_ok: {summary.get('quality_gate_ok')}",
+        f"- writes_feishu: {summary.get('writes_feishu')}",
+        f"- fallback_row_count: {summary.get('fallback_row_count')}",
+        f"- contract_failure_count: {summary.get('contract_failure_count')}",
+        f"- title_quality_failure_count: {summary.get('title_quality_failure_count')}",
+        f"- skill_rows: {summary.get('skill_rows')}",
+        f"- actionable_count: {summary.get('actionable_count')}",
+        f"- observe_count: {summary.get('observe_count')}",
+        "",
+        "## Provenance",
+        f"- runner_version: {provenance.get('runner_version')}",
+        f"- skill_dir: {provenance.get('skill_dir')}",
+        f"- skill_md_sha256: {provenance.get('skill_md_sha256')}",
+        f"- persona_style_path: {provenance.get('persona_style_path')}",
+        f"- persona_style_sha256: {provenance.get('persona_style_sha256')}",
+        f"- persona_style_embedded: {provenance.get('persona_style_embedded')}",
+        f"- persona_style_reference_only: {provenance.get('persona_style_reference_only')}",
+        f"- persona_style_role: {provenance.get('persona_style_role')}",
+        f"- case_anchor_policy: {provenance.get('case_anchor_policy')}",
+        "",
+        "## Stage Artifact Evidence",
+    ]
+    for batch in batches:
+        if batch.get("status") != "success":
+            continue
+        outputs = batch.get("outputs") or {}
+        batch_dir = Path(outputs.get("meta", "")).parent if outputs.get("meta") else out_dir / "batches" / str(batch.get("batch_id", ""))
+        lines.extend([
+            f"- {batch.get('batch_id')}: status={batch.get('status')}, rows={batch.get('row_count')}, duration_ms={batch.get('duration_ms')}",
+            f"  - stage1_input_sanitized: {batch_dir / 'stage1_input_sanitized.json'}",
+            f"  - stage1_output: {batch_dir / 'stage1_editorial_decision_output.json'}",
+            f"  - stage2_input_sanitized: {batch_dir / 'stage2_input_sanitized.json'}",
+            f"  - stage2_output: {batch_dir / 'stage2_field_mapping_output.json'}",
+        ])
+    lines.extend([
+        "",
+        "## Proof Checklist",
+        "- Stage 1 payloads are sanitized artifacts and do not include existing 04 visible fields, experiment, validation, assets, mother-scene conclusions, or deterministic title hints.",
+        "- Stage 2 receives locked Stage 1 decisions and records decision hash/id; `stage2_invariant_status` must be pass in final rows.",
+        "- persona-and-cases is embedded as style reference, not source evidence; rows must not expose case anchor/citation.",
+        "- deterministic fallback rows are not content-quality evidence.",
+        "",
+        "## Six Review Categories",
+    ])
+    for row in samples:
+        artifacts = sample_stage_artifacts(row, batches)
+        lines.extend([
+            f"### {row.get('sample_label') or row.get('sample_key')}",
+            f"- source_title: {row.get('source_title') or '（无可用标题）'}",
+            f"- source_title_hook: {row.get('source_title_hook')}",
+            f"- Austin rewrite reason: {row.get('austin_rewrite_reason')}",
+            f"- visible title/proposition: {row.get('publish_title') or row.get('topic')}",
+            f"- title thinking: {row.get('title_thinking')}",
+            f"- decision/status/action: {row.get('status')} / {row.get('action')}",
+            f"- contract: {row.get('contract_status')} {row.get('contract_issues')}",
+            f"- stage artifacts: {artifacts.get('batch_id', 'not_found')}",
+            f"  - stage1_input_sanitized: {artifacts.get('stage1_input_sanitized', '')}",
+            f"  - stage1_output: {artifacts.get('stage1_output', '')}",
+            f"  - stage2_input_sanitized: {artifacts.get('stage2_input_sanitized', '')}",
+            f"  - stage2_output: {artifacts.get('stage2_output', '')}",
+            "",
+        ])
+    lines.extend([
+        "## Output Paths",
+        f"- summary: {out_dir / 'skill_replay_summary.json'}",
+        f"- rows: {out_dir / 'skill_replay_rows.csv'}",
+        f"- title check: {out_dir / 'title_body_check.csv'}",
+        f"- user sample summary: {out_dir / 'ar020c_user_sample_summary.md'}",
+        f"- provenance manifest: {out_dir / 'ar020d_provenance_manifest.json'}",
+    ])
+    (out_dir / "AR020D_DEV_SELF_ACCEPTANCE.md").write_text("\n".join(lines), encoding="utf-8")
+
+
 def aggregate_replay_outputs(
     out_dir: Path,
     args: argparse.Namespace,
@@ -792,6 +928,8 @@ def aggregate_replay_outputs(
 
         samples = sample_rows(skill_rows)
         write_csv(out_dir / "skill_sample_table.csv", samples)
+        provenance = aggregate_provenance(engine_meta, engine)
+        write_json(out_dir / "ar020d_provenance_manifest.json", provenance)
         failed_batch_count = int(engine_meta.get("failed_batch_count", 0) or 0)
         contract_failure_count = len(classified["contract_failures"])
         fallback_row_count = len(classified["fallback_rows"])
@@ -805,6 +943,7 @@ def aggregate_replay_outputs(
             "quality_gate_ok": contract_failure_count == 0 and fallback_row_count == 0 and title_quality_failure_count == 0,
             "engine": engine,
             "engine_meta": engine_meta,
+            "provenance_manifest": provenance,
             "since": args.since,
             "batch_size": getattr(args, "batch_size", ""),
             "batch_timeout_seconds": timeout_seconds(args),
@@ -838,9 +977,12 @@ def aggregate_replay_outputs(
                 "title_body_check": str(out_dir / "title_body_check.csv"),
                 "skill_sample_table": str(out_dir / "skill_sample_table.csv"),
                 "user_sample_summary": str(out_dir / "ar020c_user_sample_summary.md"),
+                "ar020d_self_acceptance": str(out_dir / "AR020D_DEV_SELF_ACCEPTANCE.md"),
+                "ar020d_provenance_manifest": str(out_dir / "ar020d_provenance_manifest.json"),
             },
         }
         write_markdown_report(out_dir, summary, samples)
+        write_ar020d_self_acceptance_report(out_dir, summary, samples)
         write_json(out_dir / "skill_replay_summary.json", summary)
         append_progress(out_dir, [progress_event(
             status="aggregate_success" if summary["ok"] else "aggregate_partial_success",

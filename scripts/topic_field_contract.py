@@ -218,8 +218,8 @@ def warning_issues(issues: list[ContractIssue]) -> list[ContractIssue]:
 def title_for_quality(row: dict[str, Any]) -> str:
     return normalize_space(
         row.get("可发布标题")
-        or row.get("我的选题标题")
         or row.get("选题命题")
+        or row.get("我的选题标题")
         or row.get("选题标题")
     )
 
@@ -289,6 +289,12 @@ def validate_field_contract(row: dict[str, Any]) -> list[ContractIssue]:
     main = joined_text(row, MAIN_CONTRACT_FIELDS)
     combined = f"{source}\n{main}"
     issues: list[ContractIssue] = []
+
+    if normalize_space(row.get("stage2_invariant_status")) == "fail":
+        issues.append(ContractIssue(
+            "stage2_decision_divergence",
+            f"field_mapping 改动了 Stage 1 锁定标题/角度/理由：{normalize_space(row.get('stage2_invariant_issues'))}",
+        ))
 
     source_has_knowledge = contains_any(source, KNOWLEDGE_TERMS)
     source_has_video = contains_any(source, VIDEO_TERMS)
@@ -409,14 +415,18 @@ def title_quality_issues(rows: list[dict[str, Any]]) -> dict[int, list[ContractI
             reason = normalize_space(row.get("主编判断摘要") or row.get("不建议做的原因") or row.get("推荐理由"))
             if reason:
                 observe_reason_counts.setdefault(reason[:40], []).append(idx)
+            visible_title = title_for_quality(row)
             observe_text = joined_text(row, ["选题命题", "我的选题标题", "选题标题", "我要做的实验", "验证方式", "标题思路"])
             has_placeholder = contains_any(observe_text, OBSERVE_PLACEHOLDER_PATTERNS)
             if has_placeholder:
                 observe_placeholder_indices.append(idx)
+            # A colon or a question mark is a presentation form, not evidence
+            # of an internal task shell. Block only actual test/task skeletons
+            # or explicit reflection-shell wording on the visible title.
             if not has_placeholder and (
-                family != "freeform"
-                or contains_any(title, TITLE_TASK_TONE_TERMS)
-                or contains_any(title, TITLE_REFLECTION_SHELL_TERMS)
+                family in {"test_can", "first_test", "acceptance", "can_or_not", "try_once"}
+                or contains_any(visible_title, TITLE_TASK_TONE_TERMS)
+                or contains_any(visible_title, TITLE_REFLECTION_SHELL_TERMS)
             ):
                 observe_template_indices.append(idx)
         rows[idx]["title_pattern_family"] = family
@@ -461,11 +471,11 @@ def title_quality_issues(rows: list[dict[str, Any]]) -> dict[int, list[ContractI
                 severity="warn",
             ))
     if observe_template_indices:
-        severity = "block" if len(observe_template_indices) > 2 or (len(observe_template_indices) / max(1, observe_count)) > 0.30 else "warn"
+        severity = "block"
         for idx in observe_template_indices:
             issues_by_index[idx].append(ContractIssue(
                 "observe_title_task_tone",
-                "观察/补证据标题仍像内部测试任务或同构反思壳，请改成来源矛盾、Austin 场景或缺证据摘要",
+                "观察/补证据标题仍像内部测试任务或同构反思壳；用户可见标题请改成来源矛盾、Austin 场景或缺证据摘要",
                 severity=severity,
             ))
     return issues_by_index

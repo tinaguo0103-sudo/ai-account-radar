@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import argparse
 import csv
+import hashlib
 import json
 import os
 import re
@@ -33,6 +34,7 @@ REPO_SKILL_DIR = ROOT / "skills" / "ai-account-editorial-director"
 GLOBAL_SKILL_DIR = Path.home() / ".codex" / "skills" / "ai-account-editorial-director"
 SKILL_DIR = Path(os.getenv("EDITORIAL_SKILL_DIR", str(GLOBAL_SKILL_DIR))).expanduser()
 SKILL_MD = SKILL_DIR / "SKILL.md"
+RUNNER_VERSION = "ar020d_two_stage_persona_style_v1"
 
 
 def skill_reference_dirs() -> list[Path]:
@@ -52,6 +54,14 @@ SKILL_PERSONA_BRIEF = skill_reference_path("persona-brief.md")
 APPROVED_SELECTION_LEARNING_MD = ROOT / "output" / "selection_learning" / "approved_selection_learning.md"
 
 EXTRA_FIELDS = [
+    "editorial_architecture",
+    "editorial_decision_json",
+    "editorial_decision_id",
+    "editorial_decision_hash",
+    "stage2_invariant_status",
+    "stage2_invariant_issues",
+    "persona_style_reference_state",
+    "persona_style_hash",
     "主编筛选",
     "主编自由稿",
     "标题工作坊",
@@ -178,6 +188,22 @@ SKILL_FIELDS = [
     "AI味风险",
 ]
 
+EDITORIAL_DECISION_FIELDS = [
+    "decision",
+    "why_i_would_choose",
+    "why_i_would_not_choose",
+    "rejected_common_take",
+    "natural_austin_angle",
+    "title_directions",
+    "selected_visible_title",
+    "title_rationale",
+    "source_title_hook",
+    "source_hook_usage",
+    "recommendation_status",
+    "near_miss_reason",
+    "public_decision_summary",
+]
+
 NON_AUTHORITATIVE_HINT_FIELDS = {
     "对标转译角度",
     "Austin映射方向",
@@ -205,6 +231,27 @@ EXISTING_VISIBLE_FIELD_FIELDS = {
     "可沉淀资产",
     "推荐动作",
     "今日建议级别",
+}
+
+STAGE1_FORBIDDEN_SOURCE_FIELDS = set(EXISTING_VISIBLE_FIELD_FIELDS) | NON_AUTHORITATIVE_HINT_FIELDS | {
+    "关联母场景",
+    "借用方式",
+    "不能声称的部分",
+    "我的真实/相邻场景",
+    "关联母场景候选",
+    "我要做的实验",
+    "验证方式",
+    "可沉淀资产",
+    "我的工作流痛点",
+    "旧流程痛点",
+    "AI介入点",
+    "可发布标题",
+    "选题命题",
+    "我的选题标题",
+    "选题标题",
+    "标题思路",
+    "主编判断摘要",
+    "real_tension",
 }
 
 CANDIDATE_CONTEXT_FIELDS = [
@@ -526,6 +573,10 @@ def intish(value: Any) -> int:
 
 def compact_text(value: str) -> str:
     return re.sub(r"[\s\W_]+", "", (value or "").lower())
+
+
+def normalize_space(value: Any) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
 def source_title_values(row: dict[str, str]) -> list[str]:
@@ -1443,6 +1494,130 @@ def fieldnames_for(rows: list[dict[str, str]], original: list[str]) -> list[str]
     return names
 
 
+def sha256_text(value: str) -> str:
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
+def file_sha256(path: Path) -> str:
+    if not path.exists():
+        return ""
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def runtime_provenance(*, fallback_state: str = "false") -> dict[str, Any]:
+    """Describe the exact editorial runtime without exposing private text."""
+    return {
+        "runner_version": RUNNER_VERSION,
+        "stage_architecture": "editorial_decision_then_field_mapping",
+        "skill_dir": str(SKILL_DIR),
+        "skill_md_path": str(SKILL_MD),
+        "skill_md_sha256": file_sha256(SKILL_MD),
+        "repo_mirror_skill_path": str(REPO_SKILL_DIR / "SKILL.md"),
+        "repo_mirror_skill_sha256": file_sha256(REPO_SKILL_DIR / "SKILL.md"),
+        "persona_brief_path": str(SKILL_PERSONA_BRIEF),
+        "persona_brief_sha256": file_sha256(SKILL_PERSONA_BRIEF),
+        "persona_style_path": str(SKILL_REFERENCE),
+        "persona_style_sha256": file_sha256(SKILL_REFERENCE),
+        "persona_style_embedded": SKILL_REFERENCE.exists(),
+        "persona_style_reference_only": True,
+        "persona_style_role": "style_reference_only_not_source_evidence",
+        "fallback_state": fallback_state,
+    }
+
+
+def safe_source_facts(row: dict[str, str]) -> dict[str, str]:
+    source_title = row.get("原始来源标题") or row.get("来源内容") or row.get("来源标题") or ""
+    source_title_hook = row.get("原始标题钩子") or original_title_hook_from(row)
+    return {
+        "source_title": source_title,
+        "source_title_hook": source_title_hook,
+        "source_excerpt": short_sentence(row.get("来源内容") or source_title, 360),
+        "source_account": row.get("原始来源账号") or row.get("账号名/公众号名") or "",
+        "source_link": row.get("来源链接") or "",
+        "source_type": row.get("来源类型") or "",
+        "source_weight_label": row.get("来源权重类型") or row.get("来源类型") or "",
+        "source_influence_weight": row.get("来源影响权重") or "",
+        "source_composition": row.get("来源构成") or "",
+        "aihot_major_news": row.get("AIHOT重大性说明") or "",
+        "market_validation": row.get("市场验证依据") or "",
+        "content_fingerprint": row.get("内容指纹") or "",
+    }
+
+
+def stage1_candidate_payload(row: dict[str, str], index: int) -> dict[str, Any]:
+    """Payload for the free editorial decision stage.
+
+    This intentionally excludes old 04/Topic Card visible fields, workflow
+    experiment text, mother-scene conclusions, deterministic title/angle hints,
+    and real_tension-style helper output.
+    """
+    facts = safe_source_facts(row)
+    return {
+        "index": index,
+        "content_fingerprint": facts["content_fingerprint"],
+        "source_facts": facts,
+        "original_title": facts["source_title"],
+        "title_hook_reference": facts["source_title_hook"],
+        "account_directions": ["AI业务定调", "真实工作流改造", "AI导演工作流", "汽车与内容营销", "AI项目复盘"],
+        "source_weight_context": {
+            "label": facts["source_weight_label"],
+            "influence_weight": facts["source_influence_weight"],
+            "composition": facts["source_composition"],
+            "aihot_major_news": facts["aihot_major_news"],
+            "market_validation": facts["market_validation"],
+        },
+        "stage1_forbidden_inputs": sorted(STAGE1_FORBIDDEN_SOURCE_FIELDS),
+    }
+
+
+def stage2_candidate_payload(row: dict[str, str], index: int, decision: dict[str, Any]) -> dict[str, Any]:
+    return {
+        "index": index,
+        "content_fingerprint": row.get("内容指纹") or "",
+        "source_facts": safe_source_facts(row),
+        "locked_editorial_decision": decision,
+        "stage2_rule": (
+            "只能把 locked_editorial_decision 映射成运营字段；不得替换 selected_visible_title、"
+            "natural_austin_angle、title_rationale、public_decision_summary。"
+        ),
+    }
+
+
+def editorial_decision_hash(decision: dict[str, Any]) -> str:
+    stable = {
+        "decision": decision.get("decision", ""),
+        "natural_austin_angle": decision.get("natural_austin_angle", ""),
+        "selected_visible_title": decision.get("selected_visible_title", ""),
+        "title_rationale": decision.get("title_rationale", ""),
+        "public_decision_summary": decision.get("public_decision_summary", ""),
+    }
+    return sha256_text(json.dumps(stable, ensure_ascii=False, sort_keys=True))
+
+
+def editorial_decision_id(index: int, decision_hash: str) -> str:
+    return f"ar020d_decision_{index:03d}_{decision_hash[:12]}"
+
+
+def normalize_decision(raw: dict[str, Any], index: int, source: dict[str, Any]) -> dict[str, Any]:
+    decision = {field: str(raw.get(field, "") or "") for field in EDITORIAL_DECISION_FIELDS}
+    decision["index"] = index
+    if not decision.get("source_title_hook"):
+        decision["source_title_hook"] = source.get("title_hook_reference") or source.get("source_facts", {}).get("source_title_hook", "")
+    if not decision.get("selected_visible_title"):
+        decision["selected_visible_title"] = short_sentence(decision.get("natural_austin_angle") or decision.get("public_decision_summary") or source.get("original_title", ""), 80)
+    if not decision.get("public_decision_summary"):
+        decision["public_decision_summary"] = compact_public_trace([
+            decision.get("why_i_would_choose", ""),
+            decision.get("why_i_would_not_choose", ""),
+            decision.get("decision", ""),
+        ])
+    decision_hash = editorial_decision_hash(decision)
+    decision["editorial_decision_hash"] = decision_hash
+    decision["editorial_decision_id"] = editorial_decision_id(index, decision_hash)
+    decision["persona_style_role"] = "style_reference_only_not_source_evidence"
+    return decision
+
+
 def compact_candidate(row: dict[str, str], index: int) -> dict[str, str | int]:
     payload: dict[str, str | int] = {"index": index}
     non_authoritative_hints: dict[str, str] = {}
@@ -1520,8 +1695,40 @@ def strip_yaml_frontmatter(text: str) -> str:
     return text
 
 
-def codex_output_schema() -> dict[str, Any]:
+def editorial_decision_output_schema() -> dict[str, Any]:
     row_properties: dict[str, Any] = {"index": {"type": "integer", "minimum": 0}}
+    for field in EDITORIAL_DECISION_FIELDS:
+        row_properties[field] = {"type": "string"}
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "engine": {"type": "string"},
+            "editorial_decisions": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": row_properties,
+                    "required": ["index", *EDITORIAL_DECISION_FIELDS],
+                },
+            },
+            "batch_notes": {"type": "string"},
+        },
+        "required": ["engine", "editorial_decisions", "batch_notes"],
+    }
+
+
+def field_mapping_output_schema() -> dict[str, Any]:
+    row_properties: dict[str, Any] = {
+        "index": {"type": "integer", "minimum": 0},
+        "editorial_decision_id": {"type": "string"},
+        "editorial_decision_hash": {"type": "string"},
+        "locked_selected_visible_title": {"type": "string"},
+        "locked_natural_austin_angle": {"type": "string"},
+        "locked_title_rationale": {"type": "string"},
+        "locked_public_decision_summary": {"type": "string"},
+    }
     for field in SKILL_FIELDS:
         row_properties[field] = {"type": "string"}
     return {
@@ -1535,7 +1742,16 @@ def codex_output_schema() -> dict[str, Any]:
                     "type": "object",
                     "additionalProperties": False,
                     "properties": row_properties,
-                    "required": ["index", *SKILL_FIELDS],
+                    "required": [
+                        "index",
+                        "editorial_decision_id",
+                        "editorial_decision_hash",
+                        "locked_selected_visible_title",
+                        "locked_natural_austin_angle",
+                        "locked_title_rationale",
+                        "locked_public_decision_summary",
+                        *SKILL_FIELDS,
+                    ],
                 },
             },
             "batch_notes": {"type": "string"},
@@ -1544,128 +1760,47 @@ def codex_output_schema() -> dict[str, Any]:
     }
 
 
-def build_codex_prompt(rows: list[dict[str, str]]) -> str:
+def codex_output_schema() -> dict[str, Any]:
+    return field_mapping_output_schema()
+
+
+def build_editorial_decision_prompt(rows: list[dict[str, str]]) -> str:
     skill_text = strip_yaml_frontmatter(load_text(SKILL_MD))
     persona_brief = load_text(SKILL_PERSONA_BRIEF)
+    persona_style = load_text(SKILL_REFERENCE)
     selection_learning = load_selection_learning_context()
-    candidates = [compact_candidate(row, idx) for idx, row in enumerate(rows)]
-    return f"""你现在按下面嵌入的主编规则文本做判断；不要再触发或审查外部 Skill，规则、底稿和候选已经完整提供。
+    candidates = [stage1_candidate_payload(row, idx) for idx, row in enumerate(rows)]
+    return f"""你是 ai-account-editorial-director 的 AR-020D Stage 1：editorial_decision。
 
-这是一次生产管线里的批量选题筛选，不是标题润色，也不是代码 hint 的字段补全。请先像 Austin 本人做主编判断，再把判断映射成 04 / Topic Card / 06 主字段。
+本阶段只做公开可展示的主编判断，不填 04 字段，不写实验卡，不写验证方式，不写资产字段。
 
-AR-020C 两段式输出：
-1. `editorial_thinking_json`：写公开可展示的主编决策摘要，不要写隐藏推理链。它至少包含 `source_read`、`why_i_would_choose`、`why_i_would_not_choose`、`account_fit`、`source_to_me_translation`、`angle_options`、`chosen_angle`、`title_thinking`、`decision`、`near_miss_reason`。这些字段要让 PM/用户看得懂：我为什么会选、为什么不选、从什么角度切、标题为什么这样取。
-2. `field_mapping_json`：说明第一段判断如何映射到主字段，包括 `选题命题`、`一句话Brief`、`我要做的实验`、`我的工作流痛点`、`旧流程痛点`、`AI介入点`、`验证方式`、`可沉淀资产`、`对应方向`、`推荐动作`、`今日建议级别`、`title_permission`、`可发布标题`。
+输入只包含：source facts、原始标题、title hook、账号方向、来源权重事实，以及 persona/style reference。
+禁止使用或猜测：已有 04/Topic Card 可见字段、实验/验证/资产文字、MOTHER_SCENES 结论、real_tension 输出、deterministic title/angle hints、field-mapping defaults。
 
-同时必须填两个紧凑用户可见字段：
-- `主编判断摘要`：80-180 字，必须提到来源证据、Austin 场景、动作/实验和一个取舍或风险。
-- `标题思路`：40-160 字，说明标题/命题为什么这样切；如果不能给可发布标题，也要说明卡在哪里。
-- `原始标题钩子`：从来源标题里提取可借的市场表达资产，例如工具组合、结果承诺、场景词、学习入口、强冲突或用户利益。
-- `Austin改写理由`：说明你借用了哪个原始标题钩子，又如何转成 Austin 的业务现场判断；必须能看出不是照抄。
+persona-and-cases 是 Austin 人格、判断习惯和自然表达风格参考，不是来源证据库。绝对不要在输出中引用案例、写 case anchor、说“某案例证明了这条”，也不要把案例名当成证据。你只需要像这个人一样判断和表达。
 
-总边界：
-- 不要在选题筛选阶段生成完整成稿；这里只产出工作流实验命题卡。
-- 不要重新采集，不要虚构用户没做过的项目结果。
-- 不要模仿或暴露对标博主名字；只能吸收热点、话题、结构和角度，转成用户自己的语言。
-- 不要为了凑数量强行推荐；`今日最值得做` 最多 3 条。
-- 如果没有足够强的候选，可以 0 条 `今日最值得做`；不要为了分数高就自动补强推。
-- 抖音浅层内容可以进入候选，也可以成为强候选；但只能基于标题、文案、封面、公开元数据判断，不能声称看过口播、评论、镜头结构或完整视频。
-- 前台字段必须第一人称，不要写“用户当前/用户可以/适合用户/帮助用户”。
+输出必须是 public decision trace，不是隐藏思维链。每条只输出这些 Stage 1 字段：{json.dumps(EDITORIAL_DECISION_FIELDS, ensure_ascii=False)}。
 
-AR-020B 字段契约：
-- 你是 04 / Topic Card / 06 用户可见主字段的质量 owner。`选题命题`、`一句话Brief`、`我要做的实验`、`我的工作流痛点`、`旧流程痛点`、`AI介入点`、`验证方式`、`可沉淀资产`、`我的思考点`、`重点体现`、`对应方向`、`推荐动作`、`今日建议级别`、`title_permission`、`可发布标题` 必须由你重写或确认。
-- 候选里的 `source_facts` / `source_governance_evidence`、`来源权重类型`、`来源构成`、`原始来源标题`、`原始来源账号`、`AIHOT重大性说明`、`市场验证依据` 是事实证据；可以引用、吸收和校验。
-- 候选里的 `non_authoritative_hints` 只是代码在 Skill 之前给出的主题、转译、母场景线索。它们不能替代你的主编判断；不能原样复制进标题、命题、Brief、实验动作、主编判断摘要。若采用某个 hint，必须在 `source_to_me_translation` / `chosen_angle` / `主编判断摘要` 里说明它为什么和来源证据一致。
-- 候选里的 `existing_fields_do_not_copy` 是旧 deterministic prefill 或上游字段，只能作为参考或反例，不能默认沿用。你必须检查它是否和原始来源一致；不一致就重写或降级。
-- 知识库 / Obsidian / RAG / 内容资产来源，不能在主字段里写成 AI 视频、分镜、成片验收，除非原始来源本身就是 AI 视频知识库。
-- AI 视频 / AIGC / 分镜来源，不能写成纯知识库或办公表格选题，除非来源明确在讲视频素材管理知识库。
-- AI Hot 只有在有重大模型/产品/行业变化，并且能落到 Austin 的工作流影响时，才可以进入可行动候选；普通 AI Hot 只观察。
-- `推荐动作=生成脚本包` 必须有可执行的 `我要做的实验`、`验证方式` 和不为 `不生成标题` 的 `title_permission`。否则请降级为 `暂存观察` 或 `不建议制作`。
-- 如果你无法从来源证据写出具体 Austin 现场，不要用空泛句凑字段；直接标 `暂存观察`，写清缺什么证据。
-- 不要批量使用同一标题骨架。尤其 `我想用 X 测试 Y 能不能 Z`、`先拿 X 验证 Y`、`X 能不能进入 Y`、`先测/验收/试一遍` 等骨架只能少量自然出现；如果一批候选都长这样，请重写或降级。
+Stage 1 输出要求：
+- `decision` 只能表达 select / observe / reject 的含义，可以用中文。
+- `why_i_would_choose` / `why_i_would_not_choose` 要像 Austin 本人做取舍，不要像助理汇报。
+- `rejected_common_take` 写普通工具教程号/热点搬运号可能会怎么讲，以及为什么我不这样讲。
+- `natural_austin_angle` 是自然公开角度，不是工作流实验名。
+- `title_directions` 给 2-3 个标题方向，用 ` / ` 分隔；不要复制原始标题。
+- `selected_visible_title` 是最终用户可见命题/标题面。观察候选也要像公开判断，不要像内部 TODO。
+- `selected_visible_title` 不允许用“能不能 / 会不会 / 我想看的是 / 我会先把它放进 / 要放进...才算数”这类内部任务壳；观察候选也要写成公开判断或证据缺口。
+- `title_rationale` 解释来源 hook、个人场景、取舍和标题钩子来自哪里。
+- `source_title_hook` 从原始标题里提取市场表达资产。
+- `source_hook_usage` 说明借了什么、舍弃了什么。
+- `recommendation_status` 只能大致对应：生成脚本包、补证据、存素材、观察、不做。
+- `near_miss_reason` 说明差一点能做时缺什么。
+- `public_decision_summary` 80-180 字，能直接进 04/Topic Card。
 
-标题表达升级：
-- 原始标题不是噪声。对标账号标题通常包含市场验证过的入口：工具组合、结果承诺、场景词、学习承诺、强冲突、用户利益。你应该先提取 `原始标题钩子`，再决定哪些可借、哪些要舍弃。
-- 可发布标题优先融合“原始标题入口 + Austin 判断”。例如来源是 `Codex联动Obsidian，搭建超强知识库，手把手教程`，可以借 `Codex+Obsidian`、`搭知识库`、`手把手` 的入口，但落点必须变成我的选题台、长期记忆、判断留存或资料复用，而不是照抄教程标题。
-- 不能直接复制原始标题，不能变回工具教程号、热点搬运号或保姆级教程号。`标题思路` / `Austin改写理由` 必须说清借了什么、改了什么、为什么这样更像 Austin。
-- `选题命题`、`我的选题标题`、`可发布标题` 是用户会看的判断句，不是内部实验任务名。`测试 / 验证 / 验收 / 能不能 / 会不会 / 先试一遍` 这类词优先放进 `我要做的实验` 或 `验证方式`，不要集中出现在标题层。
-- 每条标题先从四种素材里选一个钩子：来源承诺、我的真实矛盾、缺失证据、最终能留下的资产。一个批次里不要连续使用同一种钩子。
-- 观察 / 补证据候选也要有人能读懂的观察标题。不要写成“先测它会不会...”的内部测试口吻；如果证据不足，就写清“这条暂时卡在什么证据/场景”，而不是包装成可生成命题。
-- 观察 / 补证据候选的 `选题命题` 也不要用冒号拆句或反思壳，例如 `X 给我的提醒：...`、`只能提醒我...`、`我会把 X 翻译成...`、`我先把它放进...`。这些话可以放进 `主编判断摘要`，但前台命题要直接说明“来源有什么价值 / 卡在哪个证据 / 为什么暂时不做”。
-- 如果一条观察候选只能写成内部测试标题，请宁可把 `选题命题` 写成证据缺口摘要，例如“CI/CD Shell 有发布边界启发，但还缺我的自动化失败样例”，不要写成“先写清 / 先接进 / 放进验收边界”。
-- 观察 / 补证据候选不是内部 TODO。不要写 `X 可以进我的 Y，但不能只看 Z`、`X 这件事，我想看的是 Y 能不能 Z`、`X 正好拿来重排 Y`、`我会先把 X 放进 Y 里看`。这些壳会让用户感觉在看测试工单。更好的写法是“来源钩子 + 公开证据缺口 / Austin 业务矛盾”：例如“多宫格故事板的市场承诺很强，但我还缺商业短片返修样例”“Codex PPT 能借 Word 到方案的入口，卡点是我还没证明它能少掉方案返工”。
-- `标题思路` 不能只说“不写成教程/不跟热点”。它必须说明标题钩子来自哪条来源证据、落到我的哪个个人场景、舍弃了什么讲法，以及为什么这个表达比工具教程更像 Austin。
-- 同批最终标题自检：如果两个以上用户可见标题都靠 `先 / 测 / 验证 / 验收 / 能不能 / 会不会 / 试一遍`、冒号拆句、`给我的提醒` 推进，请逐条重写；重写不了就降级并说明缺少的真实场景或证据。
-
-执行顺序：
-0. `editorial_thinking / 主编自由判断`
-   先不填字段，先用公开摘要判断：这条来源到底讲什么；它为什么和 Austin 的账号方向有关或无关；如果要选，我会从哪个真实工作现场切；如果不选，卡在证据、案例、工具、工作流还是标题表达；标题应该避免哪种模板。
-   输出 `editorial_thinking_json`、`主编判断摘要`、`标题思路`。这一步是质量来源。
-
-1. `field_mapping / 字段映射`
-   只把上一步已经成立的判断映射到结构化字段。字段映射不能发明新角度，不能把 `non_authoritative_hints` 或 `existing_fields_do_not_copy` 直接写成用户可见主字段。
-   输出 `field_mapping_json` 和下面所有主字段。
-
-安全检查仍按以下旧三段理解，但它们是 guardrail，不是标题模板：
-1. `gate / 主编门控`
-   先回答：这条和我的人设、四个方向、真实/相邻业务现场有没有关系？证据够不够？我能不能讲出旧流程痛点、AI介入点、人保留的判断、可展示结果、可带走资产？
-   输出 `主编筛选`、`主编自由稿`、`我的真实矛盾`、`场景依据`、`证据强度`、`候选状态`、`推荐等级`、`推荐动作`、`title_permission`。
-   `title_permission` 只能是：`可发布标题`、`内部测试标题`、`不生成标题`。
-
-2. `workflow experiment card / 工作流实验命题卡`
-   只有通过门控的候选，才整理成用户能看的工作流实验命题卡。核心输出是 `选题命题` 和 `我要做的实验`。
-   `选题命题` 是短命题，不是发布标题，也不是完整拆解。建议 35-70 字，最多不超过 90 字。它只说明“外部触发点 + 我的业务动作/工作流实验”，不要把旧流程、AI介入、验证方式、缺证据全部塞进第一列。
-   `选题命题` 要像我写给自己的工作台条目，可以短、自然、具体。不要让一批候选都写成“我想用 X 测试 Y 能不能 Z / 我准备用 X 验证 Y 能不能 Z / 用 X 测试 Y 能不能进入 Z”。这些句式偶尔可以用，但不能批量出现。
-   `我要做的实验` 必须包含明确动作：测试、改造、压缩、录成 Skill、接进返修流程、变成验收表、写回飞书任务单、从多步压成一步、沉淀 SOP、变成字段规则、做成模板、验证能不能交付、验证能不能复盘、验证能不能进入内容生产系统。
-   `验证方式` 必须是 1-2 个可执行的最小实验步骤，不能只写“检查是否可用 / 对比流程”。它要写清输入材料、动作、输出物和通过/失败标准。
-   `可沉淀资产` 必须具体到这条选题，写 1-3 个资产名。不要写通用资产包，例如“Workflow SOP / 字段规则 / 脚本包输入模板 / QA 清单”。
-   如果候选里出现 `旧可沉淀资产_不可沿用`，说明那是上一轮旧模板值，只能作为反例，必须重写成具体资产名，不能原样沿用。
-   同时输出 `热点触发点`、`我的工作流痛点`、`旧流程痛点`、`AI介入点`、`验证方式`、`可沉淀资产`、`选题判断`、`原始钩子`、`我的切入`、`我准备怎么讲`、`可展示证据`、`一句话Brief`、`我的场景拆解`、`我的思考点`、`重点体现`、`可调用案例`、`内容核心冲突`、`视频呈现方式`、`不建议做的原因`。
-   这些字段要像用户拍摄前写给自己的工作备忘，不要像助理汇报。
-
-3. `title packaging / 标题包装`
-   只有 `title_permission=可发布标题` 时，才生成 `可发布标题` 和 `标题备选`。
-   如果是 `内部测试标题` 或 `不生成标题`，`可发布标题` 和 `标题备选` 必须留空。
-   `标题工作坊`、`标题自审` 只是调试字段；本轮不要把它们当主流程必填，不要为了填它们而批量套标题。
-
-门控规则：
-- `场景依据=仅热点观察` 或 `证据强度=弱`：不能是 `今日最值得做`，通常 `可选候选` 或 `暂存观察`。
-- 写不出 `我要做的实验`，或者实验动作只是“讲一讲/分析一下/介绍一下”：不能进入强候选。
-- 写不出具体旧流程痛点、AI介入点、人保留的判断、可展示结果：不能给 `title_permission=可发布标题`。
-- 写不出 `选题命题`：不能进入前台候选。
-- 只像资讯、工具教程、泛观点：`暂存观察` 或 `不建议制作`。
-- 公众号全文可以做结构和观点拆解；AIHOT 只能做热点入口；抖音浅层只能做标题/文案级选题判断。
-
-表达规则：
-- 标题必须像真实业务现场里说出来的话，有冲突、场景、判断、动作或结果差距。
-- 热点工具/模型名可以保留做入口，但后半句必须落到用户自己的生产现场或业务判断。
-- 不要把案例句式当模板。案例只给语气和判断方式，不能批量复制骨架。
-- 标题层少用 `先 / 测 / 验证 / 验收 / 能不能 / 会不会 / 试一遍`；这些词可以出现在实验和验证方式里，但不能成为一批标题的共同骨架。
-- 观察 / 补证据标题要像“我为什么暂时不做这条”的公开摘要，而不是内部测试工单。避免 `X 给我的提醒：...`、`我会把 X 翻译成...`、`我先把它放进...` 这类看似主编、实际同构的壳。
-- 禁止模板化/抬杠化词句：`不稀奇`、`别急着夸`、`我最怕`、`听起来很美`、`最该重排`、`背后哪类工具失去壁垒`、`不该只看参数`、`某某最值得学`、`保姆级教程`。
-- 如果标题只是“正确的一句话”，但没有点击理由，宁可不给可发布标题。
-- `选题标题` 和 `我的选题标题` 在本系统里是兼容字段，内容也必须写成 `选题命题`，不要写成可发布标题。
-
-校准例，只用于理解“热点触发工作流实验”，不要复制成固定模板：
-- 外部热点：Codex Record / Record & Replay 新功能。
-- 普通 AI 号讲法：Codex 可以录制工作流并生成 Skill。
-- 我的选题命题：剪辑经验如果能被录下来，真正难的是保住人的节奏判断。
-- 我要做的实验：录一段真实剪辑流程，检查 Codex Record 能不能生成可读、可复跑、能保留验收规则的剪辑 Skill。
-- 我的工作流痛点：脚本、封面、素材生成相对容易结构化，但剪辑最依赖人的节奏、取舍、字幕、切屏和成片验收。
-- 旧流程痛点：剪一条视频要人工理解脚本、找录屏重点、切真人画面、加字幕、做结果闪现和 CTA，很多判断靠经验，难交接也难复盘。
-- AI介入点：用 Codex Record 录制一次标准剪辑流程，让它生成一个可复用的剪辑 Skill。
-- 验证方式：录 3 分钟剪辑流程，导出 Record Skill 后复跑一次；记录复跑漏掉的 3 个判断点，能复跑且人工修正少于一轮才算通过。
-- 可沉淀资产：剪辑判断节点表 / Record Skill 复跑记录 / 成片返修检查表。
-
-请重写/覆盖这些字段：
-{json.dumps(SKILL_FIELDS, ensure_ascii=False)}
-
-候选状态只能是：今日最值得做、可选候选、暂存观察、不建议制作。
-推荐等级只能是：S、A、B、C。
-对应方向只能是：AI业务定调、真实工作流改造、AI导演工作流、汽车与内容营销、AI项目复盘。
-证据强度只能是：强、中、弱。
-今日最值得做最多 3 条。
-候选数量不需要凑满 10 条；只把真的值得用户打开看的内容标为 `今日最值得做` 或 `可选候选`。
+硬禁止：
+- 不输出 `我要做的实验`、`验证方式`、`可沉淀资产`、`关联母场景`、`可调用案例`、`案例支撑`。
+- 不写“要放进/我更想把它改成/我会先把它放进/我想看的是/能不能/会不会”这类内部任务壳。
+- 不把来源标题照抄成最终标题。
+- 不暴露任何 case/persona 引用。
 
 <editorial_rule_text>
 {skill_text}
@@ -1675,8 +1810,9 @@ AR-020B 字段契约：
 {persona_brief}
 </persona-brief.md>
 
-案例/人设参考路径：{SKILL_REFERENCE}
-本次不把完整长文全部塞入上下文；你必须优先使用上面的压缩底稿，以及每条候选里的 `关联母场景候选`。
+<persona-and-cases-style-reference embedded="true" role="style_reference_only_not_source_evidence" sha256="{file_sha256(SKILL_REFERENCE)}">
+{persona_style}
+</persona-and-cases-style-reference>
 
 <approved_selection_learning_context>
 {selection_learning}
@@ -1687,7 +1823,7 @@ AR-020B 字段契约：
 - 它只代表近期偏好，不是硬规则；不要机械排除某个方向。
 - 正向样本说明用户愿意推进的场景、证据和原因。
 - 负向样本说明本轮不想做的原因，尤其是证据浅、像工具教程、缺个人经验的候选。
-- 如果候选和正向偏好相似，优先补强 `场景依据 / 可展示证据 / 推荐理由`；如果和负向样本相似，优先降级或要求补证据。
+- 如果候选和正向偏好相似，优先补强 Stage 1 的公开判断；如果和负向样本相似，优先 observe/reject 并写清原因。
 
 <candidate_rows_json>
 {json.dumps(candidates, ensure_ascii=False, indent=2)}
@@ -1695,12 +1831,65 @@ AR-020B 字段契约：
 """
 
 
-def run_codex_skill(rows: list[dict[str, str]], model: str, timeout: int) -> tuple[list[dict[str, str]], dict[str, Any]]:
+def build_field_mapping_prompt(rows: list[dict[str, str]], decisions: list[dict[str, Any]]) -> str:
+    skill_text = strip_yaml_frontmatter(load_text(SKILL_MD))
+    selection_learning = load_selection_learning_context()
+    candidates = [stage2_candidate_payload(row, idx, decisions[idx]) for idx, row in enumerate(rows)]
+    return f"""你是 ai-account-editorial-director 的 AR-020D Stage 2：field_mapping。
+
+本阶段只把 Stage 1 已锁定的主编判断映射成 04 / Topic Card / 06 需要的结构化字段。
+
+硬规则：
+- 不得创建、替换、改写 Stage 1 的 `selected_visible_title`、`natural_austin_angle`、`title_rationale`、`public_decision_summary`。
+- `选题命题` 必须等于 locked `selected_visible_title`。
+- 如果 `title_permission=可发布标题`，`可发布标题` 也必须等于 locked `selected_visible_title`；否则 `可发布标题` 和 `标题备选` 留空。
+- `主编判断摘要` 必须来自 locked `public_decision_summary`，可压缩但不能换角度。
+- `标题思路` 必须来自 locked `title_rationale`，可压缩但不能换角度。
+- `editorial_thinking_json` 必须原样保存 locked decision 的 JSON。
+- `field_mapping_json` 只说明映射关系，不能发明新标题、新角度或新选择理由。
+- 禁止输出 case anchor、案例引用、案例证明。persona/style 只影响语气和判断习惯，不能成为证据。
+
+可以生成的运营字段：
+- `我要做的实验`、`验证方式`、`可沉淀资产`、`旧流程痛点`、`AI介入点`、`重点体现` 等。
+- 这些字段可以出现测试/验证/验收等工作语言，但不能回流改写 `选题命题` / `可发布标题` / `主编判断摘要` / `标题思路`。
+
+请重写/覆盖这些字段：
+{json.dumps(SKILL_FIELDS, ensure_ascii=False)}
+
+候选状态只能是：今日最值得做、可选候选、暂存观察、不建议制作。
+推荐等级只能是：S、A、B、C。
+对应方向只能是：AI业务定调、真实工作流改造、AI导演工作流、汽车与内容营销、AI项目复盘。
+证据强度只能是：强、中、弱。
+今日最值得做最多 3 条。
+
+<editorial_rule_text>
+{skill_text}
+</editorial_rule_text>
+
+<approved_selection_learning_context>
+{selection_learning}
+</approved_selection_learning_context>
+
+<locked_decision_rows_json>
+{json.dumps(candidates, ensure_ascii=False, indent=2)}
+</locked_decision_rows_json>
+"""
+
+
+def run_codex_prompt(
+    *,
+    schema: dict[str, Any],
+    prompt: str,
+    model: str,
+    timeout: int,
+    artifact_dir: Path | None,
+    artifact_prefix: str,
+) -> dict[str, Any]:
     with tempfile.TemporaryDirectory(prefix="editorial-skill-") as tmpdir:
         tmp = Path(tmpdir)
         schema_path = tmp / "schema.json"
-        output_path = tmp / "codex_output.json"
-        schema_path.write_text(json.dumps(codex_output_schema(), ensure_ascii=False, indent=2), encoding="utf-8")
+        output_path = tmp / f"{artifact_prefix}_codex_output.json"
+        schema_path.write_text(json.dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")
         command = [
             "codex",
             "exec",
@@ -1719,7 +1908,7 @@ def run_codex_skill(rows: list[dict[str, str]], model: str, timeout: int) -> tup
         command.append("-")
         proc = subprocess.run(
             command,
-            input=build_codex_prompt(rows),
+            input=prompt,
             text=True,
             capture_output=True,
             timeout=timeout,
@@ -1733,30 +1922,171 @@ def run_codex_skill(rows: list[dict[str, str]], model: str, timeout: int) -> tup
         if not output_path.exists():
             raise RuntimeError(f"Codex Skill execution did not produce output file. stdout={proc.stdout[-2000:]}")
         payload = json.loads(output_path.read_text(encoding="utf-8"))
-    by_index: dict[int, dict[str, str]] = {}
-    for item in payload.get("rows", []):
+    if artifact_dir:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / f"{artifact_prefix}_output.json").write_text(
+            json.dumps(payload, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return payload
+
+
+def stage2_invariant_issues(decision: dict[str, Any], row: dict[str, str]) -> list[str]:
+    issues: list[str] = []
+    expected_id = str(decision.get("editorial_decision_id", ""))
+    expected_hash = str(decision.get("editorial_decision_hash", ""))
+    expected_title = normalize_space(decision.get("selected_visible_title", ""))
+    expected_angle = normalize_space(decision.get("natural_austin_angle", ""))
+    expected_rationale = normalize_space(decision.get("title_rationale", ""))
+    expected_summary = normalize_space(decision.get("public_decision_summary", ""))
+
+    if normalize_space(row.get("editorial_decision_id")) != expected_id:
+        issues.append("editorial_decision_id mismatch")
+    if normalize_space(row.get("editorial_decision_hash")) != expected_hash:
+        issues.append("editorial_decision_hash mismatch")
+    if normalize_space(row.get("locked_selected_visible_title")) != expected_title:
+        issues.append("locked_selected_visible_title mismatch")
+    if normalize_space(row.get("选题命题")) != expected_title:
+        issues.append("选题命题 diverged from Stage 1 selected_visible_title")
+    if normalize_space(row.get("locked_natural_austin_angle")) != expected_angle:
+        issues.append("locked_natural_austin_angle mismatch")
+    if normalize_space(row.get("locked_title_rationale")) != expected_rationale:
+        issues.append("locked_title_rationale mismatch")
+    if normalize_space(row.get("locked_public_decision_summary")) != expected_summary:
+        issues.append("locked_public_decision_summary mismatch")
+    if normalize_space(row.get("title_permission")) == "可发布标题" and normalize_space(row.get("可发布标题")) != expected_title:
+        issues.append("可发布标题 diverged from Stage 1 selected_visible_title")
+    return issues
+
+
+def run_codex_skill(
+    rows: list[dict[str, str]],
+    model: str,
+    timeout: int,
+    artifact_dir: Path | None = None,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    stage1_inputs = [stage1_candidate_payload(row, idx) for idx, row in enumerate(rows)]
+    if artifact_dir:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "stage1_input_sanitized.json").write_text(
+            json.dumps({
+                "runner_version": RUNNER_VERSION,
+                "stage": "editorial_decision",
+                "persona_style_text_not_written": True,
+                "rows": stage1_inputs,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    stage1_payload = run_codex_prompt(
+        schema=editorial_decision_output_schema(),
+        prompt=build_editorial_decision_prompt(rows),
+        model=model,
+        timeout=timeout,
+        artifact_dir=artifact_dir,
+        artifact_prefix="stage1_editorial_decision",
+    )
+
+    raw_decisions: dict[int, dict[str, Any]] = {}
+    for item in stage1_payload.get("editorial_decisions", []):
         try:
             idx = int(item.get("index"))
         except (TypeError, ValueError):
             continue
-        by_index[idx] = {field: str(item.get(field, "") or "") for field in SKILL_FIELDS}
+        if 0 <= idx < len(stage1_inputs):
+            raw_decisions[idx] = normalize_decision(item, idx, stage1_inputs[idx])
+    decisions: list[dict[str, Any]] = []
+    for idx in range(len(rows)):
+        if idx not in raw_decisions:
+            raise RuntimeError(f"Codex Stage 1 output missing row index {idx}")
+        decisions.append(raw_decisions[idx])
+
+    stage2_inputs = [stage2_candidate_payload(row, idx, decisions[idx]) for idx, row in enumerate(rows)]
+    if artifact_dir:
+        (artifact_dir / "stage2_input_sanitized.json").write_text(
+            json.dumps({
+                "runner_version": RUNNER_VERSION,
+                "stage": "field_mapping",
+                "rows": stage2_inputs,
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    stage2_payload = run_codex_prompt(
+        schema=field_mapping_output_schema(),
+        prompt=build_field_mapping_prompt(rows, decisions),
+        model=model,
+        timeout=timeout,
+        artifact_dir=artifact_dir,
+        artifact_prefix="stage2_field_mapping",
+    )
+
+    by_index: dict[int, dict[str, str]] = {}
+    for item in stage2_payload.get("rows", []):
+        try:
+            idx = int(item.get("index"))
+        except (TypeError, ValueError):
+            continue
+        fields = {
+            field: str(item.get(field, "") or "")
+            for field in [
+                "editorial_decision_id",
+                "editorial_decision_hash",
+                "locked_selected_visible_title",
+                "locked_natural_austin_angle",
+                "locked_title_rationale",
+                "locked_public_decision_summary",
+                *SKILL_FIELDS,
+            ]
+        }
+        by_index[idx] = fields
     enriched: list[dict[str, str]] = []
     for idx, row in enumerate(rows):
         out = dict(row)
         judgement = by_index.get(idx)
         if not judgement:
-            raise RuntimeError(f"Codex Skill output missing row index {idx}")
+            raise RuntimeError(f"Codex Stage 2 output missing row index {idx}")
+        decision = decisions[idx]
         out.update(judgement)
+        out["editorial_architecture"] = RUNNER_VERSION
+        out["editorial_decision_json"] = json.dumps(decision, ensure_ascii=False, sort_keys=True)
+        out["editorial_thinking_json"] = out.get("editorial_thinking_json") or out["editorial_decision_json"]
+        out["editorial_decision_id"] = str(decision.get("editorial_decision_id", ""))
+        out["editorial_decision_hash"] = str(decision.get("editorial_decision_hash", ""))
+        out["主编判断摘要"] = out.get("主编判断摘要") or str(decision.get("public_decision_summary", ""))
+        out["标题思路"] = out.get("标题思路") or str(decision.get("title_rationale", ""))
+        out["原始标题钩子"] = out.get("原始标题钩子") or str(decision.get("source_title_hook", ""))
+        out["Austin改写理由"] = out.get("Austin改写理由") or str(decision.get("source_hook_usage", ""))
+        # AR-020D: persona/case material is style reference only, never row evidence.
+        for case_field in ["真实/相邻案例", "可调用案例", "关联母场景", "借用方式", "我的真实/相邻场景"]:
+            out[case_field] = ""
+        out["不能声称的部分"] = out.get("不能声称的部分") or "不能把 persona/style 案例当成这条来源的事实证据。"
+        invariant_issues = stage2_invariant_issues(decision, out)
+        out["stage2_invariant_status"] = "fail" if invariant_issues else "pass"
+        out["stage2_invariant_issues"] = "；".join(invariant_issues)
+        out["persona_style_reference_state"] = "embedded_style_reference_not_source_evidence"
+        out["persona_style_hash"] = file_sha256(SKILL_REFERENCE)
         out["Skill编辑层"] = "ai-account-editorial-director"
         out["Skill参考文件"] = str(SKILL_REFERENCE)
         out["editorial_engine"] = "codex"
         out["fallback_only"] = "false"
         out["not_editorial_quality"] = "false"
         enriched.append(out)
-    return normalize_batch(enriched), {
+    normalized = normalize_batch(enriched)
+    provenance = runtime_provenance(fallback_state="false")
+    if artifact_dir:
+        (artifact_dir / "ar020d_provenance_manifest.json").write_text(
+            json.dumps(provenance, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return normalized, {
         "codex_rows": len(by_index),
-        "batch_notes": payload.get("batch_notes", ""),
+        "stage1_rows": len(decisions),
+        "stage2_rows": len(by_index),
+        "stage1_batch_notes": stage1_payload.get("batch_notes", ""),
+        "batch_notes": stage2_payload.get("batch_notes", ""),
         "model": model or "codex-default",
+        "runner_version": RUNNER_VERSION,
+        "provenance_manifest": provenance,
+        "stage_architecture": "editorial_decision_then_field_mapping",
         "approved_selection_learning": str(APPROVED_SELECTION_LEARNING_MD) if APPROVED_SELECTION_LEARNING_MD.exists() else "",
     }
 
