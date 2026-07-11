@@ -70,9 +70,9 @@ description: 当需要把 AI 热点、公众号文章、短视频对标内容、
 2. `相邻场景推演`：没有完全对应案例，但能合理推演到系统、交付、营销或导演现场。
 3. `只作观察`：很热但无法接到业务现场、四个方向或可展示资产。只能暂存或不建议。
 
-## 主流程：Editorial Decision -> Field Mapping
+## 主流程：Editorial Decision -> Global Daily Ranking -> Field Mapping
 
-AR-020D 之后，主编判断分成两个硬阶段。第一阶段先像 Austin 本人一样判断，第二阶段再映射字段。不要一上来套 `Gate -> Workflow Experiment Card -> Title Packaging` 的字段顺序写标题；那套流程只是后置防错 guardrail，不是标题骨架。
+AR-020D 之后，主编判断分成三个硬阶段。第一阶段先像 Austin 本人一样判断一条来源值不值得选；第二阶段把所有第一阶段 `select` 候选放在同一天里做全局排序；第三阶段再映射字段。不要一上来套 `Gate -> Workflow Experiment Card -> Title Packaging` 的字段顺序写标题；那套流程只是后置防错 guardrail，不是标题骨架。
 
 ### 第一段：`editorial_decision`
 
@@ -107,8 +107,11 @@ AR-020D 之后，主编判断分成两个硬阶段。第一阶段先像 Austin �
 - `title_thinking`：标题/命题为什么这样切，避免什么模板；
 - `source_title_hook` / `原始标题钩子`：原始标题里可借的市场表达资产，例如工具组合、结果承诺、场景词、学习入口、强冲突或用户利益；
 - `austin_rewrite_reason` / `Austin改写理由`：说明借了哪个标题钩子，又如何转成 Austin 的业务现场判断；
-- `decision`：生成脚本包 / 补证据 / 存素材 / 观察 / 不做；
+- `decision`：只能归一为 `select` / `observe` / `reject`；
+- `recommendation_status`：只能归一为 `生成脚本包` / `补证据` / `存素材` / `观察` / `不做`；
 - `near_miss_reason`：高适配但未选、或差一点能选时，明确缺什么。
+
+`decision` 和 `recommendation_status` 是第一阶段的选择权，必须进入 decision hash。后续字段映射、normalize、guard 不得悄悄改成另一个动作；如安全规则必须阻断，只能显式标为 `guard_blocked` 并让质量门失败。
 
 第一段必须能压缩成用户可见的 `主编判断摘要` 和 `标题思路`。这两个字段会进入 04 / Topic Card，不能只放在 QA report。
 
@@ -125,7 +128,27 @@ AR-020D 之后，主编判断分成两个硬阶段。第一阶段先像 Austin �
 
 原始标题不是噪声。对标账号标题往往已经验证过市场入口：工具组合、结果承诺、场景词、学习承诺、强冲突、用户利益。要借这个入口，但不能照抄标题，也不能变回工具教程号、热点搬运号或保姆级教程号。
 
-### 第二段：`field_mapping`
+### 第二段：`global_daily_ranking`
+
+这一段只在所有第一阶段完成后运行。它把当天所有 `decision=select` 的候选放在一起比较，决定谁是今天真正最值得打开的 1-3 条。
+
+硬规则：
+
+- 全日最多 3 条 `今日最值得做`；
+- 批次内“前三”没有意义，必须全日比较；
+- `decision=select` 但没有进入前三的候选，可以保留为 `可选候选`，并写清公开可读的取舍理由；
+- `decision=observe` 固定是 `暂存观察`；
+- `decision=reject` 固定是 `不建议制作`；
+- 全日排序不能改第一阶段标题、角度、主编摘要和 `recommendation_status`。
+
+输出必须包含：
+
+- `locked_daily_level`：`今日最值得做` / `可选候选` / `暂存观察` / `不建议制作`；
+- `locked_should_produce`：只有全日前三且 `recommendation_status=生成脚本包` 时才是 `是`；
+- `locked_global_rank_position`：全日前三的 1/2/3；
+- `locked_global_tradeoff_reason`：未进前三或只观察的公开取舍理由。
+
+### 第三段：`field_mapping`
 
 只把第一段已经成立的主编判断映射成 04 / Topic Card / 06 需要的结构化主字段。字段映射不能发明新角度，不能把 runner 给出的主题簇、转译角度、母场景等线索直接写成标题、命题、Brief、实验动作或主编判断摘要。
 
@@ -134,6 +157,9 @@ AR-020D 之后，主编判断分成两个硬阶段。第一阶段先像 Austin �
 - `selected_visible_title` 一旦在第一阶段锁定，第二阶段不能改；
 - `natural_austin_angle` 一旦在第一阶段锁定，第二阶段不能改；
 - `title_rationale` / `public_decision_summary` 只能压缩或映射，不能换角度；
+- `今日建议级别` / `候选状态` 必须承接全日排序的 `locked_daily_level`；
+- `推荐动作` 必须承接第一阶段的 `recommendation_status`；
+- `是否建议进入制作` 必须承接全日排序的 `locked_should_produce`；
 - `选题命题` 必须承接第一阶段的 visible title；
 - 如果 `title_permission=可发布标题`，`可发布标题` 必须承接第一阶段的 visible title；
 - 实验、验证、资产可以在第二阶段生成，但不能反向改写标题和主编判断。
@@ -357,7 +383,7 @@ AR-020D 之后，主编判断分成两个硬阶段。第一阶段先像 Austin �
 输出项目需要的结构化字段，但生成顺序必须是：
 
 ```text
-Editorial Decision -> Field Mapping -> Guardrail Check
+Editorial Decision -> Global Daily Ranking -> Field Mapping -> Guardrail Check
 ```
 
 不要为了填字段而写模块化句子。真正重要的是：能不能看出这条内容为什么和账号有关，为什么 Austin 会选或不选，标题如何借原始市场入口但不照抄，准备拿它改造哪个现场，哪里有证据，哪里还不能说。

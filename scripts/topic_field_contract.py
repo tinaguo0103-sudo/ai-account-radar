@@ -377,8 +377,17 @@ def downgrade_for_contract(row: dict[str, Any], issues: list[ContractIssue]) -> 
     out = mark_contract_result(row, issues)
     blockers = blocking_issues(issues)
     if not blockers:
+        out["guard_blocked"] = "false"
+        out["guard_blocked_reason"] = ""
         return out
     reason = issue_messages(blockers)
+    if out.get("editorial_architecture") or out.get("locked_decision") or out.get("global_rank_hash"):
+        out["guard_blocked"] = "true"
+        out["guard_blocked_reason"] = reason
+        existing = normalize_space(out.get("降级原因") or out.get("不建议做的原因"))
+        out["降级原因"] = "；".join(part for part in [existing, f"字段契约/质量门阻断：{reason}"] if part)
+        out["不建议做的原因"] = out["降级原因"]
+        return out
     existing = normalize_space(out.get("不建议做的原因") or out.get("降级原因"))
     out["今日建议级别"] = "暂存观察"
     out["候选状态"] = "暂存观察"
@@ -389,6 +398,8 @@ def downgrade_for_contract(row: dict[str, Any], issues: list[ContractIssue]) -> 
     out["标题备选"] = ""
     out["降级原因"] = "；".join(part for part in [existing, f"字段契约失败：{reason}"] if part)
     out["不建议做的原因"] = out["降级原因"]
+    out["guard_blocked"] = "true"
+    out["guard_blocked_reason"] = reason
     return out
 
 

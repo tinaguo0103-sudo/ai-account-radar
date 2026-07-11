@@ -158,12 +158,37 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
             "title_quality_status": "pass",
         }]
 
+        decision = {
+            "index": 0,
+            "editorial_decision_id": "decision_0",
+            "editorial_decision_hash": "hash_0",
+            "decision": "observe",
+            "recommendation_status": "观察",
+            "selected_visible_title": final_rows[0]["选题命题"],
+            "natural_austin_angle": "协作入口还缺任务回写证据",
+            "title_rationale": "先保留观察理由。",
+            "public_decision_summary": "Claude Cowork 有协作入口，但证据还不足。",
+            "locked_decision": "observe",
+            "locked_recommendation_status": "观察",
+            "locked_daily_level": "暂存观察",
+            "locked_should_produce": "否",
+            "locked_global_rank_position": "",
+            "locked_global_tradeoff_reason": "证据不足，暂存观察。",
+            "global_rank_id": "rank_0",
+            "global_rank_hash": "rank_hash_0",
+        }
+
         with TemporaryDirectory() as tmp:
             out_dir = Path(tmp)
-            with patch.object(replay, "run_skill", return_value=(
+            with patch.object(replay.editorial_skill_runner, "run_codex_stage1", return_value=(
+                [decision],
+                {"stage1_batch_notes": "stage1 ok", "provenance_manifest": {}},
+            )), patch.object(replay.editorial_skill_runner, "run_codex_global_ranking", return_value=(
+                [decision],
+                {"global_top_count": 0, "status": "success", "outputs": {}},
+            )), patch.object(replay.editorial_skill_runner, "run_codex_stage2", return_value=(
                 final_rows,
                 {"batch_notes": "本批只给 1 条“今日最值得做”：Claude Cowork。未调用外部 Skill。", "model": "codex-default"},
-                "codex",
             )):
                 rows, meta, _engine, ok = replay.run_skill_batches(pool, args, out_dir)
             batch_meta = json.loads((out_dir / "batches" / "batch_000" / "meta.json").read_text(encoding="utf-8"))

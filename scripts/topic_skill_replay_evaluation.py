@@ -368,6 +368,36 @@ def completed_batch_rows(out_dir: Path, batch_id: str) -> list[dict[str, str]]:
     return read_csv(rows_path)
 
 
+def completed_rows_match_rank_lock(rows: list[dict[str, str]], decisions: list[dict[str, Any]]) -> bool:
+    if len(rows) != len(decisions):
+        return False
+    for row, decision in zip(rows, decisions):
+        expected = {
+            "global_rank_hash": decision.get("global_rank_hash", ""),
+            "locked_daily_level": decision.get("locked_daily_level", ""),
+            "locked_recommendation_status": decision.get("locked_recommendation_status", ""),
+            "locked_should_produce": decision.get("locked_should_produce", ""),
+        }
+        for field, value in expected.items():
+            if str(row.get(field, "") or "") != str(value or ""):
+                return False
+    return True
+
+
+def stage1_decisions_path(out_dir: Path, batch_id: str) -> Path:
+    return batch_path(out_dir, batch_id) / "stage1_decisions.json"
+
+
+def completed_stage1_decisions(out_dir: Path, batch_id: str) -> list[dict[str, Any]]:
+    path = stage1_decisions_path(out_dir, batch_id)
+    if not path.exists():
+        return []
+    payload = json.loads(path.read_text(encoding="utf-8"))
+    if isinstance(payload, list):
+        return payload
+    return []
+
+
 def write_batch_meta(out_dir: Path, batch_id: str, payload: dict[str, Any]) -> None:
     write_json(batch_meta_path(out_dir, batch_id), payload)
 
@@ -431,6 +461,9 @@ def run_skill_batches(
     completed successfully. Completed batch outputs are durable artifacts, so a
     later ``--resume`` can skip them and continue the remaining batches.
     """
+    if args.engine == "codex":
+        return run_codex_skill_replay_batches(pool, args, out_dir)
+
     batch_size = int(getattr(args, "batch_size", 0) or len(pool) or 1)
     per_batch_timeout = timeout_seconds(args)
     all_rows: list[dict[str, str]] = []
@@ -554,6 +587,344 @@ def run_skill_batches(
     return all_rows, engine_meta, engine, all_ok
 
 
+def run_codex_skill_replay_batches(
+    pool: list[dict[str, Any]],
+    args: argparse.Namespace,
+    out_dir: Path,
+) -> tuple[list[dict[str, str]], dict[str, Any], str, bool]:
+    """Run AR-020D as Stage 1 batches -> global ranking -> Stage 2 batches."""
+    batch_size = int(getattr(args, "batch_size", 0) or len(pool) or 1)
+    per_batch_timeout = timeout_seconds(args)
+    all_rows_for_skill = [{key: str(value or "") for key, value in row.items()} for row in pool]
+    all_decisions: list[dict[str, Any]] = []
+    stage1_meta: list[dict[str, Any]] = []
+    all_ok = True
+
+    for batch_index, start_index, batch in batch_slices(all_rows_for_skill, batch_size):
+        batch_id = batch_id_for(batch_index)
+        directory = batch_path(out_dir, batch_id)
+        directory.mkdir(parents=True, exist_ok=True)
+        write_csv(directory / "input.csv", batch)
+        if getattr(args, "resume", False):
+            completed = completed_stage1_decisions(out_dir, batch_id)
+            if completed:
+                all_decisions.extend(completed)
+                stage1_meta.append({
+                    "batch_id": batch_id,
+                    "batch_index": batch_index,
+                    "status": "stage1_success",
+                    "resume_status": "skipped_completed_stage1",
+                    "row_count": len(completed),
+                    "input_count": len(batch),
+                    "outputs": {
+                        "input": str(directory / "input.csv"),
+                        "stage1_decisions": str(stage1_decisions_path(out_dir, batch_id)),
+                    },
+                })
+                append_progress(out_dir, batch_progress_events(
+                    batch,
+                    status="stage1_skip_completed",
+                    stage="editorial_decision",
+                    note="resume skipped completed Stage 1 decisions",
+                    batch_index=batch_index,
+                    batch_id=batch_id,
+                    start_candidate_index=start_index,
+                ))
+                continue
+        started_at = now_iso()
+        started_monotonic = monotonic()
+        append_progress(out_dir, batch_progress_events(
+            batch,
+            status="stage1_start",
+            stage="editorial_decision",
+            note=f"engine=codex; timeout={per_batch_timeout}s; rows={len(batch)}",
+            batch_index=batch_index,
+            batch_id=batch_id,
+            start_candidate_index=start_index,
+        ))
+        try:
+            decisions, meta = editorial_skill_runner.run_codex_stage1(
+                batch,
+                args.codex_model,
+                per_batch_timeout,
+                artifact_dir=directory,
+                start_index=start_index,
+            )
+            duration_ms = int((monotonic() - started_monotonic) * 1000)
+            write_json(stage1_decisions_path(out_dir, batch_id), decisions)
+            payload = {
+                "batch_id": batch_id,
+                "batch_index": batch_index,
+                "status": "stage1_success",
+                "started_at": started_at,
+                "finished_at": now_iso(),
+                "duration_ms": duration_ms,
+                "row_count": len(decisions),
+                "input_count": len(batch),
+                "engine": "codex",
+                "engine_meta": meta,
+                "timeout_seconds": per_batch_timeout,
+                "outputs": {
+                    "input": str(directory / "input.csv"),
+                    "stage1_decisions": str(stage1_decisions_path(out_dir, batch_id)),
+                    "stage1_input_sanitized": str(directory / "stage1_input_sanitized.json"),
+                    "stage1_output": str(directory / "stage1_editorial_decision_output.json"),
+                },
+            }
+            stage1_meta.append(payload)
+            all_decisions.extend(decisions)
+            append_progress(out_dir, batch_progress_events(
+                batch,
+                status="stage1_success",
+                stage="editorial_decision",
+                note=f"decisions={len(decisions)}; duration_ms={duration_ms}",
+                batch_index=batch_index,
+                batch_id=batch_id,
+                start_candidate_index=start_index,
+            ))
+        except Exception as exc:
+            all_ok = False
+            duration_ms = int((monotonic() - started_monotonic) * 1000)
+            payload = {
+                "batch_id": batch_id,
+                "batch_index": batch_index,
+                "status": "stage1_failed",
+                "started_at": started_at,
+                "finished_at": now_iso(),
+                "duration_ms": duration_ms,
+                "input_count": len(batch),
+                "engine": "codex",
+                "timeout_seconds": per_batch_timeout,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "traceback_tail": traceback.format_exc()[-4000:],
+                "outputs": {
+                    "input": str(directory / "input.csv"),
+                    "error": str(directory / "stage1_error.json"),
+                },
+            }
+            write_json(directory / "stage1_error.json", payload)
+            stage1_meta.append(payload)
+            append_progress(out_dir, batch_progress_events(
+                batch,
+                status="stage1_failed",
+                stage="editorial_decision",
+                note=f"{type(exc).__name__}: {str(exc)[:240]}",
+                batch_index=batch_index,
+                batch_id=batch_id,
+                start_candidate_index=start_index,
+            ))
+    if not all_ok or len(all_decisions) != len(all_rows_for_skill):
+        engine_meta = {
+            "mode": "ar020d_stage1_global_rank_stage2",
+            "batch_size": batch_size,
+            "batch_timeout_seconds": per_batch_timeout,
+            "stage1_batch_count": len(stage1_meta),
+            "completed_batch_count": 0,
+            "failed_batch_count": sum(1 for meta in stage1_meta if meta.get("status") == "stage1_failed"),
+            "batches": stage1_meta,
+        }
+        write_json(out_dir / "skill_replay_batches.json", engine_meta)
+        return [], engine_meta, "codex", False
+
+    ranking_dir = out_dir / "global_ranking"
+    ranking_started = now_iso()
+    ranking_monotonic = monotonic()
+    append_progress(out_dir, [progress_event(
+        status="global_ranking_start",
+        stage="global_daily_ranking",
+        note=f"stage1_decisions={len(all_decisions)}; select_count={sum(1 for d in all_decisions if d.get('decision') == 'select')}",
+    )])
+    try:
+        ranked_decisions, ranking_meta = editorial_skill_runner.run_codex_global_ranking(
+            all_rows_for_skill,
+            all_decisions,
+            args.codex_model,
+            per_batch_timeout,
+            artifact_dir=ranking_dir,
+        )
+        ranking_meta = {
+            **ranking_meta,
+            "status": "success",
+            "started_at": ranking_started,
+            "finished_at": now_iso(),
+            "duration_ms": int((monotonic() - ranking_monotonic) * 1000),
+            "outputs": {
+                "global_ranking_input": str(ranking_dir / "global_ranking_input.json"),
+                "global_ranking_output": str(ranking_dir / "global_ranking_output.json"),
+                "global_ranked_decisions": str(ranking_dir / "global_ranked_decisions.json"),
+            },
+        }
+        append_progress(out_dir, [progress_event(
+            status="global_ranking_success",
+            stage="global_daily_ranking",
+            note=f"top_today={ranking_meta.get('global_top_count')}; rows={len(ranked_decisions)}",
+        )])
+    except Exception as exc:
+        all_ok = False
+        ranking_meta = {
+            "status": "failed",
+            "started_at": ranking_started,
+            "finished_at": now_iso(),
+            "duration_ms": int((monotonic() - ranking_monotonic) * 1000),
+            "error_type": type(exc).__name__,
+            "error": str(exc),
+            "traceback_tail": traceback.format_exc()[-4000:],
+            "outputs": {"error": str(ranking_dir / "error.json")},
+        }
+        write_json(ranking_dir / "error.json", ranking_meta)
+        append_progress(out_dir, [progress_event(
+            status="global_ranking_failed",
+            stage="global_daily_ranking",
+            note=f"{type(exc).__name__}: {str(exc)[:240]}",
+        )])
+        engine_meta = {
+            "mode": "ar020d_stage1_global_rank_stage2",
+            "batch_size": batch_size,
+            "batch_timeout_seconds": per_batch_timeout,
+            "stage1_batches": stage1_meta,
+            "global_ranking": ranking_meta,
+            "completed_batch_count": 0,
+            "failed_batch_count": 1,
+            "batches": stage1_meta,
+        }
+        write_json(out_dir / "skill_replay_batches.json", engine_meta)
+        return [], engine_meta, "codex", False
+
+    all_rows: list[dict[str, str]] = []
+    final_batch_meta: list[dict[str, Any]] = []
+    for batch_index, start_index, batch in batch_slices(all_rows_for_skill, batch_size):
+        batch_id = batch_id_for(batch_index)
+        directory = batch_path(out_dir, batch_id)
+        decisions = ranked_decisions[start_index:start_index + len(batch)]
+        if getattr(args, "resume", False):
+            completed_rows = completed_batch_rows(out_dir, batch_id)
+            if completed_rows and completed_rows_match_rank_lock(completed_rows, decisions):
+                all_rows.extend(completed_rows)
+                meta = json.loads(batch_meta_path(out_dir, batch_id).read_text(encoding="utf-8"))
+                final_batch_meta.append({**meta, "resume_status": "skipped_completed_stage2", "resume_checked_at": now_iso()})
+                append_progress(out_dir, batch_progress_events(
+                    batch,
+                    status="stage2_skip_completed",
+                    stage="field_mapping",
+                    note="resume skipped completed Stage 2 rows",
+                    batch_index=batch_index,
+                    batch_id=batch_id,
+                    start_candidate_index=start_index,
+                ))
+                continue
+            if completed_rows:
+                append_progress(out_dir, batch_progress_events(
+                    batch,
+                    status="stage2_rerun_rank_lock_changed",
+                    stage="field_mapping",
+                    note="resume found completed rows but global rank lock changed; rerunning Stage 2",
+                    batch_index=batch_index,
+                    batch_id=batch_id,
+                    start_candidate_index=start_index,
+                ))
+        started_at = now_iso()
+        started_monotonic = monotonic()
+        append_progress(out_dir, batch_progress_events(
+            batch,
+            status="stage2_start",
+            stage="field_mapping",
+            note=f"engine=codex; timeout={per_batch_timeout}s; rows={len(batch)}",
+            batch_index=batch_index,
+            batch_id=batch_id,
+            start_candidate_index=start_index,
+        ))
+        try:
+            rows, meta = editorial_skill_runner.run_codex_stage2(
+                batch,
+                decisions,
+                args.codex_model,
+                per_batch_timeout,
+                artifact_dir=directory,
+            )
+            meta = final_engine_meta({**meta, "global_ranking_meta": ranking_meta}, rows)
+            duration_ms = int((monotonic() - started_monotonic) * 1000)
+            write_csv(batch_output_path(out_dir, batch_id), rows)
+            payload = {
+                "batch_id": batch_id,
+                "batch_index": batch_index,
+                "status": "success",
+                "started_at": started_at,
+                "finished_at": now_iso(),
+                "duration_ms": duration_ms,
+                "row_count": len(rows),
+                "input_count": len(batch),
+                "engine": "codex",
+                "engine_meta": meta,
+                "timeout_seconds": per_batch_timeout,
+                "outputs": {
+                    "input": str(directory / "input.csv"),
+                    "stage1_decisions": str(stage1_decisions_path(out_dir, batch_id)),
+                    "skill_rows": str(batch_output_path(out_dir, batch_id)),
+                    "meta": str(batch_meta_path(out_dir, batch_id)),
+                },
+            }
+            write_batch_meta(out_dir, batch_id, payload)
+            final_batch_meta.append(payload)
+            all_rows.extend(rows)
+            append_progress(out_dir, batch_progress_events(
+                batch,
+                status="stage2_success",
+                stage="field_mapping",
+                note=f"rows={len(rows)}; duration_ms={duration_ms}",
+                batch_index=batch_index,
+                batch_id=batch_id,
+                start_candidate_index=start_index,
+            ))
+        except Exception as exc:
+            all_ok = False
+            duration_ms = int((monotonic() - started_monotonic) * 1000)
+            payload = {
+                "batch_id": batch_id,
+                "batch_index": batch_index,
+                "status": "failed",
+                "started_at": started_at,
+                "finished_at": now_iso(),
+                "duration_ms": duration_ms,
+                "input_count": len(batch),
+                "engine": "codex",
+                "timeout_seconds": per_batch_timeout,
+                "error_type": type(exc).__name__,
+                "error": str(exc),
+                "traceback_tail": traceback.format_exc()[-4000:],
+                "outputs": {
+                    "input": str(directory / "input.csv"),
+                    "meta": str(batch_meta_path(out_dir, batch_id)),
+                    "error": str(directory / "stage2_error.json"),
+                },
+            }
+            write_batch_meta(out_dir, batch_id, payload)
+            write_json(directory / "stage2_error.json", payload)
+            final_batch_meta.append(payload)
+            append_progress(out_dir, batch_progress_events(
+                batch,
+                status="stage2_failed",
+                stage="field_mapping",
+                note=f"{type(exc).__name__}: {str(exc)[:240]}",
+                batch_index=batch_index,
+                batch_id=batch_id,
+                start_candidate_index=start_index,
+            ))
+    engine_meta = {
+        "mode": "ar020d_stage1_global_rank_stage2",
+        "batch_size": batch_size,
+        "batch_timeout_seconds": per_batch_timeout,
+        "stage1_batches": stage1_meta,
+        "global_ranking": ranking_meta,
+        "batch_count": len(final_batch_meta),
+        "completed_batch_count": sum(1 for meta in final_batch_meta if meta.get("status") == "success"),
+        "failed_batch_count": sum(1 for meta in final_batch_meta if meta.get("status") == "failed"),
+        "batches": final_batch_meta,
+    }
+    write_json(out_dir / "skill_replay_batches.json", engine_meta)
+    return all_rows, engine_meta, "codex", all_ok
+
+
 def load_completed_batch_outputs(out_dir: Path) -> tuple[list[dict[str, str]], dict[str, Any]]:
     batch_root = out_dir / "batches"
     rows: list[dict[str, str]] = []
@@ -667,6 +1038,41 @@ def title_body_check_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "field_contract_issues": row.get("field_contract_issues", ""),
         })
     return out
+
+
+def decision_rank_final_trace_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    trace: list[dict[str, Any]] = []
+    for row in rows:
+        decision: dict[str, Any] = {}
+        try:
+            decision = json.loads(str(row.get("editorial_decision_json") or "{}"))
+        except json.JSONDecodeError:
+            decision = {}
+        trace.append({
+            "index": decision.get("index", ""),
+            "原始来源标题": row.get("原始来源标题") or row.get("来源内容", ""),
+            "Stage1_decision": decision.get("decision", ""),
+            "Stage1_recommendation_status": decision.get("recommendation_status", ""),
+            "Stage1_title": decision.get("selected_visible_title", ""),
+            "Stage1_angle": decision.get("natural_austin_angle", ""),
+            "Stage1_rationale": decision.get("title_rationale", ""),
+            "global_daily_level": decision.get("locked_daily_level", ""),
+            "global_should_produce": decision.get("locked_should_produce", ""),
+            "global_rank_position": decision.get("locked_global_rank_position", ""),
+            "global_tradeoff_reason": decision.get("locked_global_tradeoff_reason", ""),
+            "final_今日建议级别": row.get("今日建议级别", ""),
+            "final_推荐动作": row.get("推荐动作", ""),
+            "final_是否建议进入制作": row.get("是否建议进入制作", ""),
+            "final_选题命题": row.get("选题命题", ""),
+            "final_主编判断摘要": row.get("主编判断摘要", ""),
+            "stage2_invariant_status": row.get("stage2_invariant_status", ""),
+            "stage2_invariant_issues": row.get("stage2_invariant_issues", ""),
+            "guard_blocked": row.get("guard_blocked", ""),
+            "guard_blocked_reason": row.get("guard_blocked_reason", ""),
+            "field_contract_status": row.get("field_contract_status", ""),
+            "title_quality_status": row.get("title_quality_status", ""),
+        })
+    return trace
 
 
 def near_miss_rows(reverse_rows: list[Any]) -> list[dict[str, Any]]:
@@ -821,6 +1227,9 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         f"- fallback_row_count: {summary.get('fallback_row_count')}",
         f"- contract_failure_count: {summary.get('contract_failure_count')}",
         f"- title_quality_failure_count: {summary.get('title_quality_failure_count')}",
+        f"- global_top_today_count: {summary.get('global_top_today_count')}",
+        f"- stage2_selection_drift_count: {summary.get('stage2_selection_drift_count')}",
+        f"- guard_blocked_count: {summary.get('guard_blocked_count')}",
         f"- skill_rows: {summary.get('skill_rows')}",
         f"- actionable_count: {summary.get('actionable_count')}",
         f"- observe_count: {summary.get('observe_count')}",
@@ -835,6 +1244,12 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         f"- persona_style_reference_only: {provenance.get('persona_style_reference_only')}",
         f"- persona_style_role: {provenance.get('persona_style_role')}",
         f"- case_anchor_policy: {provenance.get('case_anchor_policy')}",
+        "",
+        "## Global Ranking",
+        f"- status: {(engine_meta.get('global_ranking') or {}).get('status')}",
+        f"- global_top_count: {(engine_meta.get('global_ranking') or {}).get('global_top_count')}",
+        f"- artifacts: {(engine_meta.get('global_ranking') or {}).get('outputs')}",
+        f"- trace table: {out_dir / 'ar020d_decision_rank_final_trace.csv'}",
         "",
         "## Stage Artifact Evidence",
     ]
@@ -885,6 +1300,7 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         f"- title check: {out_dir / 'title_body_check.csv'}",
         f"- user sample summary: {out_dir / 'ar020c_user_sample_summary.md'}",
         f"- provenance manifest: {out_dir / 'ar020d_provenance_manifest.json'}",
+        f"- decision rank final trace: {out_dir / 'ar020d_decision_rank_final_trace.csv'}",
     ])
     (out_dir / "AR020D_DEV_SELF_ACCEPTANCE.md").write_text("\n".join(lines), encoding="utf-8")
 
@@ -925,6 +1341,8 @@ def aggregate_replay_outputs(
         write_csv(out_dir / "near_miss_high_fit_unselected.csv", near_misses)
         title_rows = title_body_check_rows(skill_rows)
         write_csv(out_dir / "title_body_check.csv", title_rows)
+        trace_rows = decision_rank_final_trace_rows(skill_rows)
+        write_csv(out_dir / "ar020d_decision_rank_final_trace.csv", trace_rows)
 
         samples = sample_rows(skill_rows)
         write_csv(out_dir / "skill_sample_table.csv", samples)
@@ -935,12 +1353,22 @@ def aggregate_replay_outputs(
         fallback_row_count = len(classified["fallback_rows"])
         title_quality_failure_count = sum(1 for row in title_rows if row.get("title_quality_status") == "fail")
         title_quality_warning_count = sum(1 for row in title_rows if row.get("title_quality_status") == "warn")
+        global_top_today_count = sum(1 for row in skill_rows if row.get("今日建议级别") == "今日最值得做")
+        stage2_selection_drift_count = sum(1 for row in skill_rows if row.get("stage2_invariant_status") == "fail")
+        guard_blocked_count = sum(1 for row in skill_rows if str(row.get("guard_blocked") or "").lower() == "true")
         replay_completed_ok = completed and failed_batch_count == 0
         summary = {
             "ok": replay_completed_ok,
             "completed": replay_completed_ok,
             "stage": "aggregate_success" if replay_completed_ok else "partial_batch_replay",
-            "quality_gate_ok": contract_failure_count == 0 and fallback_row_count == 0 and title_quality_failure_count == 0,
+            "quality_gate_ok": (
+                contract_failure_count == 0
+                and fallback_row_count == 0
+                and title_quality_failure_count == 0
+                and global_top_today_count <= 3
+                and stage2_selection_drift_count == 0
+                and guard_blocked_count == 0
+            ),
             "engine": engine,
             "engine_meta": engine_meta,
             "provenance_manifest": provenance,
@@ -961,6 +1389,9 @@ def aggregate_replay_outputs(
             "near_miss_count": len(near_misses),
             "title_quality_failure_count": title_quality_failure_count,
             "title_quality_warning_count": title_quality_warning_count,
+            "global_top_today_count": global_top_today_count,
+            "stage2_selection_drift_count": stage2_selection_drift_count,
+            "guard_blocked_count": guard_blocked_count,
             "writes_feishu": False,
             "outputs": {
                 "candidate_universe": str(out_dir / "candidate_universe.csv"),
@@ -979,6 +1410,7 @@ def aggregate_replay_outputs(
                 "user_sample_summary": str(out_dir / "ar020c_user_sample_summary.md"),
                 "ar020d_self_acceptance": str(out_dir / "AR020D_DEV_SELF_ACCEPTANCE.md"),
                 "ar020d_provenance_manifest": str(out_dir / "ar020d_provenance_manifest.json"),
+                "ar020d_decision_rank_final_trace": str(out_dir / "ar020d_decision_rank_final_trace.csv"),
             },
         }
         write_markdown_report(out_dir, summary, samples)

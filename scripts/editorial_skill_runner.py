@@ -34,7 +34,10 @@ REPO_SKILL_DIR = ROOT / "skills" / "ai-account-editorial-director"
 GLOBAL_SKILL_DIR = Path.home() / ".codex" / "skills" / "ai-account-editorial-director"
 SKILL_DIR = Path(os.getenv("EDITORIAL_SKILL_DIR", str(GLOBAL_SKILL_DIR))).expanduser()
 SKILL_MD = SKILL_DIR / "SKILL.md"
-RUNNER_VERSION = "ar020d_two_stage_persona_style_v1"
+RUNNER_VERSION = "ar020d_stage1_global_rank_stage2_v1"
+CANONICAL_DECISIONS = {"select", "observe", "reject"}
+RECOMMENDATION_STATUSES = {"生成脚本包", "补证据", "存素材", "观察", "不做"}
+GLOBAL_DAILY_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
 
 
 def skill_reference_dirs() -> list[Path]:
@@ -58,8 +61,19 @@ EXTRA_FIELDS = [
     "editorial_decision_json",
     "editorial_decision_id",
     "editorial_decision_hash",
+    "global_rank_id",
+    "global_rank_hash",
+    "locked_decision",
+    "locked_recommendation_status",
+    "locked_daily_level",
+    "locked_should_produce",
+    "locked_global_rank_position",
+    "locked_global_tradeoff_reason",
     "stage2_invariant_status",
     "stage2_invariant_issues",
+    "guard_blocked",
+    "guard_blocked_reason",
+    "global_ranking_json",
     "persona_style_reference_state",
     "persona_style_hash",
     "主编筛选",
@@ -1578,14 +1592,74 @@ def stage2_candidate_payload(row: dict[str, str], index: int, decision: dict[str
         "locked_editorial_decision": decision,
         "stage2_rule": (
             "只能把 locked_editorial_decision 映射成运营字段；不得替换 selected_visible_title、"
-            "natural_austin_angle、title_rationale、public_decision_summary。"
+            "natural_austin_angle、title_rationale、public_decision_summary、decision、"
+            "recommendation_status、locked_daily_level 或 locked_should_produce。"
         ),
     }
+
+
+def canonical_decision(value: Any) -> str:
+    cleaned = str(value or "").strip().lower()
+    if cleaned in CANONICAL_DECISIONS:
+        return cleaned
+    if any(token in cleaned for token in ["reject", "不做", "不建议", "放弃", "排除"]):
+        return "reject"
+    if any(token in cleaned for token in ["select", "选择", "生成脚本包", "今日最值得", "值得做", "推进"]):
+        return "select"
+    if any(token in cleaned for token in ["observe", "观察", "暂存", "补证据", "存素材"]):
+        return "observe"
+    return "observe"
+
+
+def canonical_recommendation_status(value: Any, decision: str) -> str:
+    cleaned = str(value or "").strip()
+    lowered = cleaned.lower()
+    if decision == "reject":
+        return "不做"
+    if any(token in cleaned for token in ["生成脚本包", "做脚本", "进制作", "制作"]) or "script" in lowered:
+        return "生成脚本包" if decision == "select" else "补证据"
+    if any(token in cleaned for token in ["补证据", "补素材", "补充证据"]):
+        return "补证据"
+    if any(token in cleaned for token in ["存素材", "素材"]):
+        return "存素材"
+    if any(token in cleaned for token in ["不做", "放弃", "不建议"]):
+        return "不做" if decision == "reject" else "观察"
+    if any(token in cleaned for token in ["观察", "暂存", "observe"]):
+        return "观察"
+    return "生成脚本包" if decision == "select" else "观察"
+
+
+def default_global_level(decision: str, recommendation_status: str, *, top_today: bool = False) -> str:
+    if decision == "select":
+        return "今日最值得做" if top_today else "可选候选"
+    if decision == "reject" or recommendation_status == "不做":
+        return "不建议制作"
+    return "暂存观察"
+
+
+def locked_should_produce(decision: str, recommendation_status: str, daily_level: str) -> str:
+    if decision == "select" and recommendation_status == "生成脚本包" and daily_level == "今日最值得做":
+        return "是"
+    return "否"
+
+
+def global_rank_hash(decision: dict[str, Any]) -> str:
+    stable = {
+        "editorial_decision_hash": decision.get("editorial_decision_hash", ""),
+        "locked_decision": decision.get("locked_decision", ""),
+        "locked_recommendation_status": decision.get("locked_recommendation_status", ""),
+        "locked_daily_level": decision.get("locked_daily_level", ""),
+        "locked_should_produce": decision.get("locked_should_produce", ""),
+        "locked_global_rank_position": decision.get("locked_global_rank_position", ""),
+        "locked_global_tradeoff_reason": decision.get("locked_global_tradeoff_reason", ""),
+    }
+    return sha256_text(json.dumps(stable, ensure_ascii=False, sort_keys=True))
 
 
 def editorial_decision_hash(decision: dict[str, Any]) -> str:
     stable = {
         "decision": decision.get("decision", ""),
+        "recommendation_status": decision.get("recommendation_status", ""),
         "natural_austin_angle": decision.get("natural_austin_angle", ""),
         "selected_visible_title": decision.get("selected_visible_title", ""),
         "title_rationale": decision.get("title_rationale", ""),
@@ -1601,6 +1675,11 @@ def editorial_decision_id(index: int, decision_hash: str) -> str:
 def normalize_decision(raw: dict[str, Any], index: int, source: dict[str, Any]) -> dict[str, Any]:
     decision = {field: str(raw.get(field, "") or "") for field in EDITORIAL_DECISION_FIELDS}
     decision["index"] = index
+    decision["decision"] = canonical_decision(decision.get("decision"))
+    decision["recommendation_status"] = canonical_recommendation_status(
+        decision.get("recommendation_status"),
+        decision["decision"],
+    )
     if not decision.get("source_title_hook"):
         decision["source_title_hook"] = source.get("title_hook_reference") or source.get("source_facts", {}).get("source_title_hook", "")
     if not decision.get("selected_visible_title"):
@@ -1614,6 +1693,18 @@ def normalize_decision(raw: dict[str, Any], index: int, source: dict[str, Any]) 
     decision_hash = editorial_decision_hash(decision)
     decision["editorial_decision_hash"] = decision_hash
     decision["editorial_decision_id"] = editorial_decision_id(index, decision_hash)
+    decision["locked_decision"] = decision["decision"]
+    decision["locked_recommendation_status"] = decision["recommendation_status"]
+    decision["locked_daily_level"] = default_global_level(decision["decision"], decision["recommendation_status"])
+    decision["locked_should_produce"] = locked_should_produce(
+        decision["decision"],
+        decision["recommendation_status"],
+        decision["locked_daily_level"],
+    )
+    decision["locked_global_rank_position"] = ""
+    decision["locked_global_tradeoff_reason"] = ""
+    decision["global_rank_hash"] = global_rank_hash(decision)
+    decision["global_rank_id"] = f"ar020d_rank_{index:03d}_{decision['global_rank_hash'][:12]}"
     decision["persona_style_role"] = "style_reference_only_not_source_evidence"
     return decision
 
@@ -1719,6 +1810,43 @@ def editorial_decision_output_schema() -> dict[str, Any]:
     }
 
 
+def global_ranking_output_schema() -> dict[str, Any]:
+    return {
+        "type": "object",
+        "additionalProperties": False,
+        "properties": {
+            "engine": {"type": "string"},
+            "ranking_rows": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "additionalProperties": False,
+                    "properties": {
+                        "index": {"type": "integer", "minimum": 0},
+                        "editorial_decision_id": {"type": "string"},
+                        "editorial_decision_hash": {"type": "string"},
+                        "global_daily_level": {"type": "string"},
+                        "final_recommendation_status": {"type": "string"},
+                        "global_rank_position": {"type": "string"},
+                        "global_tradeoff_reason": {"type": "string"},
+                    },
+                    "required": [
+                        "index",
+                        "editorial_decision_id",
+                        "editorial_decision_hash",
+                        "global_daily_level",
+                        "final_recommendation_status",
+                        "global_rank_position",
+                        "global_tradeoff_reason",
+                    ],
+                },
+            },
+            "global_ranking_notes": {"type": "string"},
+        },
+        "required": ["engine", "ranking_rows", "global_ranking_notes"],
+    }
+
+
 def field_mapping_output_schema() -> dict[str, Any]:
     row_properties: dict[str, Any] = {
         "index": {"type": "integer", "minimum": 0},
@@ -1789,6 +1917,7 @@ Stage 1 输出要求：
 - `title_directions` 给 2-3 个标题方向，用 ` / ` 分隔；不要复制原始标题。
 - `selected_visible_title` 是最终用户可见命题/标题面。观察候选也要像公开判断，不要像内部 TODO。
 - `selected_visible_title` 不允许用“能不能 / 会不会 / 我想看的是 / 我会先把它放进 / 要放进...才算数”这类内部任务壳；观察候选也要写成公开判断或证据缺口。
+- `selected_visible_title` 也不允许写成“先把/先让/先从/先讲清/讲清楚/先看/先做”这类给团队派任务的句子。要改成普通观众能懂的公开判断：来源钩子 + Austin 业务矛盾 / 公开证据缺口。
 - `title_rationale` 解释来源 hook、个人场景、取舍和标题钩子来自哪里。
 - `source_title_hook` 从原始标题里提取市场表达资产。
 - `source_hook_usage` 说明借了什么、舍弃了什么。
@@ -1799,6 +1928,7 @@ Stage 1 输出要求：
 硬禁止：
 - 不输出 `我要做的实验`、`验证方式`、`可沉淀资产`、`关联母场景`、`可调用案例`、`案例支撑`。
 - 不写“要放进/我更想把它改成/我会先把它放进/我想看的是/能不能/会不会”这类内部任务壳。
+- 不写“先把购买理由讲清楚/先把某能力讲清楚/先看某件事”这类内部动作标题；观察也要像公开判断，而不是给自己派待办。
 - 不把来源标题照抄成最终标题。
 - 不暴露任何 case/persona 引用。
 
@@ -1831,6 +1961,70 @@ Stage 1 输出要求：
 """
 
 
+def build_global_ranking_prompt(rows: list[dict[str, str]], decisions: list[dict[str, Any]]) -> str:
+    skill_text = strip_yaml_frontmatter(load_text(SKILL_MD))
+    persona_brief = load_text(SKILL_PERSONA_BRIEF)
+    persona_style = load_text(SKILL_REFERENCE)
+    ranking_rows: list[dict[str, Any]] = []
+    for row, decision in zip(rows, decisions):
+        ranking_rows.append({
+            "index": decision.get("index"),
+            "content_fingerprint": row.get("内容指纹") or "",
+            "source_facts": safe_source_facts(row),
+            "stage1_decision": {
+                key: decision.get(key, "")
+                for key in [
+                    "editorial_decision_id",
+                    "editorial_decision_hash",
+                    "decision",
+                    "recommendation_status",
+                    "why_i_would_choose",
+                    "why_i_would_not_choose",
+                    "natural_austin_angle",
+                    "selected_visible_title",
+                    "title_rationale",
+                    "public_decision_summary",
+                    "near_miss_reason",
+                ]
+            },
+        })
+    return f"""你是 ai-account-editorial-director 的 AR-020D Global Daily Ranking。
+
+你只做一件事：在所有 Stage 1 `decision=select` 的候选中做当天全局排序。你不能改 Stage 1 的标题、角度、选择理由或推荐动作。
+
+输出规则：
+- 必须为每个输入 index 输出一行 ranking_rows。
+- Stage 1 `decision=select` 的候选中，最多 3 条可以是 `global_daily_level=今日最值得做`。
+- 其余 `decision=select` 候选应为 `global_daily_level=可选候选`，并写清为什么今天不进前三。
+- `decision=observe` 固定为 `暂存观察`；`decision=reject` 固定为 `不建议制作`。
+- `final_recommendation_status` 是全日排名后的最终操作锁：前三可保留 `生成脚本包`；未进前三的 select 不能继续伪装成立刻生成，通常锁成 `补证据` / `存素材` / `观察`，并在 tradeoff reason 里说明为什么。
+- `global_rank_position` 对 `今日最值得做` 写 1/2/3；其他可为空或写观察序号，但不能伪装成前三。
+- `global_tradeoff_reason` 必须是公开可读的取舍理由，不要写模型打分或内部排序公式。
+- 这一步是全日主编判断，不是关键词排序；要比较来源证据、Austin 适配度、今天是否值得用户打开、是否已经足够可执行。
+
+禁止：
+- 不得把 `可选候选` 的 final_recommendation_status 写成 `生成脚本包`。
+- 不得新增标题、实验、验证方式、资产字段。
+- 不得引用 persona/case 作为证据。
+
+<editorial_rule_text>
+{skill_text}
+</editorial_rule_text>
+
+<persona-brief.md>
+{persona_brief}
+</persona-brief.md>
+
+<persona-and-cases-style-reference embedded="true" role="style_reference_only_not_source_evidence" sha256="{file_sha256(SKILL_REFERENCE)}">
+{persona_style}
+</persona-and-cases-style-reference>
+
+<stage1_decisions_for_global_ranking_json>
+{json.dumps(ranking_rows, ensure_ascii=False, indent=2)}
+</stage1_decisions_for_global_ranking_json>
+"""
+
+
 def build_field_mapping_prompt(rows: list[dict[str, str]], decisions: list[dict[str, Any]]) -> str:
     skill_text = strip_yaml_frontmatter(load_text(SKILL_MD))
     selection_learning = load_selection_learning_context()
@@ -1841,10 +2035,14 @@ def build_field_mapping_prompt(rows: list[dict[str, str]], decisions: list[dict[
 
 硬规则：
 - 不得创建、替换、改写 Stage 1 的 `selected_visible_title`、`natural_austin_angle`、`title_rationale`、`public_decision_summary`。
+- 不得创建、替换、改写 locked `decision`、`recommendation_status`、`locked_daily_level`、`locked_should_produce` 或 global rank。
 - `选题命题` 必须等于 locked `selected_visible_title`。
 - 如果 `title_permission=可发布标题`，`可发布标题` 也必须等于 locked `selected_visible_title`；否则 `可发布标题` 和 `标题备选` 留空。
 - `主编判断摘要` 必须来自 locked `public_decision_summary`，可压缩但不能换角度。
 - `标题思路` 必须来自 locked `title_rationale`，可压缩但不能换角度。
+- `今日建议级别` 和 `候选状态` 必须等于 locked `locked_daily_level`。
+- `推荐动作` 必须等于 locked `locked_recommendation_status`。
+- `是否建议进入制作` 必须等于 locked `locked_should_produce`。
 - `editorial_thinking_json` 必须原样保存 locked decision 的 JSON。
 - `field_mapping_json` 只说明映射关系，不能发明新标题、新角度或新选择理由。
 - 禁止输出 case anchor、案例引用、案例证明。persona/style 只影响语气和判断习惯，不能成为证据。
@@ -1931,41 +2129,15 @@ def run_codex_prompt(
     return payload
 
 
-def stage2_invariant_issues(decision: dict[str, Any], row: dict[str, str]) -> list[str]:
-    issues: list[str] = []
-    expected_id = str(decision.get("editorial_decision_id", ""))
-    expected_hash = str(decision.get("editorial_decision_hash", ""))
-    expected_title = normalize_space(decision.get("selected_visible_title", ""))
-    expected_angle = normalize_space(decision.get("natural_austin_angle", ""))
-    expected_rationale = normalize_space(decision.get("title_rationale", ""))
-    expected_summary = normalize_space(decision.get("public_decision_summary", ""))
-
-    if normalize_space(row.get("editorial_decision_id")) != expected_id:
-        issues.append("editorial_decision_id mismatch")
-    if normalize_space(row.get("editorial_decision_hash")) != expected_hash:
-        issues.append("editorial_decision_hash mismatch")
-    if normalize_space(row.get("locked_selected_visible_title")) != expected_title:
-        issues.append("locked_selected_visible_title mismatch")
-    if normalize_space(row.get("选题命题")) != expected_title:
-        issues.append("选题命题 diverged from Stage 1 selected_visible_title")
-    if normalize_space(row.get("locked_natural_austin_angle")) != expected_angle:
-        issues.append("locked_natural_austin_angle mismatch")
-    if normalize_space(row.get("locked_title_rationale")) != expected_rationale:
-        issues.append("locked_title_rationale mismatch")
-    if normalize_space(row.get("locked_public_decision_summary")) != expected_summary:
-        issues.append("locked_public_decision_summary mismatch")
-    if normalize_space(row.get("title_permission")) == "可发布标题" and normalize_space(row.get("可发布标题")) != expected_title:
-        issues.append("可发布标题 diverged from Stage 1 selected_visible_title")
-    return issues
-
-
-def run_codex_skill(
+def run_codex_stage1(
     rows: list[dict[str, str]],
     model: str,
     timeout: int,
     artifact_dir: Path | None = None,
-) -> tuple[list[dict[str, str]], dict[str, Any]]:
-    stage1_inputs = [stage1_candidate_payload(row, idx) for idx, row in enumerate(rows)]
+    *,
+    start_index: int = 0,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    stage1_inputs = [stage1_candidate_payload(row, start_index + idx) for idx, row in enumerate(rows)]
     if artifact_dir:
         artifact_dir.mkdir(parents=True, exist_ok=True)
         (artifact_dir / "stage1_input_sanitized.json").write_text(
@@ -1992,16 +2164,241 @@ def run_codex_skill(
             idx = int(item.get("index"))
         except (TypeError, ValueError):
             continue
-        if 0 <= idx < len(stage1_inputs):
-            raw_decisions[idx] = normalize_decision(item, idx, stage1_inputs[idx])
+        if start_index <= idx < start_index + len(stage1_inputs):
+            source = stage1_inputs[idx - start_index]
+            raw_decisions[idx] = normalize_decision(item, idx, source)
+        elif 0 <= idx < len(stage1_inputs):
+            global_idx = start_index + idx
+            source = stage1_inputs[idx]
+            raw_decisions[global_idx] = normalize_decision(item, global_idx, source)
     decisions: list[dict[str, Any]] = []
-    for idx in range(len(rows)):
+    for offset in range(len(rows)):
+        idx = start_index + offset
         if idx not in raw_decisions:
             raise RuntimeError(f"Codex Stage 1 output missing row index {idx}")
         decisions.append(raw_decisions[idx])
+    return decisions, {
+        "stage1_rows": len(decisions),
+        "stage1_batch_notes": stage1_payload.get("batch_notes", ""),
+        "model": model or "codex-default",
+        "runner_version": RUNNER_VERSION,
+        "provenance_manifest": runtime_provenance(fallback_state="false"),
+    }
 
-    stage2_inputs = [stage2_candidate_payload(row, idx, decisions[idx]) for idx, row in enumerate(rows)]
+
+def normalize_global_rank_row(item: dict[str, Any], decision: dict[str, Any]) -> dict[str, str]:
+    level = str(item.get("global_daily_level") or "").strip()
+    locked_decision = str(decision.get("locked_decision") or decision.get("decision") or "")
+    stage1_recommendation = str(decision.get("locked_recommendation_status") or decision.get("recommendation_status") or "")
+    if locked_decision != "select":
+        level = default_global_level(locked_decision, stage1_recommendation)
+    elif level not in {"今日最值得做", "可选候选"}:
+        level = "可选候选"
+    requested_recommendation = canonical_recommendation_status(
+        item.get("final_recommendation_status") or "",
+        locked_decision,
+    ) if item.get("final_recommendation_status") else ""
+    if locked_decision == "reject":
+        recommendation = "不做"
+    elif locked_decision != "select":
+        recommendation = requested_recommendation or stage1_recommendation
+        if recommendation == "生成脚本包":
+            recommendation = "观察"
+    elif level == "今日最值得做":
+        recommendation = stage1_recommendation if stage1_recommendation == "生成脚本包" else (requested_recommendation or stage1_recommendation)
+    else:
+        recommendation = requested_recommendation or ("补证据" if stage1_recommendation == "生成脚本包" else stage1_recommendation)
+        if recommendation == "生成脚本包":
+            recommendation = "补证据"
+    should_produce = locked_should_produce(locked_decision, recommendation, level)
+    position = str(item.get("global_rank_position") or "").strip()
+    reason = str(item.get("global_tradeoff_reason") or "").strip()
+    return {
+        "index": str(decision.get("index", "")),
+        "editorial_decision_id": str(decision.get("editorial_decision_id", "")),
+        "editorial_decision_hash": str(decision.get("editorial_decision_hash", "")),
+        "locked_decision": locked_decision,
+        "locked_recommendation_status": recommendation,
+        "locked_daily_level": level,
+        "locked_should_produce": should_produce,
+        "locked_global_rank_position": position if level == "今日最值得做" else "",
+        "locked_global_tradeoff_reason": reason,
+    }
+
+
+def apply_global_ranking(decisions: list[dict[str, Any]], ranking_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    by_id = {str(row.get("editorial_decision_id") or ""): row for row in ranking_rows}
+    by_index = {}
+    for row in ranking_rows:
+        try:
+            by_index[int(row.get("index"))] = row
+        except (TypeError, ValueError):
+            continue
+    ranked: list[dict[str, Any]] = []
+    top_count = 0
+    for decision in decisions:
+        item = by_id.get(str(decision.get("editorial_decision_id") or "")) or by_index.get(int(decision.get("index") or 0)) or {}
+        lock = normalize_global_rank_row(item, decision)
+        next_decision = {**decision, **lock}
+        rank_hash = global_rank_hash(next_decision)
+        next_decision["global_rank_hash"] = rank_hash
+        next_decision["global_rank_id"] = f"ar020d_rank_{int(next_decision.get('index') or 0):03d}_{rank_hash[:12]}"
+        if next_decision.get("locked_daily_level") == "今日最值得做":
+            top_count += 1
+        ranked.append(next_decision)
+    if top_count > 3:
+        raise RuntimeError(f"Global ranking selected {top_count} 今日最值得做 rows; maximum is 3")
+    return ranked
+
+
+def run_codex_global_ranking(
+    rows: list[dict[str, str]],
+    decisions: list[dict[str, Any]],
+    model: str,
+    timeout: int,
+    artifact_dir: Path | None = None,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
     if artifact_dir:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
+        (artifact_dir / "global_ranking_input.json").write_text(
+            json.dumps({
+                "runner_version": RUNNER_VERSION,
+                "stage": "global_daily_ranking",
+                "rows": [
+                    {
+                        "index": decision.get("index"),
+                        "source_facts": safe_source_facts(row),
+                        "editorial_decision": decision,
+                    }
+                    for row, decision in zip(rows, decisions)
+                ],
+            }, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    ranking_payload = run_codex_prompt(
+        schema=global_ranking_output_schema(),
+        prompt=build_global_ranking_prompt(rows, decisions),
+        model=model,
+        timeout=timeout,
+        artifact_dir=artifact_dir,
+        artifact_prefix="global_ranking",
+    )
+    ranked = apply_global_ranking(decisions, ranking_payload.get("ranking_rows", []))
+    if artifact_dir:
+        (artifact_dir / "global_ranked_decisions.json").write_text(
+            json.dumps(ranked, ensure_ascii=False, indent=2),
+            encoding="utf-8",
+        )
+    return ranked, {
+        "global_ranking_rows": len(ranked),
+        "global_top_count": sum(1 for decision in ranked if decision.get("locked_daily_level") == "今日最值得做"),
+        "global_ranking_notes": ranking_payload.get("global_ranking_notes", ""),
+        "model": model or "codex-default",
+        "runner_version": RUNNER_VERSION,
+    }
+
+
+def stage2_invariant_issues(decision: dict[str, Any], row: dict[str, str]) -> list[str]:
+    issues: list[str] = []
+    expected_id = str(decision.get("editorial_decision_id", ""))
+    expected_hash = str(decision.get("editorial_decision_hash", ""))
+    expected_title = normalize_space(decision.get("selected_visible_title", ""))
+    expected_angle = normalize_space(decision.get("natural_austin_angle", ""))
+    expected_rationale = normalize_space(decision.get("title_rationale", ""))
+    expected_summary = normalize_space(decision.get("public_decision_summary", ""))
+    expected_decision = normalize_space(decision.get("locked_decision") or decision.get("decision", ""))
+    expected_recommendation = normalize_space(decision.get("locked_recommendation_status") or decision.get("recommendation_status", ""))
+    expected_level = normalize_space(decision.get("locked_daily_level", ""))
+    expected_should = normalize_space(decision.get("locked_should_produce", ""))
+
+    if normalize_space(row.get("editorial_decision_id")) != expected_id:
+        issues.append("editorial_decision_id mismatch")
+    if normalize_space(row.get("editorial_decision_hash")) != expected_hash:
+        issues.append("editorial_decision_hash mismatch")
+    if normalize_space(row.get("locked_selected_visible_title")) != expected_title:
+        issues.append("locked_selected_visible_title mismatch")
+    if normalize_space(row.get("选题命题")) != expected_title:
+        issues.append("选题命题 diverged from Stage 1 selected_visible_title")
+    if normalize_space(row.get("locked_natural_austin_angle")) != expected_angle:
+        issues.append("locked_natural_austin_angle mismatch")
+    if normalize_space(row.get("locked_title_rationale")) != expected_rationale:
+        issues.append("locked_title_rationale mismatch")
+    if normalize_space(row.get("locked_public_decision_summary")) != expected_summary:
+        issues.append("locked_public_decision_summary mismatch")
+    if normalize_space(row.get("title_permission")) == "可发布标题" and normalize_space(row.get("可发布标题")) != expected_title:
+        issues.append("可发布标题 diverged from Stage 1 selected_visible_title")
+    if normalize_space(row.get("locked_decision")) != expected_decision:
+        issues.append("locked_decision mismatch")
+    if normalize_space(row.get("locked_recommendation_status")) != expected_recommendation:
+        issues.append("locked_recommendation_status mismatch")
+    if normalize_space(row.get("locked_daily_level")) != expected_level:
+        issues.append("locked_daily_level mismatch")
+    if normalize_space(row.get("locked_should_produce")) != expected_should:
+        issues.append("locked_should_produce mismatch")
+    if normalize_space(row.get("今日建议级别")) != expected_level:
+        issues.append("今日建议级别 diverged from global ranking")
+    if normalize_space(row.get("候选状态")) != expected_level:
+        issues.append("候选状态 diverged from global ranking")
+    if normalize_space(row.get("推荐动作")) != expected_recommendation:
+        issues.append("推荐动作 diverged from Stage 1 recommendation_status")
+    if normalize_space(row.get("是否建议进入制作")) != expected_should:
+        issues.append("是否建议进入制作 diverged from global ranking")
+    return issues
+
+
+def reapply_locked_stage2_fields(row: dict[str, Any], decision: dict[str, Any]) -> dict[str, Any]:
+    """Re-apply AR-020D locked selection/ranking fields after legacy normalization.
+
+    normalize_batch still protects older flows by adjusting recommendation and
+    level fields. AR-020D has a stricter contract: Stage 1 plus global ranking
+    own those fields, so legacy normalization may not silently rewrite them.
+    """
+    out = dict(row)
+    expected_title = str(decision.get("selected_visible_title", ""))
+    expected_summary = str(decision.get("public_decision_summary", ""))
+    expected_tradeoff = str(decision.get("locked_global_tradeoff_reason", ""))
+
+    out["locked_decision"] = str(decision.get("locked_decision") or decision.get("decision", ""))
+    out["locked_recommendation_status"] = str(
+        decision.get("locked_recommendation_status") or decision.get("recommendation_status", "")
+    )
+    out["locked_daily_level"] = str(decision.get("locked_daily_level", ""))
+    out["locked_should_produce"] = str(decision.get("locked_should_produce", ""))
+    out["locked_global_rank_position"] = str(decision.get("locked_global_rank_position", ""))
+    out["locked_global_tradeoff_reason"] = expected_tradeoff
+
+    out["今日建议级别"] = out["locked_daily_level"]
+    out["候选状态"] = out["locked_daily_level"]
+    out["推荐动作"] = out["locked_recommendation_status"]
+    out["是否建议进入制作"] = out["locked_should_produce"]
+    out["选题命题"] = expected_title
+    out["我的选题标题"] = expected_title
+    out["选题标题"] = expected_title
+
+    if normalize_space(out.get("title_permission")) == "可发布标题":
+        out["可发布标题"] = expected_title
+    elif normalize_space(out.get("locked_daily_level")) in NON_PUBLISH_LEVELS:
+        out["可发布标题"] = ""
+        out["标题备选"] = ""
+
+    if expected_summary:
+        summary = normalize_space(out.get("主编判断摘要") or expected_summary)
+        if expected_tradeoff and not any(marker in summary for marker in ["取舍", "但", "不过", "缺", "风险"]):
+            summary = f"{summary} 取舍：{expected_tradeoff}"
+        out["主编判断摘要"] = summary
+    return out
+
+
+def run_codex_stage2(
+    rows: list[dict[str, str]],
+    decisions: list[dict[str, Any]],
+    model: str,
+    timeout: int,
+    artifact_dir: Path | None = None,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    stage2_inputs = [stage2_candidate_payload(row, int(decisions[idx].get("index", idx)), decisions[idx]) for idx, row in enumerate(rows)]
+    if artifact_dir:
+        artifact_dir.mkdir(parents=True, exist_ok=True)
         (artifact_dir / "stage2_input_sanitized.json").write_text(
             json.dumps({
                 "runner_version": RUNNER_VERSION,
@@ -2042,10 +2439,36 @@ def run_codex_skill(
     for idx, row in enumerate(rows):
         out = dict(row)
         judgement = by_index.get(idx)
+        global_idx = int(decisions[idx].get("index", idx))
+        if not judgement and global_idx != idx:
+            judgement = by_index.get(global_idx)
         if not judgement:
-            raise RuntimeError(f"Codex Stage 2 output missing row index {idx}")
+            raise RuntimeError(f"Codex Stage 2 output missing row index {global_idx}")
         decision = decisions[idx]
         out.update(judgement)
+        for lock_field in [
+            "global_rank_id",
+            "global_rank_hash",
+            "locked_decision",
+            "locked_recommendation_status",
+            "locked_daily_level",
+            "locked_should_produce",
+            "locked_global_rank_position",
+            "locked_global_tradeoff_reason",
+        ]:
+            out[lock_field] = str(decision.get(lock_field, ""))
+        out["global_ranking_json"] = json.dumps({
+            "global_rank_id": decision.get("global_rank_id", ""),
+            "global_rank_hash": decision.get("global_rank_hash", ""),
+            "locked_daily_level": decision.get("locked_daily_level", ""),
+            "locked_should_produce": decision.get("locked_should_produce", ""),
+            "locked_global_rank_position": decision.get("locked_global_rank_position", ""),
+            "locked_global_tradeoff_reason": decision.get("locked_global_tradeoff_reason", ""),
+        }, ensure_ascii=False, sort_keys=True)
+        out["今日建议级别"] = str(decision.get("locked_daily_level", ""))
+        out["候选状态"] = str(decision.get("locked_daily_level", ""))
+        out["推荐动作"] = str(decision.get("locked_recommendation_status", ""))
+        out["是否建议进入制作"] = str(decision.get("locked_should_produce", ""))
         out["editorial_architecture"] = RUNNER_VERSION
         out["editorial_decision_json"] = json.dumps(decision, ensure_ascii=False, sort_keys=True)
         out["editorial_thinking_json"] = out.get("editorial_thinking_json") or out["editorial_decision_json"]
@@ -2071,6 +2494,14 @@ def run_codex_skill(
         out["not_editorial_quality"] = "false"
         enriched.append(out)
     normalized = normalize_batch(enriched)
+    decision_by_id = {str(decision.get("editorial_decision_id", "")): decision for decision in decisions}
+    normalized = [
+        reapply_locked_stage2_fields(row, decision_by_id[str(row.get("editorial_decision_id", ""))])
+        if str(row.get("editorial_decision_id", "")) in decision_by_id
+        else row
+        for row in normalized
+    ]
+    normalized = apply_final_stage2_invariants(normalized)
     provenance = runtime_provenance(fallback_state="false")
     if artifact_dir:
         (artifact_dir / "ar020d_provenance_manifest.json").write_text(
@@ -2081,13 +2512,54 @@ def run_codex_skill(
         "codex_rows": len(by_index),
         "stage1_rows": len(decisions),
         "stage2_rows": len(by_index),
-        "stage1_batch_notes": stage1_payload.get("batch_notes", ""),
         "batch_notes": stage2_payload.get("batch_notes", ""),
         "model": model or "codex-default",
         "runner_version": RUNNER_VERSION,
         "provenance_manifest": provenance,
         "stage_architecture": "editorial_decision_then_field_mapping",
         "approved_selection_learning": str(APPROVED_SELECTION_LEARNING_MD) if APPROVED_SELECTION_LEARNING_MD.exists() else "",
+    }
+
+
+def apply_final_stage2_invariants(rows: list[dict[str, str]]) -> list[dict[str, str]]:
+    checked: list[dict[str, Any]] = []
+    for row in rows:
+        out = dict(row)
+        decision: dict[str, Any] = {}
+        try:
+            decision = json.loads(str(out.get("editorial_decision_json") or "{}"))
+        except json.JSONDecodeError:
+            decision = {}
+        issues = stage2_invariant_issues(decision, out) if decision else ["missing editorial_decision_json"]
+        if issues:
+            existing = normalize_space(out.get("stage2_invariant_issues"))
+            out["stage2_invariant_status"] = "fail"
+            out["stage2_invariant_issues"] = "；".join(part for part in [existing, "；".join(issues)] if part)
+            out["guard_blocked"] = "true"
+            out["guard_blocked_reason"] = out["stage2_invariant_issues"]
+        else:
+            out["stage2_invariant_status"] = "pass"
+            out["stage2_invariant_issues"] = ""
+        checked.append(out)
+    return field_contract.apply_batch_quality_guards(checked)  # type: ignore[return-value]
+
+
+def run_codex_skill(
+    rows: list[dict[str, str]],
+    model: str,
+    timeout: int,
+    artifact_dir: Path | None = None,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    decisions, stage1_meta = run_codex_stage1(rows, model, timeout, artifact_dir=artifact_dir, start_index=0)
+    ranked_decisions, ranking_meta = run_codex_global_ranking(rows, decisions, model, timeout, artifact_dir=artifact_dir)
+    mapped_rows, stage2_meta = run_codex_stage2(rows, ranked_decisions, model, timeout, artifact_dir=artifact_dir)
+    return mapped_rows, {
+        **stage2_meta,
+        "stage1_rows": len(decisions),
+        "stage1_batch_notes": stage1_meta.get("stage1_batch_notes", ""),
+        "global_ranking_meta": ranking_meta,
+        "global_top_count": ranking_meta.get("global_top_count", 0),
+        "stage_architecture": "editorial_decision_global_ranking_then_field_mapping",
     }
 
 
