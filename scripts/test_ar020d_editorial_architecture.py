@@ -23,6 +23,7 @@ def stage2_stub_row(decision: dict[str, str]) -> dict[str, str]:
         "locked_recommendation_status": decision.get("locked_recommendation_status", decision.get("recommendation_status", "")),
         "locked_daily_level": decision.get("locked_daily_level", "可选候选"),
         "locked_should_produce": decision.get("locked_should_produce", "否"),
+        "locked_title_permission": decision.get("locked_title_permission", "不生成标题"),
         "locked_global_rank_position": decision.get("locked_global_rank_position", ""),
         "locked_global_tradeoff_reason": decision.get("locked_global_tradeoff_reason", ""),
         "locked_selected_visible_title": decision["selected_visible_title"],
@@ -37,11 +38,11 @@ def stage2_stub_row(decision: dict[str, str]) -> dict[str, str]:
         "标题思路": decision["title_rationale"],
         "原始标题钩子": decision["source_title_hook"],
         "Austin改写理由": decision["source_hook_usage"],
-        "title_permission": "可发布标题",
+        "title_permission": decision.get("locked_title_permission", "不生成标题"),
         "选题命题": decision["selected_visible_title"],
         "我的选题标题": decision["selected_visible_title"],
         "选题标题": decision["selected_visible_title"],
-        "可发布标题": decision["selected_visible_title"],
+        "可发布标题": decision["selected_visible_title"] if decision.get("locked_title_permission") == "可发布标题" else "",
         "标题备选": "",
         "我要做的实验": "输入来源素材，生成一版对比字段，并记录通过/失败标准。",
         "验证方式": "输入来源标题和摘要，输出主编判断与字段映射，检查标题是否保留市场入口。",
@@ -62,7 +63,166 @@ def stage2_stub_row(decision: dict[str, str]) -> dict[str, str]:
     return row
 
 
+def make_decision(index: int = 0, *, decision_value: str = "select") -> dict[str, str]:
+    recommendation = "生成脚本包" if decision_value == "select" else ("不做" if decision_value == "reject" else "观察")
+    return runner.normalize_decision({
+        "decision": decision_value,
+        "why_i_would_choose": "来源证据能接到 Austin 的真实业务现场。",
+        "why_i_would_not_choose": "不能照搬来源的普通教程讲法。",
+        "rejected_common_take": "普通讲法只会介绍工具。",
+        "natural_austin_angle": "把来源入口转成公开的 Austin 业务判断。",
+        "title_directions": "来源入口 / 业务矛盾",
+        "selected_visible_title": f"第 {index} 条公开标题",
+        "title_rationale": "借来源市场入口，落到 Austin 的业务矛盾。",
+        "source_title_hook": "来源钩子",
+        "source_hook_usage": "借入口，不照抄。",
+        "recommendation_status": recommendation,
+        "near_miss_reason": "" if decision_value == "select" else "今天不进入制作。",
+        "public_decision_summary": "来源证据和 Austin 场景形成了公开可解释的取舍。",
+    }, index, {"original_title": f"source {index}"})
+
+
+def ranking_row(decision: dict[str, str], *, level: str = "今日最值得做", position: str = "1") -> dict[str, str | int]:
+    return {
+        "index": int(decision["index"]),
+        "editorial_decision_id": decision["editorial_decision_id"],
+        "editorial_decision_hash": decision["editorial_decision_hash"],
+        "input_global_rank_hash": decision["global_rank_hash"],
+        "global_daily_level": level,
+        "final_recommendation_status": "生成脚本包" if level == "今日最值得做" else "补证据",
+        "global_rank_position": position,
+        "global_tradeoff_reason": "全日比较后的公开取舍理由。",
+    }
+
+
 class AR020DEditorialArchitectureTests(unittest.TestCase):
+    def test_global_ranking_rejects_missing_row(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "row count mismatch"):
+            runner.apply_global_ranking([make_decision(0), make_decision(1)], [ranking_row(make_decision(0))])
+
+    def test_global_ranking_rejects_duplicate_row(self) -> None:
+        decision = make_decision(0)
+        with self.assertRaisesRegex(RuntimeError, "duplicate editorial_decision_id"):
+            runner.apply_global_ranking([decision, make_decision(1)], [ranking_row(decision), ranking_row(decision)])
+
+    def test_global_ranking_rejects_unknown_id_or_index(self) -> None:
+        decision = make_decision(0)
+        unknown_id = {**ranking_row(decision), "editorial_decision_id": "unknown"}
+        with self.assertRaisesRegex(RuntimeError, "unknown editorial_decision_id"):
+            runner.apply_global_ranking([decision], [unknown_id])
+        unknown_index = {**ranking_row(decision), "index": 99}
+        with self.assertRaisesRegex(RuntimeError, "unknown index"):
+            runner.apply_global_ranking([decision], [unknown_index])
+
+    def test_global_ranking_rejects_id_index_mismatch(self) -> None:
+        first, second = make_decision(0), make_decision(1)
+        rows = [ranking_row(first), ranking_row(second, level="可选候选", position="")]
+        rows[0]["index"] = 1
+        rows[1]["index"] = 0
+        with self.assertRaisesRegex(RuntimeError, "id/index mismatch"):
+            runner.apply_global_ranking([first, second], rows)
+
+    def test_global_ranking_rejects_decision_or_input_rank_hash_mismatch(self) -> None:
+        decision = make_decision(0)
+        with self.assertRaisesRegex(RuntimeError, "decision hash mismatch"):
+            runner.apply_global_ranking([decision], [{**ranking_row(decision), "editorial_decision_hash": "bad"}])
+        with self.assertRaisesRegex(RuntimeError, "input rank hash mismatch"):
+            runner.apply_global_ranking([decision], [{**ranking_row(decision), "input_global_rank_hash": "bad"}])
+
+    def test_global_ranking_rejects_selected_row_without_tradeoff(self) -> None:
+        decision = make_decision(0)
+        with self.assertRaisesRegex(RuntimeError, "missing tradeoff reason"):
+            runner.apply_global_ranking([decision], [{**ranking_row(decision), "global_tradeoff_reason": ""}])
+
+    def test_raw_stage2_owner_drift_survives_normalize_and_reapply(self) -> None:
+        decision = runner.apply_global_ranking([make_decision(0)], [ranking_row(make_decision(0))])[0]
+        raw = {
+            "主编筛选": "observe",
+            "选题命题": "Stage 2 改写标题",
+            "主编判断摘要": "Stage 2 改写主编摘要",
+            "标题思路": "Stage 2 改写标题理由",
+            "locked_natural_austin_angle": "Stage 2 改写角度",
+            "locked_selected_visible_title": "Stage 2 改写可见标题",
+            "locked_title_rationale": "Stage 2 改写 rationale",
+            "locked_public_decision_summary": "Stage 2 改写 public summary",
+            "推荐动作": "观察",
+            "今日建议级别": "暂存观察",
+            "是否建议进入制作": "否",
+        }
+        issues = runner.raw_stage2_drift_issues(decision, raw)
+        self.assertGreaterEqual(len(issues), 11)
+        row = stage2_stub_row(decision)
+        row["raw_stage2_drift_status"] = "fail"
+        row["raw_stage2_drift_issues"] = "；".join(issues)
+        normalized = runner.normalize_batch([row])[0]
+        restored = runner.reapply_locked_stage2_fields(normalized, decision)
+        final = runner.apply_final_stage2_invariants([restored])[0]
+        self.assertEqual(final["stage2_invariant_status"], "fail")
+        self.assertEqual(final["guard_blocked"], "true")
+        self.assertIn("raw Stage 2 选题命题", final["stage2_invariant_issues"])
+
+    def test_raw_stage2_exact_echo_and_operational_only_mapping_pass(self) -> None:
+        decision = runner.apply_global_ranking([make_decision(0)], [ranking_row(make_decision(0))])[0]
+        raw = {
+            "选题命题": decision["selected_visible_title"],
+            "主编判断摘要": decision["public_decision_summary"],
+            "标题思路": decision["title_rationale"],
+            "推荐动作": decision["locked_recommendation_status"],
+            "今日建议级别": decision["locked_daily_level"],
+            "是否建议进入制作": decision["locked_should_produce"],
+            "我要做的实验": "只映射运营字段。",
+        }
+        self.assertEqual(runner.raw_stage2_drift_issues(decision, raw), [])
+
+    def test_stage2_schema_excludes_editorial_owner_fields(self) -> None:
+        properties = runner.field_mapping_output_schema()["properties"]["rows"]["items"]["properties"]
+        for field in [
+            "主编筛选",
+            "主编判断摘要",
+            "标题思路",
+            "选题命题",
+            "可发布标题",
+            "推荐动作",
+            "今日建议级别",
+            "是否建议进入制作",
+        ]:
+            self.assertNotIn(field, properties)
+
+    def test_run_stage2_preserves_malicious_raw_owner_drift(self) -> None:
+        source = {"原始来源标题": "Agent business record", "来源内容": "Agent leaves task records"}
+        decision = make_decision(0)
+        ranked = runner.apply_global_ranking([decision], [ranking_row(decision)])[0]
+        operational = stage2_stub_row(ranked)
+        malicious = {
+            "index": 0,
+            "editorial_decision_id": ranked["editorial_decision_id"],
+            "editorial_decision_hash": ranked["editorial_decision_hash"],
+            "locked_selected_visible_title": "Stage 2 changed title",
+            "locked_natural_austin_angle": "Stage 2 changed angle",
+            "locked_title_rationale": "Stage 2 changed rationale",
+            "locked_public_decision_summary": "Stage 2 changed summary",
+            **{field: operational.get(field, "") for field in runner.STAGE2_OPERATIONAL_FIELDS},
+            "选题命题": "Stage 2 changed proposition",
+            "主编判断摘要": "Stage 2 changed public summary",
+            "标题思路": "Stage 2 changed title thinking",
+            "推荐动作": "观察",
+            "今日建议级别": "暂存观察",
+            "是否建议进入制作": "否",
+        }
+
+        with patch.object(runner, "run_codex_prompt", return_value={
+            "engine": "malicious-stub",
+            "batch_notes": "attempted owner drift",
+            "rows": [malicious],
+        }):
+            rows, _meta = runner.run_codex_stage2([source], [ranked], "", 30)
+
+        self.assertEqual(rows[0]["raw_stage2_drift_status"], "fail")
+        self.assertEqual(rows[0]["stage2_invariant_status"], "fail")
+        self.assertEqual(rows[0]["guard_blocked"], "true")
+        self.assertEqual(rows[0]["选题命题"], ranked["selected_visible_title"])
+        self.assertIn("raw Stage 2 locked_natural_austin_angle mismatch", rows[0]["raw_stage2_drift_issues"])
+        self.assertIn("field_mapping 原始输出越权改写 owner fields", rows[0]["field_contract_issues"])
     def test_stage1_payload_excludes_old_visible_and_deterministic_hints(self) -> None:
         row = {
             "原始来源标题": "Codex联动Obsidian，搭建超强知识库，手把手教程",
@@ -153,7 +313,9 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "index": 0,
             "editorial_decision_id": decision["editorial_decision_id"],
             "editorial_decision_hash": decision["editorial_decision_hash"],
+            "input_global_rank_hash": decision["global_rank_hash"],
             "global_daily_level": "今日最值得做",
+            "final_recommendation_status": "生成脚本包",
             "global_rank_position": "1",
             "global_tradeoff_reason": "今天证据最完整。",
         }])[0]
@@ -188,7 +350,9 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "index": 0,
             "editorial_decision_id": decision["editorial_decision_id"],
             "editorial_decision_hash": decision["editorial_decision_hash"],
+            "input_global_rank_hash": decision["global_rank_hash"],
             "global_daily_level": "不建议制作",
+            "final_recommendation_status": "不做",
             "global_rank_position": "",
             "global_tradeoff_reason": "新闻影响力成立，不过今天没有 Austin 业务现场证据。",
         }])[0]
@@ -239,7 +403,9 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                 "index": index,
                 "editorial_decision_id": decision["editorial_decision_id"],
                 "editorial_decision_hash": decision["editorial_decision_hash"],
+                "input_global_rank_hash": decision["global_rank_hash"],
                 "global_daily_level": "今日最值得做" if index < 3 else "可选候选",
+                "final_recommendation_status": "生成脚本包" if index < 3 else "补证据",
                 "global_rank_position": str(index + 1) if index < 3 else "",
                 "global_tradeoff_reason": "全日排序后取前三。" if index < 3 else "今天不进前三，但保留为可选。",
             })
@@ -273,7 +439,9 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "index": 0,
             "editorial_decision_id": decision["editorial_decision_id"],
             "editorial_decision_hash": decision["editorial_decision_hash"],
+            "input_global_rank_hash": decision["global_rank_hash"],
             "global_daily_level": "可选候选",
+            "final_recommendation_status": "补证据",
             "global_rank_position": "",
             "global_tradeoff_reason": "全日排序后证据弱于前三，需要补案例。",
         }])[0]
@@ -310,7 +478,9 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                 "index": index,
                 "editorial_decision_id": decision["editorial_decision_id"],
                 "editorial_decision_hash": decision["editorial_decision_hash"],
+                "input_global_rank_hash": decision["global_rank_hash"],
                 "global_daily_level": "今日最值得做",
+                "final_recommendation_status": "生成脚本包",
                 "global_rank_position": str(index + 1),
                 "global_tradeoff_reason": "错误地全部进前三。",
             })
@@ -338,7 +508,9 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "index": 0,
             "editorial_decision_id": decision["editorial_decision_id"],
             "editorial_decision_hash": decision["editorial_decision_hash"],
+            "input_global_rank_hash": decision["global_rank_hash"],
             "global_daily_level": "今日最值得做",
+            "final_recommendation_status": "生成脚本包",
             "global_rank_position": "1",
             "global_tradeoff_reason": "全日前三。",
         }])[0]
@@ -399,7 +571,9 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "index": 0,
             "editorial_decision_id": decision["editorial_decision_id"],
             "editorial_decision_hash": decision["editorial_decision_hash"],
+            "input_global_rank_hash": decision["global_rank_hash"],
             "global_daily_level": "今日最值得做",
+            "final_recommendation_status": "生成脚本包",
             "global_rank_position": "1",
             "global_tradeoff_reason": "唯一强候选。",
         }])[0]
@@ -498,7 +672,9 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                     "index": decision["index"],
                     "editorial_decision_id": decision["editorial_decision_id"],
                     "editorial_decision_hash": decision["editorial_decision_hash"],
+                    "input_global_rank_hash": decision["global_rank_hash"],
                     "global_daily_level": "今日最值得做" if index < 3 else "可选候选",
+                    "final_recommendation_status": "生成脚本包" if index < 3 else "补证据",
                     "global_rank_position": str(index + 1) if index < 3 else "",
                     "global_tradeoff_reason": "全日前三。" if index < 3 else "全日排序后保留可选。",
                 })
@@ -605,7 +781,9 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                         "index": 0,
                         "editorial_decision_id": decision["editorial_decision_id"],
                         "editorial_decision_hash": decision["editorial_decision_hash"],
+                        "input_global_rank_hash": decision["global_rank_hash"],
                         "global_daily_level": "今日最值得做",
+                        "final_recommendation_status": "生成脚本包",
                         "global_rank_position": "1",
                         "global_tradeoff_reason": "唯一强候选。",
                     }],
@@ -615,14 +793,25 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                 "index": 0,
                 "editorial_decision_id": decision["editorial_decision_id"],
                 "editorial_decision_hash": decision["editorial_decision_hash"],
+                "input_global_rank_hash": decision["global_rank_hash"],
                 "global_daily_level": "今日最值得做",
+                "final_recommendation_status": "生成脚本包",
                 "global_rank_position": "1",
                 "global_tradeoff_reason": "唯一强候选。",
             }])[0]
+            mapped = stage2_stub_row(decision)
+            stage2_row = {
+                "index": 0,
+                "editorial_decision_id": decision["editorial_decision_id"],
+                "editorial_decision_hash": decision["editorial_decision_hash"],
+                "global_rank_id": decision["global_rank_id"],
+                "global_rank_hash": decision["global_rank_hash"],
+                **{field: mapped.get(field, "") for field in runner.STAGE2_OPERATIONAL_FIELDS},
+            }
             return {
                 "engine": "stub",
                 "batch_notes": "stage2 ok",
-                "rows": [{**stage2_stub_row(decision), "index": 0}],
+                "rows": [stage2_row],
             }
 
         with TemporaryDirectory() as tmp:
@@ -634,7 +823,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             self.assertTrue((artifact_dir / "stage2_input_sanitized.json").exists())
             self.assertTrue((artifact_dir / "ar020d_provenance_manifest.json").exists())
 
-        self.assertEqual(rows[0]["stage2_invariant_status"], "pass")
+        self.assertEqual(rows[0]["stage2_invariant_status"], "pass", rows[0].get("stage2_invariant_issues"))
         self.assertEqual(rows[0]["今日建议级别"], "今日最值得做")
         self.assertEqual(rows[0]["推荐动作"], "生成脚本包")
         self.assertEqual(rows[0]["真实/相邻案例"], "")

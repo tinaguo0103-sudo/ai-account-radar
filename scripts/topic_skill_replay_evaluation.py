@@ -330,13 +330,11 @@ def run_skill(
 ) -> tuple[list[dict[str, str]], dict[str, Any], str]:
     rows = [{key: str(value or "") for key, value in row.items()} for row in pool]
     if args.engine == "codex":
-        enriched, meta = editorial_skill_runner.run_codex_skill(
-            rows,
-            args.codex_model,
-            timeout or args.timeout,
-            artifact_dir=artifact_dir,
+        raise RuntimeError(
+            "Legacy nested Codex replay is disabled for AR-020D. Use "
+            "scripts/topic_editorial_state_machine.py so the current Codex task "
+            "writes Stage 1, global ranking, and Stage 2 artifacts directly."
         )
-        return enriched, meta, "codex"
     enriched = editorial_skill_runner.normalize_batch([editorial_skill_runner.enrich(row) for row in rows])
     return enriched, {"mode": "explicit_deterministic", "fallback_only": True, "not_editorial_quality": True}, "deterministic"
 
@@ -443,10 +441,17 @@ def final_engine_meta(meta: dict[str, Any], rows: list[dict[str, Any]]) -> dict[
             "未额外调用外部工具；本批由 Codex 按嵌入的 ai-account-editorial-director 合约执行",
         )
     out["batch_notes"] = final_batch_notes(rows)
-    out["execution_note"] = (
-        "Codex exec 按嵌入的 ai-account-editorial-director repo mirror/persona/context 执行主编合约；"
-        "未在本进程内另行调用全局私有 Skill 工具。最终证据以 guard-applied rows 为准。"
-    )
+    execution_surface = str(out.get("execution_surface") or "")
+    if execution_surface == "current_codex_task":
+        out["execution_note"] = (
+            "当前 Codex 任务按 repo mirror/persona/context 直接执行主编状态机；"
+            "未启动 nested codex exec、API 或子代理。最终证据以 guard-applied rows 为准。"
+        )
+    else:
+        out["execution_note"] = (
+            "Codex exec 按嵌入的 ai-account-editorial-director repo mirror/persona/context 执行主编合约；"
+            "未在本进程内另行调用全局私有 Skill 工具。最终证据以 guard-applied rows 为准。"
+        )
     return out
 
 
@@ -973,8 +978,12 @@ def aggregate_provenance(engine_meta: dict[str, Any], engine: str) -> dict[str, 
         manifest = ((meta.get("engine_meta") or {}).get("provenance_manifest") or {})
         if manifest:
             manifests.append(manifest)
+    explicit = engine_meta.get("provenance_manifest") or {}
+    if explicit and not manifests:
+        manifests.append(explicit)
+    real_skill_engine = engine in {"codex", "current_task"}
     first = manifests[0] if manifests else editorial_skill_runner.runtime_provenance(
-        fallback_state="true" if engine != "codex" else "unknown"
+        fallback_state="false" if real_skill_engine else "true"
     )
     return {
         **first,
@@ -1060,6 +1069,9 @@ def decision_rank_final_trace_rows(rows: list[dict[str, Any]]) -> list[dict[str,
             "global_should_produce": decision.get("locked_should_produce", ""),
             "global_rank_position": decision.get("locked_global_rank_position", ""),
             "global_tradeoff_reason": decision.get("locked_global_tradeoff_reason", ""),
+            "ranking_complete": bool(decision.get("global_rank_id") and decision.get("global_rank_hash")),
+            "raw_stage2_drift_status": row.get("raw_stage2_drift_status", ""),
+            "raw_stage2_drift_issues": row.get("raw_stage2_drift_issues", ""),
             "final_今日建议级别": row.get("今日建议级别", ""),
             "final_推荐动作": row.get("推荐动作", ""),
             "final_是否建议进入制作": row.get("是否建议进入制作", ""),
@@ -1227,14 +1239,19 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         f"- fallback_row_count: {summary.get('fallback_row_count')}",
         f"- contract_failure_count: {summary.get('contract_failure_count')}",
         f"- title_quality_failure_count: {summary.get('title_quality_failure_count')}",
+        f"- title_quality_warning_count: {summary.get('title_quality_warning_count')}",
         f"- global_top_today_count: {summary.get('global_top_today_count')}",
         f"- stage2_selection_drift_count: {summary.get('stage2_selection_drift_count')}",
+        f"- raw_stage2_drift_count: {summary.get('raw_stage2_drift_count')}",
         f"- guard_blocked_count: {summary.get('guard_blocked_count')}",
         f"- skill_rows: {summary.get('skill_rows')}",
         f"- actionable_count: {summary.get('actionable_count')}",
         f"- observe_count: {summary.get('observe_count')}",
         "",
         "## Provenance",
+        f"- execution_surface: {provenance.get('execution_surface')}",
+        f"- nested_model_execution: {provenance.get('nested_model_execution')}",
+        f"- fallback_state: {provenance.get('fallback_state')}",
         f"- runner_version: {provenance.get('runner_version')}",
         f"- skill_dir: {provenance.get('skill_dir')}",
         f"- skill_md_sha256: {provenance.get('skill_md_sha256')}",
@@ -1247,6 +1264,9 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         "",
         "## Global Ranking",
         f"- status: {(engine_meta.get('global_ranking') or {}).get('status')}",
+        f"- ranking_bijection_ok: {summary.get('ranking_bijection_ok')}",
+        f"- stage1_decision_count: {(engine_meta.get('global_ranking') or {}).get('stage1_decision_count')}",
+        f"- ranking_output_count: {(engine_meta.get('global_ranking') or {}).get('ranking_output_count')}",
         f"- global_top_count: {(engine_meta.get('global_ranking') or {}).get('global_top_count')}",
         f"- artifacts: {(engine_meta.get('global_ranking') or {}).get('outputs')}",
         f"- trace table: {out_dir / 'ar020d_decision_rank_final_trace.csv'}",
@@ -1257,13 +1277,15 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         if batch.get("status") != "success":
             continue
         outputs = batch.get("outputs") or {}
-        batch_dir = Path(outputs.get("meta", "")).parent if outputs.get("meta") else out_dir / "batches" / str(batch.get("batch_id", ""))
+        batch_id = str(batch.get("batch_id", ""))
+        current_task = (batch.get("engine_meta") or {}).get("execution_surface") == "current_codex_task"
+        batch_dir = Path(outputs.get("meta", "")).parent if outputs.get("meta") else out_dir / "batches" / batch_id
         lines.extend([
-            f"- {batch.get('batch_id')}: status={batch.get('status')}, rows={batch.get('row_count')}, duration_ms={batch.get('duration_ms')}",
-            f"  - stage1_input_sanitized: {batch_dir / 'stage1_input_sanitized.json'}",
-            f"  - stage1_output: {batch_dir / 'stage1_editorial_decision_output.json'}",
-            f"  - stage2_input_sanitized: {batch_dir / 'stage2_input_sanitized.json'}",
-            f"  - stage2_output: {batch_dir / 'stage2_field_mapping_output.json'}",
+            f"- {batch_id}: status={batch.get('status')}, rows={batch.get('row_count')}, duration_ms={batch.get('duration_ms')}",
+            f"  - stage1_input_sanitized: {(out_dir / 'stage1' / batch_id / 'input.json') if current_task else (batch_dir / 'stage1_input_sanitized.json')}",
+            f"  - stage1_output: {(out_dir / 'stage1' / batch_id / 'output.pending.json') if current_task else (batch_dir / 'stage1_editorial_decision_output.json')}",
+            f"  - stage2_input_sanitized: {(out_dir / 'stage2' / batch_id / 'input.json') if current_task else (batch_dir / 'stage2_input_sanitized.json')}",
+            f"  - stage2_output: {(out_dir / 'stage2' / batch_id / 'output.pending.json') if current_task else (batch_dir / 'stage2_field_mapping_output.json')}",
         ])
     lines.extend([
         "",
@@ -1277,6 +1299,26 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
     ])
     for row in samples:
         artifacts = sample_stage_artifacts(row, batches)
+        if provenance.get("execution_surface") == "current_codex_task":
+            batch_id = ""
+            source_title = editorial_skill_runner.normalize_space(row.get("source_title"))
+            for candidate_batch in batches:
+                candidate_id = str(candidate_batch.get("batch_id") or "")
+                input_path = out_dir / "stage1" / candidate_id / "input.json"
+                if not input_path.exists():
+                    continue
+                payload = json.loads(input_path.read_text(encoding="utf-8"))
+                if any(editorial_skill_runner.normalize_space(item.get("original_title")) == source_title for item in payload.get("rows", [])):
+                    batch_id = candidate_id
+                    break
+            if batch_id:
+                artifacts = {
+                    "batch_id": batch_id,
+                    "stage1_input_sanitized": str(out_dir / "stage1" / batch_id / "input.json"),
+                    "stage1_output": str(out_dir / "stage1" / batch_id / "output.pending.json"),
+                    "stage2_input_sanitized": str(out_dir / "stage2" / batch_id / "input.json"),
+                    "stage2_output": str(out_dir / "stage2" / batch_id / "output.pending.json"),
+                }
         lines.extend([
             f"### {row.get('sample_label') or row.get('sample_key')}",
             f"- source_title: {row.get('source_title') or '（无可用标题）'}",
@@ -1355,7 +1397,10 @@ def aggregate_replay_outputs(
         title_quality_warning_count = sum(1 for row in title_rows if row.get("title_quality_status") == "warn")
         global_top_today_count = sum(1 for row in skill_rows if row.get("今日建议级别") == "今日最值得做")
         stage2_selection_drift_count = sum(1 for row in skill_rows if row.get("stage2_invariant_status") == "fail")
+        raw_stage2_drift_count = sum(1 for row in skill_rows if row.get("raw_stage2_drift_status") == "fail")
         guard_blocked_count = sum(1 for row in skill_rows if str(row.get("guard_blocked") or "").lower() == "true")
+        global_ranking_meta = engine_meta.get("global_ranking") or {}
+        ranking_bijection_ok = bool(global_ranking_meta.get("ranking_bijection_ok"))
         replay_completed_ok = completed and failed_batch_count == 0
         summary = {
             "ok": replay_completed_ok,
@@ -1367,7 +1412,9 @@ def aggregate_replay_outputs(
                 and title_quality_failure_count == 0
                 and global_top_today_count <= 3
                 and stage2_selection_drift_count == 0
+                and raw_stage2_drift_count == 0
                 and guard_blocked_count == 0
+                and ranking_bijection_ok
             ),
             "engine": engine,
             "engine_meta": engine_meta,
@@ -1391,7 +1438,9 @@ def aggregate_replay_outputs(
             "title_quality_warning_count": title_quality_warning_count,
             "global_top_today_count": global_top_today_count,
             "stage2_selection_drift_count": stage2_selection_drift_count,
+            "raw_stage2_drift_count": raw_stage2_drift_count,
             "guard_blocked_count": guard_blocked_count,
+            "ranking_bijection_ok": ranking_bijection_ok,
             "writes_feishu": False,
             "outputs": {
                 "candidate_universe": str(out_dir / "candidate_universe.csv"),

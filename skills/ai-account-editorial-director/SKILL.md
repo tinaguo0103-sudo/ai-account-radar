@@ -74,6 +74,24 @@ description: 当需要把 AI 热点、公众号文章、短视频对标内容、
 
 AR-020D 之后，主编判断分成三个硬阶段。第一阶段先像 Austin 本人一样判断一条来源值不值得选；第二阶段把所有第一阶段 `select` 候选放在同一天里做全局排序；第三阶段再映射字段。不要一上来套 `Gate -> Workflow Experiment Card -> Title Packaging` 的字段顺序写标题；那套流程只是后置防错 guardrail，不是标题骨架。
 
+### Current-task state-machine protocol
+
+真实执行面是 `execution_surface=current_codex_task`。当前 Codex 任务本身就是主编引擎；Python 只准备最小输入、校验 JSON、推进状态、保存 hash 和生成最终证据。禁止从 runner 内再次启动 `codex exec`、API、subagent 或其他模型会话。
+
+固定协议：
+
+1. `prepare-stage1`：生成 7 个 allowlisted/sanitized 输入批次、schema、persona/style reference 与 provenance；
+2. 当前任务读取 Skill、persona/style reference 和 Stage 1 input，逐批写 `output.pending.json`；
+3. `validate-stage1`：校验覆盖、schema、decision id/hash、case-reference-only 边界；
+4. `prepare-ranking` 后，当前任务一次性对全部 Stage 1 decisions 写 1:1 ranking output，再由 `validate-ranking` 执行 strict bijection；
+5. `prepare-stage2` 后，当前任务逐批只写 operational fields；
+6. `validate-stage2` 在 normalization 前保存 raw payload，owner drift 必须 fail + guard_blocked；
+7. `finalize` 只在全部前置阶段 completed 后生成 final trace、质量门和用户样例包。
+
+每阶段 manifest 必须记录 started/completed/failed、input/output hash、task provenance、Skill/persona hash、fallback=false。失败不得跨阶段继续；相同 output hash 可 resume，输入 hash 变化必须视为 stale 并重新验证。
+
+Stage 1 模型上下文只允许：来源类型、平台、来源账号、原始标题、必要短摘录、原始标题钩子、来源权重/市场验证、账号方向，以及 persona/style reference。内容指纹、来源链接、抓取状态、失败原因、内部路径、旧 04 字段、deterministic 角度/标题/母场景不得进入主编上下文。
+
 ### 第一段：`editorial_decision`
 
 这一段输出公开可展示的主编决策摘要，不写隐藏推理链，也不写长篇报告。
@@ -139,30 +157,35 @@ AR-020D 之后，主编判断分成三个硬阶段。第一阶段先像 Austin �
 - `decision=select` 但没有进入前三的候选，可以保留为 `可选候选`，并写清公开可读的取舍理由；
 - `decision=observe` 固定是 `暂存观察`；
 - `decision=reject` 固定是 `不建议制作`；
-- 全日排序不能改第一阶段标题、角度、主编摘要和 `recommendation_status`。
+- 全日排序不能改第一阶段 `decision`、标题、角度、主编摘要和标题理由。它可以基于全日取舍把非前三 `select` 的最终操作锁为 `补证据` / `存素材` / `观察`，但必须保留 Stage 1 recommendation、写明公开 tradeoff，并进入 global rank hash；不能静默漂移。
+- ranking 输出必须和全部 Stage 1 decisions 严格一一对应：index、decision id、decision hash、输入 rank hash 均需原样匹配；缺失、重复、未知、串行或 hash mismatch 一律失败，禁止默认补行和后写覆盖。
+- 每条 `select`（包括前三与非前三）都必须有公开可读的全日取舍理由。
 
 输出必须包含：
 
 - `locked_daily_level`：`今日最值得做` / `可选候选` / `暂存观察` / `不建议制作`；
+- `locked_recommendation_status`：全日排序后的最终操作锁；
 - `locked_should_produce`：只有全日前三且 `recommendation_status=生成脚本包` 时才是 `是`；
+- `locked_title_permission`：由全日锁定状态派生，Stage 2 无权填写；
 - `locked_global_rank_position`：全日前三的 1/2/3；
 - `locked_global_tradeoff_reason`：未进前三或只观察的公开取舍理由。
 
 ### 第三段：`field_mapping`
 
-只把第一段已经成立的主编判断映射成 04 / Topic Card / 06 需要的结构化主字段。字段映射不能发明新角度，不能把 runner 给出的主题簇、转译角度、母场景等线索直接写成标题、命题、Brief、实验动作或主编判断摘要。
+只把第一段已经成立的主编判断映射成 04 / Topic Card / 06 需要的 operational fields。字段映射不能发明新角度，不能把 runner 给出的主题簇、转译角度、母场景等线索直接写成标题、命题、Brief、实验动作或主编判断摘要。
 
 硬规则：
 
-- `selected_visible_title` 一旦在第一阶段锁定，第二阶段不能改；
-- `natural_austin_angle` 一旦在第一阶段锁定，第二阶段不能改；
-- `title_rationale` / `public_decision_summary` 只能压缩或映射，不能换角度；
+- `selected_visible_title` 一旦在第一阶段锁定，Stage 2 schema 不再接收它；
+- `natural_austin_angle` 一旦在第一阶段锁定，Stage 2 schema 不再接收它；
+- `title_rationale` / `public_decision_summary` 由 runner 原样映射，Stage 2 不得压缩或改写；
 - `今日建议级别` / `候选状态` 必须承接全日排序的 `locked_daily_level`；
-- `推荐动作` 必须承接第一阶段的 `recommendation_status`；
+- `推荐动作` 必须承接全日排序后的 `locked_recommendation_status`；
 - `是否建议进入制作` 必须承接全日排序的 `locked_should_produce`；
 - `选题命题` 必须承接第一阶段的 visible title；
 - 如果 `title_permission=可发布标题`，`可发布标题` 必须承接第一阶段的 visible title；
-- 实验、验证、资产可以在第二阶段生成，但不能反向改写标题和主编判断。
+- Stage 2 只生成实验、验证、资产、痛点、AI 介入点等 operational fields。标题、角度、命题、主编摘要、标题思路、selection、recommendation、daily level、produce state 和 title permission 不在它的 authoring schema 中。
+- 若兼容输出回显 owner fields，只允许 exact echo。runner 必须在 normalization/reapply 前保存 raw output；任何改写都要保留 drift evidence、标记 invariant fail + `guard_blocked`，不得洗回 pass。
 
 如果第一段没有足够证据，第二段应该降级为 `暂存观察` / `补证据` / `不建议制作`，而不是用正确但空泛的话补齐字段。
 

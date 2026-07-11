@@ -19,8 +19,6 @@ import hashlib
 import json
 import os
 import re
-import subprocess
-import tempfile
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -34,7 +32,7 @@ REPO_SKILL_DIR = ROOT / "skills" / "ai-account-editorial-director"
 GLOBAL_SKILL_DIR = Path.home() / ".codex" / "skills" / "ai-account-editorial-director"
 SKILL_DIR = Path(os.getenv("EDITORIAL_SKILL_DIR", str(GLOBAL_SKILL_DIR))).expanduser()
 SKILL_MD = SKILL_DIR / "SKILL.md"
-RUNNER_VERSION = "ar020d_stage1_global_rank_stage2_v1"
+RUNNER_VERSION = "ar020d_current_task_state_machine_v1"
 CANONICAL_DECISIONS = {"select", "observe", "reject"}
 RECOMMENDATION_STATUSES = {"生成脚本包", "补证据", "存素材", "观察", "不做"}
 GLOBAL_DAILY_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
@@ -67,10 +65,15 @@ EXTRA_FIELDS = [
     "locked_recommendation_status",
     "locked_daily_level",
     "locked_should_produce",
+    "locked_title_permission",
     "locked_global_rank_position",
     "locked_global_tradeoff_reason",
     "stage2_invariant_status",
     "stage2_invariant_issues",
+    "raw_stage2_owner_fields_json",
+    "raw_stage2_payload_json",
+    "raw_stage2_drift_status",
+    "raw_stage2_drift_issues",
     "guard_blocked",
     "guard_blocked_reason",
     "global_ranking_json",
@@ -201,6 +204,70 @@ SKILL_FIELDS = [
     "标题质量分",
     "AI味风险",
 ]
+
+STAGE2_OWNER_FIELDS = {
+    "主编筛选",
+    "主编自由稿",
+    "editorial_thinking_json",
+    "主编判断摘要",
+    "标题思路",
+    "选题命题",
+    "我的选题标题",
+    "选题标题",
+    "可发布标题",
+    "标题备选",
+    "候选状态",
+    "推荐等级",
+    "推荐动作",
+    "今日建议级别",
+    "是否建议进入制作",
+    "title_permission",
+    "选题判断",
+    "推荐理由",
+    "主编判断",
+    "我的切入",
+    "我准备怎么讲",
+    "我会怎么讲",
+}
+
+STAGE2_OPERATIONAL_FIELDS = [field for field in SKILL_FIELDS if field not in STAGE2_OWNER_FIELDS]
+
+STAGE2_REQUIRED_OPERATIONAL_FIELDS = [
+    "field_mapping_json",
+    "我要做的实验",
+    "我的工作流痛点",
+    "旧流程痛点",
+    "AI介入点",
+    "验证方式",
+    "可沉淀资产",
+    "对应方向",
+    "一句话Brief",
+    "我的场景拆解",
+    "我的思考点",
+    "重点体现",
+    "可展示证据",
+    "内容核心冲突",
+    "视频呈现方式",
+    "证据强度",
+    "需要补的证据",
+    "不建议做的原因",
+]
+
+STAGE2_RAW_OWNER_EXPECTATIONS = {
+    "主编筛选": "locked_decision",
+    "主编自由稿": "public_decision_summary",
+    "主编判断摘要": "public_decision_summary",
+    "标题思路": "title_rationale",
+    "选题命题": "selected_visible_title",
+    "我的选题标题": "selected_visible_title",
+    "选题标题": "selected_visible_title",
+    "候选状态": "locked_daily_level",
+    "推荐等级": "locked_daily_level",
+    "推荐动作": "locked_recommendation_status",
+    "今日建议级别": "locked_daily_level",
+    "是否建议进入制作": "locked_should_produce",
+    "title_permission": "locked_title_permission",
+}
 
 EDITORIAL_DECISION_FIELDS = [
     "decision",
@@ -1643,6 +1710,14 @@ def locked_should_produce(decision: str, recommendation_status: str, daily_level
     return "否"
 
 
+def locked_title_permission(decision: str, daily_level: str, should_produce: str) -> str:
+    if decision == "select" and daily_level == "今日最值得做" and should_produce == "是":
+        return "可发布标题"
+    if decision == "select":
+        return "内部测试标题"
+    return "不生成标题"
+
+
 def global_rank_hash(decision: dict[str, Any]) -> str:
     stable = {
         "editorial_decision_hash": decision.get("editorial_decision_hash", ""),
@@ -1650,6 +1725,7 @@ def global_rank_hash(decision: dict[str, Any]) -> str:
         "locked_recommendation_status": decision.get("locked_recommendation_status", ""),
         "locked_daily_level": decision.get("locked_daily_level", ""),
         "locked_should_produce": decision.get("locked_should_produce", ""),
+        "locked_title_permission": decision.get("locked_title_permission", ""),
         "locked_global_rank_position": decision.get("locked_global_rank_position", ""),
         "locked_global_tradeoff_reason": decision.get("locked_global_tradeoff_reason", ""),
     }
@@ -1700,6 +1776,9 @@ def normalize_decision(raw: dict[str, Any], index: int, source: dict[str, Any]) 
         decision["decision"],
         decision["recommendation_status"],
         decision["locked_daily_level"],
+    )
+    decision["locked_title_permission"] = locked_title_permission(
+        decision["locked_decision"], decision["locked_daily_level"], decision["locked_should_produce"]
     )
     decision["locked_global_rank_position"] = ""
     decision["locked_global_tradeoff_reason"] = ""
@@ -1825,6 +1904,7 @@ def global_ranking_output_schema() -> dict[str, Any]:
                         "index": {"type": "integer", "minimum": 0},
                         "editorial_decision_id": {"type": "string"},
                         "editorial_decision_hash": {"type": "string"},
+                        "input_global_rank_hash": {"type": "string"},
                         "global_daily_level": {"type": "string"},
                         "final_recommendation_status": {"type": "string"},
                         "global_rank_position": {"type": "string"},
@@ -1834,6 +1914,7 @@ def global_ranking_output_schema() -> dict[str, Any]:
                         "index",
                         "editorial_decision_id",
                         "editorial_decision_hash",
+                        "input_global_rank_hash",
                         "global_daily_level",
                         "final_recommendation_status",
                         "global_rank_position",
@@ -1852,12 +1933,10 @@ def field_mapping_output_schema() -> dict[str, Any]:
         "index": {"type": "integer", "minimum": 0},
         "editorial_decision_id": {"type": "string"},
         "editorial_decision_hash": {"type": "string"},
-        "locked_selected_visible_title": {"type": "string"},
-        "locked_natural_austin_angle": {"type": "string"},
-        "locked_title_rationale": {"type": "string"},
-        "locked_public_decision_summary": {"type": "string"},
+        "global_rank_id": {"type": "string"},
+        "global_rank_hash": {"type": "string"},
     }
-    for field in SKILL_FIELDS:
+    for field in STAGE2_OPERATIONAL_FIELDS:
         row_properties[field] = {"type": "string"}
     return {
         "type": "object",
@@ -1874,11 +1953,9 @@ def field_mapping_output_schema() -> dict[str, Any]:
                         "index",
                         "editorial_decision_id",
                         "editorial_decision_hash",
-                        "locked_selected_visible_title",
-                        "locked_natural_austin_angle",
-                        "locked_title_rationale",
-                        "locked_public_decision_summary",
-                        *SKILL_FIELDS,
+                        "global_rank_id",
+                        "global_rank_hash",
+                        *STAGE2_REQUIRED_OPERATIONAL_FIELDS,
                     ],
                 },
             },
@@ -1976,6 +2053,7 @@ def build_global_ranking_prompt(rows: list[dict[str, str]], decisions: list[dict
                 for key in [
                     "editorial_decision_id",
                     "editorial_decision_hash",
+                    "global_rank_hash",
                     "decision",
                     "recommendation_status",
                     "why_i_would_choose",
@@ -1994,6 +2072,7 @@ def build_global_ranking_prompt(rows: list[dict[str, str]], decisions: list[dict
 
 输出规则：
 - 必须为每个输入 index 输出一行 ranking_rows。
+- 必须原样回显每行 `editorial_decision_id`、`editorial_decision_hash` 和输入的 `global_rank_hash` 到 `input_global_rank_hash`；不得缺行、重复或串行。
 - Stage 1 `decision=select` 的候选中，最多 3 条可以是 `global_daily_level=今日最值得做`。
 - 其余 `decision=select` 候选应为 `global_daily_level=可选候选`，并写清为什么今天不进前三。
 - `decision=observe` 固定为 `暂存观察`；`decision=reject` 固定为 `不建议制作`。
@@ -2051,8 +2130,10 @@ def build_field_mapping_prompt(rows: list[dict[str, str]], decisions: list[dict[
 - `我要做的实验`、`验证方式`、`可沉淀资产`、`旧流程痛点`、`AI介入点`、`重点体现` 等。
 - 这些字段可以出现测试/验证/验收等工作语言，但不能回流改写 `选题命题` / `可发布标题` / `主编判断摘要` / `标题思路`。
 
-请重写/覆盖这些字段：
-{json.dumps(SKILL_FIELDS, ensure_ascii=False)}
+只允许生成这些 operational fields：
+{json.dumps(STAGE2_OPERATIONAL_FIELDS, ensure_ascii=False)}
+
+schema 中不存在的 Stage 1 / global ranking owner fields 不得输出。锁定标题、角度、主编摘要、标题思路、推荐动作、今日级别、制作状态和 title permission 都由 runner 在 Stage 2 之后原样映射。
 
 候选状态只能是：今日最值得做、可选候选、暂存观察、不建议制作。
 推荐等级只能是：S、A、B、C。
@@ -2083,50 +2164,56 @@ def run_codex_prompt(
     artifact_dir: Path | None,
     artifact_prefix: str,
 ) -> dict[str, Any]:
-    with tempfile.TemporaryDirectory(prefix="editorial-skill-") as tmpdir:
-        tmp = Path(tmpdir)
-        schema_path = tmp / "schema.json"
-        output_path = tmp / f"{artifact_prefix}_codex_output.json"
-        schema_path.write_text(json.dumps(schema, ensure_ascii=False, indent=2), encoding="utf-8")
-        command = [
-            "codex",
-            "exec",
-            "--ephemeral",
-            "--sandbox",
-            "read-only",
-            "-C",
-            str(ROOT),
-            "--output-schema",
-            str(schema_path),
-            "--output-last-message",
-            str(output_path),
-        ]
-        if model:
-            command.extend(["--model", model])
-        command.append("-")
-        proc = subprocess.run(
-            command,
-            input=prompt,
-            text=True,
-            capture_output=True,
-            timeout=timeout,
-            cwd=str(ROOT),
+    raise RuntimeError(
+        "Nested model execution is disabled for AR-020D. Use "
+        "scripts/topic_editorial_state_machine.py and let the current Codex task "
+        "write the stage output artifact before validation."
+    )
+
+
+def validate_stage1_payload(
+    rows: list[dict[str, str]],
+    stage1_payload: dict[str, Any],
+    *,
+    start_index: int = 0,
+) -> tuple[list[dict[str, Any]], dict[str, Any]]:
+    stage1_inputs = [stage1_candidate_payload(row, start_index + idx) for idx, row in enumerate(rows)]
+    raw_decisions: dict[int, dict[str, Any]] = {}
+    seen_indices: set[int] = set()
+    for item in stage1_payload.get("editorial_decisions", []):
+        try:
+            raw_idx = int(item.get("index"))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"Stage 1 output has invalid index: {item.get('index')!r}") from exc
+        if start_index <= raw_idx < start_index + len(stage1_inputs):
+            idx = raw_idx
+            source = stage1_inputs[idx - start_index]
+        elif 0 <= raw_idx < len(stage1_inputs):
+            idx = start_index + raw_idx
+            source = stage1_inputs[raw_idx]
+        else:
+            raise RuntimeError(f"Stage 1 output has unknown index: {raw_idx}")
+        if idx in seen_indices:
+            raise RuntimeError(f"Stage 1 output has duplicate index: {idx}")
+        seen_indices.add(idx)
+        raw_decisions[idx] = normalize_decision(item, idx, source)
+    decisions: list[dict[str, Any]] = []
+    for offset in range(len(rows)):
+        idx = start_index + offset
+        if idx not in raw_decisions:
+            raise RuntimeError(f"Stage 1 output missing row index {idx}")
+        decisions.append(raw_decisions[idx])
+    if len(stage1_payload.get("editorial_decisions", [])) != len(rows):
+        raise RuntimeError(
+            f"Stage 1 row count mismatch: expected {len(rows)}, got {len(stage1_payload.get('editorial_decisions', []))}"
         )
-        if proc.returncode != 0:
-            raise RuntimeError(
-                "Codex Skill execution failed "
-                f"(code={proc.returncode}). stderr={proc.stderr[-2000:]} stdout={proc.stdout[-1000:]}"
-            )
-        if not output_path.exists():
-            raise RuntimeError(f"Codex Skill execution did not produce output file. stdout={proc.stdout[-2000:]}")
-        payload = json.loads(output_path.read_text(encoding="utf-8"))
-    if artifact_dir:
-        artifact_dir.mkdir(parents=True, exist_ok=True)
-        (artifact_dir / f"{artifact_prefix}_output.json").write_text(
-            json.dumps(payload, ensure_ascii=False, indent=2),
-            encoding="utf-8",
-        )
-    return payload
+    return decisions, {
+        "stage1_rows": len(decisions),
+        "stage1_batch_notes": stage1_payload.get("batch_notes", ""),
+        "runner_version": RUNNER_VERSION,
+        "execution_surface": "current_codex_task",
+        "provenance_manifest": runtime_provenance(fallback_state="false"),
+    }
 
 
 def run_codex_stage1(
@@ -2158,32 +2245,7 @@ def run_codex_stage1(
         artifact_prefix="stage1_editorial_decision",
     )
 
-    raw_decisions: dict[int, dict[str, Any]] = {}
-    for item in stage1_payload.get("editorial_decisions", []):
-        try:
-            idx = int(item.get("index"))
-        except (TypeError, ValueError):
-            continue
-        if start_index <= idx < start_index + len(stage1_inputs):
-            source = stage1_inputs[idx - start_index]
-            raw_decisions[idx] = normalize_decision(item, idx, source)
-        elif 0 <= idx < len(stage1_inputs):
-            global_idx = start_index + idx
-            source = stage1_inputs[idx]
-            raw_decisions[global_idx] = normalize_decision(item, global_idx, source)
-    decisions: list[dict[str, Any]] = []
-    for offset in range(len(rows)):
-        idx = start_index + offset
-        if idx not in raw_decisions:
-            raise RuntimeError(f"Codex Stage 1 output missing row index {idx}")
-        decisions.append(raw_decisions[idx])
-    return decisions, {
-        "stage1_rows": len(decisions),
-        "stage1_batch_notes": stage1_payload.get("batch_notes", ""),
-        "model": model or "codex-default",
-        "runner_version": RUNNER_VERSION,
-        "provenance_manifest": runtime_provenance(fallback_state="false"),
-    }
+    return validate_stage1_payload(rows, stage1_payload, start_index=start_index)
 
 
 def normalize_global_rank_row(item: dict[str, Any], decision: dict[str, Any]) -> dict[str, str]:
@@ -2211,6 +2273,7 @@ def normalize_global_rank_row(item: dict[str, Any], decision: dict[str, Any]) ->
         if recommendation == "生成脚本包":
             recommendation = "补证据"
     should_produce = locked_should_produce(locked_decision, recommendation, level)
+    title_permission = locked_title_permission(locked_decision, level, should_produce)
     position = str(item.get("global_rank_position") or "").strip()
     reason = str(item.get("global_tradeoff_reason") or "").strip()
     return {
@@ -2221,23 +2284,86 @@ def normalize_global_rank_row(item: dict[str, Any], decision: dict[str, Any]) ->
         "locked_recommendation_status": recommendation,
         "locked_daily_level": level,
         "locked_should_produce": should_produce,
+        "locked_title_permission": title_permission,
         "locked_global_rank_position": position if level == "今日最值得做" else "",
         "locked_global_tradeoff_reason": reason,
     }
 
 
-def apply_global_ranking(decisions: list[dict[str, Any]], ranking_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    by_id = {str(row.get("editorial_decision_id") or ""): row for row in ranking_rows}
-    by_index = {}
+def validate_global_ranking_bijection(
+    decisions: list[dict[str, Any]],
+    ranking_rows: list[dict[str, Any]],
+) -> None:
+    if len(ranking_rows) != len(decisions):
+        raise RuntimeError(
+            f"Global ranking row count mismatch: expected {len(decisions)}, got {len(ranking_rows)}"
+        )
+    declared_top_count = sum(1 for row in ranking_rows if str(row.get("global_daily_level") or "") == "今日最值得做")
+    if declared_top_count > 3:
+        raise RuntimeError(f"Global ranking selected {declared_top_count} 今日最值得做 rows; maximum is 3")
+    expected_by_id = {str(item.get("editorial_decision_id") or ""): item for item in decisions}
+    expected_by_index = {int(item.get("index")): item for item in decisions}
+    if len(expected_by_id) != len(decisions) or len(expected_by_index) != len(decisions):
+        raise RuntimeError("Stage 1 decisions are not uniquely identifiable")
+    seen_ids: set[str] = set()
+    seen_indices: set[int] = set()
+    top_positions: list[str] = []
     for row in ranking_rows:
+        required_fields = {
+            "index",
+            "editorial_decision_id",
+            "editorial_decision_hash",
+            "input_global_rank_hash",
+            "global_daily_level",
+            "final_recommendation_status",
+            "global_rank_position",
+            "global_tradeoff_reason",
+        }
+        missing_fields = sorted(field for field in required_fields if field not in row)
+        if missing_fields:
+            raise RuntimeError(f"Global ranking row missing required fields: {', '.join(missing_fields)}")
+        row_id = str(row.get("editorial_decision_id") or "")
         try:
-            by_index[int(row.get("index"))] = row
-        except (TypeError, ValueError):
-            continue
+            row_index = int(row.get("index"))
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError(f"Global ranking has invalid index: {row.get('index')!r}") from exc
+        if row_id in seen_ids:
+            raise RuntimeError(f"Global ranking duplicate editorial_decision_id: {row_id}")
+        if row_index in seen_indices:
+            raise RuntimeError(f"Global ranking duplicate index: {row_index}")
+        seen_ids.add(row_id)
+        seen_indices.add(row_index)
+        if row_id not in expected_by_id:
+            raise RuntimeError(f"Global ranking unknown editorial_decision_id: {row_id}")
+        if row_index not in expected_by_index:
+            raise RuntimeError(f"Global ranking unknown index: {row_index}")
+        expected = expected_by_id[row_id]
+        if int(expected.get("index")) != row_index:
+            raise RuntimeError(f"Global ranking id/index mismatch: {row_id} != index {row_index}")
+        if str(row.get("editorial_decision_hash") or "") != str(expected.get("editorial_decision_hash") or ""):
+            raise RuntimeError(f"Global ranking decision hash mismatch at index {row_index}")
+        if str(row.get("input_global_rank_hash") or "") != str(expected.get("global_rank_hash") or ""):
+            raise RuntimeError(f"Global ranking input rank hash mismatch at index {row_index}")
+        if str(expected.get("locked_decision") or expected.get("decision") or "") == "select" and not str(
+            row.get("global_tradeoff_reason") or ""
+        ).strip():
+            raise RuntimeError(f"Global ranking selected row missing tradeoff reason at index {row_index}")
+        if str(row.get("global_daily_level") or "") == "今日最值得做":
+            position = str(row.get("global_rank_position") or "").strip()
+            if position not in {"1", "2", "3"}:
+                raise RuntimeError(f"Global ranking top row has invalid position at index {row_index}: {position!r}")
+            top_positions.append(position)
+    if len(set(top_positions)) != len(top_positions):
+        raise RuntimeError("Global ranking has duplicate top positions")
+
+
+def apply_global_ranking(decisions: list[dict[str, Any]], ranking_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    validate_global_ranking_bijection(decisions, ranking_rows)
+    by_id = {str(row.get("editorial_decision_id") or ""): row for row in ranking_rows}
     ranked: list[dict[str, Any]] = []
     top_count = 0
     for decision in decisions:
-        item = by_id.get(str(decision.get("editorial_decision_id") or "")) or by_index.get(int(decision.get("index") or 0)) or {}
+        item = by_id[str(decision.get("editorial_decision_id") or "")]
         lock = normalize_global_rank_row(item, decision)
         next_decision = {**decision, **lock}
         rank_hash = global_rank_hash(next_decision)
@@ -2290,6 +2416,9 @@ def run_codex_global_ranking(
             encoding="utf-8",
         )
     return ranked, {
+        "ranking_bijection_ok": True,
+        "stage1_decision_count": len(decisions),
+        "ranking_output_count": len(ranking_payload.get("ranking_rows", [])),
         "global_ranking_rows": len(ranked),
         "global_top_count": sum(1 for decision in ranked if decision.get("locked_daily_level") == "今日最值得做"),
         "global_ranking_notes": ranking_payload.get("global_ranking_notes", ""),
@@ -2310,6 +2439,7 @@ def stage2_invariant_issues(decision: dict[str, Any], row: dict[str, str]) -> li
     expected_recommendation = normalize_space(decision.get("locked_recommendation_status") or decision.get("recommendation_status", ""))
     expected_level = normalize_space(decision.get("locked_daily_level", ""))
     expected_should = normalize_space(decision.get("locked_should_produce", ""))
+    expected_title_permission = normalize_space(decision.get("locked_title_permission", ""))
 
     if normalize_space(row.get("editorial_decision_id")) != expected_id:
         issues.append("editorial_decision_id mismatch")
@@ -2335,6 +2465,8 @@ def stage2_invariant_issues(decision: dict[str, Any], row: dict[str, str]) -> li
         issues.append("locked_daily_level mismatch")
     if normalize_space(row.get("locked_should_produce")) != expected_should:
         issues.append("locked_should_produce mismatch")
+    if normalize_space(row.get("locked_title_permission")) != expected_title_permission:
+        issues.append("locked_title_permission mismatch")
     if normalize_space(row.get("今日建议级别")) != expected_level:
         issues.append("今日建议级别 diverged from global ranking")
     if normalize_space(row.get("候选状态")) != expected_level:
@@ -2343,6 +2475,45 @@ def stage2_invariant_issues(decision: dict[str, Any], row: dict[str, str]) -> li
         issues.append("推荐动作 diverged from Stage 1 recommendation_status")
     if normalize_space(row.get("是否建议进入制作")) != expected_should:
         issues.append("是否建议进入制作 diverged from global ranking")
+    if normalize_space(row.get("title_permission")) != expected_title_permission:
+        issues.append("title_permission diverged from global ranking")
+    if normalize_space(row.get("主编判断摘要")) != expected_summary:
+        issues.append("主编判断摘要 diverged from Stage 1 public_decision_summary")
+    if normalize_space(row.get("标题思路")) != expected_rationale:
+        issues.append("标题思路 diverged from Stage 1 title_rationale")
+    if normalize_space(row.get("主编筛选")) != expected_decision:
+        issues.append("主编筛选 diverged from Stage 1 decision")
+    return issues
+
+
+def raw_stage2_drift_issues(decision: dict[str, Any], raw: dict[str, Any]) -> list[str]:
+    issues: list[str] = []
+    for field, decision_field in STAGE2_RAW_OWNER_EXPECTATIONS.items():
+        if field not in raw:
+            continue
+        actual = normalize_space(raw.get(field))
+        expected = normalize_space(decision.get(decision_field, ""))
+        if actual != expected:
+            issues.append(f"raw Stage 2 {field} diverged from locked {decision_field}")
+    if "可发布标题" in raw:
+        actual = normalize_space(raw.get("可发布标题"))
+        expected = normalize_space(decision.get("selected_visible_title", ""))
+        permission = normalize_space(raw.get("title_permission"))
+        if permission == "可发布标题" and actual != expected:
+            issues.append("raw Stage 2 可发布标题 diverged from locked selected_visible_title")
+    if "editorial_thinking_json" in raw:
+        issues.append("raw Stage 2 attempted to author editorial_thinking_json")
+    lock_echo_expectations = {
+        "editorial_decision_id": "editorial_decision_id",
+        "editorial_decision_hash": "editorial_decision_hash",
+        "locked_selected_visible_title": "selected_visible_title",
+        "locked_natural_austin_angle": "natural_austin_angle",
+        "locked_title_rationale": "title_rationale",
+        "locked_public_decision_summary": "public_decision_summary",
+    }
+    for field, decision_field in lock_echo_expectations.items():
+        if field in raw and normalize_space(raw.get(field)) != normalize_space(decision.get(decision_field, "")):
+            issues.append(f"raw Stage 2 {field} mismatch")
     return issues
 
 
@@ -2364,28 +2535,39 @@ def reapply_locked_stage2_fields(row: dict[str, Any], decision: dict[str, Any]) 
     )
     out["locked_daily_level"] = str(decision.get("locked_daily_level", ""))
     out["locked_should_produce"] = str(decision.get("locked_should_produce", ""))
+    out["locked_title_permission"] = str(decision.get("locked_title_permission", ""))
     out["locked_global_rank_position"] = str(decision.get("locked_global_rank_position", ""))
     out["locked_global_tradeoff_reason"] = expected_tradeoff
+    out["locked_selected_visible_title"] = expected_title
+    out["locked_natural_austin_angle"] = str(decision.get("natural_austin_angle", ""))
+    out["locked_title_rationale"] = str(decision.get("title_rationale", ""))
+    out["locked_public_decision_summary"] = expected_summary
 
     out["今日建议级别"] = out["locked_daily_level"]
     out["候选状态"] = out["locked_daily_level"]
     out["推荐动作"] = out["locked_recommendation_status"]
     out["是否建议进入制作"] = out["locked_should_produce"]
+    out["title_permission"] = out["locked_title_permission"]
     out["选题命题"] = expected_title
     out["我的选题标题"] = expected_title
     out["选题标题"] = expected_title
 
-    if normalize_space(out.get("title_permission")) == "可发布标题":
+    if out["locked_title_permission"] == "可发布标题":
         out["可发布标题"] = expected_title
-    elif normalize_space(out.get("locked_daily_level")) in NON_PUBLISH_LEVELS:
+    else:
         out["可发布标题"] = ""
         out["标题备选"] = ""
 
-    if expected_summary:
-        summary = normalize_space(out.get("主编判断摘要") or expected_summary)
-        if expected_tradeoff and not any(marker in summary for marker in ["取舍", "但", "不过", "缺", "风险"]):
-            summary = f"{summary} 取舍：{expected_tradeoff}"
-        out["主编判断摘要"] = summary
+    out["主编筛选"] = out["locked_decision"]
+    out["主编自由稿"] = expected_summary
+    out["主编判断摘要"] = expected_summary
+    out["标题思路"] = str(decision.get("title_rationale", ""))
+    out["选题判断"] = expected_summary
+    out["推荐理由"] = expected_tradeoff or expected_summary
+    out["主编判断"] = expected_summary
+    out["我的切入"] = str(decision.get("natural_austin_angle", ""))
+    out["我准备怎么讲"] = str(decision.get("natural_austin_angle", ""))
+    out["我会怎么讲"] = str(decision.get("natural_austin_angle", ""))
     return out
 
 
@@ -2395,6 +2577,8 @@ def run_codex_stage2(
     model: str,
     timeout: int,
     artifact_dir: Path | None = None,
+    *,
+    stage2_payload_override: dict[str, Any] | None = None,
 ) -> tuple[list[dict[str, str]], dict[str, Any]]:
     stage2_inputs = [stage2_candidate_payload(row, int(decisions[idx].get("index", idx)), decisions[idx]) for idx, row in enumerate(rows)]
     if artifact_dir:
@@ -2407,14 +2591,22 @@ def run_codex_stage2(
             }, ensure_ascii=False, indent=2),
             encoding="utf-8",
         )
-    stage2_payload = run_codex_prompt(
-        schema=field_mapping_output_schema(),
-        prompt=build_field_mapping_prompt(rows, decisions),
-        model=model,
-        timeout=timeout,
-        artifact_dir=artifact_dir,
-        artifact_prefix="stage2_field_mapping",
-    )
+    if stage2_payload_override is None:
+        stage2_payload = run_codex_prompt(
+            schema=field_mapping_output_schema(),
+            prompt=build_field_mapping_prompt(rows, decisions),
+            model=model,
+            timeout=timeout,
+            artifact_dir=artifact_dir,
+            artifact_prefix="stage2_field_mapping",
+        )
+    else:
+        stage2_payload = stage2_payload_override
+        if artifact_dir:
+            (artifact_dir / "stage2_field_mapping_output.json").write_text(
+                json.dumps(stage2_payload, ensure_ascii=False, indent=2),
+                encoding="utf-8",
+            )
 
     by_index: dict[int, dict[str, str]] = {}
     for item in stage2_payload.get("rows", []):
@@ -2427,13 +2619,21 @@ def run_codex_stage2(
             for field in [
                 "editorial_decision_id",
                 "editorial_decision_hash",
+                "global_rank_id",
+                "global_rank_hash",
                 "locked_selected_visible_title",
                 "locked_natural_austin_angle",
                 "locked_title_rationale",
                 "locked_public_decision_summary",
-                *SKILL_FIELDS,
+                *STAGE2_OPERATIONAL_FIELDS,
             ]
         }
+        fields["raw_stage2_owner_fields_json"] = json.dumps(
+            {field: item.get(field) for field in STAGE2_OWNER_FIELDS if field in item},
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        fields["raw_stage2_payload_json"] = json.dumps(item, ensure_ascii=False, sort_keys=True)
         by_index[idx] = fields
     enriched: list[dict[str, str]] = []
     for idx, row in enumerate(rows):
@@ -2445,6 +2645,14 @@ def run_codex_stage2(
         if not judgement:
             raise RuntimeError(f"Codex Stage 2 output missing row index {global_idx}")
         decision = decisions[idx]
+        try:
+            raw_stage2_payload = json.loads(judgement.get("raw_stage2_payload_json") or "{}")
+        except json.JSONDecodeError:
+            raw_stage2_payload = {}
+        raw_issues = raw_stage2_drift_issues(decision, raw_stage2_payload)
+        for field in ["editorial_decision_id", "editorial_decision_hash", "global_rank_id", "global_rank_hash"]:
+            if normalize_space(raw_stage2_payload.get(field)) != normalize_space(decision.get(field)):
+                raw_issues.append(f"raw Stage 2 {field} mismatch")
         out.update(judgement)
         for lock_field in [
             "global_rank_id",
@@ -2453,6 +2661,7 @@ def run_codex_stage2(
             "locked_recommendation_status",
             "locked_daily_level",
             "locked_should_produce",
+            "locked_title_permission",
             "locked_global_rank_position",
             "locked_global_tradeoff_reason",
         ]:
@@ -2482,7 +2691,12 @@ def run_codex_stage2(
         for case_field in ["真实/相邻案例", "可调用案例", "关联母场景", "借用方式", "我的真实/相邻场景"]:
             out[case_field] = ""
         out["不能声称的部分"] = out.get("不能声称的部分") or "不能把 persona/style 案例当成这条来源的事实证据。"
-        invariant_issues = stage2_invariant_issues(decision, out)
+        # Before normalization/reapply, only inspect the raw model payload for
+        # owner-field attempts. Full field invariants run after locked values
+        # have been mapped into the final row.
+        invariant_issues = list(raw_issues)
+        out["raw_stage2_drift_status"] = "fail" if raw_issues else "pass"
+        out["raw_stage2_drift_issues"] = "；".join(raw_issues)
         out["stage2_invariant_status"] = "fail" if invariant_issues else "pass"
         out["stage2_invariant_issues"] = "；".join(invariant_issues)
         out["persona_style_reference_state"] = "embedded_style_reference_not_source_evidence"
@@ -2521,6 +2735,23 @@ def run_codex_stage2(
     }
 
 
+def apply_stage2_payload(
+    rows: list[dict[str, str]],
+    decisions: list[dict[str, Any]],
+    stage2_payload: dict[str, Any],
+    *,
+    artifact_dir: Path | None = None,
+) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    return run_codex_stage2(
+        rows,
+        decisions,
+        model="current-codex-task",
+        timeout=0,
+        artifact_dir=artifact_dir,
+        stage2_payload_override=stage2_payload,
+    )
+
+
 def apply_final_stage2_invariants(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     checked: list[dict[str, Any]] = []
     for row in rows:
@@ -2530,7 +2761,10 @@ def apply_final_stage2_invariants(rows: list[dict[str, str]]) -> list[dict[str, 
             decision = json.loads(str(out.get("editorial_decision_json") or "{}"))
         except json.JSONDecodeError:
             decision = {}
+        preserved_raw_issues = normalize_space(out.get("raw_stage2_drift_issues"))
         issues = stage2_invariant_issues(decision, out) if decision else ["missing editorial_decision_json"]
+        if preserved_raw_issues:
+            issues = [preserved_raw_issues, *issues]
         if issues:
             existing = normalize_space(out.get("stage2_invariant_issues"))
             out["stage2_invariant_status"] = "fail"

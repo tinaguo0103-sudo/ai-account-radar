@@ -290,6 +290,12 @@ def validate_field_contract(row: dict[str, Any]) -> list[ContractIssue]:
     combined = f"{source}\n{main}"
     issues: list[ContractIssue] = []
 
+    if normalize_space(row.get("raw_stage2_drift_status")) == "fail":
+        issues.append(ContractIssue(
+            "raw_stage2_owner_drift",
+            f"field_mapping 原始输出越权改写 owner fields：{normalize_space(row.get('raw_stage2_drift_issues'))}",
+        ))
+
     if normalize_space(row.get("stage2_invariant_status")) == "fail":
         issues.append(ContractIssue(
             "stage2_decision_divergence",
