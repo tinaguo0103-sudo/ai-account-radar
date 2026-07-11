@@ -4,12 +4,15 @@ from __future__ import annotations
 import argparse
 import inspect
 import json
+import sys
 import unittest
 from pathlib import Path
 from tempfile import TemporaryDirectory
+from unittest.mock import patch
 
 import editorial_skill_runner as runner
 import topic_editorial_state_machine as machine
+import topic_skill_replay_evaluation as replay
 
 
 class TopicEditorialStateMachineTests(unittest.TestCase):
@@ -56,6 +59,27 @@ class TopicEditorialStateMachineTests(unittest.TestCase):
         self.assertFalse(manifest["nested_model_execution"])
         self.assertFalse(manifest["fallback"])
         self.assertTrue(manifest["persona_style_reference_only"])
+
+    def test_legacy_editorial_codex_cli_fails_before_business_io(self) -> None:
+        with TemporaryDirectory() as tmp:
+            output = Path(tmp) / "must-not-exist.csv"
+            argv = [
+                "editorial_skill_runner.py", "--engine", "codex",
+                "--input", str(Path(tmp) / "missing.csv"), "--output", str(output),
+            ]
+            with patch.object(sys, "argv", argv), self.assertRaises(SystemExit) as caught:
+                runner.main()
+            self.assertEqual(caught.exception.code, 2)
+            self.assertFalse(output.exists())
+
+    def test_legacy_replay_codex_cli_fails_before_output_creation(self) -> None:
+        with TemporaryDirectory() as tmp:
+            output = Path(tmp) / "must-not-exist"
+            argv = ["topic_skill_replay_evaluation.py", "--engine", "codex", "--out-dir", str(output)]
+            with patch.object(sys, "argv", argv), self.assertRaises(SystemExit) as caught:
+                replay.main()
+            self.assertEqual(caught.exception.code, 2)
+            self.assertFalse(output.exists())
 
     def test_later_stage_cannot_run_before_dependency(self) -> None:
         state = {"stages": {"stage1": machine.stage_record("prepared")}}

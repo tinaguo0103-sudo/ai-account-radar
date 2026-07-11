@@ -190,16 +190,8 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
                 final_rows,
                 {"batch_notes": "本批只给 1 条“今日最值得做”：Claude Cowork。未调用外部 Skill。", "model": "codex-default"},
             )):
-                rows, meta, _engine, ok = replay.run_skill_batches(pool, args, out_dir)
-            batch_meta = json.loads((out_dir / "batches" / "batch_000" / "meta.json").read_text(encoding="utf-8"))
-
-        self.assertTrue(ok)
-        self.assertEqual(rows[0]["今日建议级别"], "暂存观察")
-        self.assertIn("暂存观察=1", batch_meta["engine_meta"]["batch_notes"])
-        self.assertIn("暂存观察=1", meta["batches"][0]["engine_meta"]["batch_notes"])
-        self.assertIn("pre_guard_batch_notes", batch_meta["engine_meta"])
-        self.assertNotIn("未调用外部 Skill", batch_meta["engine_meta"]["pre_guard_batch_notes"])
-        self.assertIn("Codex exec 按嵌入的 ai-account-editorial-director", batch_meta["engine_meta"]["execution_note"])
+                with self.assertRaisesRegex(RuntimeError, "legacy-disabled"):
+                    replay.run_skill_batches(pool, args, out_dir)
 
     def test_aggregate_refreshes_batch_meta_from_final_rows(self) -> None:
         rows = [{

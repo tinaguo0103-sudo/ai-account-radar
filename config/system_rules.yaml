@@ -101,7 +101,7 @@
     },
     {
       "name": "今日候选池编辑判断层",
-      "rule": "候选池输出前必须先做 content_sampler.py 的采集、标准化、基础拆解、去重、同主题合并和明显噪音过滤，再把更宽的审阅池交给 scripts/editorial_skill_runner.py；runner 默认只读取本机全局私有版 ai-account-editorial-director Skill 文本和 persona-brief，本机私有版不存在时直接失败，不自动回退仓库脱敏版，并调用本机 Codex CLI 做批量主编判断；必要时可用 EDITORIAL_SKILL_DIR 显式指定目录做测试。代码不得先固定挑出10条，也不得按分数自动补满3条今日最值得做。当前采用 Gate -> Workflow Experiment Card -> Title Packaging：先做主编门控，判断这条能不能接到我的真实或相邻业务现场、证据是否足够；再生成工作流实验命题卡，写清短选题命题、我要做的实验、热点触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、我的思考点、重点体现、可展示证据、需要补的证据；最后只有 title_permission=可发布标题 时才生成并写入可发布标题和标题备选。选题命题要短、自然、像工作台条目，不能批量写成“我想用 X 测试 Y 能不能 Z”；验证方式必须是1-2步最小实验动作，写清输入、动作、输出或验收标准；可沉淀资产必须具体到该选题，不能写通用 Workflow SOP / 字段规则 / Brief 模板 / QA 清单。选题标题是飞书兼容主字段，内容必须镜像短选题命题，不再写发布标题。标题工作坊和标题自审降级为调试字段，不再作为主流程必填。代码不得用固定标题模板或资产包兜底；暂存观察、不建议制作、内部测试标题和证据不足项必须清空可发布标题和标题备选，但可保留内部选题命题和我要做的实验。抖音浅层内容与其他来源一样参与评分和候选判断，但命题、标题与推荐理由只能基于已采到的标题、文案、封面和公开元数据，不得声称口播全文、评论区、镜头结构或完整视频理解。"
+      "rule": "候选池先由 content_sampler.py 完成采集、标准化、去重和明显噪音过滤，再由当前 Codex 任务按 scripts/topic_editorial_state_machine.py 协议执行 Editorial Decision -> Global Daily Ranking -> Operational Field Mapping。Python 只准备 allowlisted source facts、记录状态与 hash、执行 strict bijection/raw drift/field contract 校验并落 artifact；禁止 nested Codex CLI、API 或子代理。Stage 1 只接收来源类型、平台、来源账号、原始标题、必要短摘录、标题钩子、来源权重/市场验证、账号方向和 persona/style reference，不接收旧04字段、实验字段、母场景结论或 deterministic 标题角度。全日 ranking 必须覆盖全部 Stage 1 decisions 且今日最值得做最多3条。Stage 2 只写 operational fields，任何 owner-field 改写均 fail + guard_blocked。repo mirror 是 Git 合约源；生产 global Skill 仅在发布阶段做 hash sync/read-back。"
     },
     {
       "name": "AI味检测规则",
@@ -1123,7 +1123,7 @@
     },
     {
       "name": "实验动作优先",
-      "rule": "候选不能只是一句正确判断，必须有用户会真实去做的实验动作。每条候选必须先通过 Gate，再整理 Workflow Experiment Card；如果写不出我要做的实验，不能成为今日最值得做。"
+      "rule": "实验动作是 Stage 2 的后置 operational field，不得反向驱动 Stage 1 标题、角度或选择。生成脚本包候选必须有可执行实验和验证方式；缺失时由 guard 显式阻断，不得静默改写主编 decision。"
     },
     {
       "name": "内容类型配比",

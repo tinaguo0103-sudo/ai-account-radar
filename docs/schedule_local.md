@@ -222,15 +222,17 @@ python3 scripts/daily_pipeline.py --resolve-url-intake
 python3 scripts/daily_pipeline.py --no-fetch-aihot
 ```
 
-只测试 Skill 或标题判断时，不要重新采集，直接复用最近一次正式输出：
+只测试 Skill 或标题判断时，不要重新采集。用当前 Codex 任务状态机复用只读 `content_items.csv`：
 
 ```bash
-python3 scripts/editorial_skill_runner.py \
-  --engine codex \
-  --input output/latest_write/today_10_topics.csv \
-  --output output/latest_write/today_10_topics.csv \
-  --report output/latest_write/editorial_skill_report.json
+PYTHONPATH=scripts python3 scripts/topic_editorial_state_machine.py prepare-stage1 \
+  --out-dir /private/tmp/ar020d_current_task_replay \
+  --content-csv output/runs/<run_id>/content_items.csv \
+  --since <YYYY-MM-DD> \
+  --batch-size 3
 ```
+
+当前 Codex 任务随后按 `validate-stage1 -> prepare-ranking -> validate-ranking -> prepare-stage2 -> validate-stage2 -> finalize` 协议执行。`editorial_skill_runner.py --engine codex` 是禁用的旧入口，会在读写业务输出前失败。
 
 写入边界：
 

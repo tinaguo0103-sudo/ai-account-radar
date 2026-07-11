@@ -2826,24 +2826,32 @@ def write_report(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run ai-account-editorial-director on a candidate CSV.")
+    parser = argparse.ArgumentParser(
+        description="Legacy CSV adapter. Real editorial judgment uses topic_editorial_state_machine.py in the current Codex task."
+    )
     parser.add_argument("--input", required=True, help="Candidate CSV from content_sampler.py.")
     parser.add_argument("--output", required=True, help="Enriched candidate CSV.")
     parser.add_argument("--report", default="", help="Optional JSON report path.")
     parser.add_argument(
         "--engine",
-        choices=["codex", "deterministic"],
-        default=os.getenv("EDITORIAL_SKILL_ENGINE", "codex"),
-        help="Default codex embeds the global private Skill text. deterministic is an explicit offline emergency fallback.",
+        choices=["state-machine", "codex", "deterministic"],
+        default=os.getenv("EDITORIAL_SKILL_ENGINE", "state-machine"),
+        help="state-machine is the required current-task protocol. codex is legacy-disabled. deterministic is an explicit offline emergency fallback only.",
     )
-    parser.add_argument("--codex-model", default=os.getenv("EDITORIAL_SKILL_CODEX_MODEL", ""), help="Optional Codex model override.")
-    parser.add_argument("--timeout", type=int, default=int(os.getenv("EDITORIAL_SKILL_TIMEOUT", "900")), help="Codex execution timeout in seconds.")
+    parser.add_argument("--codex-model", default="", help="Deprecated; nested Codex execution is disabled.")
+    parser.add_argument("--timeout", type=int, default=0, help="Deprecated; current-task stages do not start a nested model process.")
     parser.add_argument(
         "--allow-deterministic-fallback",
         action="store_true",
-        help="If Codex execution fails, fall back to deterministic field filling instead of failing.",
+        help="Deprecated compatibility flag. It never converts a state-machine or codex invocation into accepted editorial output.",
     )
     args = parser.parse_args()
+
+    if args.engine in {"state-machine", "codex"}:
+        parser.error(
+            "Nested editorial execution is disabled. Use scripts/topic_editorial_state_machine.py "
+            "prepare-stage1, then let the current Codex task produce and validate Stage 1, global ranking, and Stage 2 artifacts."
+        )
 
     load_local_env()
     input_path = Path(args.input)
@@ -2852,16 +2860,13 @@ def main() -> int:
     engine = args.engine
     engine_meta: dict[str, Any] = {}
     try:
-        if args.engine == "codex":
-            enriched, engine_meta = run_codex_skill(rows, args.codex_model, args.timeout)
-        else:
-            enriched = normalize_batch([enrich(row) for row in rows])
-            engine_meta = {
-                "mode": "explicit_deterministic",
-                "fallback_only": True,
-                "not_editorial_quality": True,
-                "approved_selection_learning": str(APPROVED_SELECTION_LEARNING_MD) if APPROVED_SELECTION_LEARNING_MD.exists() else "",
-            }
+        enriched = normalize_batch([enrich(row) for row in rows])
+        engine_meta = {
+            "mode": "explicit_deterministic",
+            "fallback_only": True,
+            "not_editorial_quality": True,
+            "approved_selection_learning": str(APPROVED_SELECTION_LEARNING_MD) if APPROVED_SELECTION_LEARNING_MD.exists() else "",
+        }
     except Exception as exc:
         if not args.allow_deterministic_fallback:
             raise

@@ -693,14 +693,9 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             with patch.object(runner, "run_codex_stage1", side_effect=fake_stage1), \
                 patch.object(runner, "run_codex_global_ranking", side_effect=fake_ranking), \
                 patch.object(runner, "run_codex_stage2", side_effect=fake_stage2):
-                rows, meta, engine, completed = replay.run_skill_batches(pool, args, out_dir)
-
-            self.assertTrue(completed)
-            self.assertEqual(engine, "codex")
-            self.assertEqual(len(rows), 6)
-            self.assertEqual(sum(1 for row in rows if row["今日建议级别"] == "今日最值得做"), 3)
-            self.assertEqual(calls, ["stage1:0", "stage1:2", "stage1:4", "ranking", "stage2:0", "stage2:2", "stage2:4"])
-            self.assertEqual(meta["global_ranking"]["global_top_count"], 3)
+                with self.assertRaisesRegex(RuntimeError, "legacy-disabled"):
+                    replay.run_skill_batches(pool, args, out_dir)
+            self.assertEqual(calls, [])
 
     def test_observe_visible_task_shell_is_blocking_title_quality_issue(self) -> None:
         row = stage2_stub_row(runner.normalize_decision({

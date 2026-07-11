@@ -449,8 +449,8 @@ def final_engine_meta(meta: dict[str, Any], rows: list[dict[str, Any]]) -> dict[
         )
     else:
         out["execution_note"] = (
-            "Codex exec 按嵌入的 ai-account-editorial-director repo mirror/persona/context 执行主编合约；"
-            "未在本进程内另行调用全局私有 Skill 工具。最终证据以 guard-applied rows 为准。"
+            "Legacy nested replay artifact；该执行路径已禁用，不得作为当前主编质量证据。"
+            "新证据必须来自 execution_surface=current_codex_task 状态机。"
         )
     return out
 
@@ -467,7 +467,10 @@ def run_skill_batches(
     later ``--resume`` can skip them and continue the remaining batches.
     """
     if args.engine == "codex":
-        return run_codex_skill_replay_batches(pool, args, out_dir)
+        raise RuntimeError(
+            "Nested Codex replay is legacy-disabled. Use topic_editorial_state_machine.py "
+            "with execution_surface=current_codex_task."
+        )
 
     batch_size = int(getattr(args, "batch_size", 0) or len(pool) or 1)
     per_batch_timeout = timeout_seconds(args)
@@ -1481,11 +1484,13 @@ def aggregate_replay_outputs(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Run AR-020B real editorial Skill replay.")
+    parser = argparse.ArgumentParser(
+        description="Legacy replay aggregator. Current-task editorial replay uses topic_editorial_state_machine.py."
+    )
     parser.add_argument("--since", default="2026-07-01")
     parser.add_argument("--content-csv", action="append", default=[], help="Specific content_items.csv path. Can be repeated.")
     parser.add_argument("--out-dir", default=str(DEFAULT_OUT))
-    parser.add_argument("--engine", choices=["codex", "deterministic"], default="codex")
+    parser.add_argument("--engine", choices=["state-machine", "codex", "deterministic"], default="state-machine")
     parser.add_argument("--codex-model", default="")
     parser.add_argument("--timeout", type=int, default=900, help="Default timeout seconds for each real codex Skill batch unless --batch-timeout-seconds is set. Error artifacts are written on timeout/failure.")
     parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Number of pre-skill candidates per real Skill batch. Use 0 to run as one batch.")
@@ -1494,6 +1499,12 @@ def main() -> int:
     parser.add_argument("--aggregate-only", action="store_true", help="Aggregate existing successful batch artifacts without running the Skill.")
     parser.add_argument("--max-skill-candidates", type=int, default=content_sampler.MAX_SKILL_REVIEW_CANDIDATES)
     args = parser.parse_args()
+
+    if args.engine in {"state-machine", "codex"} and not args.aggregate_only:
+        parser.error(
+            "Nested real-Skill replay is disabled. Use scripts/topic_editorial_state_machine.py prepare-stage1 "
+            "and complete the current-task Stage 1 -> global ranking -> Stage 2 protocol."
+        )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

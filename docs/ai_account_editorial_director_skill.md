@@ -26,7 +26,7 @@ skills/ai-account-editorial-director/
 
 这份版本保留人设方法、判断流程、字段契约和脱敏示例，不包含个人客户资料、真实项目细节、内部数据、登录信息或私有案例全文。它适合作为 Git 可追踪基线，也适合单独分享。
 
-本机全局 Skill `/Users/congcong/.codex/skills/ai-account-editorial-director` 是生产唯一默认入口，可以继续保留更完整的私有案例版。当前生产脚本只读取本机私有版文本；如果本机私有版不存在，会直接失败，不会自动回退仓库公开脱敏版。脚本只是读取 Skill 文本并嵌入 prompt，不触发外部 Skill 调用机制，因此可以兼顾个性化效果和执行稳定性。需要测试仓库脱敏版时，必须显式设置 `EDITORIAL_SKILL_DIR=skills/ai-account-editorial-director`。
+仓库 mirror 是 Git 管理的合约源；本机全局 Skill 可保留私有 persona/style 材料，但生产发布前必须做 Skill hash sync/read-back。真实主编执行面是当前 Codex 任务；Python 不再把 Skill prompt 交给 nested Codex CLI、API 或子代理。测试私有 Skill 目录必须从当前 repo mirror 生成并校验 `SKILL.md` hash 一致，persona/cases 只是 style reference，不是来源证据。
 
 如需把仓库脱敏版安装到全局目录：
 
@@ -129,13 +129,13 @@ Skill 现在按三层证据判断，而不是强行“每条贴一个案例”�
 
 Skill 还必须区分 `热点钩子` 和 `我的内容`。遇到 Claude Code、Claude Design、Vercel Eve、Seedance、小云雀、Runway、Kling 等明确热点名时，可以把名称保留在标题或Brief里做入口，但标题必须落到“我会怎么测、怎么改造、怎么验证”的业务动作上。
 
-## Gate -> Workflow Experiment Card -> Title Packaging
+## Editorial Decision -> Global Daily Ranking -> Operational Field Mapping
 
-最新规则不是“热点映射到母场景后生成标题”，也不是“先填字段再拼标题”。每条候选必须先做门控，再生成工作流实验命题卡，最后才做标题包装：
+最新规则不是“先填字段再拼标题”，而是三个严格所有权阶段：
 
-1. `Gate / 主编门控`：只判断这条值不值得我做、证据够不够、是否允许生成标题。输出 `主编筛选 / 主编自由稿 / 我的真实矛盾 / 场景依据 / 证据强度 / title_permission`。
-2. `Workflow Experiment Card / 工作流实验命题卡`：通过门控后，整理成用户能看的工作备忘。核心输出短 `选题命题` 和 `我要做的实验`，并补充 `热点触发点 / 我的工作流痛点 / 旧流程痛点 / AI介入点 / 验证方式 / 可沉淀资产 / 我的思考点 / 重点体现 / 需要补的证据`。
-3. `Title Packaging / 标题包装`：只有 `title_permission=可发布标题`，才生成 `可发布标题 / 标题备选`。否则这两个字段必须为空。
+1. `Editorial Decision`：只读最小来源事实与 persona/style reference，锁定 select/observe/reject、Austin 角度、可见标题、标题理由和公开主编摘要；不接收旧 04 字段、实验字段、母场景结论或 deterministic 角度。
+2. `Global Daily Ranking`：一次覆盖全日所有 Stage 1 decisions，严格 1:1 校验 id/index/hash，全日 `今日最值得做` 最多 3 条，并为非 top 候选写公开取舍理由。
+3. `Operational Field Mapping`：只根据已锁定的 decision/ranking 补实验、验证、资产、痛点等后置字段。它无权改选择、标题、角度、主编摘要或全日级别；任何 raw drift 都在 normalization 前留证并 `fail + guard_blocked`。
 
 `主编自由稿` 是用户拍之前写给自己的判断备忘，约 120-220 字，不是字段清单。它要回答：
 
@@ -188,18 +188,17 @@ Skill 还必须区分 `热点钩子` 和 `我的内容`。遇到 Claude Code、C
 
 ## 自动链路如何真正使用案例库
 
-`scripts/editorial_skill_runner.py` 不再把完整案例库整篇塞进 prompt 后让模型自己找重点。现在流程是：
+案例库整体嵌入为 persona/style reference，不做候选来源证据，不做逐条案例锚定，不出现在用户可见引用中。现在流程是：
 
 ```text
-候选内容
-→ 代码按关键词和栏目匹配 1-3 个母场景
-→ prompt 注入 persona-brief.md + 每条候选的关联母场景候选 + 热点钩子候选 + 场景依据候选
-→ Skill 必须先写出“主编自由稿”，再完成业务现场复盘：旧流程、卡点、AI改造、人保留判断、可展示证据
-→ Skill 再写点击钩子和观众为什么会点
-→ Skill 从自由稿和点击理由输出第一人称工作流实验命题卡：主编自由稿 / 点击钩子 / 观众为什么会点 / 我的真实矛盾 / 选题命题 / 我要做的实验 / 热点触发点 / 我的工作流痛点 / 验证方式 / 可展示证据
-→ Skill 输出 热点钩子 / 普通人会怎么讲 / 我会怎么讲 / 场景依据 / 真实或相邻案例 / 我的改造动作 / 需要补的证据
-→ Skill 再输出 关联母场景 / 借用方式 / 不能声称的部分 / 我的真实或相邻场景
-→ 最后才决定是否生成可发布标题和标题备选
+只读候选内容
+→ Python 生成 allowlisted Stage 1 facts + persona/style reference hash
+→ 当前 Codex 任务写 editorial decisions
+→ Python 校验全覆盖、decision hash 和 case-reference-only 边界
+→ 当前任务一次性完成全日 1:1 ranking
+→ Python 校验 bijection/tradeoff/top<=3 并锁定 ranking hash
+→ 当前任务只写 operational fields
+→ Python 在 normalization 前保留 raw drift，再 finalize 用户样例包
 ```
 
 这样做的目的，是避免“看起来读了案例库、实际输出还是泛模板”。模型必须先说明这条内容如何连接用户的真实/相邻场景，并判断它是 `真实案例 / 相邻推演 / 仅热点观察`，再决定是否值得进入候选。
@@ -253,7 +252,7 @@ ContentItem -> code 初筛 -> ai-account-editorial-director -> 04 分析与选�
 
 ## 当前接入状态
 
-当前已经新增 `scripts/editorial_skill_runner.py` 作为 Skill 主编层执行脚本。它默认调用本机已登录的 Codex CLI，在只读模式下读取本机全局私有 Skill 文本、`persona-brief.md` 和每条候选匹配到的母场景包；如果本机私有版不存在，会直接失败，不会自动读取仓库公开脱敏版。它会对 `content_sampler.py` 输出的候选重新做一轮批量主编判断，并补齐飞书前台可读字段。需要测试指定版本时，可通过 `EDITORIAL_SKILL_DIR` 显式指定目录。
+当前入口是 `scripts/topic_editorial_state_machine.py`。它从只读 `content_items.csv` 准备 Stage 1 最小输入，由当前 Codex 任务完成主编判断、全日统一排序和 operational field mapping，再由 Python 校验 schema/hash/bijection/raw drift 并生成 artifact。`editorial_skill_runner.py --engine codex` 是禁用的 legacy 入口，会在读写业务输出前直接失败。
 
 - `主编筛选`
 - `主编自由稿`
