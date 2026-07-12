@@ -151,9 +151,7 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
     def test_feishu_visible_rows_infers_missing_level_for_publishable_script_candidates(self) -> None:
         rows = [
             {
-                "editorial_engine": "codex",
-                "fallback_only": "false",
-                "not_editorial_quality": "false",
+                "strict_fail_closed": "true",
                 "我的选题标题": "值得推进",
                 "推荐动作": "生成脚本包",
                 "是否建议进入制作": "是",
@@ -166,9 +164,7 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
                 "标题思路": "标题先写恢复链路的真实动作，不写成泛工具教程。",
             },
             {
-                "editorial_engine": "codex",
-                "fallback_only": "false",
-                "not_editorial_quality": "false",
+                "strict_fail_closed": "true",
                 "我的选题标题": "先观察",
                 "推荐动作": "暂存观察",
                 "是否建议进入制作": "暂存观察",
@@ -188,9 +184,7 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
     def test_feishu_visible_rows_omits_internal_title_script_candidates(self) -> None:
         rows = [
             {
-                "editorial_engine": "codex",
-                "fallback_only": "false",
-                "not_editorial_quality": "false",
+                "strict_fail_closed": "true",
                 "我的选题标题": "内部测试标题候选",
                 "推荐动作": "生成脚本包",
                 "是否建议进入制作": "是",

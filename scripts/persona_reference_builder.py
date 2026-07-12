@@ -13,7 +13,7 @@ from typing import Any
 from xml.etree import ElementTree
 
 
-VERSION = "persona_reference_v2"
+VERSION = "persona_reference_v3"
 WORD_NS = {"w": "http://schemas.openxmlformats.org/wordprocessingml/2006/main"}
 
 
@@ -54,27 +54,37 @@ def slice_between(lines: list[str], start_pattern: str, end_pattern: str | None)
     return lines[start:end]
 
 
-def judgment_examples(lines: list[str]) -> list[dict[str, str]]:
-    section = slice_between(lines, r"^\u7b2c7\u9898", None)
-    starts = [index for index, line in enumerate(section) if re.match(r"^\u6837\u4f8b[\u4e00\u4e8c\u4e09\u56db\u4e94\u516d\u4e03\u516b\u4e5d\u5341\d]", line)]
-    examples: list[dict[str, str]] = []
-    for offset, start in enumerate(starts):
-        block = section[start: starts[offset + 1] if offset + 1 < len(starts) else len(section)]
-        values: dict[str, str] = {}
-        for line in block[1:]:
-            for label, key in [
-                ("\u6211\u7684\u601d\u8003\u70b9\uff1a", "judgment_move"),
-                ("\u91cd\u70b9\u4f53\u73b0\uff1a", "selection_boundary"),
-            ]:
-                if line.startswith(label):
-                    values[key] = line[len(label):].strip()
-        if values.get("judgment_move") and values.get("selection_boundary"):
-            examples.append({
-                "example_id": f"style_{len(examples) + 1:03d}",
-                **values,
-                "role": "judgment_and_style_reference_only",
-                "anti_copy": "Infer only the judgment operation; do not reuse nouns, projects, vocabulary, or sentence skeletons.",
-            })
+OPERATION_PATTERNS = {
+    "public_contradiction": ("但", "反而", "不是", "矛盾", "问题"),
+    "shallow_take_rejection": ("不是", "不要", "不能只", "不等于", "别"),
+    "evidence_skepticism": ("证据", "判断", "是否", "结果", "真实"),
+    "story_or_social_proof": ("故事", "经历", "客户", "团队", "项目"),
+    "result_promise": ("结果", "做到", "解决", "留下", "提升"),
+    "decision_tradeoff": ("选择", "取舍", "优先", "更重要", "宁可"),
+    "natural_voice": ("我", "其实", "所以", "后来", "现在"),
+}
+EXCLUDED_PREFIXES = ("字段", "飞书", "推荐动作", "今日建议级别", "关联母场景", "可调用案例")
+
+
+def judgment_examples(lines: list[str]) -> list[dict[str, Any]]:
+    examples: list[dict[str, Any]] = []
+    for paragraph_index, raw in enumerate(lines):
+        text = raw.strip()
+        if len(text) < 28 or len(text) > 360 or text.startswith(EXCLUDED_PREFIXES):
+            continue
+        operations = [name for name, markers in OPERATION_PATTERNS.items() if any(marker in text for marker in markers)]
+        if not operations:
+            continue
+        role = "judgment_and_style_reference_only"
+        examples.append({
+            "example_id": f"style_p{paragraph_index:04d}",
+            "paragraph_index": paragraph_index,
+            "source_hash": sha256_bytes(text.encode("utf-8")),
+            "verbatim_text": text,
+            "role": role,
+            "judgment_operations": operations,
+            "anti_copy": "Use only voice and judgment habits. Never reuse case facts, names, claims, or sentence shells as candidate evidence.",
+        })
     if not examples:
         raise RuntimeError("No judgment/style examples could be derived from the authoritative Word file")
     return examples
@@ -140,16 +150,21 @@ def build_bundle(docx_path: Path, out_dir: Path) -> dict[str, Any]:
     return manifest
 
 
-def retrieve_style_examples(examples: list[dict[str, str]], operations: list[str], limit: int = 6) -> list[dict[str, str]]:
+def retrieve_style_examples(
+    examples: list[dict[str, Any]], operations: list[str], *, candidate_id: str, limit: int = 6
+) -> list[dict[str, Any]]:
     if not 3 <= limit <= 6:
         raise ValueError("Style retrieval limit must be between 3 and 6")
-    terms = {term.lower() for term in operations if term.strip()}
+    terms = {term for term in operations if term in OPERATION_PATTERNS}
+    if not terms:
+        terms = {"natural_voice", "decision_tradeoff"}
     scored = []
-    for index, item in enumerate(examples):
-        haystack = " ".join(str(value) for value in item.values()).lower()
-        score = sum(1 for term in terms if term in haystack)
-        scored.append((score, -index, item))
-    selected = [item for _score, _index, item in sorted(scored, reverse=True)[:limit]]
+    for item in examples:
+        tags = set(item.get("judgment_operations") or [])
+        score = len(terms & tags)
+        tie = sha256_bytes(f"{candidate_id}:{item['example_id']}".encode("utf-8"))
+        scored.append((score, tie, item))
+    selected = [item for _score, _tie, item in sorted(scored, key=lambda value: (-value[0], value[1]))[:limit]]
     if len(selected) < 3:
         raise RuntimeError("Persona style retrieval returned fewer than 3 examples")
     return selected

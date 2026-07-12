@@ -21,14 +21,11 @@ class AR020BFieldContractTests(unittest.TestCase):
             "AIHOT重大性说明": "",
         }
 
-        payload = editorial_skill_runner.compact_candidate(row, 0)
+        payload = editorial_skill_runner.stage1_candidate_payload(row, 0)
 
-        self.assertIn("source_governance_evidence", payload)
-        self.assertIn("主编字段所有权", payload)
-        self.assertIn("field_contract_guardrails", payload)
-        self.assertIn("AIGC自修室", str(payload["source_governance_evidence"]))
-        self.assertIn("原始标题钩子", payload)
-        self.assertIn("工具组合", str(payload["source_governance_evidence"]))
+        self.assertIn("source_facts", payload)
+        self.assertIn("AIGC自修室", str(payload["source_facts"]))
+        self.assertIn("source_title_hook", payload["source_facts"])
 
     def test_skill_output_schema_includes_all_core_main_fields(self) -> None:
         required = {
@@ -65,13 +62,12 @@ class AR020BFieldContractTests(unittest.TestCase):
             "主题簇": "知识库/内容资产流转",
         }
 
-        payload = editorial_skill_runner.compact_candidate(row, 0)
+        payload = editorial_skill_runner.stage1_candidate_payload(row, 0)
 
         self.assertNotIn("Austin转译角度", payload)
         self.assertNotIn("我的工作流痛点", payload)
-        self.assertIn("non_authoritative_hints", payload)
-        self.assertIn("existing_fields_do_not_copy", payload)
-        self.assertIn("信息雷达", str(payload["non_authoritative_hints"]))
+        self.assertNotIn("non_authoritative_hints", payload)
+        self.assertNotIn("信息雷达", str(payload))
 
     def test_knowledge_base_source_with_video_main_fields_is_downgraded(self) -> None:
         row = {
@@ -95,7 +91,7 @@ class AR020BFieldContractTests(unittest.TestCase):
             "title_permission": "内部测试标题",
         }
 
-        normalized = editorial_skill_runner.normalize_batch([row])[0]
+        normalized = contract.downgrade_for_contract(row, contract.validate_field_contract(row))
 
         self.assertEqual(normalized["field_contract_status"], "fail")
         self.assertIn("知识库/Obsidian/RAG", normalized["field_contract_issues"])
@@ -347,19 +343,17 @@ class AR020BFieldContractTests(unittest.TestCase):
 
         self.assertTrue(any(issue.code == "hint_leak_without_skill_trace" for issue in issues))
 
-    def test_deterministic_fallback_is_marked_not_quality_and_omitted_from_04(self) -> None:
-        fallback = editorial_skill_runner.enrich({
+    def test_non_state_machine_row_is_omitted_from_04(self) -> None:
+        invalid = {
             "来源内容": "普通来源",
             "对应栏目": "真实工作流改造",
             "推荐动作": "生成脚本包",
             "是否建议进入制作": "是",
             "今日建议级别": "推荐制作",
-        })
+        }
 
-        visible, omitted = push_today10_to_feishu.feishu_visible_rows([fallback])
+        visible, omitted = push_today10_to_feishu.feishu_visible_rows([invalid])
 
-        self.assertEqual(fallback["fallback_only"], "true")
-        self.assertEqual(fallback["not_editorial_quality"], "true")
         self.assertEqual(visible, [])
         self.assertEqual(omitted, 1)
 

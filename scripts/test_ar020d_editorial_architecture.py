@@ -154,8 +154,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
         row = stage2_stub_row(decision)
         row["raw_stage2_drift_status"] = "fail"
         row["raw_stage2_drift_issues"] = "；".join(issues)
-        normalized = runner.normalize_batch([row])[0]
-        restored = runner.reapply_locked_stage2_fields(normalized, decision)
+        restored = runner.reapply_locked_stage2_fields(row, decision)
         final = runner.apply_final_stage2_invariants([restored])[0]
         self.assertEqual(final["stage2_invariant_status"], "fail")
         self.assertEqual(final["guard_blocked"], "true")
@@ -210,12 +209,11 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "是否建议进入制作": "否",
         }
 
-        with patch.object(runner, "run_codex_prompt", return_value={
+        rows, _meta = runner.apply_stage2_payload([source], [ranked], {
             "engine": "malicious-stub",
             "batch_notes": "attempted owner drift",
             "rows": [malicious],
-        }):
-            rows, _meta = runner.run_codex_stage2([source], [ranked], "", 30)
+        })
 
         self.assertEqual(rows[0]["raw_stage2_drift_status"], "fail")
         self.assertEqual(rows[0]["stage2_invariant_status"], "fail")
@@ -253,13 +251,15 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
         self.assertNotIn("主题簇", payload)
 
     def test_provenance_requires_embedded_persona_style_reference(self) -> None:
-        manifest = runner.runtime_provenance(fallback_state="false")
+        manifest = runner.runtime_provenance()
 
         self.assertEqual(manifest["runner_version"], runner.RUNNER_VERSION)
         self.assertTrue(manifest["persona_style_embedded"])
         self.assertTrue(manifest["persona_style_reference_only"])
         self.assertEqual(manifest["persona_style_role"], "style_reference_only_not_source_evidence")
         self.assertTrue(str(manifest["persona_style_sha256"]))
+        self.assertTrue(manifest["strict_fail_closed"])
+        self.assertEqual(manifest["prohibited_path_count"], 0)
 
     def test_editorial_decision_schema_has_no_case_anchor_field(self) -> None:
         schema_text = json.dumps(runner.editorial_decision_output_schema(), ensure_ascii=False)
@@ -370,14 +370,8 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
         self.assertEqual(runner.stage2_invariant_issues(ranked, restored), [])
 
     def test_stage1_prompt_forbids_internal_action_titles(self) -> None:
-        prompt = runner.build_editorial_decision_prompt([{
-            "原始来源标题": "做产品不要先堆功能，先找到购买理由",
-            "来源内容": "产品增长和购买理由。",
-        }])
-
-        self.assertIn("先把购买理由讲清楚", prompt)
-        self.assertIn("观察也要像公开判断", prompt)
-        self.assertIn("来源钩子 + Austin 业务矛盾", prompt)
+        self.assertFalse(hasattr(runner, "build_editorial_decision_prompt"))
+        self.assertFalse(hasattr(runner, "normalize_batch"))
 
     def test_global_ranking_keeps_all_quality_passing_rows_across_batches(self) -> None:
         decisions = []
@@ -658,7 +652,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                     "near_miss_reason": "",
                     "public_decision_summary": "公开摘要。",
                 }, index, {"original_title": row["原始来源标题"]}))
-            return decisions, {"provenance_manifest": runner.runtime_provenance(fallback_state="false")}
+            return decisions, {"provenance_manifest": runner.runtime_provenance()}
 
         def fake_ranking(rows, decisions, model, timeout, artifact_dir=None):
             calls.append("ranking")
@@ -680,17 +674,17 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
         def fake_stage2(rows, decisions, model, timeout, artifact_dir=None):
             calls.append(f"stage2:{decisions[0]['index']}")
             return [stage2_stub_row(decision) for decision in decisions], {
-                "provenance_manifest": runner.runtime_provenance(fallback_state="false"),
+                "provenance_manifest": runner.runtime_provenance(),
                 "batch_notes": "stage2 ok",
             }
 
         with TemporaryDirectory() as tmp:
             out_dir = Path(tmp)
-            with patch.object(runner, "run_codex_stage1", side_effect=fake_stage1), \
-                patch.object(runner, "run_codex_global_ranking", side_effect=fake_ranking), \
-                patch.object(runner, "run_codex_stage2", side_effect=fake_stage2):
-                with self.assertRaisesRegex(RuntimeError, "legacy-disabled"):
-                    replay.run_skill_batches(pool, args, out_dir)
+            self.assertFalse(hasattr(runner, "run_current_task_stage1"))
+            self.assertFalse(hasattr(runner, "run_current_task_global_ranking"))
+            self.assertFalse(hasattr(runner, "run_current_task_stage2"))
+            with self.assertRaisesRegex(RuntimeError, "legacy-disabled"):
+                replay.run_skill_batches(pool, args, out_dir)
             self.assertEqual(calls, [])
 
     def test_observe_visible_task_shell_is_blocking_title_quality_issue(self) -> None:
@@ -737,8 +731,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "来源类型": "对标视频",
         }
 
-        with self.assertRaisesRegex(RuntimeError, "zero-fallback"):
-            runner.run_codex_skill([row], "", 30)
+        self.assertFalse(hasattr(runner, "run_codex_skill"))
 
     def test_six_counterexample_payloads_stay_source_fact_only(self) -> None:
         titles = [

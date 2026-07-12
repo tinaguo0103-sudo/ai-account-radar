@@ -24,6 +24,10 @@ def build_output(candidate: dict[str, Any], capture: dict[str, Any]) -> dict[str
     content_hash = hashlib.sha256(
         json.dumps({"url": final_url, "title": title, "author": author, "body": body}, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
+    requested_screenshot = Path(str(capture.get("screenshot_path") or "")) if capture.get("screenshot_path") else None
+    screenshot_path = str(requested_screenshot) if requested_screenshot and requested_screenshot.exists() else ""
+    visual_status = "completed" if screenshot_path else "failed"
+    visual_error = "" if screenshot_path else str(capture.get("visual_capture_error") or "Page.captureScreenshot timeout")
     output = {
         "protocol": "ar020d_exact_source_evidence_v1",
         "primary_adapter": primary,
@@ -51,7 +55,10 @@ def build_output(candidate: dict[str, Any], capture: dict[str, Any]) -> dict[str
         "browser_surface": str(capture.get("browser_surface") or ""),
         "browser_session_boundary": str(capture.get("browser_session_boundary") or ""),
         "dom_text_path": str(capture.get("dom_text_path") or ""),
-        "screenshot_path": str(capture.get("screenshot_path") or ""),
+        "screenshot_path": screenshot_path,
+        "visual_capture_status": visual_status,
+        "visual_capture_error": visual_error,
+        "audit_warnings": [] if visual_status == "completed" else ["visual_capture_failed_dom_evidence_retained"],
         "content_evidence": [{
             "evidence_id": f"exact-page-{candidate['candidate_id']}",
             "evidence_type": "visible_exact_page",

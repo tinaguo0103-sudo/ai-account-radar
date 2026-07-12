@@ -167,14 +167,14 @@ def minimized_stage1_row(
 
 
 def provenance(task_id: str) -> dict[str, Any]:
-    base = runner.runtime_provenance(fallback_state="false")
+    base = runner.runtime_provenance()
     return {
         **base,
         "state_machine_version": VERSION,
         "execution_surface": "current_codex_task",
         "task_provenance": task_id,
         "nested_model_execution": False,
-        "fallback": False,
+        "strict_fail_closed": True,
         "persona_style_embedded": True,
         "persona_style_reference_only": True,
     }
@@ -259,7 +259,7 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
         "raw_persona_authority_sha256": persona_manifest["authority_sha256"],
         "persona_manifest_hash": persona_manifest["manifest_hash"],
         "experience_archive_runtime": "excluded",
-        "fallback_paths": [],
+        "prohibited_paths": [],
     })
     source_manifest = {
         "input_files": [str(path) for path in csv_paths],
@@ -288,7 +288,7 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
         "task_provenance": args.task_id,
         "out_dir": str(out_dir),
         "writes_feishu": False,
-        "fallback": False,
+        "strict_fail_closed": True,
         "source_manifest_hash": hash_json(source_manifest),
         "content_csvs": [str(path) for path in csv_paths],
         "since": args.since,
@@ -416,8 +416,28 @@ def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
         stage_rows = []
         for offset, item in enumerate(rows):
             dossier = read_json(out_dir / "research" / item["candidate_id"] / "validated.json")
-            operations = list(dossier.get("hook_analysis", {}).get("hook_type") or []) + ["choose", "reject", "phrase"]
-            retrieved = persona_builder.retrieve_style_examples(examples, operations, limit=min(6, len(examples)))
+            hook_types = set(dossier.get("hook_analysis", {}).get("hook_type") or [])
+            operations = ["natural_voice", "decision_tradeoff"]
+            if hook_types & {"story", "social_proof"}:
+                operations.append("story_or_social_proof")
+            if hook_types & {"result_promise", "audience_benefit"}:
+                operations.append("result_promise")
+            if dossier.get("conflicts"):
+                operations.extend(["public_contradiction", "evidence_skepticism"])
+            else:
+                operations.append("shallow_take_rejection")
+            retrieved = persona_builder.retrieve_style_examples(
+                examples, operations, candidate_id=item["candidate_id"], limit=min(6, len(examples))
+            )
+            write_json(out_dir / "persona_retrieval" / f"{item['candidate_id']}.json", {
+                "candidate_id": item["candidate_id"],
+                "requested_operations": operations,
+                "example_ids": [example["example_id"] for example in retrieved],
+                "source_hashes": [example["source_hash"] for example in retrieved],
+                "retrieval_reasons": [
+                    sorted(set(example["judgment_operations"]) & set(operations)) for example in retrieved
+                ],
+            })
             stage_rows.append({"index": start + offset, **minimized_stage1_row(item, dossier, facts, retrieved)})
         payload = {
             "protocol": VERSION,
@@ -448,7 +468,16 @@ def pool_from_state(state: dict[str, Any]) -> tuple[list[content_sampler.Content
 def eligible_source_rows(out_dir: Path, state: dict[str, Any]) -> list[dict[str, Any]]:
     _, pre = pool_from_state(state)
     eligible = read_json(out_dir / "eligible_candidates.json")
-    return [pre["pre_skill_pool"][int(item["index"])] for item in eligible]
+    rows: list[dict[str, Any]] = []
+    for item in eligible:
+        row = dict(pre["pre_skill_pool"][int(item["index"])])
+        source = read_json(out_dir / "source_open" / item["candidate_id"] / "validated.json")
+        is_video = str(source.get("platform") or "").lower() in {"douyin", "x"} or source.get("page_identity", {}).get("kind") in {"douyin_video", "x_status"}
+        row["原始来源标题"] = str(source.get("exact_title") or "") if not is_video else ""
+        row["原始发布文案"] = str(source.get("caption_body") or source.get("source_summary") or "") if is_video else ""
+        row["来源链接"] = str(source.get("final_url") or source.get("exact_url") or "")
+        rows.append(row)
+    return rows
 
 
 def validate_stage1(args: argparse.Namespace) -> dict[str, Any]:
@@ -710,7 +739,8 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
         engine_meta = {
             "mode": "current_task_state_machine",
             "execution_surface": "current_codex_task",
-            "fallback_only": False,
+            "strict_fail_closed": True,
+            "prohibited_path_count": 0,
             "failed_batch_count": 0,
             "batch_count": len(batch_meta),
             "completed_batch_count": len(batch_meta),
@@ -735,6 +765,18 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
             out_dir, ns, csv_paths=[Path(value) for value in state["content_csvs"]], items=items,
             pre=pre, skill_rows=rows, engine_meta=engine_meta, engine="current_task", completed=True,
         )
+        visual_warning_paths = []
+        for candidate in candidate_rows_from_state(state):
+            source_path = out_dir / "source_open" / candidate["candidate_id"] / "validated.json"
+            if source_path.exists() and read_json(source_path).get("visual_capture_status") == "failed":
+                visual_warning_paths.append(str(source_path))
+        summary["visual_capture_warning_count"] = len(visual_warning_paths)
+        summary["visual_capture_warning_paths"] = visual_warning_paths
+        provenance_path = out_dir / "ar020d_provenance_manifest.json"
+        provenance = read_json(provenance_path)
+        provenance["visual_capture_warning_count"] = len(visual_warning_paths)
+        provenance["visual_capture_warning_paths"] = visual_warning_paths
+        write_json(provenance_path, provenance)
         if not summary.get("quality_gate_ok"):
             raise RuntimeError("Final quality gate failed")
         source_failures = int(state["stages"]["source_open"].get("failure_count", 0) or 0)
@@ -772,7 +814,7 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
 
 def status(args: argparse.Namespace) -> dict[str, Any]:
     state = load_state(Path(args.out_dir))
-    return {"protocol": state["protocol"], "execution_surface": state["execution_surface"], "stages": state["stages"], "writes_feishu": state["writes_feishu"], "fallback": state["fallback"]}
+    return {"protocol": state["protocol"], "execution_surface": state["execution_surface"], "stages": state["stages"], "writes_feishu": state["writes_feishu"], "strict_fail_closed": state["strict_fail_closed"]}
 
 
 def main() -> int:

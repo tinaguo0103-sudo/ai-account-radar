@@ -66,8 +66,18 @@ def validate_primary_adapter(candidate: dict[str, Any], output: dict[str, Any]) 
             raise AdapterContractError("Claude exact article path mismatch")
         if output.get("page_state") in {"generic_home", "search_page", "blank_shell"}:
             raise AdapterContractError("Claude exact article is not visibly open")
-    if expected_adapter == TRUSTED_BROWSER_ADAPTER:
-        required = ["browser_surface", "browser_session_boundary", "dom_text_path", "screenshot_path"]
+    if expected_adapter in {TRUSTED_BROWSER_ADAPTER, TRUSTED_WEB_ADAPTER}:
+        required = ["browser_surface", "browser_session_boundary", "dom_text_path", "visual_capture_status"]
         missing = [field for field in required if not str(output.get(field) or "").strip()]
         if missing:
             raise AdapterContractError(f"Trusted-browser evidence missing: {', '.join(missing)}")
+        visual_status = str(output.get("visual_capture_status") or "")
+        if visual_status not in {"completed", "failed"}:
+            raise AdapterContractError("visual_capture_status must be completed or failed")
+        if visual_status == "completed" and not str(output.get("screenshot_path") or "").strip():
+            raise AdapterContractError("Completed visual capture requires screenshot_path")
+        if visual_status == "failed":
+            if str(output.get("screenshot_path") or "").strip():
+                raise AdapterContractError("Failed visual capture must not expose a fabricated screenshot_path")
+            if not str(output.get("visual_capture_error") or "").strip():
+                raise AdapterContractError("Failed visual capture requires visual_capture_error")

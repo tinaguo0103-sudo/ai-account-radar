@@ -40,6 +40,11 @@ TOPIC_TABLE_ID_ENV_KEYS = ("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE
 TOPIC_CREATE_KIND = "topic_candidate_create"
 REQUIRED_FIELDS = [
     *DAILY_WRITE_FIELDS,
+    "研究摘要",
+    "受众钩子",
+    "内容结构",
+    "我的切入",
+    "原始发布文案",
 ]
 ALLOWED_LEVELS = {"推荐制作", "暂存观察", "不建议制作"}
 FEISHU_VISIBLE_LEVELS = {"推荐制作"}
@@ -214,7 +219,7 @@ def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]
     omitted = 0
     guarded_rows = field_contract.apply_batch_quality_guards(rows)
     for row in guarded_rows:
-        if row.get("editorial_engine") != "codex" or row.get("fallback_only") == "true" or row.get("not_editorial_quality") == "true":
+        if row.get("strict_fail_closed") != "true" or row.get("guard_blocked") == "true":
             omitted += 1
             continue
         issues = field_contract.validate_field_contract(row)
@@ -351,8 +356,13 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "对应方向": row.get("对应方向", row.get("对应栏目", "")),
         "来源构成": row.get("来源构成", "") or f"{row.get('来源类型', '')} / {row.get('原始来源账号', '')}".strip(" /"),
         "来源权重类型": row.get("来源权重类型", ""),
-        "原始来源标题": row.get("来源内容") or row.get("原始来源标题", ""),
+        "原始来源标题": row.get("原始来源标题") or row.get("来源标题", ""),
+        "原始发布文案": row.get("原始发布文案") or row.get("原始来源摘录") or row.get("来源内容", ""),
         "来源链接": row.get("来源链接", ""),
+        "研究摘要": row.get("研究摘要", ""),
+        "受众钩子": row.get("受众钩子", ""),
+        "内容结构": row.get("内容结构", ""),
+        "我的切入": row.get("我的切入") or row.get("natural_austin_angle", ""),
         "一句话Brief": row.get("一句话Brief", ""),
         "主编判断摘要": row.get("主编判断摘要", ""),
         "标题思路": row.get("标题思路", ""),

@@ -67,12 +67,13 @@ class TopicEditorialStateMachineTests(unittest.TestCase):
 
     def test_active_path_has_no_nested_model_execution(self) -> None:
         machine_source = inspect.getsource(machine)
-        disabled_source = inspect.getsource(runner.run_codex_prompt)
+        runner_source = inspect.getsource(runner)
 
         self.assertNotIn("subprocess", machine_source)
         self.assertNotIn("codex exec", machine_source.lower())
-        self.assertNotIn("subprocess", disabled_source)
-        self.assertIn("Nested model execution is disabled", disabled_source)
+        self.assertFalse(hasattr(runner, "run_codex_prompt"))
+        self.assertNotIn("run_codex_prompt", runner_source)
+        self.assertNotIn("subprocess", runner_source)
 
     def test_provenance_declares_current_task_and_no_fallback(self) -> None:
         manifest = machine.provenance("test-task")
@@ -80,7 +81,8 @@ class TopicEditorialStateMachineTests(unittest.TestCase):
         self.assertEqual(manifest["execution_surface"], "current_codex_task")
         self.assertEqual(manifest["task_provenance"], "test-task")
         self.assertFalse(manifest["nested_model_execution"])
-        self.assertFalse(manifest["fallback"])
+        self.assertTrue(manifest["strict_fail_closed"])
+        self.assertEqual(manifest["prohibited_path_count"], 0)
         self.assertTrue(manifest["persona_style_reference_only"])
 
     def test_legacy_editorial_codex_cli_fails_before_business_io(self) -> None:

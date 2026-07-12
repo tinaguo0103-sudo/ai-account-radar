@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -265,6 +266,7 @@ def candidate_caveat(fields: dict[str, Any]) -> str:
 def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     title = compact(fields.get("选题标题"), 50) or f"候选 {index}"
     source_title = compact(fields.get("原始来源标题"), 88)
+    source_caption = compact(fields.get("原始发布文案") or fields.get("原始来源摘录"), 120)
     source_url = normalize(fields.get("来源链接"))
     research_summary = compact(fields.get("研究摘要"), 120)
     audience_hook = compact(fields.get("受众钩子"), 100)
@@ -274,28 +276,33 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     experiment = compact(fields.get("我要做的实验"), 76)
     evidence = compact(fields.get("可展示证据"), 64)
     missing = compact(fields.get("需要补的证据"), 52)
-    direction = compact(fields.get("对应方向"), 18)
+    natural_angle = compact(fields.get("我的切入") or fields.get("natural_austin_angle"), 100)
+    category = compact(fields.get("对应方向"), 18)
     lines = [f"**{index}. {title}**"]
-    if source_url and source_title:
-        lines.append(f"精确来源：[{source_title}]({source_url})")
-    elif source_title:
-        lines.append(f"原始标题：{source_title}")
+    source_kind = "视频" if "douyin" in source_url else "文章"
+    if source_url:
+        lines.append(f"精确来源：[{f'查看原始{source_kind}'}]({source_url})")
+    lines.append(f"原始标题：{source_title or '平台未提供独立标题'}")
+    if source_caption:
+        lines.append(f"原始发布文案：{source_caption}")
     if research_summary:
         lines.append(f"来源摘要：{research_summary}")
     if audience_hook:
         lines.append(f"受众钩子：{audience_hook}")
-    if editorial_trace:
-        lines.append(f"主编：{editorial_trace}")
-    if title_thinking:
-        lines.append(f"标题思路：{title_thinking}")
-    if direction:
-        lines.append(f"Austin 角度：{direction}")
+    if natural_angle:
+        lines.append(f"Austin 角度：{natural_angle}")
     if content_structure:
         lines.append(f"内容结构：{content_structure}")
     if evidence:
         lines.append(f"证据：{evidence}")
     if missing:
         lines.append(f"缺口：{missing}")
+    if category:
+        lines.append(f"方向分类：{category}")
+    if editorial_trace:
+        lines.append(f"主编：{editorial_trace}")
+    if title_thinking:
+        lines.append(f"标题思路：{title_thinking}")
     caveat = candidate_caveat(fields)
     if caveat:
         lines.append(caveat)
@@ -471,6 +478,11 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         for record in records
         if normalize(record.get("fields", {}).get("推荐日期"))
     })
+    if not coverage_dates:
+        match = re.search(r"(20\d{2})(\d{2})(\d{2})", run_id)
+        coverage_dates = [
+            f"{match.group(1)}-{match.group(2)}-{match.group(3)}" if match else date.today().isoformat()
+        ]
     script_records = [
         (index, record)
         for index, record in enumerate(records, start=1)
@@ -510,7 +522,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
-            "content": f"这是一页证据优先的候选卡。下方“生成脚本包”只包含已经具备制作条件的编号；补证据/观察项只展示判断和缺口。\n\n提交只更新你明确勾选的候选；未勾选、未触碰或其他页面候选全部保持待判断，不会被隐式标记为不做。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n本次候选覆盖：{('、'.join(coverage_dates) if coverage_dates else '未识别日期')}\n可生成候选：{len(script_records)} 条｜补证据/观察候选：{len(supplement_records)} 条",
+            "content": f"这是一页证据优先的候选卡。下方“生成脚本包”只包含已经具备制作条件的编号；补证据/观察项只展示判断和缺口。\n\n提交只更新你明确勾选的候选；未勾选、未触碰或其他页面候选全部保持待判断，不会被隐式标记为不做。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n本次候选覆盖：{'、'.join(coverage_dates)}\n可生成候选：{len(script_records)} 条｜补证据/观察候选：{len(supplement_records)} 条",
         }
     ]
     for index, record in enumerate(records, start=1):
@@ -557,7 +569,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
                             "tag": "button",
                             "type": "default",
                             "width": "default",
-                            "text": {"tag": "plain_text", "content": "本批都不选"},
+                            "text": {"tag": "plain_text", "content": "本页都不选"},
                             "form_action_type": "submit",
                             "name": "submit_no_selection",
                             "behaviors": [

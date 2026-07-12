@@ -297,7 +297,7 @@ def write_error_artifacts(
         "## Action",
         "- 检查 `skill_replay_progress.csv` 判断是否卡在 Skill 执行前、执行中或输出后。",
         "- 如为 timeout，先用较小 `--max-skill-candidates` 复现，再回到完整候选池。",
-        "- 不要用 deterministic fallback 代替 real Skill replay 作为内容质量证据。",
+        "- strict fail-closed：不存在替代性的 editorial engine。",
     ]
     (out_dir / "skill_replay_error.md").write_text("\n".join(lines), encoding="utf-8")
     return payload
@@ -320,23 +320,6 @@ def build_pre_skill_pool(items: list[content_sampler.ContentItem], max_candidate
         "pre_skill_pool": selected,
         "item_by_fp": item_by_fp,
     }
-
-
-def run_skill(
-    pool: list[dict[str, Any]],
-    args: argparse.Namespace,
-    timeout: int | None = None,
-    artifact_dir: Path | None = None,
-) -> tuple[list[dict[str, str]], dict[str, Any], str]:
-    rows = [{key: str(value or "") for key, value in row.items()} for row in pool]
-    if args.engine == "codex":
-        raise RuntimeError(
-            "Legacy nested Codex replay is disabled for AR-020D. Use "
-            "scripts/topic_editorial_state_machine.py so the current Codex task "
-            "writes Stage 1, global ranking, and Stage 2 artifacts directly."
-        )
-    enriched = editorial_skill_runner.normalize_batch([editorial_skill_runner.enrich(row) for row in rows])
-    return enriched, {"mode": "explicit_deterministic", "fallback_only": True, "not_editorial_quality": True}, "deterministic"
 
 
 def batch_id_for(index: int) -> str:
@@ -595,344 +578,6 @@ def run_skill_batches(
     return all_rows, engine_meta, engine, all_ok
 
 
-def run_codex_skill_replay_batches(
-    pool: list[dict[str, Any]],
-    args: argparse.Namespace,
-    out_dir: Path,
-) -> tuple[list[dict[str, str]], dict[str, Any], str, bool]:
-    """Run AR-020D as Stage 1 batches -> global ranking -> Stage 2 batches."""
-    batch_size = int(getattr(args, "batch_size", 0) or len(pool) or 1)
-    per_batch_timeout = timeout_seconds(args)
-    all_rows_for_skill = [{key: str(value or "") for key, value in row.items()} for row in pool]
-    all_decisions: list[dict[str, Any]] = []
-    stage1_meta: list[dict[str, Any]] = []
-    all_ok = True
-
-    for batch_index, start_index, batch in batch_slices(all_rows_for_skill, batch_size):
-        batch_id = batch_id_for(batch_index)
-        directory = batch_path(out_dir, batch_id)
-        directory.mkdir(parents=True, exist_ok=True)
-        write_csv(directory / "input.csv", batch)
-        if getattr(args, "resume", False):
-            completed = completed_stage1_decisions(out_dir, batch_id)
-            if completed:
-                all_decisions.extend(completed)
-                stage1_meta.append({
-                    "batch_id": batch_id,
-                    "batch_index": batch_index,
-                    "status": "stage1_success",
-                    "resume_status": "skipped_completed_stage1",
-                    "row_count": len(completed),
-                    "input_count": len(batch),
-                    "outputs": {
-                        "input": str(directory / "input.csv"),
-                        "stage1_decisions": str(stage1_decisions_path(out_dir, batch_id)),
-                    },
-                })
-                append_progress(out_dir, batch_progress_events(
-                    batch,
-                    status="stage1_skip_completed",
-                    stage="editorial_decision",
-                    note="resume skipped completed Stage 1 decisions",
-                    batch_index=batch_index,
-                    batch_id=batch_id,
-                    start_candidate_index=start_index,
-                ))
-                continue
-        started_at = now_iso()
-        started_monotonic = monotonic()
-        append_progress(out_dir, batch_progress_events(
-            batch,
-            status="stage1_start",
-            stage="editorial_decision",
-            note=f"engine=codex; timeout={per_batch_timeout}s; rows={len(batch)}",
-            batch_index=batch_index,
-            batch_id=batch_id,
-            start_candidate_index=start_index,
-        ))
-        try:
-            decisions, meta = editorial_skill_runner.run_codex_stage1(
-                batch,
-                args.codex_model,
-                per_batch_timeout,
-                artifact_dir=directory,
-                start_index=start_index,
-            )
-            duration_ms = int((monotonic() - started_monotonic) * 1000)
-            write_json(stage1_decisions_path(out_dir, batch_id), decisions)
-            payload = {
-                "batch_id": batch_id,
-                "batch_index": batch_index,
-                "status": "stage1_success",
-                "started_at": started_at,
-                "finished_at": now_iso(),
-                "duration_ms": duration_ms,
-                "row_count": len(decisions),
-                "input_count": len(batch),
-                "engine": "codex",
-                "engine_meta": meta,
-                "timeout_seconds": per_batch_timeout,
-                "outputs": {
-                    "input": str(directory / "input.csv"),
-                    "stage1_decisions": str(stage1_decisions_path(out_dir, batch_id)),
-                    "stage1_input_sanitized": str(directory / "stage1_input_sanitized.json"),
-                    "stage1_output": str(directory / "stage1_editorial_decision_output.json"),
-                },
-            }
-            stage1_meta.append(payload)
-            all_decisions.extend(decisions)
-            append_progress(out_dir, batch_progress_events(
-                batch,
-                status="stage1_success",
-                stage="editorial_decision",
-                note=f"decisions={len(decisions)}; duration_ms={duration_ms}",
-                batch_index=batch_index,
-                batch_id=batch_id,
-                start_candidate_index=start_index,
-            ))
-        except Exception as exc:
-            all_ok = False
-            duration_ms = int((monotonic() - started_monotonic) * 1000)
-            payload = {
-                "batch_id": batch_id,
-                "batch_index": batch_index,
-                "status": "stage1_failed",
-                "started_at": started_at,
-                "finished_at": now_iso(),
-                "duration_ms": duration_ms,
-                "input_count": len(batch),
-                "engine": "codex",
-                "timeout_seconds": per_batch_timeout,
-                "error_type": type(exc).__name__,
-                "error": str(exc),
-                "traceback_tail": traceback.format_exc()[-4000:],
-                "outputs": {
-                    "input": str(directory / "input.csv"),
-                    "error": str(directory / "stage1_error.json"),
-                },
-            }
-            write_json(directory / "stage1_error.json", payload)
-            stage1_meta.append(payload)
-            append_progress(out_dir, batch_progress_events(
-                batch,
-                status="stage1_failed",
-                stage="editorial_decision",
-                note=f"{type(exc).__name__}: {str(exc)[:240]}",
-                batch_index=batch_index,
-                batch_id=batch_id,
-                start_candidate_index=start_index,
-            ))
-    if not all_ok or len(all_decisions) != len(all_rows_for_skill):
-        engine_meta = {
-            "mode": "ar020d_stage1_global_rank_stage2",
-            "batch_size": batch_size,
-            "batch_timeout_seconds": per_batch_timeout,
-            "stage1_batch_count": len(stage1_meta),
-            "completed_batch_count": 0,
-            "failed_batch_count": sum(1 for meta in stage1_meta if meta.get("status") == "stage1_failed"),
-            "batches": stage1_meta,
-        }
-        write_json(out_dir / "skill_replay_batches.json", engine_meta)
-        return [], engine_meta, "codex", False
-
-    ranking_dir = out_dir / "global_ranking"
-    ranking_started = now_iso()
-    ranking_monotonic = monotonic()
-    append_progress(out_dir, [progress_event(
-        status="global_ranking_start",
-        stage="global_daily_ranking",
-        note=f"stage1_decisions={len(all_decisions)}; select_count={sum(1 for d in all_decisions if d.get('decision') == 'select')}",
-    )])
-    try:
-        ranked_decisions, ranking_meta = editorial_skill_runner.run_codex_global_ranking(
-            all_rows_for_skill,
-            all_decisions,
-            args.codex_model,
-            per_batch_timeout,
-            artifact_dir=ranking_dir,
-        )
-        ranking_meta = {
-            **ranking_meta,
-            "status": "success",
-            "started_at": ranking_started,
-            "finished_at": now_iso(),
-            "duration_ms": int((monotonic() - ranking_monotonic) * 1000),
-            "outputs": {
-                "global_ranking_input": str(ranking_dir / "global_ranking_input.json"),
-                "global_ranking_output": str(ranking_dir / "global_ranking_output.json"),
-                "global_ranked_decisions": str(ranking_dir / "global_ranked_decisions.json"),
-            },
-        }
-        append_progress(out_dir, [progress_event(
-            status="global_ranking_success",
-            stage="global_daily_ranking",
-            note=f"recommended={ranking_meta.get('recommended_count')}; rows={len(ranked_decisions)}",
-        )])
-    except Exception as exc:
-        all_ok = False
-        ranking_meta = {
-            "status": "failed",
-            "started_at": ranking_started,
-            "finished_at": now_iso(),
-            "duration_ms": int((monotonic() - ranking_monotonic) * 1000),
-            "error_type": type(exc).__name__,
-            "error": str(exc),
-            "traceback_tail": traceback.format_exc()[-4000:],
-            "outputs": {"error": str(ranking_dir / "error.json")},
-        }
-        write_json(ranking_dir / "error.json", ranking_meta)
-        append_progress(out_dir, [progress_event(
-            status="global_ranking_failed",
-            stage="global_daily_ranking",
-            note=f"{type(exc).__name__}: {str(exc)[:240]}",
-        )])
-        engine_meta = {
-            "mode": "ar020d_stage1_global_rank_stage2",
-            "batch_size": batch_size,
-            "batch_timeout_seconds": per_batch_timeout,
-            "stage1_batches": stage1_meta,
-            "global_ranking": ranking_meta,
-            "completed_batch_count": 0,
-            "failed_batch_count": 1,
-            "batches": stage1_meta,
-        }
-        write_json(out_dir / "skill_replay_batches.json", engine_meta)
-        return [], engine_meta, "codex", False
-
-    all_rows: list[dict[str, str]] = []
-    final_batch_meta: list[dict[str, Any]] = []
-    for batch_index, start_index, batch in batch_slices(all_rows_for_skill, batch_size):
-        batch_id = batch_id_for(batch_index)
-        directory = batch_path(out_dir, batch_id)
-        decisions = ranked_decisions[start_index:start_index + len(batch)]
-        if getattr(args, "resume", False):
-            completed_rows = completed_batch_rows(out_dir, batch_id)
-            if completed_rows and completed_rows_match_rank_lock(completed_rows, decisions):
-                all_rows.extend(completed_rows)
-                meta = json.loads(batch_meta_path(out_dir, batch_id).read_text(encoding="utf-8"))
-                final_batch_meta.append({**meta, "resume_status": "skipped_completed_stage2", "resume_checked_at": now_iso()})
-                append_progress(out_dir, batch_progress_events(
-                    batch,
-                    status="stage2_skip_completed",
-                    stage="field_mapping",
-                    note="resume skipped completed Stage 2 rows",
-                    batch_index=batch_index,
-                    batch_id=batch_id,
-                    start_candidate_index=start_index,
-                ))
-                continue
-            if completed_rows:
-                append_progress(out_dir, batch_progress_events(
-                    batch,
-                    status="stage2_rerun_rank_lock_changed",
-                    stage="field_mapping",
-                    note="resume found completed rows but global rank lock changed; rerunning Stage 2",
-                    batch_index=batch_index,
-                    batch_id=batch_id,
-                    start_candidate_index=start_index,
-                ))
-        started_at = now_iso()
-        started_monotonic = monotonic()
-        append_progress(out_dir, batch_progress_events(
-            batch,
-            status="stage2_start",
-            stage="field_mapping",
-            note=f"engine=codex; timeout={per_batch_timeout}s; rows={len(batch)}",
-            batch_index=batch_index,
-            batch_id=batch_id,
-            start_candidate_index=start_index,
-        ))
-        try:
-            rows, meta = editorial_skill_runner.run_codex_stage2(
-                batch,
-                decisions,
-                args.codex_model,
-                per_batch_timeout,
-                artifact_dir=directory,
-            )
-            meta = final_engine_meta({**meta, "global_ranking_meta": ranking_meta}, rows)
-            duration_ms = int((monotonic() - started_monotonic) * 1000)
-            write_csv(batch_output_path(out_dir, batch_id), rows)
-            payload = {
-                "batch_id": batch_id,
-                "batch_index": batch_index,
-                "status": "success",
-                "started_at": started_at,
-                "finished_at": now_iso(),
-                "duration_ms": duration_ms,
-                "row_count": len(rows),
-                "input_count": len(batch),
-                "engine": "codex",
-                "engine_meta": meta,
-                "timeout_seconds": per_batch_timeout,
-                "outputs": {
-                    "input": str(directory / "input.csv"),
-                    "stage1_decisions": str(stage1_decisions_path(out_dir, batch_id)),
-                    "skill_rows": str(batch_output_path(out_dir, batch_id)),
-                    "meta": str(batch_meta_path(out_dir, batch_id)),
-                },
-            }
-            write_batch_meta(out_dir, batch_id, payload)
-            final_batch_meta.append(payload)
-            all_rows.extend(rows)
-            append_progress(out_dir, batch_progress_events(
-                batch,
-                status="stage2_success",
-                stage="field_mapping",
-                note=f"rows={len(rows)}; duration_ms={duration_ms}",
-                batch_index=batch_index,
-                batch_id=batch_id,
-                start_candidate_index=start_index,
-            ))
-        except Exception as exc:
-            all_ok = False
-            duration_ms = int((monotonic() - started_monotonic) * 1000)
-            payload = {
-                "batch_id": batch_id,
-                "batch_index": batch_index,
-                "status": "failed",
-                "started_at": started_at,
-                "finished_at": now_iso(),
-                "duration_ms": duration_ms,
-                "input_count": len(batch),
-                "engine": "codex",
-                "timeout_seconds": per_batch_timeout,
-                "error_type": type(exc).__name__,
-                "error": str(exc),
-                "traceback_tail": traceback.format_exc()[-4000:],
-                "outputs": {
-                    "input": str(directory / "input.csv"),
-                    "meta": str(batch_meta_path(out_dir, batch_id)),
-                    "error": str(directory / "stage2_error.json"),
-                },
-            }
-            write_batch_meta(out_dir, batch_id, payload)
-            write_json(directory / "stage2_error.json", payload)
-            final_batch_meta.append(payload)
-            append_progress(out_dir, batch_progress_events(
-                batch,
-                status="stage2_failed",
-                stage="field_mapping",
-                note=f"{type(exc).__name__}: {str(exc)[:240]}",
-                batch_index=batch_index,
-                batch_id=batch_id,
-                start_candidate_index=start_index,
-            ))
-    engine_meta = {
-        "mode": "ar020d_stage1_global_rank_stage2",
-        "batch_size": batch_size,
-        "batch_timeout_seconds": per_batch_timeout,
-        "stage1_batches": stage1_meta,
-        "global_ranking": ranking_meta,
-        "batch_count": len(final_batch_meta),
-        "completed_batch_count": sum(1 for meta in final_batch_meta if meta.get("status") == "success"),
-        "failed_batch_count": sum(1 for meta in final_batch_meta if meta.get("status") == "failed"),
-        "batches": final_batch_meta,
-    }
-    write_json(out_dir / "skill_replay_batches.json", engine_meta)
-    return all_rows, engine_meta, "codex", all_ok
-
-
 def load_completed_batch_outputs(out_dir: Path) -> tuple[list[dict[str, str]], dict[str, Any]]:
     batch_root = out_dir / "batches"
     rows: list[dict[str, str]] = []
@@ -984,10 +629,7 @@ def aggregate_provenance(engine_meta: dict[str, Any], engine: str) -> dict[str, 
     explicit = engine_meta.get("provenance_manifest") or {}
     if explicit and not manifests:
         manifests.append(explicit)
-    real_skill_engine = engine in {"codex", "current_task"}
-    first = manifests[0] if manifests else editorial_skill_runner.runtime_provenance(
-        fallback_state="false" if real_skill_engine else "true"
-    )
+    first = manifests[0] if manifests else editorial_skill_runner.runtime_provenance()
     return {
         **first,
         "engine": engine,
@@ -1004,23 +646,18 @@ def classify_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]
         "observe": [],
         "rejected": [],
         "contract_failures": [],
-        "fallback_rows": [],
     }
     for row in rows:
         row_with_status = dict(row)
         if not row_with_status.get("field_contract_status"):
             issues = field_contract.validate_field_contract(row_with_status)
             row_with_status = field_contract.mark_contract_result(row_with_status, issues)
-        if row_with_status.get("fallback_only") == "true" or row_with_status.get("not_editorial_quality") == "true":
-            outputs["fallback_rows"].append(row_with_status)
         if row_with_status.get("field_contract_status") == "fail":
             outputs["contract_failures"].append(row_with_status)
         level = row_with_status.get("今日建议级别") or row_with_status.get("候选状态")
         if (
             str(row_with_status.get("推荐动作") or "") in field_contract.ACTIONABLE_ACTIONS
             and row_with_status.get("field_contract_status") != "fail"
-            and row_with_status.get("fallback_only") != "true"
-            and row_with_status.get("not_editorial_quality") != "true"
         ):
             outputs["actionable"].append(row_with_status)
         elif level == "暂存观察":
@@ -1142,7 +779,6 @@ def sample_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "status": row.get("今日建议级别") or row.get("候选状态", ""),
                     "contract_status": row.get("field_contract_status", ""),
                     "contract_issues": row.get("field_contract_issues", ""),
-                    "fallback_only": row.get("fallback_only", ""),
                 })
                 break
     return samples
@@ -1191,7 +827,7 @@ def write_markdown_report(out_dir: Path, summary: dict[str, Any], samples: list[
         "observe_count",
         "rejected_count",
         "contract_failure_count",
-        "fallback_row_count",
+        "prohibited_path_count",
         "title_quality_failure_count",
         "near_miss_count",
     ]:
@@ -1241,7 +877,7 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         f"- completed: {summary.get('completed')}",
         f"- quality_gate_ok: {summary.get('quality_gate_ok')}",
         f"- writes_feishu: {summary.get('writes_feishu')}",
-        f"- fallback_row_count: {summary.get('fallback_row_count')}",
+        f"- prohibited_path_count: {summary.get('prohibited_path_count')}",
         f"- contract_failure_count: {summary.get('contract_failure_count')}",
         f"- title_quality_failure_count: {summary.get('title_quality_failure_count')}",
         f"- title_quality_warning_count: {summary.get('title_quality_warning_count')}",
@@ -1259,7 +895,7 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         "## Provenance",
         f"- execution_surface: {provenance.get('execution_surface')}",
         f"- nested_model_execution: {provenance.get('nested_model_execution')}",
-        f"- fallback_state: {provenance.get('fallback_state')}",
+        f"- prohibited_path_count: {provenance.get('prohibited_path_count')}",
         f"- runner_version: {provenance.get('runner_version')}",
         f"- skill_dir: {provenance.get('skill_dir')}",
         f"- skill_md_sha256: {provenance.get('skill_md_sha256')}",
@@ -1301,7 +937,7 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         "- Stage 1 payloads are sanitized artifacts and do not include existing 04 visible fields, experiment, validation, assets, mother-scene conclusions, or deterministic title hints.",
         "- Stage 2 receives locked Stage 1 decisions and records decision hash/id; `stage2_invariant_status` must be pass in final rows.",
         "- persona-and-cases is embedded as style reference, not source evidence; rows must not expose case anchor/citation.",
-        "- deterministic fallback rows are not content-quality evidence.",
+        "- no alternate editorial path exists in this runtime.",
         "",
         "## Six Review Categories",
     ])
@@ -1418,7 +1054,6 @@ def aggregate_replay_outputs(
         write_json(out_dir / "ar020d_provenance_manifest.json", provenance)
         failed_batch_count = int(engine_meta.get("failed_batch_count", 0) or 0)
         contract_failure_count = len(classified["contract_failures"])
-        fallback_row_count = len(classified["fallback_rows"])
         title_quality_failure_count = sum(1 for row in title_rows if row.get("title_quality_status") == "fail")
         title_quality_warning_count = sum(1 for row in title_rows if row.get("title_quality_status") == "warn")
         recommended_count = sum(1 for row in skill_rows if row.get("今日建议级别") == "推荐制作")
@@ -1434,7 +1069,7 @@ def aggregate_replay_outputs(
             "stage": "aggregate_success" if replay_completed_ok else "partial_batch_replay",
             "quality_gate_ok": (
                 contract_failure_count == 0
-                and fallback_row_count == 0
+                and int(provenance.get("prohibited_path_count", 0) or 0) == 0
                 and title_quality_failure_count == 0
                 and stage2_selection_drift_count == 0
                 and raw_stage2_drift_count == 0
@@ -1456,7 +1091,7 @@ def aggregate_replay_outputs(
             "observe_count": len(classified["observe"]),
             "rejected_count": len(classified["rejected"]),
             "contract_failure_count": contract_failure_count,
-            "fallback_row_count": fallback_row_count,
+            "prohibited_path_count": int(provenance.get("prohibited_path_count", 0) or 0),
             "reverse_flags": sum(1 for row in reverse_rows if row.potentially_better),
             "near_miss_count": len(near_misses),
             "title_quality_failure_count": title_quality_failure_count,
@@ -1506,123 +1141,10 @@ def aggregate_replay_outputs(
 
 
 def main() -> int:
-    parser = argparse.ArgumentParser(
-        description="Legacy replay aggregator. Current-task editorial replay uses topic_editorial_state_machine.py."
-    )
-    parser.add_argument("--since", default="2026-07-01")
-    parser.add_argument("--content-csv", action="append", default=[], help="Specific content_items.csv path. Can be repeated.")
-    parser.add_argument("--out-dir", default=str(DEFAULT_OUT))
-    parser.add_argument("--engine", choices=["state-machine", "codex", "deterministic"], default="state-machine")
-    parser.add_argument("--codex-model", default="")
-    parser.add_argument("--timeout", type=int, default=900, help="Default timeout seconds for each real codex Skill batch unless --batch-timeout-seconds is set. Error artifacts are written on timeout/failure.")
-    parser.add_argument("--batch-size", type=int, default=DEFAULT_BATCH_SIZE, help="Number of pre-skill candidates per real Skill batch. Use 0 to run as one batch.")
-    parser.add_argument("--batch-timeout-seconds", type=int, default=0, help="Timeout seconds per real Skill batch. Defaults to --timeout.")
-    parser.add_argument("--resume", action="store_true", help="Skip completed batch artifacts and continue remaining batches.")
-    parser.add_argument("--aggregate-only", action="store_true", help="Aggregate existing successful batch artifacts without running the Skill.")
-    parser.add_argument("--max-skill-candidates", type=int, default=content_sampler.MAX_SKILL_REVIEW_CANDIDATES)
-    args = parser.parse_args()
-
-    parser.error(
-        "This legacy replay CLI is disabled before business I/O. Use "
-        "topic_editorial_state_machine.py prepare-source-open. Old aggregate, deterministic, and nested model paths "
-        "cannot produce AR-020D runtime or QA evidence."
-    )
-
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
-    reset_progress(out_dir, resume=args.resume, aggregate_only=args.aggregate_only)
-    since = date.fromisoformat(args.since)
-    csv_paths = deterministic_replay.discover_content_csvs(args.content_csv)
-    items: list[content_sampler.ContentItem] = []
-    pre: dict[str, Any] = {"candidates": [], "pre_skill_pool": [], "item_by_fp": {}}
-    try:
-        items = deterministic_replay.load_items(csv_paths, since)
-        pre = build_pre_skill_pool(items, args.max_skill_candidates)
-        write_csv(out_dir / "pre_skill_candidates.csv", pre["pre_skill_pool"])
-        write_csv(out_dir / "candidate_universe.csv", pre["candidates"])
-        append_progress(out_dir, [
-            progress_event(
-                status="candidate_universe_built",
-                stage="candidate_universe",
-                note=f"content_items={len(items)}; candidate_count={len(pre['candidates'])}",
-            ),
-            progress_event(
-                status="pre_skill_selection_built",
-                stage="pre_skill_selection",
-                note=f"pre_skill_pool_count={len(pre['pre_skill_pool'])}; max_skill_candidates={args.max_skill_candidates}",
-            ),
-        ])
-
-        if args.aggregate_only:
-            skill_rows, engine_meta = load_completed_batch_outputs(out_dir)
-            engine = args.engine
-            completed = bool(skill_rows) and int(engine_meta.get("failed_batch_count", 0) or 0) == 0
-        else:
-            skill_rows, engine_meta, engine, completed = run_skill_batches(pre["pre_skill_pool"], args, out_dir)
-    except Exception as exc:
-        if pre.get("pre_skill_pool"):
-            append_progress(out_dir, batch_progress_events(
-                pre["pre_skill_pool"],
-                status="skill_replay_failed",
-                stage="real_skill_replay",
-                note=f"{type(exc).__name__}: {str(exc)[:240]}",
-                batch_index=0,
-                batch_id="unbatched",
-                start_candidate_index=0,
-            ))
-        payload = write_error_artifacts(
-            out_dir,
-            args,
-            "real_skill_replay" if args.engine == "codex" else "deterministic_replay",
-            exc,
-            csv_paths=csv_paths,
-            content_items=len(items),
-            candidate_count=len(pre.get("candidates", [])),
-            pre_skill_pool=pre.get("pre_skill_pool", []),
-        )
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 1
-    if not skill_rows:
-        payload = write_error_artifacts(
-            out_dir,
-            args,
-            "real_skill_replay_batches",
-            RuntimeError("No completed Skill batch outputs to aggregate."),
-            csv_paths=csv_paths,
-            content_items=len(items),
-            candidate_count=len(pre.get("candidates", [])),
-            pre_skill_pool=pre.get("pre_skill_pool", []),
-        )
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 1
-
-    try:
-        summary = aggregate_replay_outputs(
-            out_dir,
-            args,
-            csv_paths=csv_paths,
-            items=items,
-            pre=pre,
-            skill_rows=skill_rows,
-            engine_meta=engine_meta,
-            engine=engine,
-            completed=completed,
-        )
-    except Exception as exc:
-        payload = write_error_artifacts(
-            out_dir,
-            args,
-            "aggregate",
-            exc,
-            csv_paths=csv_paths,
-            content_items=len(items),
-            candidate_count=len(pre.get("candidates", [])),
-            pre_skill_pool=pre.get("pre_skill_pool", []),
-        )
-        print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return 1
-    print(json.dumps(summary, ensure_ascii=False, indent=2))
-    return 0 if summary.get("ok") else 1
+    parser = argparse.ArgumentParser(description="AR-020D artifact helpers; no standalone editorial execution mode.")
+    parser.parse_args()
+    parser.error("Use topic_editorial_state_machine.py. Legacy replay engines and aggregate execution are removed.")
+    return 2
 
 
 if __name__ == "__main__":

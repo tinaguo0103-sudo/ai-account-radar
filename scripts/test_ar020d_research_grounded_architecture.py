@@ -12,7 +12,9 @@ from pathlib import Path
 
 import editorial_skill_runner as runner
 import feishu_topic_decision_card as card
+import push_today10_to_feishu as topic_writer
 import persona_reference_builder as persona
+import persona_counterfactual_audit as persona_audit
 import topic_research_contract as research
 import topic_research_dossier_builder as dossier_builder
 import topic_research_cache_revalidator as cache_revalidator
@@ -77,7 +79,8 @@ class ResearchContractTests(unittest.TestCase):
         candidate = {"exact_url": "https://x.com/a/status/123", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
         base = {"primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER, "attempted_adapters": [exact_adapter.TRUSTED_BROWSER_ADAPTER],
                 "page_identity": {"kind": "x_status", "status_id": "123"}, "page_state": "exact_post",
-                "browser_surface": "iab", "browser_session_boundary": "current_task", "dom_text_path": "/tmp/dom", "screenshot_path": "/tmp/shot"}
+                "browser_surface": "iab", "browser_session_boundary": "current_task", "dom_text_path": "/tmp/dom",
+                "screenshot_path": "/tmp/shot", "visual_capture_status": "completed"}
         exact_adapter.validate_primary_adapter(candidate, base)
         with self.assertRaisesRegex(exact_adapter.AdapterContractError, "failover"):
             exact_adapter.validate_primary_adapter(candidate, {**base, "attempted_adapters": [exact_adapter.TRUSTED_BROWSER_ADAPTER, exact_adapter.TRUSTED_WEB_ADAPTER]})
@@ -88,7 +91,8 @@ class ResearchContractTests(unittest.TestCase):
         x_candidate = {"exact_url": "https://x.com/a/status/123", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
         x_output = {"primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER, "attempted_adapters": [exact_adapter.TRUSTED_BROWSER_ADAPTER],
                     "page_identity": {"kind": "x_status", "status_id": "123"}, "page_state": "login_wall",
-                    "browser_surface": "iab", "browser_session_boundary": "current_task", "dom_text_path": "/tmp/dom", "screenshot_path": "/tmp/shot"}
+                    "browser_surface": "iab", "browser_session_boundary": "current_task", "dom_text_path": "/tmp/dom",
+                    "screenshot_path": "/tmp/shot", "visual_capture_status": "completed"}
         with self.assertRaisesRegex(exact_adapter.AdapterContractError, "not visibly open"):
             exact_adapter.validate_primary_adapter(x_candidate, x_output)
         claude_candidate = {"exact_url": "https://claude.com/blog/how-people-are-using-claude-cowork", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
@@ -102,10 +106,49 @@ class ResearchContractTests(unittest.TestCase):
             "final_url": candidate["exact_url"], "page_identity": {"kind": "x_status", "status_id": "123"},
             "page_state": "exact_post", "exact_title": "Visible post", "visible_body": "Complete visible post body",
             "author": "@a", "browser_surface": "iab", "browser_session_boundary": "current_task",
-            "dom_text_path": "/tmp/dom", "screenshot_path": "/tmp/shot",
+            "dom_text_path": "/tmp/dom", "screenshot_path": "", "visual_capture_error": "timeout",
         })
         self.assertEqual(output["attempted_adapters"], [exact_adapter.TRUSTED_BROWSER_ADAPTER])
         self.assertEqual(len(output["content_evidence"]), 1)
+        self.assertEqual(output["visual_capture_status"], "failed")
+        self.assertEqual(output["screenshot_path"], "")
+        self.assertTrue(output["audit_warnings"])
+
+    def test_screenshot_timeout_with_complete_dom_is_opened_with_warning(self) -> None:
+        candidate = {"candidate_id": "c1", "exact_url": "https://x.com/a/status/123", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
+        output = exact_evidence.build_output(candidate, {
+            "final_url": candidate["exact_url"], "page_identity": {"kind": "x_status", "status_id": "123"},
+            "page_state": "exact_post", "exact_title": "Exact post", "visible_body": "Complete post body",
+            "author": "@a", "browser_surface": "iab", "browser_session_boundary": "current_task",
+            "dom_text_path": "/tmp/fresh-dom", "screenshot_path": "", "visual_capture_error": "timeout",
+        })
+        self.assertEqual(output["open_status"], "opened")
+        self.assertEqual(output["visual_capture_status"], "failed")
+        self.assertEqual(output["screenshot_path"], "")
+
+    def test_screenshot_timeout_does_not_relax_missing_body(self) -> None:
+        candidate = {"candidate_id": "c1", "exact_url": "https://x.com/a/status/123", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
+        with self.assertRaisesRegex(exact_adapter.AdapterContractError, "title/body/author"):
+            exact_evidence.build_output(candidate, {
+                "final_url": candidate["exact_url"], "page_identity": {"kind": "x_status", "status_id": "123"},
+                "page_state": "exact_post", "exact_title": "Exact post", "visible_body": "", "author": "@a",
+                "browser_surface": "iab", "browser_session_boundary": "current_task", "dom_text_path": "/tmp/dom",
+                "screenshot_path": "", "visual_capture_error": "timeout",
+            })
+
+    def test_screenshot_success_keeps_real_path(self) -> None:
+        candidate = {"candidate_id": "c1", "exact_url": "https://x.com/a/status/123", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
+        with tempfile.TemporaryDirectory() as temp:
+            screenshot = Path(temp) / "page.png"
+            screenshot.write_bytes(b"png")
+            output = exact_evidence.build_output(candidate, {
+                "final_url": candidate["exact_url"], "page_identity": {"kind": "x_status", "status_id": "123"},
+                "page_state": "exact_post", "exact_title": "Exact post", "visible_body": "Complete post body", "author": "@a",
+                "browser_surface": "iab", "browser_session_boundary": "current_task", "dom_text_path": "/tmp/dom",
+                "screenshot_path": str(screenshot),
+            })
+        self.assertEqual(output["visual_capture_status"], "completed")
+        self.assertEqual(output["screenshot_path"], str(screenshot))
     def test_dossier_builder_produces_contract_hash(self) -> None:
         spec = {
             "source_content_hash": "a" * 64,
@@ -207,6 +250,40 @@ class PersonaIsolationTests(unittest.TestCase):
         self.assertNotIn("persona_context", runtime_text)
         self.assertNotIn("natural_expression", runtime_text)
 
+    def test_tagged_retrieval_is_candidate_specific_and_verbatim(self) -> None:
+        examples = [
+            {"example_id": f"e{i}", "source_hash": str(i), "verbatim_text": f"原文段落 {i}",
+             "judgment_operations": [operation], "role": "judgment_and_style_reference_only"}
+            for i, operation in enumerate([
+                "public_contradiction", "shallow_take_rejection", "evidence_skepticism",
+                "story_or_social_proof", "result_promise", "decision_tradeoff", "natural_voice",
+            ])
+        ]
+        first = persona.retrieve_style_examples(examples, ["story_or_social_proof", "natural_voice"], candidate_id="story", limit=3)
+        second = persona.retrieve_style_examples(examples, ["result_promise", "decision_tradeoff"], candidate_id="result", limit=3)
+        self.assertNotEqual([item["example_id"] for item in first], [item["example_id"] for item in second])
+        self.assertTrue(all(item["verbatim_text"].startswith("原文段落") for item in first + second))
+
+    def test_counterfactual_computes_fact_stability_and_expression_change(self) -> None:
+        base = {
+            "candidate_id": "c1", "source": {"hash": "s"}, "research": {"hash": "r"},
+            "hook_analysis": {"hook": "h"}, "decision": "observe", "recommendation_status": "补证据",
+            "natural_austin_angle": "自然角度 A", "selected_visible_title": "标题 A",
+            "title_rationale": "理由 A", "public_decision_summary": "摘要 A",
+        }
+        control = {**base, "natural_austin_angle": "自然角度 B", "selected_visible_title": "标题 B"}
+        result = persona_audit.compare_pair(base, control)
+        self.assertTrue(result["facts_stable"])
+        self.assertTrue(result["eligibility_stable"])
+        self.assertTrue(result["persona_changes_expression_only"])
+
+    def test_leakage_report_detects_universal_retrieval(self) -> None:
+        report = persona_audit.leakage_report(
+            [{"selected_visible_title": "不同标题一"}, {"selected_visible_title": "不同标题二"}],
+            [{"example_ids": ["e1", "e2"]}, {"example_ids": ["e1", "e2"]}],
+        )
+        self.assertTrue(report["all_candidates_same_retrieval"])
+
 
 class DynamicRankingTests(unittest.TestCase):
     def test_all_recommended_rows_survive_without_dynamic_ranking_cap(self) -> None:
@@ -231,6 +308,27 @@ class DynamicRankingTests(unittest.TestCase):
 
 
 class CardPaginationTests(unittest.TestCase):
+    def test_writer_preserves_evidence_first_visible_fields(self) -> None:
+        row = {
+            "选题命题": "Austin topic",
+            "原始来源标题": "Exact article title",
+            "来源内容": "Long post caption",
+            "来源链接": "https://example.com/article/1",
+            "研究摘要": "What the source establishes",
+            "受众钩子": "Why an unfamiliar viewer cares",
+            "内容结构": "1. conflict 2. evidence 3. decision",
+            "我的切入": "Natural Austin angle",
+            "推荐动作": "生成脚本包",
+            "今日建议级别": "推荐制作",
+        }
+        mapped = topic_writer.map_row(row, 1, "2026-07-12", "run")
+        self.assertEqual(mapped["原始来源标题"], "Exact article title")
+        self.assertEqual(mapped["原始发布文案"], "Long post caption")
+        self.assertEqual(mapped["研究摘要"], "What the source establishes")
+        self.assertEqual(mapped["受众钩子"], "Why an unfamiliar viewer cares")
+        self.assertEqual(mapped["内容结构"], "1. conflict 2. evidence 3. decision")
+        self.assertEqual(mapped["我的切入"], "Natural Austin angle")
+
     def records(self, count: int) -> list[dict]:
         return [{
             "record_id": f"rec-{index}",
@@ -282,10 +380,29 @@ class CardPaginationTests(unittest.TestCase):
 
     def test_card_displays_exact_clickable_source_and_research(self) -> None:
         markdown = card.card_markdown_for_candidate(1, self.records(1)[0]["fields"])
-        self.assertIn("[source-0](https://example.com/article/0)", markdown)
+        self.assertIn("[查看原始文章](https://example.com/article/0)", markdown)
+        self.assertIn("原始标题：source-0", markdown)
         self.assertIn("来源摘要：summary", markdown)
         self.assertIn("受众钩子：hook", markdown)
         self.assertIn("内容结构：", markdown)
+
+    def test_card_uses_natural_angle_and_page_scoped_reject(self) -> None:
+        record = self.records(1)[0]
+        record["fields"].update({"我的切入": "自然公开判断", "对应方向": "内部分类"})
+        payload = card.build_card([record], "run_20260712_test")
+        serialized = json.dumps(payload, ensure_ascii=False)
+        self.assertIn("Austin 角度：自然公开判断", serialized)
+        self.assertIn("方向分类：内部分类", serialized)
+        self.assertIn("本页都不选", serialized)
+        self.assertNotIn("本批都不选", serialized)
+        self.assertNotIn("未识别日期", serialized)
+
+    def test_card_keeps_summary_hook_and_title_caption_distinct(self) -> None:
+        fields = self.records(1)[0]["fields"]
+        fields.update({"原始来源标题": "Article title", "原始发布文案": "Post body", "我的切入": "Public angle"})
+        markdown = card.card_markdown_for_candidate(1, fields)
+        expected = ["精确来源：", "原始标题：", "原始发布文案：", "来源摘要：", "受众钩子：", "Austin 角度：", "内容结构："]
+        self.assertEqual([markdown.index(value) for value in expected], sorted(markdown.index(value) for value in expected))
 
 
 class LegacyCliTests(unittest.TestCase):
@@ -297,8 +414,18 @@ class LegacyCliTests(unittest.TestCase):
                 "--engine", "deterministic", "--input", str(Path(temp) / "missing.csv"), "--output", str(output),
             ], text=True, capture_output=True)
             self.assertNotEqual(result.returncode, 0)
-            self.assertIn("zero-fallback", result.stderr)
+            self.assertIn("unrecognized arguments", result.stderr)
             self.assertFalse(output.exists())
+
+    def test_active_sources_have_no_editorial_fallback_routes(self) -> None:
+        prohibited = [
+            "allow-deterministic-fallback", "fallback_after_error", "explicit_deterministic",
+            "run_deterministic", "skill_fallback_rows", "fallback_row_count",
+            'choices=["state-machine", "codex", "deterministic"]',
+        ]
+        active = ["editorial_skill_runner.py", "topic_editorial_state_machine.py", "topic_skill_replay_evaluation.py"]
+        text = "\n".join(Path(__file__).with_name(name).read_text(encoding="utf-8") for name in active)
+        self.assertEqual([marker for marker in prohibited if marker in text], [])
 
 
 if __name__ == "__main__":
