@@ -21,7 +21,7 @@ def stage2_stub_row(decision: dict[str, str]) -> dict[str, str]:
         "global_rank_hash": decision.get("global_rank_hash", ""),
         "locked_decision": decision.get("locked_decision", decision.get("decision", "")),
         "locked_recommendation_status": decision.get("locked_recommendation_status", decision.get("recommendation_status", "")),
-        "locked_daily_level": decision.get("locked_daily_level", "可选候选"),
+        "locked_daily_level": decision.get("locked_daily_level", "推荐制作"),
         "locked_should_produce": decision.get("locked_should_produce", "否"),
         "locked_title_permission": decision.get("locked_title_permission", "不生成标题"),
         "locked_global_rank_position": decision.get("locked_global_rank_position", ""),
@@ -53,8 +53,8 @@ def stage2_stub_row(decision: dict[str, str]) -> dict[str, str]:
         "重点体现": "标题先像公开判断，再进入实验字段。",
         "对应方向": "真实工作流改造",
         "推荐动作": decision.get("locked_recommendation_status", "生成脚本包"),
-        "今日建议级别": decision.get("locked_daily_level", "可选候选"),
-        "候选状态": decision.get("locked_daily_level", "可选候选"),
+        "今日建议级别": decision.get("locked_daily_level", "推荐制作"),
+        "候选状态": decision.get("locked_daily_level", "推荐制作"),
         "是否建议进入制作": decision.get("locked_should_produce", "否"),
         "编辑判断分": "85",
         "标题质量分": "85",
@@ -82,14 +82,14 @@ def make_decision(index: int = 0, *, decision_value: str = "select") -> dict[str
     }, index, {"original_title": f"source {index}"})
 
 
-def ranking_row(decision: dict[str, str], *, level: str = "今日最值得做", position: str = "1") -> dict[str, str | int]:
+def ranking_row(decision: dict[str, str], *, level: str = "推荐制作", position: str = "1") -> dict[str, str | int]:
     return {
         "index": int(decision["index"]),
         "editorial_decision_id": decision["editorial_decision_id"],
         "editorial_decision_hash": decision["editorial_decision_hash"],
         "input_global_rank_hash": decision["global_rank_hash"],
         "global_daily_level": level,
-        "final_recommendation_status": "生成脚本包" if level == "今日最值得做" else "补证据",
+        "final_recommendation_status": decision["locked_recommendation_status"],
         "global_rank_position": position,
         "global_tradeoff_reason": "全日比较后的公开取舍理由。",
     }
@@ -116,7 +116,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
 
     def test_global_ranking_rejects_id_index_mismatch(self) -> None:
         first, second = make_decision(0), make_decision(1)
-        rows = [ranking_row(first), ranking_row(second, level="可选候选", position="")]
+        rows = [ranking_row(first), ranking_row(second, level="推荐制作", position="")]
         rows[0]["index"] = 1
         rows[1]["index"] = 0
         with self.assertRaisesRegex(RuntimeError, "id/index mismatch"):
@@ -131,7 +131,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
 
     def test_global_ranking_rejects_selected_row_without_tradeoff(self) -> None:
         decision = make_decision(0)
-        with self.assertRaisesRegex(RuntimeError, "missing tradeoff reason"):
+        with self.assertRaisesRegex(RuntimeError, "missing public tradeoff reason"):
             runner.apply_global_ranking([decision], [{**ranking_row(decision), "global_tradeoff_reason": ""}])
 
     def test_raw_stage2_owner_drift_survives_normalize_and_reapply(self) -> None:
@@ -314,7 +314,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "editorial_decision_id": decision["editorial_decision_id"],
             "editorial_decision_hash": decision["editorial_decision_hash"],
             "input_global_rank_hash": decision["global_rank_hash"],
-            "global_daily_level": "今日最值得做",
+            "global_daily_level": "推荐制作",
             "final_recommendation_status": "生成脚本包",
             "global_rank_position": "1",
             "global_tradeoff_reason": "今天证据最完整。",
@@ -353,7 +353,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "input_global_rank_hash": decision["global_rank_hash"],
             "global_daily_level": "不建议制作",
             "final_recommendation_status": "不做",
-            "global_rank_position": "",
+            "global_rank_position": "1",
             "global_tradeoff_reason": "新闻影响力成立，不过今天没有 Austin 业务现场证据。",
         }])[0]
         row = stage2_stub_row(ranked)
@@ -379,7 +379,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
         self.assertIn("观察也要像公开判断", prompt)
         self.assertIn("来源钩子 + Austin 业务矛盾", prompt)
 
-    def test_global_ranking_caps_top_today_across_batches(self) -> None:
+    def test_global_ranking_keeps_all_quality_passing_rows_across_batches(self) -> None:
         decisions = []
         ranking_rows = []
         for index in range(6):
@@ -404,21 +404,20 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                 "editorial_decision_id": decision["editorial_decision_id"],
                 "editorial_decision_hash": decision["editorial_decision_hash"],
                 "input_global_rank_hash": decision["global_rank_hash"],
-                "global_daily_level": "今日最值得做" if index < 3 else "可选候选",
-                "final_recommendation_status": "生成脚本包" if index < 3 else "补证据",
-                "global_rank_position": str(index + 1) if index < 3 else "",
-                "global_tradeoff_reason": "全日排序后取前三。" if index < 3 else "今天不进前三，但保留为可选。",
+                "global_daily_level": "推荐制作",
+                "final_recommendation_status": "生成脚本包",
+                "global_rank_position": str(index + 1),
+                "global_tradeoff_reason": "全日排序只决定顺序，不改变推荐资格。",
             })
 
         ranked = runner.apply_global_ranking(decisions, ranking_rows)
 
-        self.assertEqual(sum(1 for item in ranked if item["locked_daily_level"] == "今日最值得做"), 3)
-        self.assertEqual(sum(1 for item in ranked if item["locked_daily_level"] == "可选候选"), 3)
+        self.assertEqual(sum(1 for item in ranked if item["locked_daily_level"] == "推荐制作"), 6)
         self.assertEqual(ranked[0]["locked_should_produce"], "是")
-        self.assertEqual(ranked[3]["locked_should_produce"], "否")
-        self.assertEqual(ranked[3]["locked_recommendation_status"], "补证据")
+        self.assertEqual(ranked[3]["locked_should_produce"], "是")
+        self.assertEqual(ranked[3]["locked_recommendation_status"], "生成脚本包")
 
-    def test_global_ranking_locks_non_top_select_to_non_generation_action(self) -> None:
+    def test_global_ranking_cannot_downgrade_a_selected_row(self) -> None:
         decision = runner.normalize_decision({
             "decision": "select",
             "why_i_would_choose": "有 Austin 现场。",
@@ -432,29 +431,22 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "source_hook_usage": "借判断，不照抄。",
             "recommendation_status": "生成脚本包",
             "near_miss_reason": "需要补证据。",
-            "public_decision_summary": "来源的购买理由入口适合转成 Agent 业务表达，场景是客户旧流程改造；但今天证据弱于前三，需要先补案例再进入制作。",
+            "public_decision_summary": "来源的购买理由入口适合转成 Agent 业务表达，场景是客户旧流程改造；但今天证据弱于排序靠前，需要先补案例再进入制作。",
         }, 0, {"original_title": "做产品不要先堆功能"})
 
-        ranked = runner.apply_global_ranking([decision], [{
+        with self.assertRaisesRegex(RuntimeError, "change recommendation"):
+            runner.apply_global_ranking([decision], [{
             "index": 0,
             "editorial_decision_id": decision["editorial_decision_id"],
             "editorial_decision_hash": decision["editorial_decision_hash"],
             "input_global_rank_hash": decision["global_rank_hash"],
-            "global_daily_level": "可选候选",
+            "global_daily_level": "推荐制作",
             "final_recommendation_status": "补证据",
-            "global_rank_position": "",
-            "global_tradeoff_reason": "全日排序后证据弱于前三，需要补案例。",
-        }])[0]
+            "global_rank_position": "1",
+            "global_tradeoff_reason": "排序靠后也不能改变资格。",
+        }])
 
-        self.assertEqual(ranked["locked_decision"], "select")
-        self.assertEqual(ranked["locked_daily_level"], "可选候选")
-        self.assertEqual(ranked["locked_recommendation_status"], "补证据")
-        self.assertEqual(ranked["locked_should_produce"], "否")
-        row = contract.apply_batch_quality_guards([stage2_stub_row(ranked)])[0]
-        self.assertEqual(row["field_contract_status"], "pass")
-        self.assertEqual(row["guard_blocked"], "false")
-
-    def test_global_ranking_over_three_top_today_fails(self) -> None:
+    def test_global_ranking_allows_more_than_three_recommended_rows(self) -> None:
         decisions = []
         ranking_rows = []
         for index in range(4):
@@ -479,14 +471,14 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                 "editorial_decision_id": decision["editorial_decision_id"],
                 "editorial_decision_hash": decision["editorial_decision_hash"],
                 "input_global_rank_hash": decision["global_rank_hash"],
-                "global_daily_level": "今日最值得做",
+                "global_daily_level": "推荐制作",
                 "final_recommendation_status": "生成脚本包",
                 "global_rank_position": str(index + 1),
-                "global_tradeoff_reason": "错误地全部进前三。",
+                "global_tradeoff_reason": "排序位置不影响推荐资格。",
             })
-
-        with self.assertRaisesRegex(RuntimeError, "maximum is 3"):
-            runner.apply_global_ranking(decisions, ranking_rows)
+        ranked = runner.apply_global_ranking(decisions, ranking_rows)
+        self.assertEqual(len(ranked), 4)
+        self.assertTrue(all(row["locked_should_produce"] == "是" for row in ranked))
 
     def test_resume_stage2_rows_must_match_current_global_rank_lock(self) -> None:
         decision = runner.normalize_decision({
@@ -509,10 +501,10 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "editorial_decision_id": decision["editorial_decision_id"],
             "editorial_decision_hash": decision["editorial_decision_hash"],
             "input_global_rank_hash": decision["global_rank_hash"],
-            "global_daily_level": "今日最值得做",
+            "global_daily_level": "推荐制作",
             "final_recommendation_status": "生成脚本包",
             "global_rank_position": "1",
-            "global_tradeoff_reason": "全日前三。",
+            "global_tradeoff_reason": "全日排序靠前。",
         }])[0]
         rows = [stage2_stub_row(ranked)]
 
@@ -523,12 +515,16 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
     def test_stage1_accepts_local_batch_indices_and_locks_global_index(self) -> None:
         row = {"原始来源标题": "Codex PPT", "来源内容": "Codex 做 PPT"}
 
-        def fake_prompt(*, schema, prompt, model, timeout, artifact_dir, artifact_prefix):
-            return {
+        payload = {
                 "engine": "stub",
                 "batch_notes": "local index output",
                 "editorial_decisions": [{
                     "index": 0,
+                    "research_dossier_hash": "a" * 64,
+                    "research_evidence_ids": "src-1,web-1",
+                    "audience_hook": "陌生观众能看到可编辑 PPT 的结果承诺。",
+                    "hook_evidence_ids": "src-1,web-1",
+                    "source_read": "来源演示 Word Brief 生成可编辑 PPT。",
                     "decision": "select",
                     "why_i_would_choose": "能接到交付现场。",
                     "why_i_would_not_choose": "不能照抄教程。",
@@ -540,13 +536,13 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                     "source_title_hook": "Codex PPT",
                     "source_hook_usage": "借工具组合，舍弃教程感。",
                     "recommendation_status": "生成脚本包",
-                    "near_miss_reason": "",
+                    "near_miss_reason": "无；证据已满足。",
                     "public_decision_summary": "来源入口是 Codex 做 PPT，我会看它能不能变成方案资产。",
+                    "proposed_content_structure": "来源承诺 / Austin 矛盾 / 证据 / 判断",
+                    "state_or_gap": "证据完整",
                 }],
             }
-
-        with patch.object(runner, "run_codex_prompt", side_effect=fake_prompt):
-            decisions, _meta = runner.run_codex_stage1([row], "", 30, start_index=3)
+        decisions, _meta = runner.validate_stage1_payload([row], payload, start_index=3)
 
         self.assertEqual(decisions[0]["index"], 3)
         self.assertTrue(decisions[0]["editorial_decision_id"].startswith("ar020d_decision_003_"))
@@ -572,7 +568,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "editorial_decision_id": decision["editorial_decision_id"],
             "editorial_decision_hash": decision["editorial_decision_hash"],
             "input_global_rank_hash": decision["global_rank_hash"],
-            "global_daily_level": "今日最值得做",
+            "global_daily_level": "推荐制作",
             "final_recommendation_status": "生成脚本包",
             "global_rank_position": "1",
             "global_tradeoff_reason": "唯一强候选。",
@@ -584,7 +580,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
         guarded = contract.apply_batch_quality_guards([row])[0]
 
         self.assertEqual(guarded["推荐动作"], "生成脚本包")
-        self.assertEqual(guarded["今日建议级别"], "今日最值得做")
+        self.assertEqual(guarded["今日建议级别"], "推荐制作")
         self.assertEqual(guarded["是否建议进入制作"], "是")
         self.assertEqual(guarded["guard_blocked"], "true")
         self.assertEqual(guarded["field_contract_status"], "fail")
@@ -605,8 +601,8 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "重点体现": "不是能力清单，而是执行后可追溯。",
             "对应方向": "真实工作流改造",
             "推荐动作": "生成脚本包",
-            "今日建议级别": "今日最值得做",
-            "候选状态": "今日最值得做",
+            "今日建议级别": "推荐制作",
+            "候选状态": "推荐制作",
             "title_permission": "可发布标题",
             "可发布标题": "Agent真正有用的能力，是做完事以后留下可验收记录",
             "主编判断摘要": "来源证据是 Agent 能力讨论，我会转到 Austin 的任务复盘现场；取舍是保留能力入口，但不做泛泛工具介绍。",
@@ -673,13 +669,13 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                     "editorial_decision_id": decision["editorial_decision_id"],
                     "editorial_decision_hash": decision["editorial_decision_hash"],
                     "input_global_rank_hash": decision["global_rank_hash"],
-                    "global_daily_level": "今日最值得做" if index < 3 else "可选候选",
+                    "global_daily_level": "推荐制作" if index < 3 else "推荐制作",
                     "final_recommendation_status": "生成脚本包" if index < 3 else "补证据",
                     "global_rank_position": str(index + 1) if index < 3 else "",
-                    "global_tradeoff_reason": "全日前三。" if index < 3 else "全日排序后保留可选。",
+                    "global_tradeoff_reason": "全日排序靠前。" if index < 3 else "全日排序后保留可选。",
                 })
             ranked = runner.apply_global_ranking(decisions, ranking_rows)
-            return ranked, {"global_top_count": 3, "status": "success", "outputs": {}}
+            return ranked, {"recommended_count": len(ranked), "status": "success", "outputs": {}}
 
         def fake_stage2(rows, decisions, model, timeout, artifact_dir=None):
             calls.append(f"stage2:{decisions[0]['index']}")
@@ -733,7 +729,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
         self.assertEqual(guarded["title_quality_status"], "pass")
         self.assertEqual(guarded["title_quality_issues"], "")
 
-    def test_run_codex_skill_two_stage_writes_artifacts_and_clears_case_fields(self) -> None:
+    def test_legacy_run_codex_skill_api_is_disabled(self) -> None:
         row = {
             "原始来源标题": "Codex联动Obsidian，搭建超强知识库，手把手教程",
             "来源内容": "Codex 联动 Obsidian，自生长知识库，自动整理复盘。",
@@ -741,91 +737,8 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
             "来源类型": "对标视频",
         }
 
-        stage1_decision_holder: dict[str, str] = {}
-
-        def fake_codex_prompt(*, schema, prompt, model, timeout, artifact_dir, artifact_prefix):
-            if artifact_prefix.startswith("stage1"):
-                payload = {
-                    "engine": "stub",
-                    "batch_notes": "stage1 ok",
-                    "editorial_decisions": [{
-                        "index": 0,
-                        "decision": "select",
-                        "why_i_would_choose": "这个工具组合能接到我的选题台长期记忆。",
-                        "why_i_would_not_choose": "不能照抄手把手教程。",
-                        "rejected_common_take": "普通工具号会讲搭库教程。",
-                        "natural_austin_angle": "知识库不是存资料，而是留下为什么选。",
-                        "title_directions": "Codex+Obsidian / 选题台长期记忆",
-                        "selected_visible_title": "Codex+Obsidian 真正该留下的，是每条选题为什么值得做",
-                        "title_rationale": "借工具组合和知识库承诺，转成选题判断留存。",
-                        "source_title_hook": "工具组合：Codex联动Obsidian",
-                        "source_hook_usage": "借工具组合，舍弃手把手教程。",
-                        "recommendation_status": "生成脚本包",
-                        "near_miss_reason": "",
-                        "public_decision_summary": "来源的市场入口是 Codex+Obsidian 知识库，我会把它转成选题台长期记忆。",
-                    }],
-                }
-                stage1_decision_holder.update(payload["editorial_decisions"][0])
-                return payload
-            if artifact_prefix.startswith("global_ranking"):
-                decision = runner.normalize_decision(stage1_decision_holder, 0, runner.stage1_candidate_payload(row, 0))
-                return {
-                    "engine": "stub",
-                    "global_ranking_notes": "global ranking ok",
-                    "ranking_rows": [{
-                        "index": 0,
-                        "editorial_decision_id": decision["editorial_decision_id"],
-                        "editorial_decision_hash": decision["editorial_decision_hash"],
-                        "input_global_rank_hash": decision["global_rank_hash"],
-                        "global_daily_level": "今日最值得做",
-                        "final_recommendation_status": "生成脚本包",
-                        "global_rank_position": "1",
-                        "global_tradeoff_reason": "唯一强候选。",
-                    }],
-                }
-            decision = runner.normalize_decision(stage1_decision_holder, 0, runner.stage1_candidate_payload(row, 0))
-            decision = runner.apply_global_ranking(decision and [decision], [{
-                "index": 0,
-                "editorial_decision_id": decision["editorial_decision_id"],
-                "editorial_decision_hash": decision["editorial_decision_hash"],
-                "input_global_rank_hash": decision["global_rank_hash"],
-                "global_daily_level": "今日最值得做",
-                "final_recommendation_status": "生成脚本包",
-                "global_rank_position": "1",
-                "global_tradeoff_reason": "唯一强候选。",
-            }])[0]
-            mapped = stage2_stub_row(decision)
-            stage2_row = {
-                "index": 0,
-                "editorial_decision_id": decision["editorial_decision_id"],
-                "editorial_decision_hash": decision["editorial_decision_hash"],
-                "global_rank_id": decision["global_rank_id"],
-                "global_rank_hash": decision["global_rank_hash"],
-                **{field: mapped.get(field, "") for field in runner.STAGE2_OPERATIONAL_FIELDS},
-            }
-            return {
-                "engine": "stub",
-                "batch_notes": "stage2 ok",
-                "rows": [stage2_row],
-            }
-
-        with TemporaryDirectory() as tmp:
-            artifact_dir = Path(tmp)
-            with patch.object(runner, "run_codex_prompt", side_effect=fake_codex_prompt):
-                rows, meta = runner.run_codex_skill([row], "", 30, artifact_dir=artifact_dir)
-
-            self.assertTrue((artifact_dir / "stage1_input_sanitized.json").exists())
-            self.assertTrue((artifact_dir / "stage2_input_sanitized.json").exists())
-            self.assertTrue((artifact_dir / "ar020d_provenance_manifest.json").exists())
-
-        self.assertEqual(rows[0]["stage2_invariant_status"], "pass", rows[0].get("stage2_invariant_issues"))
-        self.assertEqual(rows[0]["今日建议级别"], "今日最值得做")
-        self.assertEqual(rows[0]["推荐动作"], "生成脚本包")
-        self.assertEqual(rows[0]["真实/相邻案例"], "")
-        self.assertEqual(rows[0]["可调用案例"], "")
-        self.assertEqual(meta["stage_architecture"], "editorial_decision_global_ranking_then_field_mapping")
-        self.assertEqual(meta["global_top_count"], 1)
-        self.assertTrue(meta["provenance_manifest"]["persona_style_embedded"])
+        with self.assertRaisesRegex(RuntimeError, "zero-fallback"):
+            runner.run_codex_skill([row], "", 30)
 
     def test_six_counterexample_payloads_stay_source_fact_only(self) -> None:
         titles = [

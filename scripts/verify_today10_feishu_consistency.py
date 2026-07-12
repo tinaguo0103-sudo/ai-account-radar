@@ -248,8 +248,6 @@ def main() -> int:
             failures.append(f"Feishu row 可沉淀资产 too generic: {normalize(fields.get('选题标题'))[:40]}")
 
     level_counts = Counter(normalize(record.get("fields", {}).get("今日建议级别")) for record in run_records)
-    if level_counts.get("今日最值得做", 0) > 3:
-        failures.append(f"今日最值得做 count > 3: {level_counts.get('今日最值得做')}")
 
     forbidden_hits: list[dict[str, str]] = []
     for record in run_records:

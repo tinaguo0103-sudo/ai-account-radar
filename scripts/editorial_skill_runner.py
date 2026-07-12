@@ -30,12 +30,12 @@ from local_env import load_local_env
 ROOT = Path(__file__).resolve().parents[1]
 REPO_SKILL_DIR = ROOT / "skills" / "ai-account-editorial-director"
 GLOBAL_SKILL_DIR = Path.home() / ".codex" / "skills" / "ai-account-editorial-director"
-SKILL_DIR = Path(os.getenv("EDITORIAL_SKILL_DIR", str(GLOBAL_SKILL_DIR))).expanduser()
+SKILL_DIR = REPO_SKILL_DIR
 SKILL_MD = SKILL_DIR / "SKILL.md"
 RUNNER_VERSION = "ar020d_current_task_state_machine_v1"
 CANONICAL_DECISIONS = {"select", "observe", "reject"}
 RECOMMENDATION_STATUSES = {"生成脚本包", "补证据", "存素材", "观察", "不做"}
-GLOBAL_DAILY_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
+GLOBAL_DAILY_LEVELS = {"推荐制作", "暂存观察", "不建议制作"}
 
 
 def skill_reference_dirs() -> list[Path]:
@@ -232,6 +232,18 @@ STAGE2_OWNER_FIELDS = {
 
 STAGE2_OPERATIONAL_FIELDS = [field for field in SKILL_FIELDS if field not in STAGE2_OWNER_FIELDS]
 
+# AR-020D owns these surfaces through Stage 1 or the operational mapper. Values
+# inherited from the pre-Skill deterministic candidate builder are stale authoring,
+# not source facts, and must not leak back into the final row.
+AR020D_LEGACY_CREATIVE_FIELDS = {
+    "标题备选", "内部切入角度", "为什么今天值得做", "我的账号为什么能讲",
+    "我能讲出的独特角度", "真实用户问题", "可展示结果", "推荐理由",
+    "普通AI资讯号会怎么讲", "我的蹭热点角度", "Austin映射方向",
+    "Austin转译角度", "对标转译角度", "主题簇", "主题簇说明",
+    "关联母场景", "真实/相邻案例", "可调用案例", "我的真实/相邻场景",
+    "field_contract_status", "field_contract_issues", "guard_blocked", "guard_blocked_reason",
+}
+
 STAGE2_REQUIRED_OPERATIONAL_FIELDS = [
     "field_mapping_json",
     "我要做的实验",
@@ -270,6 +282,11 @@ STAGE2_RAW_OWNER_EXPECTATIONS = {
 }
 
 EDITORIAL_DECISION_FIELDS = [
+    "research_dossier_hash",
+    "research_evidence_ids",
+    "audience_hook",
+    "hook_evidence_ids",
+    "source_read",
     "decision",
     "why_i_would_choose",
     "why_i_would_not_choose",
@@ -283,6 +300,8 @@ EDITORIAL_DECISION_FIELDS = [
     "recommendation_status",
     "near_miss_reason",
     "public_decision_summary",
+    "proposed_content_structure",
+    "state_or_gap",
 ]
 
 NON_AUTHORITATIVE_HINT_FIELDS = {
@@ -457,14 +476,14 @@ HOT_HOOK_TERMS = [
     "baoyu-design",
 ]
 
-ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
+ALLOWED_LEVELS = {"推荐制作", "暂存观察", "不建议制作"}
 LEVEL_ALIASES = {
-    "备选": "可选候选",
-    "备选候选": "可选候选",
-    "备选，不占今日前三": "可选候选",
-    "候选": "可选候选",
-    "可做候选": "可选候选",
-    "进入候选": "可选候选",
+    "备选": "推荐制作",
+    "备选候选": "推荐制作",
+    "备选，不占全日排序": "推荐制作",
+    "候选": "推荐制作",
+    "可做候选": "推荐制作",
+    "进入候选": "推荐制作",
     "观察": "暂存观察",
     "暂存": "暂存观察",
     "待观察": "暂存观察",
@@ -993,13 +1012,13 @@ def normalize_level(value: str) -> str:
         if key and key in cleaned:
             return target
     if "最值得" in cleaned or cleaned in {"S", "强推"}:
-        return "今日最值得做"
+        return "推荐制作"
     if "不建议" in cleaned or "放弃" in cleaned:
         return "不建议制作"
     if "暂存" in cleaned or "观察" in cleaned:
         return "暂存观察"
     if cleaned:
-        return "可选候选"
+        return "推荐制作"
     return "暂存观察"
 
 
@@ -1050,7 +1069,7 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     out["候选状态"] = level
     if out.get("我要做的实验") == FALLBACK_EXPERIMENT_PROMPT:
         reason = out.get("不建议做的原因") or out.get("降级原因") or out.get("推荐动作原因")
-        extra = "还没有形成可执行的最小实验动作，先不进入前台可选候选。"
+        extra = "还没有形成可执行的最小实验动作，先不进入前台推荐制作。"
         out["今日建议级别"] = "暂存观察"
         out["候选状态"] = "暂存观察"
         out["是否建议进入制作"] = "否"
@@ -1074,16 +1093,16 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     evidence = (out.get("证据强度", "") or "").strip()
     scene_basis_value = (out.get("场景依据", "") or "").strip()
 
-    if level == "今日最值得做" and (evidence == "弱" or scene_basis_value == "仅热点观察"):
+    if level == "推荐制作" and (evidence == "弱" or scene_basis_value == "仅热点观察"):
         reason = out.get("不建议做的原因") or out.get("降级原因") or out.get("推荐动作原因")
-        extra = "证据或场景依据还不够强，不能作为今日最值得做。"
-        out["今日建议级别"] = "可选候选"
-        out["候选状态"] = "可选候选"
+        extra = "证据或场景依据还不够强，不能作为推荐制作。"
+        out["今日建议级别"] = "推荐制作"
+        out["候选状态"] = "推荐制作"
         out["是否建议进入制作"] = "否"
         out["推荐动作"] = out.get("推荐动作") or "补证据"
         out["降级原因"] = f"{reason}；{extra}".strip("；")
         out["不建议做的原因"] = out["降级原因"]
-        level = "可选候选"
+        level = "推荐制作"
         if not publishable:
             title_permission = "内部测试标题"
 
@@ -1113,9 +1132,9 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
         out["是否建议进入制作"] = "否"
         if out.get("推荐动作") not in {"补证据", "存素材", "观察"}:
             out["推荐动作"] = "补证据" if title_permission == "内部测试标题" else "观察"
-        if level == "今日最值得做":
-            out["今日建议级别"] = "可选候选"
-            out["候选状态"] = "可选候选"
+        if level == "推荐制作":
+            out["今日建议级别"] = "推荐制作"
+            out["候选状态"] = "推荐制作"
         return finalize(out)
 
     if not publishable:
@@ -1131,9 +1150,9 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
         out["降级原因"] = f"{reason}；{extra}".strip("；")
         if not out.get("不建议做的原因"):
             out["不建议做的原因"] = out["降级原因"]
-        if level == "今日最值得做":
-            out["今日建议级别"] = "可选候选"
-            out["候选状态"] = "可选候选"
+        if level == "推荐制作":
+            out["今日建议级别"] = "推荐制作"
+            out["候选状态"] = "推荐制作"
         return finalize(out)
 
     if publishable and is_same_as_source(publishable, out):
@@ -1154,7 +1173,7 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     out["可发布标题"] = publishable
     out["title_permission"] = "可发布标题"
 
-    if level == "今日最值得做":
+    if level == "推荐制作":
         out["是否建议进入制作"] = "是"
     elif not out.get("是否建议进入制作"):
         out["是否建议进入制作"] = "否"
@@ -1183,29 +1202,20 @@ def sanitize_visible_language(row: dict[str, str]) -> dict[str, str]:
 
 
 def wants_top_today(row: dict[str, str]) -> bool:
-    return row.get("今日建议级别") == "今日最值得做"
+    return row.get("今日建议级别") == "推荐制作"
 
 
 def normalize_batch(rows: list[dict[str, str]]) -> list[dict[str, str]]:
     normalized = [normalize_skill_row(row) for row in rows]
-    top_candidates = [idx for idx, row in enumerate(normalized) if wants_top_today(row)]
-    for idx in top_candidates[:3]:
-        normalized[idx]["今日建议级别"] = "今日最值得做"
-        normalized[idx]["候选状态"] = "今日最值得做"
-        normalized[idx]["是否建议进入制作"] = "是"
-    for idx in top_candidates[3:]:
-        if normalized[idx].get("今日建议级别") == "今日最值得做":
-            normalized[idx]["今日建议级别"] = "可选候选"
-            normalized[idx]["候选状态"] = "可选候选"
     visible_asset_counts: dict[str, int] = {}
     for row in normalized:
-        if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
+        if row.get("今日建议级别") == "推荐制作":
             asset = (row.get("可沉淀资产", "") or "").strip()
             if asset:
                 visible_asset_counts[asset] = visible_asset_counts.get(asset, 0) + 1
     for row in normalized:
         asset = (row.get("可沉淀资产", "") or "").strip()
-        if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and visible_asset_counts.get(asset, 0) > 2:
+        if row.get("今日建议级别") == "推荐制作" and visible_asset_counts.get(asset, 0) > 2:
             replacement = context_specific_asset(row)
             if replacement and replacement != asset:
                 row["可沉淀资产"] = replacement
@@ -1276,9 +1286,9 @@ def normalize_direction(value: str) -> str:
 def grade(row: dict[str, str]) -> str:
     score = intish(row.get("编辑判断分") or row.get("推荐分"))
     level = row.get("今日建议级别", "")
-    if level == "今日最值得做" or score >= 90:
+    if level == "推荐制作" or score >= 90:
         return "S"
-    if level == "可选候选" or score >= 78:
+    if level == "推荐制作" or score >= 78:
         return "A"
     if level == "暂存观察" or score >= 68:
         return "B"
@@ -1379,9 +1389,9 @@ def editorial_judgement(row: dict[str, str]) -> str:
     level = row.get("今日建议级别") or row.get("候选状态") or "暂存观察"
     hook = hot_hook(row)
     basis = scene_basis(row)
-    if level == "今日最值得做":
+    if level == "推荐制作":
         return f"值得优先做：{hook or '这个来源'}能接到用户真实业务现场，并且有机会展示流程改造或资产结果。"
-    if level == "可选候选":
+    if level == "推荐制作":
         return f"可以进入候选：{hook or '这个来源'}有可借的角度，但还需要补证据或补一轮自己的测试。"
     if level == "不建议制作":
         return f"不建议制作：目前只能停在资讯或工具层，和用户业务现场关系弱。"
@@ -1696,22 +1706,22 @@ def canonical_recommendation_status(value: Any, decision: str) -> str:
     return "生成脚本包" if decision == "select" else "观察"
 
 
-def default_global_level(decision: str, recommendation_status: str, *, top_today: bool = False) -> str:
+def default_global_level(decision: str, recommendation_status: str) -> str:
     if decision == "select":
-        return "今日最值得做" if top_today else "可选候选"
+        return "推荐制作"
     if decision == "reject" or recommendation_status == "不做":
         return "不建议制作"
     return "暂存观察"
 
 
 def locked_should_produce(decision: str, recommendation_status: str, daily_level: str) -> str:
-    if decision == "select" and recommendation_status == "生成脚本包" and daily_level == "今日最值得做":
+    if decision == "select" and recommendation_status == "生成脚本包" and daily_level == "推荐制作":
         return "是"
     return "否"
 
 
 def locked_title_permission(decision: str, daily_level: str, should_produce: str) -> str:
-    if decision == "select" and daily_level == "今日最值得做" and should_produce == "是":
+    if decision == "select" and daily_level == "推荐制作" and should_produce == "是":
         return "可发布标题"
     if decision == "select":
         return "内部测试标题"
@@ -1756,16 +1766,6 @@ def normalize_decision(raw: dict[str, Any], index: int, source: dict[str, Any]) 
         decision.get("recommendation_status"),
         decision["decision"],
     )
-    if not decision.get("source_title_hook"):
-        decision["source_title_hook"] = source.get("title_hook_reference") or source.get("source_facts", {}).get("source_title_hook", "")
-    if not decision.get("selected_visible_title"):
-        decision["selected_visible_title"] = short_sentence(decision.get("natural_austin_angle") or decision.get("public_decision_summary") or source.get("original_title", ""), 80)
-    if not decision.get("public_decision_summary"):
-        decision["public_decision_summary"] = compact_public_trace([
-            decision.get("why_i_would_choose", ""),
-            decision.get("why_i_would_not_choose", ""),
-            decision.get("decision", ""),
-        ])
     decision_hash = editorial_decision_hash(decision)
     decision["editorial_decision_hash"] = decision_hash
     decision["editorial_decision_id"] = editorial_decision_id(index, decision_hash)
@@ -2066,23 +2066,21 @@ def build_global_ranking_prompt(rows: list[dict[str, str]], decisions: list[dict
                 ]
             },
         })
-    return f"""你是 ai-account-editorial-director 的 AR-020D Global Daily Ranking。
+    return f"""你是 ai-account-editorial-director 的 AR-020D Dynamic Global Ranking。
 
-你只做一件事：在所有 Stage 1 `decision=select` 的候选中做当天全局排序。你不能改 Stage 1 的标题、角度、选择理由或推荐动作。
+你只做一件事：对当天全部 Stage 1 决策做无损排序。你不能改 Stage 1 的标题、角度、选择理由、eligibility 或推荐动作。
 
 输出规则：
 - 必须为每个输入 index 输出一行 ranking_rows。
 - 必须原样回显每行 `editorial_decision_id`、`editorial_decision_hash` 和输入的 `global_rank_hash` 到 `input_global_rank_hash`；不得缺行、重复或串行。
-- Stage 1 `decision=select` 的候选中，最多 3 条可以是 `global_daily_level=今日最值得做`。
-- 其余 `decision=select` 候选应为 `global_daily_level=可选候选`，并写清为什么今天不进前三。
-- `decision=observe` 固定为 `暂存观察`；`decision=reject` 固定为 `不建议制作`。
-- `final_recommendation_status` 是全日排名后的最终操作锁：前三可保留 `生成脚本包`；未进前三的 select 不能继续伪装成立刻生成，通常锁成 `补证据` / `存素材` / `观察`，并在 tradeoff reason 里说明为什么。
-- `global_rank_position` 对 `今日最值得做` 写 1/2/3；其他可为空或写观察序号，但不能伪装成前三。
+- `global_rank_position` 必须覆盖全部输入，严格为唯一的 1..N；排序不截断任何行。
+- `decision=select` 固定回显 `global_daily_level=推荐制作`；observe 固定 `暂存观察`；reject 固定 `不建议制作`。
+- `final_recommendation_status` 必须精确回显 Stage 1 recommendation；排序层无权降级或升级。
 - `global_tradeoff_reason` 必须是公开可读的取舍理由，不要写模型打分或内部排序公式。
-- 这一步是全日主编判断，不是关键词排序；要比较来源证据、Austin 适配度、今天是否值得用户打开、是否已经足够可执行。
+- 这一步是全日主编排序，不是关键词排序；所有质量通过的推荐制作候选都保留并展示，数量为 0..N。
 
 禁止：
-- 不得把 `可选候选` 的 final_recommendation_status 写成 `生成脚本包`。
+- 不得用数量上限、分页或排序位置改变候选 eligibility。
 - 不得新增标题、实验、验证方式、资产字段。
 - 不得引用 persona/case 作为证据。
 
@@ -2135,11 +2133,11 @@ def build_field_mapping_prompt(rows: list[dict[str, str]], decisions: list[dict[
 
 schema 中不存在的 Stage 1 / global ranking owner fields 不得输出。锁定标题、角度、主编摘要、标题思路、推荐动作、今日级别、制作状态和 title permission 都由 runner 在 Stage 2 之后原样映射。
 
-候选状态只能是：今日最值得做、可选候选、暂存观察、不建议制作。
+候选状态只能是：推荐制作、暂存观察、不建议制作。
 推荐等级只能是：S、A、B、C。
 对应方向只能是：AI业务定调、真实工作流改造、AI导演工作流、汽车与内容营销、AI项目复盘。
 证据强度只能是：强、中、弱。
-今日最值得做最多 3 条。
+排序只决定顺序，不设数量上限，不得截断。
 
 <editorial_rule_text>
 {skill_text}
@@ -2181,6 +2179,11 @@ def validate_stage1_payload(
     raw_decisions: dict[int, dict[str, Any]] = {}
     seen_indices: set[int] = set()
     for item in stage1_payload.get("editorial_decisions", []):
+        missing = [field for field in EDITORIAL_DECISION_FIELDS if not str(item.get(field) or "").strip()]
+        if missing:
+            raise RuntimeError(
+                f"Stage 1 output is incomplete; zero-fallback contract forbids filling: {', '.join(missing)}"
+            )
         try:
             raw_idx = int(item.get("index"))
         except (TypeError, ValueError) as exc:
@@ -2249,29 +2252,10 @@ def run_codex_stage1(
 
 
 def normalize_global_rank_row(item: dict[str, Any], decision: dict[str, Any]) -> dict[str, str]:
-    level = str(item.get("global_daily_level") or "").strip()
     locked_decision = str(decision.get("locked_decision") or decision.get("decision") or "")
     stage1_recommendation = str(decision.get("locked_recommendation_status") or decision.get("recommendation_status") or "")
-    if locked_decision != "select":
-        level = default_global_level(locked_decision, stage1_recommendation)
-    elif level not in {"今日最值得做", "可选候选"}:
-        level = "可选候选"
-    requested_recommendation = canonical_recommendation_status(
-        item.get("final_recommendation_status") or "",
-        locked_decision,
-    ) if item.get("final_recommendation_status") else ""
-    if locked_decision == "reject":
-        recommendation = "不做"
-    elif locked_decision != "select":
-        recommendation = requested_recommendation or stage1_recommendation
-        if recommendation == "生成脚本包":
-            recommendation = "观察"
-    elif level == "今日最值得做":
-        recommendation = stage1_recommendation if stage1_recommendation == "生成脚本包" else (requested_recommendation or stage1_recommendation)
-    else:
-        recommendation = requested_recommendation or ("补证据" if stage1_recommendation == "生成脚本包" else stage1_recommendation)
-        if recommendation == "生成脚本包":
-            recommendation = "补证据"
+    level = default_global_level(locked_decision, stage1_recommendation)
+    recommendation = stage1_recommendation
     should_produce = locked_should_produce(locked_decision, recommendation, level)
     title_permission = locked_title_permission(locked_decision, level, should_produce)
     position = str(item.get("global_rank_position") or "").strip()
@@ -2285,7 +2269,7 @@ def normalize_global_rank_row(item: dict[str, Any], decision: dict[str, Any]) ->
         "locked_daily_level": level,
         "locked_should_produce": should_produce,
         "locked_title_permission": title_permission,
-        "locked_global_rank_position": position if level == "今日最值得做" else "",
+        "locked_global_rank_position": position,
         "locked_global_tradeoff_reason": reason,
     }
 
@@ -2298,16 +2282,13 @@ def validate_global_ranking_bijection(
         raise RuntimeError(
             f"Global ranking row count mismatch: expected {len(decisions)}, got {len(ranking_rows)}"
         )
-    declared_top_count = sum(1 for row in ranking_rows if str(row.get("global_daily_level") or "") == "今日最值得做")
-    if declared_top_count > 3:
-        raise RuntimeError(f"Global ranking selected {declared_top_count} 今日最值得做 rows; maximum is 3")
     expected_by_id = {str(item.get("editorial_decision_id") or ""): item for item in decisions}
     expected_by_index = {int(item.get("index")): item for item in decisions}
     if len(expected_by_id) != len(decisions) or len(expected_by_index) != len(decisions):
         raise RuntimeError("Stage 1 decisions are not uniquely identifiable")
     seen_ids: set[str] = set()
     seen_indices: set[int] = set()
-    top_positions: list[str] = []
+    positions: list[int] = []
     for row in ranking_rows:
         required_fields = {
             "index",
@@ -2344,24 +2325,33 @@ def validate_global_ranking_bijection(
             raise RuntimeError(f"Global ranking decision hash mismatch at index {row_index}")
         if str(row.get("input_global_rank_hash") or "") != str(expected.get("global_rank_hash") or ""):
             raise RuntimeError(f"Global ranking input rank hash mismatch at index {row_index}")
-        if str(expected.get("locked_decision") or expected.get("decision") or "") == "select" and not str(
-            row.get("global_tradeoff_reason") or ""
-        ).strip():
-            raise RuntimeError(f"Global ranking selected row missing tradeoff reason at index {row_index}")
-        if str(row.get("global_daily_level") or "") == "今日最值得做":
-            position = str(row.get("global_rank_position") or "").strip()
-            if position not in {"1", "2", "3"}:
-                raise RuntimeError(f"Global ranking top row has invalid position at index {row_index}: {position!r}")
-            top_positions.append(position)
-    if len(set(top_positions)) != len(top_positions):
-        raise RuntimeError("Global ranking has duplicate top positions")
+        expected_level = default_global_level(
+            str(expected.get("locked_decision") or expected.get("decision") or ""),
+            str(expected.get("locked_recommendation_status") or expected.get("recommendation_status") or ""),
+        )
+        if str(row.get("global_daily_level") or "") != expected_level:
+            raise RuntimeError(f"Global ranking attempted to change eligibility at index {row_index}")
+        if str(row.get("final_recommendation_status") or "") != str(
+            expected.get("locked_recommendation_status") or expected.get("recommendation_status") or ""
+        ):
+            raise RuntimeError(f"Global ranking attempted to change recommendation at index {row_index}")
+        if not str(row.get("global_tradeoff_reason") or "").strip():
+            raise RuntimeError(f"Global ranking row missing public tradeoff reason at index {row_index}")
+        try:
+            position = int(str(row.get("global_rank_position") or "").strip())
+        except ValueError as exc:
+            raise RuntimeError(f"Global ranking has invalid position at index {row_index}") from exc
+        if position < 1:
+            raise RuntimeError(f"Global ranking position must be positive at index {row_index}")
+        positions.append(position)
+    if sorted(positions) != list(range(1, len(decisions) + 1)):
+        raise RuntimeError("Global ranking positions must be a lossless 1..N ordering")
 
 
 def apply_global_ranking(decisions: list[dict[str, Any]], ranking_rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     validate_global_ranking_bijection(decisions, ranking_rows)
     by_id = {str(row.get("editorial_decision_id") or ""): row for row in ranking_rows}
     ranked: list[dict[str, Any]] = []
-    top_count = 0
     for decision in decisions:
         item = by_id[str(decision.get("editorial_decision_id") or "")]
         lock = normalize_global_rank_row(item, decision)
@@ -2369,12 +2359,8 @@ def apply_global_ranking(decisions: list[dict[str, Any]], ranking_rows: list[dic
         rank_hash = global_rank_hash(next_decision)
         next_decision["global_rank_hash"] = rank_hash
         next_decision["global_rank_id"] = f"ar020d_rank_{int(next_decision.get('index') or 0):03d}_{rank_hash[:12]}"
-        if next_decision.get("locked_daily_level") == "今日最值得做":
-            top_count += 1
         ranked.append(next_decision)
-    if top_count > 3:
-        raise RuntimeError(f"Global ranking selected {top_count} 今日最值得做 rows; maximum is 3")
-    return ranked
+    return sorted(ranked, key=lambda row: int(row["locked_global_rank_position"]))
 
 
 def run_codex_global_ranking(
@@ -2420,7 +2406,7 @@ def run_codex_global_ranking(
         "stage1_decision_count": len(decisions),
         "ranking_output_count": len(ranking_payload.get("ranking_rows", [])),
         "global_ranking_rows": len(ranked),
-        "global_top_count": sum(1 for decision in ranked if decision.get("locked_daily_level") == "今日最值得做"),
+        "recommended_count": sum(1 for decision in ranked if decision.get("locked_daily_level") == "推荐制作"),
         "global_ranking_notes": ranking_payload.get("global_ranking_notes", ""),
         "model": model or "codex-default",
         "runner_version": RUNNER_VERSION,
@@ -2638,6 +2624,8 @@ def run_codex_stage2(
     enriched: list[dict[str, str]] = []
     for idx, row in enumerate(rows):
         out = dict(row)
+        for field in AR020D_LEGACY_CREATIVE_FIELDS:
+            out[field] = ""
         judgement = by_index.get(idx)
         global_idx = int(decisions[idx].get("index", idx))
         if not judgement and global_idx != idx:
@@ -2687,6 +2675,9 @@ def run_codex_stage2(
         out["标题思路"] = out.get("标题思路") or str(decision.get("title_rationale", ""))
         out["原始标题钩子"] = out.get("原始标题钩子") or str(decision.get("source_title_hook", ""))
         out["Austin改写理由"] = out.get("Austin改写理由") or str(decision.get("source_hook_usage", ""))
+        out["研究摘要"] = str(decision.get("source_read") or decision.get("public_decision_summary") or "")
+        out["受众钩子"] = str(decision.get("audience_hook") or "")
+        out["内容结构"] = str(decision.get("proposed_content_structure") or "")
         # AR-020D: persona/case material is style reference only, never row evidence.
         for case_field in ["真实/相邻案例", "可调用案例", "关联母场景", "借用方式", "我的真实/相邻场景"]:
             out[case_field] = ""
@@ -2707,7 +2698,11 @@ def run_codex_stage2(
         out["fallback_only"] = "false"
         out["not_editorial_quality"] = "false"
         enriched.append(out)
-    normalized = normalize_batch(enriched)
+    # AR-020D never sends Stage 2 rows through the legacy deterministic
+    # normalizer. That path authors defaults, downgrades decisions, and applies
+    # a batch-local selection cap. Stage 2 output is operational-only; validators may
+    # block it, but must not rewrite Stage 1 or ranking ownership.
+    normalized = [sanitize_visible_language(row) for row in enriched]
     decision_by_id = {str(decision.get("editorial_decision_id", "")): decision for decision in decisions}
     normalized = [
         reapply_locked_stage2_fields(row, decision_by_id[str(row.get("editorial_decision_id", ""))])
@@ -2775,7 +2770,20 @@ def apply_final_stage2_invariants(rows: list[dict[str, str]]) -> list[dict[str, 
             out["stage2_invariant_status"] = "pass"
             out["stage2_invariant_issues"] = ""
         checked.append(out)
-    return field_contract.apply_batch_quality_guards(checked)  # type: ignore[return-value]
+    final_rows: list[dict[str, Any]] = []
+    for row in checked:
+        out = dict(row)
+        contract_issues = field_contract.validate_field_contract(out)
+        blocking = [issue for issue in contract_issues if issue.severity == "block"]
+        out["field_contract_status"] = "fail" if blocking else "pass"
+        out["field_contract_issues"] = "；".join(issue.message for issue in contract_issues)
+        if blocking:
+            out["guard_blocked"] = "true"
+            out["guard_blocked_reason"] = "；".join(
+                part for part in [out.get("guard_blocked_reason", ""), out["field_contract_issues"]] if part
+            )
+        final_rows.append(out)
+    return final_rows  # type: ignore[return-value]
 
 
 def run_codex_skill(
@@ -2784,6 +2792,10 @@ def run_codex_skill(
     timeout: int,
     artifact_dir: Path | None = None,
 ) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    raise RuntimeError(
+        "Legacy one-shot Skill execution is disabled by the AR-020D zero-fallback contract. "
+        "Use topic_editorial_state_machine.py prepare-source-open."
+    )
     decisions, stage1_meta = run_codex_stage1(rows, model, timeout, artifact_dir=artifact_dir, start_index=0)
     ranked_decisions, ranking_meta = run_codex_global_ranking(rows, decisions, model, timeout, artifact_dir=artifact_dir)
     mapped_rows, stage2_meta = run_codex_stage2(rows, ranked_decisions, model, timeout, artifact_dir=artifact_dir)
@@ -2792,7 +2804,7 @@ def run_codex_skill(
         "stage1_rows": len(decisions),
         "stage1_batch_notes": stage1_meta.get("stage1_batch_notes", ""),
         "global_ranking_meta": ranking_meta,
-        "global_top_count": ranking_meta.get("global_top_count", 0),
+        "recommended_count": ranking_meta.get("recommended_count", 0),
         "stage_architecture": "editorial_decision_global_ranking_then_field_mapping",
     }
 
@@ -2836,22 +2848,21 @@ def main() -> int:
         "--engine",
         choices=["state-machine", "codex", "deterministic"],
         default=os.getenv("EDITORIAL_SKILL_ENGINE", "state-machine"),
-        help="state-machine is the required current-task protocol. codex is legacy-disabled. deterministic is an explicit offline emergency fallback only.",
+        help="Migration-only selector. Every legacy one-shot engine is disabled; use topic_editorial_state_machine.py.",
     )
     parser.add_argument("--codex-model", default="", help="Deprecated; nested Codex execution is disabled.")
     parser.add_argument("--timeout", type=int, default=0, help="Deprecated; current-task stages do not start a nested model process.")
     parser.add_argument(
         "--allow-deterministic-fallback",
         action="store_true",
-        help="Deprecated compatibility flag. It never converts a state-machine or codex invocation into accepted editorial output.",
+        help="Removed. Zero-fallback AR-020D has no deterministic editorial path.",
     )
     args = parser.parse_args()
 
-    if args.engine in {"state-machine", "codex"}:
-        parser.error(
-            "Nested editorial execution is disabled. Use scripts/topic_editorial_state_machine.py "
-            "prepare-stage1, then let the current Codex task produce and validate Stage 1, global ranking, and Stage 2 artifacts."
-        )
+    parser.error(
+        "The one-shot editorial runner is legacy-disabled before business I/O. "
+        "Use topic_editorial_state_machine.py prepare-source-open; the zero-fallback contract removes deterministic and nested model paths."
+    )
 
     load_local_env()
     input_path = Path(args.input)

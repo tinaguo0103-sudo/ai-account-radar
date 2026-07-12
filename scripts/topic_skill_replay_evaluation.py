@@ -766,7 +766,7 @@ def run_codex_skill_replay_batches(
         append_progress(out_dir, [progress_event(
             status="global_ranking_success",
             stage="global_daily_ranking",
-            note=f"top_today={ranking_meta.get('global_top_count')}; rows={len(ranked_decisions)}",
+            note=f"recommended={ranking_meta.get('recommended_count')}; rows={len(ranked_decisions)}",
         )])
     except Exception as exc:
         all_ok = False
@@ -1023,7 +1023,7 @@ def classify_rows(rows: list[dict[str, Any]]) -> dict[str, list[dict[str, Any]]]
             and row_with_status.get("not_editorial_quality") != "true"
         ):
             outputs["actionable"].append(row_with_status)
-        elif level in {"暂存观察", "可选候选"}:
+        elif level == "暂存观察":
             outputs["observe"].append(row_with_status)
         else:
             outputs["rejected"].append(row_with_status)
@@ -1236,6 +1236,8 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         "本报告由 replay aggregate 自动生成，只读 content_items.csv；不写飞书、不发 Topic Card、不触发 06。",
         "",
         "## Required Result",
+        f"- ok: {summary.get('ok')}",
+        f"- stage: {summary.get('stage')}",
         f"- completed: {summary.get('completed')}",
         f"- quality_gate_ok: {summary.get('quality_gate_ok')}",
         f"- writes_feishu: {summary.get('writes_feishu')}",
@@ -1243,13 +1245,16 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         f"- contract_failure_count: {summary.get('contract_failure_count')}",
         f"- title_quality_failure_count: {summary.get('title_quality_failure_count')}",
         f"- title_quality_warning_count: {summary.get('title_quality_warning_count')}",
-        f"- global_top_today_count: {summary.get('global_top_today_count')}",
+        f"- recommended_count: {summary.get('recommended_count')}",
         f"- stage2_selection_drift_count: {summary.get('stage2_selection_drift_count')}",
         f"- raw_stage2_drift_count: {summary.get('raw_stage2_drift_count')}",
         f"- guard_blocked_count: {summary.get('guard_blocked_count')}",
         f"- skill_rows: {summary.get('skill_rows')}",
         f"- actionable_count: {summary.get('actionable_count')}",
         f"- observe_count: {summary.get('observe_count')}",
+        f"- candidate_failure_count: {summary.get('candidate_failure_count', 0)}",
+        f"- source_open_failure_count: {summary.get('source_open_failure_count', 0)}",
+        f"- research_failure_count: {summary.get('research_failure_count', 0)}",
         "",
         "## Provenance",
         f"- execution_surface: {provenance.get('execution_surface')}",
@@ -1270,7 +1275,7 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
         f"- ranking_bijection_ok: {summary.get('ranking_bijection_ok')}",
         f"- stage1_decision_count: {(engine_meta.get('global_ranking') or {}).get('stage1_decision_count')}",
         f"- ranking_output_count: {(engine_meta.get('global_ranking') or {}).get('ranking_output_count')}",
-        f"- global_top_count: {(engine_meta.get('global_ranking') or {}).get('global_top_count')}",
+        f"- recommended_count: {(engine_meta.get('global_ranking') or {}).get('recommended_count')}",
         f"- artifacts: {(engine_meta.get('global_ranking') or {}).get('outputs')}",
         f"- trace table: {out_dir / 'ar020d_decision_rank_final_trace.csv'}",
         "",
@@ -1311,7 +1316,12 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
                 if not input_path.exists():
                     continue
                 payload = json.loads(input_path.read_text(encoding="utf-8"))
-                if any(editorial_skill_runner.normalize_space(item.get("original_title")) == source_title for item in payload.get("rows", [])):
+                if any(
+                    editorial_skill_runner.normalize_space(
+                        (item.get("source") or {}).get("exact_title") or item.get("original_title")
+                    ) == source_title
+                    for item in payload.get("rows", [])
+                ):
                     batch_id = candidate_id
                     break
             if batch_id:
@@ -1339,6 +1349,19 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
             "",
         ])
     lines.extend([
+        "## Every Recommended Candidate",
+    ])
+    actionable_path = out_dir / "skill_actionable.csv"
+    for row in read_csv(actionable_path) if actionable_path.exists() else []:
+        lines.extend([
+            f"- [{row.get('global_rank_position') or row.get('locked_global_rank_position') or '?'}] {row.get('选题命题') or row.get('可发布标题')}",
+            f"  - source: {row.get('原始来源标题') or row.get('来源标题')}",
+            f"  - exact_url: {row.get('来源链接')}",
+            f"  - hook: {row.get('受众钩子')}",
+            f"  - structure: {row.get('内容结构')}",
+        ])
+    lines.extend([
+        "",
         "## Output Paths",
         f"- summary: {out_dir / 'skill_replay_summary.json'}",
         f"- rows: {out_dir / 'skill_replay_rows.csv'}",
@@ -1398,7 +1421,7 @@ def aggregate_replay_outputs(
         fallback_row_count = len(classified["fallback_rows"])
         title_quality_failure_count = sum(1 for row in title_rows if row.get("title_quality_status") == "fail")
         title_quality_warning_count = sum(1 for row in title_rows if row.get("title_quality_status") == "warn")
-        global_top_today_count = sum(1 for row in skill_rows if row.get("今日建议级别") == "今日最值得做")
+        recommended_count = sum(1 for row in skill_rows if row.get("今日建议级别") == "推荐制作")
         stage2_selection_drift_count = sum(1 for row in skill_rows if row.get("stage2_invariant_status") == "fail")
         raw_stage2_drift_count = sum(1 for row in skill_rows if row.get("raw_stage2_drift_status") == "fail")
         guard_blocked_count = sum(1 for row in skill_rows if str(row.get("guard_blocked") or "").lower() == "true")
@@ -1413,7 +1436,6 @@ def aggregate_replay_outputs(
                 contract_failure_count == 0
                 and fallback_row_count == 0
                 and title_quality_failure_count == 0
-                and global_top_today_count <= 3
                 and stage2_selection_drift_count == 0
                 and raw_stage2_drift_count == 0
                 and guard_blocked_count == 0
@@ -1439,7 +1461,7 @@ def aggregate_replay_outputs(
             "near_miss_count": len(near_misses),
             "title_quality_failure_count": title_quality_failure_count,
             "title_quality_warning_count": title_quality_warning_count,
-            "global_top_today_count": global_top_today_count,
+            "recommended_count": recommended_count,
             "stage2_selection_drift_count": stage2_selection_drift_count,
             "raw_stage2_drift_count": raw_stage2_drift_count,
             "guard_blocked_count": guard_blocked_count,
@@ -1500,11 +1522,11 @@ def main() -> int:
     parser.add_argument("--max-skill-candidates", type=int, default=content_sampler.MAX_SKILL_REVIEW_CANDIDATES)
     args = parser.parse_args()
 
-    if args.engine in {"state-machine", "codex"} and not args.aggregate_only:
-        parser.error(
-            "Nested real-Skill replay is disabled. Use scripts/topic_editorial_state_machine.py prepare-stage1 "
-            "and complete the current-task Stage 1 -> global ranking -> Stage 2 protocol."
-        )
+    parser.error(
+        "This legacy replay CLI is disabled before business I/O. Use "
+        "topic_editorial_state_machine.py prepare-source-open. Old aggregate, deterministic, and nested model paths "
+        "cannot produce AR-020D runtime or QA evidence."
+    )
 
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)

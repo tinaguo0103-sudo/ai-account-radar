@@ -185,10 +185,10 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
                 {"stage1_batch_notes": "stage1 ok", "provenance_manifest": {}},
             )), patch.object(replay.editorial_skill_runner, "run_codex_global_ranking", return_value=(
                 [decision],
-                {"global_top_count": 0, "status": "success", "outputs": {}},
+                {"recommended_count": 0, "status": "success", "outputs": {}},
             )), patch.object(replay.editorial_skill_runner, "run_codex_stage2", return_value=(
                 final_rows,
-                {"batch_notes": "本批只给 1 条“今日最值得做”：Claude Cowork。未调用外部 Skill。", "model": "codex-default"},
+                {"batch_notes": "本批只给 1 条“推荐制作”：Claude Cowork。未调用外部 Skill。", "model": "codex-default"},
             )):
                 with self.assertRaisesRegex(RuntimeError, "legacy-disabled"):
                     replay.run_skill_batches(pool, args, out_dir)
@@ -211,7 +211,7 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
                 "batch_id": "batch_000",
                 "status": "success",
                 "row_count": 1,
-                "engine_meta": {"batch_notes": "本批只给 1 条今日最值得做：Claude Cowork。未调用外部 Skill。"},
+                "engine_meta": {"batch_notes": "本批只给 1 条推荐制作：Claude Cowork。未调用外部 Skill。"},
             }],
         }
 
@@ -226,7 +226,7 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
         self.assertIn("暂存观察=1", refreshed["batches"][0]["engine_meta"]["batch_notes"])
         self.assertIn("暂存观察=1", batch_meta["engine_meta"]["batch_notes"])
         self.assertIn("暂存观察=1", batches_json["batches"][0]["engine_meta"]["batch_notes"])
-        self.assertNotIn("今日最值得做：Claude Cowork", batch_meta["engine_meta"]["batch_notes"])
+        self.assertNotIn("推荐制作：Claude Cowork", batch_meta["engine_meta"]["batch_notes"])
 
     def test_aggregate_keeps_contract_and_title_failures_consistent(self) -> None:
         rows = []
@@ -244,7 +244,7 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
                 "我要做的实验": "输入一条真实素材，测试并记录输出物。",
                 "验证方式": "输入素材，输出记录表并检查通过/失败标准。",
                 "推荐动作": "生成脚本包",
-                "今日建议级别": "可选候选",
+                "今日建议级别": "推荐制作",
                 "title_permission": "可发布标题",
                 "可发布标题": title,
                 "主编判断摘要": "这条来源来自对标账号，我会放进自己的工作流实验，但先保留证据边界。",
@@ -304,7 +304,7 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
             "标题思路": "借原始标题里的工具组合和知识库结果承诺，改成 Austin 的选题台长期记忆。",
             "Austin改写理由": "保留 Codex+Obsidian 和知识库入口，舍弃手把手教程口吻。",
             "推荐动作": "生成脚本包",
-            "今日建议级别": "今日最值得做",
+            "今日建议级别": "推荐制作",
             "对应方向": "真实工作流改造",
             "field_contract_status": "pass",
             "field_contract_issues": "",
@@ -332,11 +332,11 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
 
     def test_sample_rows_cover_user_review_categories_when_available(self) -> None:
         rows = [
-            {"内容指纹": "kb", "原始来源标题": "Codex联动Obsidian，搭建超强知识库，手把手教程", "选题命题": "知识库判断留存", "推荐动作": "生成脚本包", "今日建议级别": "今日最值得做"},
+            {"内容指纹": "kb", "原始来源标题": "Codex联动Obsidian，搭建超强知识库，手把手教程", "选题命题": "知识库判断留存", "推荐动作": "生成脚本包", "今日建议级别": "推荐制作"},
             {"内容指纹": "story", "原始来源标题": "多宫格故事板2.0，出视频比你想的还简单", "选题命题": "故事板证据缺口", "推荐动作": "观察", "今日建议级别": "暂存观察"},
             {"内容指纹": "ppt", "原始来源标题": "Codex生成可编辑PPT，按这5步就够了", "选题命题": "Codex PPT 方案交付", "推荐动作": "观察", "今日建议级别": "暂存观察"},
             {"内容指纹": "desk", "原始来源标题": "Claude Cowork 的协作案例", "选题命题": "飞书选题台任务边界", "推荐动作": "观察", "今日建议级别": "暂存观察"},
-            {"内容指纹": "video", "原始来源标题": "AI视频导演工作流", "选题命题": "AI视频导演交付", "推荐动作": "生成脚本包", "今日建议级别": "今日最值得做"},
+            {"内容指纹": "video", "原始来源标题": "AI视频导演工作流", "选题命题": "AI视频导演交付", "推荐动作": "生成脚本包", "今日建议级别": "推荐制作"},
             {"内容指纹": "hot", "原始来源标题": "MIRA：可玩多人世界模型，20 FPS实时生成", "选题命题": "AI Hot 观察", "推荐动作": "观察", "今日建议级别": "暂存观察"},
         ]
 

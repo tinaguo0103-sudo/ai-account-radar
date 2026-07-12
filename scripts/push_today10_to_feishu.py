@@ -41,14 +41,13 @@ TOPIC_CREATE_KIND = "topic_candidate_create"
 REQUIRED_FIELDS = [
     *DAILY_WRITE_FIELDS,
 ]
-ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
-FEISHU_VISIBLE_LEVELS = {"今日最值得做", "可选候选"}
+ALLOWED_LEVELS = {"推荐制作", "暂存观察", "不建议制作"}
+FEISHU_VISIBLE_LEVELS = {"推荐制作"}
 VISIBLE_ACTIONS = {"立即蹭热点", "生成脚本包"}
 LEVEL_ALIASES = {
-    "备选": "可选候选",
-    "备选候选": "可选候选",
-    "备选，不占今日前三": "可选候选",
-    "候选": "可选候选",
+    "备选": "推荐制作",
+    "备选候选": "推荐制作",
+    "候选": "推荐制作",
     "观察": "暂存观察",
     "暂存": "暂存观察",
     "不做": "不建议制作",
@@ -65,13 +64,13 @@ def normalize_level(value: str) -> str:
     for key, target in LEVEL_ALIASES.items():
         if key and key in cleaned:
             return target
-    if "最值得" in cleaned:
-        return "今日最值得做"
+    if "最值得" in cleaned or "推荐制作" in cleaned:
+        return "推荐制作"
     if "不建议" in cleaned:
         return "不建议制作"
     if "暂存" in cleaned or "观察" in cleaned:
         return "暂存观察"
-    return "可选候选" if cleaned else ""
+    return "推荐制作" if cleaned else ""
 
 
 def inferred_visible_level(row: dict[str, str], visible_rank: int) -> str:
@@ -79,7 +78,7 @@ def inferred_visible_level(row: dict[str, str], visible_rank: int) -> str:
     if level:
         return level
     if row.get("推荐动作", "") in VISIBLE_ACTIONS and row.get("是否建议进入制作", "") == "是":
-        return "今日最值得做" if visible_rank == 1 else "可选候选"
+        return "推荐制作"
     return ""
 
 
@@ -660,14 +659,14 @@ def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: s
     detail_visible = set(DETAIL_VISIBLE_FIELDS)
     return {
         "今日候选池": patch_candidate_view(token, app_token, table_id, "今日候选池", run_id, core_visible),
-        "今日最值得做": patch_candidate_view(
+        "推荐制作": patch_candidate_view(
             token,
             app_token,
             table_id,
-            "今日最值得做",
+            "推荐制作",
             run_id,
             core_visible,
-            {"field": "今日建议级别", "operator": "is", "value": ["今日最值得做"]},
+            {"field": "今日建议级别", "operator": "is", "value": ["推荐制作"]},
         ),
         "暂存观察": patch_candidate_view(
             token,

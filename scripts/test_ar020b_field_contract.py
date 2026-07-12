@@ -91,7 +91,7 @@ class AR020BFieldContractTests(unittest.TestCase):
             "重点体现": "分镜和成片验收。",
             "对应方向": "真实工作流改造",
             "推荐动作": "生成脚本包",
-            "今日建议级别": "今日最值得做",
+            "今日建议级别": "推荐制作",
             "title_permission": "内部测试标题",
         }
 
@@ -112,7 +112,7 @@ class AR020BFieldContractTests(unittest.TestCase):
             "我要做的实验": "测试这条消息能不能接进我的工作流。",
             "验证方式": "输入消息，检查是否能输出工作流影响判断。",
             "推荐动作": "生成脚本包",
-            "今日建议级别": "可选候选",
+            "今日建议级别": "推荐制作",
             "title_permission": "内部测试标题",
             "对标转译角度": "",
             "AIHOT重大性说明": "",
@@ -148,7 +148,7 @@ class AR020BFieldContractTests(unittest.TestCase):
             "我要做的实验": "拿一条短片 Brief 测试分镜返修验收。",
             "验证方式": "输入 Brief，输出分镜表并记录返修次数。",
             "推荐动作": "生成脚本包",
-            "今日建议级别": "可选候选",
+            "今日建议级别": "推荐制作",
             "title_permission": "可发布标题",
             "可发布标题": "多宫格故事板先过一次返修验收",
             "主编判断摘要": "吸收它的选题承诺和结构，再转成自己的业务语言。",
@@ -174,7 +174,7 @@ class AR020BFieldContractTests(unittest.TestCase):
                 "我要做的实验": "输入一条真实素材，测试并记录输出物。",
                 "验证方式": "输入素材，输出记录表并检查通过/失败标准。",
                 "推荐动作": "生成脚本包",
-                "今日建议级别": "可选候选",
+                "今日建议级别": "推荐制作",
                 "title_permission": "可发布标题",
                 "可发布标题": title,
                 "主编判断摘要": "这条来源来自对标账号，我会放进自己的工作流实验，但先保留证据边界。",
@@ -191,7 +191,7 @@ class AR020BFieldContractTests(unittest.TestCase):
         rows = [
             {
                 "推荐动作": "补证据",
-                "今日建议级别": "可选候选",
+                "今日建议级别": "推荐制作",
                 "选题命题": "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。",
                 "我要做的实验": "待补实验动作：写清输入材料、1-2个动作、输出物和通过/失败标准。",
                 "主编判断摘要": "来源证据不足，我会先补 Austin 场景；但暂时不能生成。",
@@ -222,7 +222,7 @@ class AR020BFieldContractTests(unittest.TestCase):
             },
             {
                 "推荐动作": "补证据",
-                "今日建议级别": "可选候选",
+                "今日建议级别": "推荐制作",
                 "选题命题": "Claude Cowork 先接进选题台看它会不会留记录",
                 "主编判断摘要": "来源是 AI 同事热点，但缺任务回写细节和失败样例。",
                 "标题思路": "先不生成可发布标题。",
@@ -307,7 +307,7 @@ class AR020BFieldContractTests(unittest.TestCase):
             },
             {
                 "推荐动作": "补证据",
-                "今日建议级别": "可选候选",
+                "今日建议级别": "推荐制作",
                 "选题命题": "Codex 做 PPT 这件事，我想看的是 Word Brief 能不能变成方案资产",
                 "主编判断摘要": "来源有 Word 到 PPT 入口，但缺我的方案交付样例。",
                 "标题思路": "暂不给可发布标题。",
@@ -336,7 +336,7 @@ class AR020BFieldContractTests(unittest.TestCase):
             "我要做的实验": "拿一条素材测试路径回填。",
             "验证方式": "输入素材，输出路径记录并检查能否复用。",
             "推荐动作": "生成脚本包",
-            "今日建议级别": "可选候选",
+            "今日建议级别": "推荐制作",
             "title_permission": "可发布标题",
             "可发布标题": "检查素材路径有没有留下来",
             "主编判断摘要": "这条来源来自对标账号，我会先看资料路径是否可复用，但不直接采用代码提示。",
@@ -353,7 +353,7 @@ class AR020BFieldContractTests(unittest.TestCase):
             "对应栏目": "真实工作流改造",
             "推荐动作": "生成脚本包",
             "是否建议进入制作": "是",
-            "今日建议级别": "今日最值得做",
+            "今日建议级别": "推荐制作",
         })
 
         visible, omitted = push_today10_to_feishu.feishu_visible_rows([fallback])
@@ -377,7 +377,7 @@ class AR020BFieldContractTests(unittest.TestCase):
             "推荐动作": "补证据",
             "title_permission": "内部测试标题",
             "可发布标题": "",
-            "今日建议级别": "可选候选",
+            "今日建议级别": "推荐制作",
             "AI味风险": "低",
             "对应方向": "真实工作流改造",
             "来源构成": "对标视频 / xuan酱",
@@ -389,14 +389,14 @@ class AR020BFieldContractTests(unittest.TestCase):
 
         self.assertEqual(mapped["推荐动作"], "补证据")
         self.assertEqual(mapped["title_permission"], "内部测试标题")
-        self.assertEqual(mapped["今日建议级别"], "可选候选")
+        self.assertEqual(mapped["今日建议级别"], "推荐制作")
 
     def test_04_writer_maps_editorial_trace_fields(self) -> None:
         row = {
             "选题命题": "Codex 联动 Obsidian 后先测资料回流",
             "推荐动作": "补证据",
             "title_permission": "内部测试标题",
-            "今日建议级别": "可选候选",
+            "今日建议级别": "推荐制作",
             "主编判断摘要": "来源在讲知识库，我会先看它能不能进入自己的信息雷达；但还缺真实素材路径。",
             "标题思路": "标题先落在资料回流，不写成工具教程。",
         }

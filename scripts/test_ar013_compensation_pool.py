@@ -26,7 +26,7 @@ def record(
     generated: str = "",
     action: str = "生成脚本包",
     title_permission: str = "可发布标题",
-    level: str = "今日最值得做",
+    level: str = "推荐制作",
 ) -> dict:
     return {
         "record_id": record_id,
@@ -94,14 +94,14 @@ class AR013CompensationPoolTest(unittest.TestCase):
 
         self.assertEqual([item["record_id"] for item in selected], ["rec_today"])
 
-    def test_fetch_candidates_preserves_existing_global_limit(self) -> None:
+    def test_fetch_candidates_has_no_default_editorial_limit_but_supports_page_slice(self) -> None:
         selected = self.fetch_with_records([
             record("rec1", title="One", run_id="run_20260703_080000", day="2026-07-03", rank="1"),
             record("rec2", title="Two", run_id="run_20260703_080000", day="2026-07-03", rank="2"),
             record("rec3", title="Three", run_id="run_20260704_080730", day="2026-07-04", rank="3"),
         ], limit=2)
 
-        self.assertEqual(card.DEFAULT_LIMIT, 7)
+        self.assertEqual(card.DEFAULT_LIMIT, 0)
         self.assertEqual([item["record_id"] for item in selected], ["rec1", "rec2"])
 
     def test_build_card_shows_coverage_dates_original_date_and_run_id(self) -> None:
@@ -114,14 +114,14 @@ class AR013CompensationPoolTest(unittest.TestCase):
 
         self.assertEqual(value["coverage_dates"], ["2026-07-03", "2026-07-04"])
         self.assertIn("本次候选覆盖：2026-07-03、2026-07-04", text)
-        self.assertIn("run：run_20260703_080000", text)
+        self.assertNotIn("run：run_20260703_080000", text)
         self.assertEqual(value["candidate_snapshots"]["rec_old"]["run_id"], "run_20260703_080000")
         self.assertEqual(value["candidate_snapshots"]["rec_old"]["date"], "2026-07-03")
 
     def test_build_card_keeps_evidence_candidates_out_of_script_package_selector(self) -> None:
         built = card.build_card([
             record("rec_script", title="Script", run_id="run_20260704_080730", day="2026-07-04"),
-            record("rec_evidence", title="Evidence", run_id="run_20260704_080730", day="2026-07-04", action="补证据", level="可选候选", title_permission="内部测试标题"),
+            record("rec_evidence", title="Evidence", run_id="run_20260704_080730", day="2026-07-04", action="补证据", level="推荐制作", title_permission="内部测试标题"),
         ], "run_20260704_080730")
         value = card.card_candidate_value(built)
         text = str(built)
@@ -139,7 +139,7 @@ class AR013CompensationPoolTest(unittest.TestCase):
             with patch.object(card, "CANDIDATE_LEDGER", ledger):
                 built = card.build_card([
                     record("rec_script", title="Script", run_id="run_20260704_080730", day="2026-07-04"),
-                    record("rec_evidence", title="Evidence", run_id="run_20260704_080730", day="2026-07-04", action="补证据", level="可选候选"),
+                    record("rec_evidence", title="Evidence", run_id="run_20260704_080730", day="2026-07-04", action="补证据", level="推荐制作"),
                 ], "run_20260704_080730")
                 card.write_card_candidate_ledger(built, "run_20260704_080730", "/tmp/preview.json")
             text = ledger.read_text(encoding="utf-8")
@@ -164,7 +164,7 @@ class AR013CompensationPoolTest(unittest.TestCase):
                 write=False,
             )
 
-        self.assertEqual(summary["candidate_update_count"], 2)
+        self.assertEqual(summary["candidate_update_count"], 1)
         self.assertEqual(summary["skipped"], [])
         self.assertEqual(summary["updates"][0]["record_id"], "rec_old")
         self.assertEqual(summary["updates"][0]["fields"]["选择原因标签"], "")

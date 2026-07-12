@@ -84,7 +84,7 @@ OFFICE_TERMS = ["Excel", "表格", "PPT", "Word", "飞书文档", "飞书表格"
 AIHOT_MAJOR_TERMS = ["重大", "发布", "模型", "多模态", "Agent", "智能体", "工作流", "视频", "API", "降价", "开源", "监管", "行业变化"]
 AIHOT_SOURCE_LABELS = {"AIHOT热点", "AI Hot 低权重热点源"}
 ACTIONABLE_ACTIONS = {"生成脚本包", "立即蹭热点"}
-ACTIONABLE_LEVELS = {"今日最值得做", "可选候选"}
+ACTIONABLE_LEVELS = {"推荐制作"}
 VISIBLE_REASON_FIELDS = [
     "主编判断摘要",
     "标题思路",

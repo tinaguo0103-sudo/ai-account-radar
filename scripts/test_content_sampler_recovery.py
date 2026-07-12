@@ -183,7 +183,7 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
 
         self.assertEqual(len(visible), 1)
         self.assertEqual(omitted, 1)
-        self.assertEqual(visible[0]["今日建议级别"], "今日最值得做")
+        self.assertEqual(visible[0]["今日建议级别"], "推荐制作")
 
     def test_feishu_visible_rows_omits_internal_title_script_candidates(self) -> None:
         rows = [

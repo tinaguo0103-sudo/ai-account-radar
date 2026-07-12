@@ -19,27 +19,22 @@ import content_sampler
 import editorial_skill_runner as runner
 import topic_replay_evaluation as deterministic_replay
 import topic_skill_replay_evaluation as replay
+import topic_research_contract as research_contract
+import persona_reference_builder as persona_builder
+import trusted_exact_source_adapter as source_adapter
 
 
-VERSION = "ar020d_current_task_state_machine_v1"
-ACCOUNT_DIRECTIONS = ["AI业务定调", "真实工作流改造", "AI导演工作流", "汽车与内容营销", "AI项目复盘"]
+VERSION = "ar020d_research_grounded_state_machine_v2"
+ACCOUNT_DIRECTIONS = ["AI业务定调", "真实工作流改造", "汽车与内容营销", "AI导演工作流"]
 STAGE1_ALLOWLIST = {
-    "source_type",
-    "platform",
-    "source_account",
-    "original_title",
-    "source_excerpt",
-    "source_title_hook",
-    "source_weight_label",
-    "source_influence_weight",
-    "source_composition",
-    "aihot_major_news",
-    "market_validation",
+    "candidate_id", "source", "research", "hook_analysis", "persona_facts",
+    "judgment_and_style_examples",
     "account_directions",
 }
 STAGE1_FORBIDDEN_MARKERS = {
-    "内容指纹", "来源链接", "原始payload", "抓取状态", "失败原因", "内部文件路径",
-    "Austin转译角度", "关联母场景", "我的工作流痛点", "我要做的实验", "验证方式", "可沉淀资产",
+    "原始payload", "内部文件路径", "Austin转译角度", "关联母场景",
+    "我的工作流痛点", "我要做的实验", "验证方式", "可沉淀资产",
+    "experience_archive", "可调用案例", "真实/相邻案例",
 }
 
 
@@ -128,7 +123,7 @@ def invalidate_stage(state: dict[str, Any], stage_name: str, reason: str) -> Non
 
 
 def invalidate_downstream(state: dict[str, Any], from_stage: str, reason: str) -> None:
-    order = ["stage1", "global_ranking", "stage2", "finalize"]
+    order = ["source_open", "research", "stage1", "global_ranking", "stage2", "finalize"]
     start = order.index(from_stage) + 1
     for stage_name in order[start:]:
         invalidate_stage(state, stage_name, reason)
@@ -142,20 +137,25 @@ def local_source_trace(row: dict[str, Any], index: int) -> dict[str, Any]:
     }
 
 
-def minimized_stage1_row(row: dict[str, Any], index: int) -> dict[str, Any]:
-    facts = runner.safe_source_facts({key: str(value or "") for key, value in row.items()})
+def minimized_stage1_row(
+    candidate: dict[str, Any],
+    dossier: dict[str, Any],
+    persona_facts: dict[str, Any],
+    style_examples: list[dict[str, Any]],
+) -> dict[str, Any]:
     result = {
-        "source_type": facts["source_type"],
-        "platform": str(row.get("平台") or row.get("来源平台") or facts["source_type"] or ""),
-        "source_account": facts["source_account"],
-        "original_title": replay.extract_original_title(facts["source_title"]),
-        "source_excerpt": replay.truncate_on_sentence(facts["source_excerpt"], 280),
-        "source_title_hook": facts["source_title_hook"],
-        "source_weight_label": facts["source_weight_label"],
-        "source_influence_weight": facts["source_influence_weight"],
-        "source_composition": facts["source_composition"],
-        "aihot_major_news": facts["aihot_major_news"],
-        "market_validation": facts["market_validation"],
+        "candidate_id": candidate["candidate_id"],
+        "source": dossier["source"],
+        "research": {
+            "research_summary": dossier["research_summary"],
+            "results": dossier["results"],
+            "conflicts": dossier.get("conflicts", []),
+            "confidence": dossier.get("confidence", ""),
+            "dossier_hash": dossier["dossier_hash"],
+        },
+        "hook_analysis": dossier["hook_analysis"],
+        "persona_facts": persona_facts,
+        "judgment_and_style_examples": style_examples,
         "account_directions": ACCOUNT_DIRECTIONS,
     }
     assert set(result) == STAGE1_ALLOWLIST
@@ -163,7 +163,7 @@ def minimized_stage1_row(row: dict[str, Any], index: int) -> dict[str, Any]:
     leaked = sorted(marker for marker in STAGE1_FORBIDDEN_MARKERS if marker in text)
     if leaked:
         raise RuntimeError(f"Stage 1 minimized row leaked forbidden markers: {leaked}")
-    return {"index": index, **result}
+    return result
 
 
 def provenance(task_id: str) -> dict[str, Any]:
@@ -180,28 +180,87 @@ def provenance(task_id: str) -> dict[str, Any]:
     }
 
 
-def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
-    out_dir = Path(args.out_dir)
-    out_dir.mkdir(parents=True, exist_ok=True)
+def candidate_id(row: dict[str, Any], index: int) -> str:
+    fingerprint = str(row.get("内容指纹") or "").strip()
+    return f"candidate_{index:03d}_{fingerprint or hash_json(row)[:12]}"
+
+
+def shortlist(args: argparse.Namespace) -> tuple[list[Path], list[content_sampler.ContentItem], dict[str, Any]]:
     csv_paths = deterministic_replay.discover_content_csvs(args.content_csv)
-    if args.resume and state_path(out_dir).exists():
-        state = load_state(out_dir)
-        current_hashes = {str(path): file_hash(path) for path in csv_paths}
-        stored = read_json(out_dir / "local_source_manifest.json").get("input_file_hashes", {})
-        if current_hashes != stored:
-            raise RuntimeError("Cannot resume: source CSV hashes changed")
-        return {"ok": True, "stage": "prepare_stage1", "resumed": True, "stages": state["stages"]}
     items = deterministic_replay.load_items(csv_paths, date.fromisoformat(args.since))
     pre = replay.build_pre_skill_pool(items, args.max_skill_candidates)
-    pool = pre["pre_skill_pool"]
-    if not pool:
+    if not pre["pre_skill_pool"]:
         raise RuntimeError("No pre-Skill candidates")
-    batches = replay.batch_slices(pool, args.batch_size)
+    return csv_paths, items, pre
+
+
+def candidate_rows_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
+    return read_json(Path(state["out_dir"]) / "shortlist_candidates.json")
+
+
+def update_terminal_stage(state: dict[str, Any], stage_name: str) -> None:
+    batches = state["stages"][stage_name]["candidates"]
+    terminal = {"completed", "failed"}
+    if batches and all(item.get("status") in terminal for item in batches.values()):
+        failures = sum(1 for item in batches.values() if item.get("status") == "failed")
+        state["stages"][stage_name]["status"] = "completed_with_failures" if failures else "completed"
+        state["stages"][stage_name]["completed_at"] = now_iso()
+        state["stages"][stage_name]["failure_count"] = failures
+
+
+def require_terminal(state: dict[str, Any], stage_name: str) -> None:
+    status_value = state["stages"].get(stage_name, {}).get("status")
+    if status_value not in {"completed", "completed_with_failures"}:
+        raise RuntimeError(f"Stage {stage_name} is not terminal; later stages are blocked")
+
+
+def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
+    out_dir = Path(args.out_dir)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    if state_path(out_dir).exists():
+        raise RuntimeError("Output directory already contains a run; use a fresh out-dir or explicit stage resume")
+    csv_paths, items, pre = shortlist(args)
+    pool = pre["pre_skill_pool"]
+    candidates: list[dict[str, Any]] = []
+    source_state: dict[str, Any] = {}
+    for index, row in enumerate(pool):
+        exact_url = str(row.get("来源链接") or "").strip()
+        item = {
+            "index": index,
+            "candidate_id": candidate_id(row, index),
+            "exact_url": exact_url,
+            "csv_title": str(row.get("原始来源标题") or row.get("来源内容") or ""),
+            "source_account": str(row.get("原始来源账号") or ""),
+            "source_type": str(row.get("来源类型") or ""),
+            "platform": str(row.get("平台") or ""),
+            "local_trace_hash": hash_json(row),
+            "primary_adapter": source_adapter.primary_adapter_for_url(exact_url),
+            "expected_page_identity": source_adapter.expected_identity(exact_url),
+        }
+        candidates.append(item)
+        path = out_dir / "source_open" / item["candidate_id"]
+        write_json(path / "input.json", {
+            "protocol": VERSION,
+            "stage": "exact_source_open",
+            "candidate": item,
+            "rules": {
+                "must_open_exact_url": True,
+                "no_csv_or_search_snippet_substitution": True,
+                "no_account_home_or_search_page": True,
+                "one_primary_adapter_only": True,
+                "no_failover_after_adapter_failure": True,
+            },
+        })
+        source_state[item["candidate_id"]] = stage_record("prepared", input_hash=file_hash(path / "input.json"), index=index)
+    write_json(out_dir / "shortlist_candidates.json", candidates)
     prov = provenance(args.task_id)
-    persona_text = runner.load_text(runner.SKILL_REFERENCE)
-    persona_path = out_dir / "references" / "persona_style_reference.md"
-    persona_path.parent.mkdir(parents=True, exist_ok=True)
-    persona_path.write_text(persona_text, encoding="utf-8")
+    persona_manifest = persona_builder.build_bundle(Path(args.persona_docx), out_dir / "private_persona")
+    prov.update({
+        "raw_persona_authority_sha256": persona_manifest["authority_sha256"],
+        "persona_manifest_hash": persona_manifest["manifest_hash"],
+        "experience_archive_runtime": "excluded",
+        "fallback_paths": [],
+    })
     source_manifest = {
         "input_files": [str(path) for path in csv_paths],
         "input_file_hashes": {str(path): file_hash(path) for path in csv_paths},
@@ -217,39 +276,17 @@ def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
     replay.append_progress(out_dir, [
         replay.progress_event(
             status="success",
-            stage="prepare_stage1",
+            stage="prepare_source_open",
             note=f"content_items={len(items)}; candidates={len(pre['candidates'])}; pre_skill={len(pool)}",
         )
     ])
-    write_json(out_dir / "schemas" / "stage1_output_schema.json", runner.editorial_decision_output_schema())
-    batch_state: dict[str, Any] = {}
-    for batch_index, start, rows in batches:
-        batch_id = replay.batch_id_for(batch_index)
-        payload = {
-            "protocol": VERSION,
-            "execution_surface": "current_codex_task",
-            "stage": "editorial_decision",
-            "batch_id": batch_id,
-            "start_index": start,
-            "persona_style_reference": {
-                "path": str(persona_path),
-                "sha256": file_hash(persona_path),
-                "embedded": True,
-                "role": "style_reference_only_not_source_evidence",
-            },
-            "skill": {"path": str(runner.SKILL_MD), "sha256": file_hash(runner.SKILL_MD)},
-            "rows": [minimized_stage1_row(row, start + offset) for offset, row in enumerate(rows)],
-        }
-        batch_dir = out_dir / "stage1" / batch_id
-        write_json(batch_dir / "input.json", payload)
-        write_json(batch_dir / "schema.json", runner.editorial_decision_output_schema())
-        batch_state[batch_id] = stage_record("prepared", input_hash=hash_json(payload), start_index=start, row_count=len(rows))
     state = {
         "protocol": VERSION,
         "execution_surface": "current_codex_task",
         "created_at": now_iso(),
         "updated_at": now_iso(),
         "task_provenance": args.task_id,
+        "out_dir": str(out_dir),
         "writes_feishu": False,
         "fallback": False,
         "source_manifest_hash": hash_json(source_manifest),
@@ -258,15 +295,147 @@ def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
         "batch_size": args.batch_size,
         "max_skill_candidates": args.max_skill_candidates,
         "stages": {
-            "prepare_stage1": stage_record("completed", input_hash=hash_json(source_manifest), output_hash=hash_json(batch_state), completed_at=now_iso()),
-            "stage1": stage_record("prepared", batches=batch_state),
+            "source_open": stage_record("prepared", candidates=source_state),
+            "research": stage_record("pending", candidates={}),
+            "prepare_stage1": stage_record("pending"),
+            "stage1": stage_record("pending", batches={}),
             "global_ranking": stage_record(),
             "stage2": stage_record(),
             "finalize": stage_record(),
         },
     }
     save_state(out_dir, state)
-    return {"ok": True, "stage": "prepare_stage1", "batches": len(batches), "rows": len(pool), "out_dir": str(out_dir)}
+    return {"ok": True, "stage": "prepare_source_open", "candidates": len(candidates), "out_dir": str(out_dir)}
+
+
+def validate_source_open(args: argparse.Namespace) -> dict[str, Any]:
+    out_dir = Path(args.out_dir)
+    state = load_state(out_dir)
+    record = state["stages"]["source_open"]["candidates"].get(args.candidate_id)
+    if not record:
+        raise RuntimeError(f"Unknown candidate: {args.candidate_id}")
+    candidate = next(item for item in candidate_rows_from_state(state) if item["candidate_id"] == args.candidate_id)
+    output_path = Path(args.evidence_json) if getattr(args, "evidence_json", "") else out_dir / "source_open" / args.candidate_id / "output.pending.json"
+    if not output_path.exists():
+        raise RuntimeError(f"Current task must write {output_path}")
+    try:
+        validated = research_contract.validate_source_open(candidate, read_json(output_path))
+        write_json(out_dir / "source_open" / args.candidate_id / "validated.json", validated)
+        if validated.get("eligible"):
+            complete_stage(record, hash_json(validated), source_hash=validated["captured_content_hash"])
+        else:
+            raise research_contract.ContractError(validated.get("failure_reason") or "source_open_failed")
+    except Exception as exc:
+        fail_stage(record, exc)
+    update_terminal_stage(state, "source_open")
+    save_state(out_dir, state)
+    return {"ok": record["status"] == "completed", "candidate_id": args.candidate_id, "status": record["status"]}
+
+
+def prepare_research(args: argparse.Namespace) -> dict[str, Any]:
+    out_dir = Path(args.out_dir)
+    state = load_state(out_dir)
+    require_terminal(state, "source_open")
+    records: dict[str, Any] = {}
+    for candidate in candidate_rows_from_state(state):
+        cid = candidate["candidate_id"]
+        source_record = state["stages"]["source_open"]["candidates"][cid]
+        if source_record["status"] != "completed":
+            records[cid] = stage_record("failed", error="source_open_failed", index=candidate["index"])
+            continue
+        source = read_json(out_dir / "source_open" / cid / "validated.json")
+        payload = {
+            "protocol": VERSION,
+            "stage": "web_research_and_hook_analysis",
+            "candidate": candidate,
+            "source": source,
+            "rules": {
+                "research_every_opened_source": True,
+                "official_then_credible_independent": True,
+                "search_snippet_is_discovery_only": True,
+                "product_name_is_not_hook": True,
+                "persona_is_not_evidence": True,
+            },
+        }
+        path = out_dir / "research" / cid
+        write_json(path / "input.json", payload)
+        records[cid] = stage_record("prepared", input_hash=hash_json(payload), index=candidate["index"])
+    state["stages"]["research"] = stage_record("prepared", candidates=records)
+    update_terminal_stage(state, "research")
+    save_state(out_dir, state)
+    return {"ok": True, "stage": "prepare_research", "researchable": sum(1 for item in records.values() if item["status"] == "prepared")}
+
+
+def validate_research(args: argparse.Namespace) -> dict[str, Any]:
+    out_dir = Path(args.out_dir)
+    state = load_state(out_dir)
+    record = state["stages"]["research"]["candidates"].get(args.candidate_id)
+    if not record:
+        raise RuntimeError(f"Candidate is not researchable: {args.candidate_id}")
+    if record["status"] == "failed":
+        record.update(stage_record("prepared", input_hash=record.get("input_hash", ""), index=record.get("index")))
+    candidate = next(item for item in candidate_rows_from_state(state) if item["candidate_id"] == args.candidate_id)
+    source = read_json(out_dir / "source_open" / args.candidate_id / "validated.json")
+    output_path = out_dir / "research" / args.candidate_id / "output.pending.json"
+    if not output_path.exists():
+        raise RuntimeError(f"Current task must write {output_path}")
+    try:
+        validated = research_contract.validate_research_dossier(candidate, source, read_json(output_path))
+        validated = {
+            **validated,
+            "source": source,
+            "research_summary": validated.get("research_summary") or validated.get("summary") or "",
+        }
+        write_json(out_dir / "research" / args.candidate_id / "validated.json", validated)
+        if validated.get("eligible"):
+            complete_stage(record, validated["dossier_hash"], dossier_hash=validated["dossier_hash"])
+        else:
+            raise research_contract.ContractError(validated.get("failure_reason") or "research_failed")
+    except Exception as exc:
+        fail_stage(record, exc)
+    update_terminal_stage(state, "research")
+    save_state(out_dir, state)
+    return {"ok": record["status"] == "completed", "candidate_id": args.candidate_id, "status": record["status"]}
+
+
+def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
+    out_dir = Path(args.out_dir)
+    state = load_state(out_dir)
+    require_terminal(state, "research")
+    facts = read_json(out_dir / "private_persona" / "persona_facts.private.json")
+    examples = read_json(out_dir / "private_persona" / "judgment_and_style_examples.private.json")
+    candidates = candidate_rows_from_state(state)
+    eligible = [item for item in candidates if state["stages"]["research"]["candidates"][item["candidate_id"]]["status"] == "completed"]
+    eligible = [{**item, "eligible_index": index} for index, item in enumerate(eligible)]
+    if not eligible:
+        raise RuntimeError("No fully researched candidates; Stage 1 is blocked")
+    write_json(out_dir / "eligible_candidates.json", eligible)
+    batch_state: dict[str, Any] = {}
+    for batch_index, start, rows in replay.batch_slices(eligible, int(state["batch_size"])):
+        batch_id = replay.batch_id_for(batch_index)
+        stage_rows = []
+        for offset, item in enumerate(rows):
+            dossier = read_json(out_dir / "research" / item["candidate_id"] / "validated.json")
+            operations = list(dossier.get("hook_analysis", {}).get("hook_type") or []) + ["choose", "reject", "phrase"]
+            retrieved = persona_builder.retrieve_style_examples(examples, operations, limit=min(6, len(examples)))
+            stage_rows.append({"index": start + offset, **minimized_stage1_row(item, dossier, facts, retrieved)})
+        payload = {
+            "protocol": VERSION,
+            "execution_surface": "current_codex_task",
+            "stage": "persona_native_editorial_decision",
+            "batch_id": batch_id,
+            "rows": stage_rows,
+            "skill": {"path": str(runner.SKILL_MD), "sha256": file_hash(runner.SKILL_MD)},
+            "persona_manifest_hash": read_json(out_dir / "private_persona" / "persona_provenance_manifest.json")["manifest_hash"],
+        }
+        path = out_dir / "stage1" / batch_id
+        write_json(path / "input.json", payload)
+        write_json(path / "schema.json", runner.editorial_decision_output_schema())
+        batch_state[batch_id] = stage_record("prepared", input_hash=hash_json(payload), start_index=start, row_count=len(rows))
+    state["stages"]["prepare_stage1"] = stage_record("completed", completed_at=now_iso(), output_hash=hash_json(batch_state))
+    state["stages"]["stage1"] = stage_record("prepared", batches=batch_state)
+    save_state(out_dir, state)
+    return {"ok": True, "stage": "prepare_stage1", "batches": len(batch_state), "eligible_rows": len(eligible), "research_failures": state["stages"]["research"].get("failure_count", 0)}
 
 
 def pool_from_state(state: dict[str, Any]) -> tuple[list[content_sampler.ContentItem], dict[str, Any]]:
@@ -274,6 +443,12 @@ def pool_from_state(state: dict[str, Any]) -> tuple[list[content_sampler.Content
     items = deterministic_replay.load_items(paths, date.fromisoformat(state["since"]))
     pre = replay.build_pre_skill_pool(items, int(state["max_skill_candidates"]))
     return items, pre
+
+
+def eligible_source_rows(out_dir: Path, state: dict[str, Any]) -> list[dict[str, Any]]:
+    _, pre = pool_from_state(state)
+    eligible = read_json(out_dir / "eligible_candidates.json")
+    return [pre["pre_skill_pool"][int(item["index"])] for item in eligible]
 
 
 def validate_stage1(args: argparse.Namespace) -> dict[str, Any]:
@@ -294,15 +469,29 @@ def validate_stage1(args: argparse.Namespace) -> dict[str, Any]:
     if record.get("status") == "completed" and record.get("raw_output_hash") == raw_output_hash:
         return {"ok": True, "stage": "validate_stage1", "batch_id": args.batch_id, "status": "completed", "resumed": True}
     previous_output_hash = record.get("raw_output_hash", "")
-    _, pre = pool_from_state(state)
     start = int(record["start_index"])
-    rows = [{key: str(value or "") for key, value in row.items()} for row in pre["pre_skill_pool"][start:start + int(record["row_count"])]]
+    eligible_rows = eligible_source_rows(out_dir, state)
+    rows = [{key: str(value or "") for key, value in row.items()} for row in eligible_rows[start:start + int(record["row_count"])]]
     start_stage(record, record["input_hash"])
     try:
         payload = read_json(output_path)
         decisions, meta = runner.validate_stage1_payload(rows, payload, start_index=start)
-        if any("case_anchor" in canonical_json(item) or "可调用案例" in canonical_json(item) for item in decisions):
-            raise RuntimeError("Stage 1 output exposed a case anchor/citation")
+        batch_candidates = read_json(out_dir / "eligible_candidates.json")[start:start + int(record["row_count"])]
+        for decision, candidate in zip(decisions, batch_candidates):
+            serialized = canonical_json(decision)
+            if any(marker in serialized for marker in ["case_anchor", "case_id", "可调用案例", "案例证明"]):
+                raise RuntimeError("Stage 1 output exposed a case anchor/citation")
+            dossier = read_json(out_dir / "research" / candidate["candidate_id"] / "validated.json")
+            if decision.get("research_dossier_hash") != dossier.get("dossier_hash"):
+                raise RuntimeError(f"Stage 1 dossier hash mismatch for {candidate['candidate_id']}")
+            known_ids = research_contract.evidence_ids(dossier)
+            used_ids = research_contract.parse_evidence_ids(
+                f"{decision.get('research_evidence_ids', '')},{decision.get('hook_evidence_ids', '')}"
+            )
+            unknown_ids = sorted(used_ids - known_ids)
+            if unknown_ids:
+                raise RuntimeError(f"Stage 1 used unknown evidence IDs: {unknown_ids}")
+            research_contract.validate_claim_trace(decision, dossier)
         write_json(batch_dir / "decisions.json", decisions)
         write_json(batch_dir / "meta.json", meta)
         complete_stage(record, hash_json(decisions), decision_count=len(decisions), raw_output_hash=raw_output_hash)
@@ -336,7 +525,13 @@ def prepare_ranking(args: argparse.Namespace) -> dict[str, Any]:
         "protocol": VERSION,
         "execution_surface": "current_codex_task",
         "stage": "global_daily_ranking",
-        "rules": {"strict_bijection": True, "top_today_max": 3, "tradeoff_required_for_select": True},
+        "rules": {
+            "strict_bijection": True,
+            "ranking_is_order_only": True,
+            "selection_cap": None,
+            "no_truncation_or_eligibility_downgrade": True,
+            "tradeoff_required_for_every_row": True,
+        },
         "decisions": decisions,
     }
     write_json(out_dir / "global_ranking" / "input.json", payload)
@@ -369,8 +564,14 @@ def validate_ranking(args: argparse.Namespace) -> dict[str, Any]:
         decisions = all_stage1_decisions(out_dir, state)
         ranked = runner.apply_global_ranking(decisions, output.get("ranking_rows", []))
         write_json(out_dir / "global_ranking" / "ranked_decisions.json", ranked)
-        complete_stage(record, hash_json(ranked), raw_output_hash=raw_output_hash, row_count=len(ranked), ranking_bijection_ok=True,
-                       top_count=sum(1 for item in ranked if item.get("locked_daily_level") == "今日最值得做"))
+        complete_stage(
+            record,
+            hash_json(ranked),
+            raw_output_hash=raw_output_hash,
+            row_count=len(ranked),
+            ranking_bijection_ok=True,
+            recommended_count=sum(1 for item in ranked if item.get("locked_decision") == "select"),
+        )
         if previous_output_hash and previous_output_hash != raw_output_hash:
             invalidate_downstream(state, "global_ranking", "Global ranking output changed")
     except Exception as exc:
@@ -378,7 +579,12 @@ def validate_ranking(args: argparse.Namespace) -> dict[str, Any]:
         save_state(out_dir, state)
         raise
     save_state(out_dir, state)
-    return {"ok": True, "stage": "validate_global_ranking", "rows": record["row_count"], "top_count": record["top_count"]}
+    return {
+        "ok": True,
+        "stage": "validate_global_ranking",
+        "rows": record["row_count"],
+        "recommended_count": record["recommended_count"],
+    }
 
 
 def prepare_stage2(args: argparse.Namespace) -> dict[str, Any]:
@@ -386,12 +592,15 @@ def prepare_stage2(args: argparse.Namespace) -> dict[str, Any]:
     state = load_state(out_dir)
     require_completed(state, "global_ranking")
     ranked = read_json(out_dir / "global_ranking" / "ranked_decisions.json")
-    _, pre = pool_from_state(state)
-    pool = pre["pre_skill_pool"]
+    ranked_by_index = {int(item["index"]): item for item in ranked}
+    pool = eligible_source_rows(out_dir, state)
+    expected_indices = set(range(len(pool)))
+    if set(ranked_by_index) != expected_indices:
+        raise RuntimeError("Global ranking indices do not match the eligible Stage 2 pool")
     batch_state: dict[str, Any] = {}
     for batch_index, start, rows in replay.batch_slices(pool, int(state["batch_size"])):
         batch_id = replay.batch_id_for(batch_index)
-        decisions = ranked[start:start + len(rows)]
+        decisions = [ranked_by_index[start + offset] for offset in range(len(rows))]
         payload = {
             "protocol": VERSION,
             "execution_surface": "current_codex_task",
@@ -400,7 +609,11 @@ def prepare_stage2(args: argparse.Namespace) -> dict[str, Any]:
             "rows": [
                 {
                     "index": start + offset,
-                    "source_facts": {key: value for key, value in minimized_stage1_row(row, start + offset).items() if key != "index"},
+                    "source_facts": {
+                        "candidate_id": read_json(out_dir / "eligible_candidates.json")[start + offset]["candidate_id"],
+                        "source": read_json(out_dir / "research" / read_json(out_dir / "eligible_candidates.json")[start + offset]["candidate_id"] / "validated.json")["source"],
+                        "research_dossier_hash": read_json(out_dir / "research" / read_json(out_dir / "eligible_candidates.json")[start + offset]["candidate_id"] / "validated.json")["dossier_hash"],
+                    },
                     "locked_editorial_decision": decisions[offset],
                     "stage2_rule": "operational fields only; owner-field authoring is forbidden",
                 }
@@ -437,12 +650,13 @@ def validate_stage2(args: argparse.Namespace) -> dict[str, Any]:
     if record.get("status") == "completed" and record.get("raw_output_hash") == raw_output_hash:
         return {"ok": True, "stage": "validate_stage2", "batch_id": args.batch_id, "status": "completed", "resumed": True}
     previous_output_hash = record.get("raw_output_hash", "")
-    _, pre = pool_from_state(state)
     ranked = read_json(out_dir / "global_ranking" / "ranked_decisions.json")
+    ranked_by_index = {int(item["index"]): item for item in ranked}
     start = int(record["start_index"])
     count = int(record["row_count"])
-    rows = [{key: str(value or "") for key, value in row.items()} for row in pre["pre_skill_pool"][start:start + count]]
-    decisions = ranked[start:start + count]
+    eligible_rows = eligible_source_rows(out_dir, state)
+    rows = [{key: str(value or "") for key, value in row.items()} for row in eligible_rows[start:start + count]]
+    decisions = [ranked_by_index[start + offset] for offset in range(count)]
     start_stage(record, record["input_hash"])
     try:
         payload = read_json(output_path)
@@ -506,7 +720,7 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
                 "ranking_bijection_ok": ranking_record.get("ranking_bijection_ok"),
                 "stage1_decision_count": ranking_record.get("row_count"),
                 "ranking_output_count": ranking_record.get("row_count"),
-                "global_top_count": ranking_record.get("top_count"),
+                "recommended_count": ranking_record.get("recommended_count"),
                 "outputs": {"ranked_decisions": str(out_dir / "global_ranking" / "ranked_decisions.json")},
             },
             "provenance_manifest": read_json(out_dir / "provenance_manifest.json"),
@@ -523,7 +737,31 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
         )
         if not summary.get("quality_gate_ok"):
             raise RuntimeError("Final quality gate failed")
-        complete_stage(record, hash_json(summary), quality_gate_ok=True)
+        source_failures = int(state["stages"]["source_open"].get("failure_count", 0) or 0)
+        research_failures = int(state["stages"]["research"].get("failure_count", 0) or 0)
+        failed_candidate_ids = {
+            candidate_id
+            for stage_name in ("source_open", "research")
+            for candidate_id, item in state["stages"][stage_name].get("candidates", {}).items()
+            if item.get("status") == "failed"
+        }
+        candidate_failures = len(failed_candidate_ids)
+        if candidate_failures:
+            summary.update({
+                "ok": False,
+                "completed": True,
+                "stage": "completed_with_failures",
+                "candidate_failure_count": candidate_failures,
+                "source_open_failure_count": source_failures,
+                "research_failure_count": research_failures,
+                "failure_semantics": "failed candidates were excluded before editorial decision and cards",
+            })
+            replay.write_json(out_dir / "skill_replay_summary.json", summary)
+            replay.write_markdown_report(out_dir, summary, replay.sample_rows(rows))
+            replay.write_ar020d_self_acceptance_report(out_dir, summary, replay.sample_rows(rows))
+        complete_stage(record, hash_json(summary), quality_gate_ok=True, candidate_failure_count=candidate_failures)
+        if candidate_failures:
+            record["status"] = "completed_with_failures"
     except Exception as exc:
         fail_stage(record, exc)
         save_state(out_dir, state)
@@ -540,14 +778,23 @@ def status(args: argparse.Namespace) -> dict[str, Any]:
 def main() -> int:
     parser = argparse.ArgumentParser(description="AR-020D current-task editorial state machine")
     sub = parser.add_subparsers(dest="command", required=True)
-    prepare = sub.add_parser("prepare-stage1")
+    prepare = sub.add_parser("prepare-source-open")
     prepare.add_argument("--out-dir", required=True)
     prepare.add_argument("--content-csv", action="append", default=[])
     prepare.add_argument("--since", default="2026-07-01")
     prepare.add_argument("--batch-size", type=int, default=3)
     prepare.add_argument("--max-skill-candidates", type=int, default=content_sampler.MAX_SKILL_REVIEW_CANDIDATES)
     prepare.add_argument("--task-id", default=os.getenv("CODEX_THREAD_ID", "current-codex-task"))
-    prepare.add_argument("--resume", action="store_true")
+    prepare.add_argument("--persona-docx", required=True)
+    for name in ["validate-source-open", "validate-research"]:
+        command = sub.add_parser(name)
+        command.add_argument("--out-dir", required=True)
+        command.add_argument("--candidate-id", required=True)
+        if name == "validate-source-open":
+            command.add_argument("--evidence-json", default="")
+    for name in ["prepare-research", "prepare-stage1"]:
+        command = sub.add_parser(name)
+        command.add_argument("--out-dir", required=True)
     for name in ["validate-stage1", "validate-stage2"]:
         command = sub.add_parser(name)
         command.add_argument("--out-dir", required=True)
@@ -557,6 +804,10 @@ def main() -> int:
         command.add_argument("--out-dir", required=True)
     args = parser.parse_args()
     handlers = {
+        "prepare-source-open": prepare_source_open,
+        "validate-source-open": validate_source_open,
+        "prepare-research": prepare_research,
+        "validate-research": validate_research,
         "prepare-stage1": prepare_stage1,
         "validate-stage1": validate_stage1,
         "prepare-ranking": prepare_ranking,

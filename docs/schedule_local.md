@@ -135,7 +135,7 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 - 08:00：同步 `01 来源与采样`，然后跑全源采集和选题。
 - 10:00：发送第一张选题卡。发送前会检查当天 `daily_pipeline` 是否成功、`latest_write` 是否为当天正式运行、候选 CSV 是否非空；不满足就跳过，避免误发旧候选。
 
-08:00 采集任务会使用 `--defer-editorial`：仓库脚本只负责同步来源、采集素材、写入 `03 内容收件箱`、生成 raw `today_10_topics.csv`，然后停止在“等待外层 Codex 主编判断”状态。这样避免在 Codex automation 内部再次调用 `codex exec`。当前外层 Codex automation 会直接读取全局 `ai-account-editorial-director` Skill，把 raw 候选补成正式主编字段，再运行 `scripts/finalize_daily_pipeline_after_editorial.py --write-feishu --update-scheduled-log` 写入 `04`、校验并把当天日志标记为成功。
+08:00 采集任务会使用 `--defer-editorial`：仓库脚本只负责同步来源、采集素材、写入 `03 内容收件箱`、生成 raw shortlist，然后停止在“等待外层 Codex 主编判断”状态。外层 Codex automation 必须使用 Git 管理的 `skills/ai-account-editorial-director/SKILL.md` 和 `topic_editorial_state_machine.py`，依次完成精确来源打开、网页研究、主编判断、无损排序与运营字段映射；不得调用旧 one-shot runner、环境切换 Skill 或 deterministic editorial fallback。发布时才把 repo Skill 显式同步到 global private Skill 并做 hash read-back。
 
 在外层 Codex 完成收尾前，`daily_pipeline_YYYY-MM-DD.json` 会保持 `ok=false`，所以 10:00 守卫不会误发 raw 候选卡。只有收尾脚本成功后，10:00 才会正常发卡。
 
@@ -225,14 +225,15 @@ python3 scripts/daily_pipeline.py --no-fetch-aihot
 只测试 Skill 或标题判断时，不要重新采集。用当前 Codex 任务状态机复用只读 `content_items.csv`：
 
 ```bash
-PYTHONPATH=scripts python3 scripts/topic_editorial_state_machine.py prepare-stage1 \
+PYTHONPATH=scripts python3 scripts/topic_editorial_state_machine.py prepare-source-open \
   --out-dir /private/tmp/ar020d_current_task_replay \
+  --persona-docx "/absolute/private/path/to/我的案例库.docx" \
   --content-csv output/runs/<run_id>/content_items.csv \
   --since <YYYY-MM-DD> \
   --batch-size 3
 ```
 
-当前 Codex 任务随后按 `validate-stage1 -> prepare-ranking -> validate-ranking -> prepare-stage2 -> validate-stage2 -> finalize` 协议执行。`editorial_skill_runner.py --engine codex` 是禁用的旧入口，会在读写业务输出前失败。
+当前 Codex 任务随后按 `validate-source-open -> prepare-research -> validate-research -> prepare-stage1 -> validate-stage1 -> prepare-ranking -> validate-ranking -> prepare-stage2 -> validate-stage2 -> finalize` 协议执行。精确来源和研究失败均 fail closed；旧 one-shot/deterministic/nested CLI 会在读写业务输出前失败。
 
 写入边界：
 

@@ -1,0 +1,305 @@
+from __future__ import annotations
+
+import hashlib
+import inspect
+import json
+import subprocess
+import sys
+import tempfile
+import unittest
+from datetime import datetime, timezone
+from pathlib import Path
+
+import editorial_skill_runner as runner
+import feishu_topic_decision_card as card
+import persona_reference_builder as persona
+import topic_research_contract as research
+import topic_research_dossier_builder as dossier_builder
+import topic_research_cache_revalidator as cache_revalidator
+import trusted_exact_source_adapter as exact_adapter
+import trusted_exact_source_evidence as exact_evidence
+
+
+def decision(index: int, action: str = "生成脚本包") -> dict:
+    row = {
+        "index": index,
+        "decision": "select",
+        "recommendation_status": action,
+        "natural_austin_angle": f"angle-{index}",
+        "selected_visible_title": f"title-{index}",
+        "title_rationale": f"rationale-{index}",
+        "public_decision_summary": f"summary-{index}",
+    }
+    row["editorial_decision_hash"] = runner.editorial_decision_hash(row)
+    row["editorial_decision_id"] = runner.editorial_decision_id(index, row["editorial_decision_hash"])
+    row["locked_decision"] = "select"
+    row["locked_recommendation_status"] = action
+    row["locked_daily_level"] = "推荐制作"
+    row["locked_should_produce"] = "是"
+    row["locked_title_permission"] = "可发布标题"
+    row["locked_global_rank_position"] = ""
+    row["locked_global_tradeoff_reason"] = ""
+    row["global_rank_hash"] = runner.global_rank_hash(row)
+    return row
+
+
+def ranking_row(row: dict, position: int) -> dict:
+    return {
+        "index": row["index"],
+        "editorial_decision_id": row["editorial_decision_id"],
+        "editorial_decision_hash": row["editorial_decision_hash"],
+        "input_global_rank_hash": row["global_rank_hash"],
+        "global_daily_level": "推荐制作",
+        "final_recommendation_status": row["locked_recommendation_status"],
+        "global_rank_position": str(position),
+        "global_tradeoff_reason": f"公开取舍 {position}",
+    }
+
+
+class ResearchContractTests(unittest.TestCase):
+    def test_research_cache_requires_fresh_exact_source_identity(self) -> None:
+        now = datetime(2026, 7, 12, 8, tzinfo=timezone.utc)
+        source = {"exact_url": "https://example.com/a", "exact_title": "A", "author": "Austin", "captured_content_hash": "a" * 64}
+        cached = {"protocol": "x", "status": "completed", "source_content_hash": "a" * 64, "source_type": "evergreen", "queries": ["q"], "results": [], "research_summary": "s", "hook_analysis": {}, "claim_evidence": [], "completed_at": "2026-07-12T07:00:00+00:00", "dossier_hash": "old"}
+        current = {**source, "captured_content_hash": "b" * 64}
+        result = cache_revalidator.revalidate(source, current, cached, now=now)
+        self.assertEqual(result["source_content_hash"], "b" * 64)
+        self.assertEqual(result["cache_revalidation"]["status"], "revalidated")
+        with self.assertRaisesRegex(ValueError, "identity changed"):
+            cache_revalidator.revalidate(source, {**current, "exact_title": "Changed"}, cached, now=now)
+    def test_domain_routes_to_exactly_one_primary_adapter(self) -> None:
+        self.assertEqual(exact_adapter.primary_adapter_for_url("https://www.douyin.com/video/1"), exact_adapter.DOUYIN_ADAPTER)
+        self.assertEqual(exact_adapter.primary_adapter_for_url("https://x.com/a/status/123"), exact_adapter.TRUSTED_BROWSER_ADAPTER)
+        self.assertEqual(exact_adapter.primary_adapter_for_url("https://claude.com/blog/how-people-are-using-claude-cowork"), exact_adapter.TRUSTED_BROWSER_ADAPTER)
+        self.assertEqual(exact_adapter.primary_adapter_for_url("https://example.com/article/1"), exact_adapter.TRUSTED_WEB_ADAPTER)
+
+    def test_primary_adapter_rejects_failover_or_identity_mismatch(self) -> None:
+        candidate = {"exact_url": "https://x.com/a/status/123", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
+        base = {"primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER, "attempted_adapters": [exact_adapter.TRUSTED_BROWSER_ADAPTER],
+                "page_identity": {"kind": "x_status", "status_id": "123"}, "page_state": "exact_post",
+                "browser_surface": "iab", "browser_session_boundary": "current_task", "dom_text_path": "/tmp/dom", "screenshot_path": "/tmp/shot"}
+        exact_adapter.validate_primary_adapter(candidate, base)
+        with self.assertRaisesRegex(exact_adapter.AdapterContractError, "failover"):
+            exact_adapter.validate_primary_adapter(candidate, {**base, "attempted_adapters": [exact_adapter.TRUSTED_BROWSER_ADAPTER, exact_adapter.TRUSTED_WEB_ADAPTER]})
+        with self.assertRaisesRegex(exact_adapter.AdapterContractError, "status ID"):
+            exact_adapter.validate_primary_adapter(candidate, {**base, "page_identity": {"kind": "x_status", "status_id": "999"}})
+
+    def test_trusted_browser_rejects_login_blank_or_generic_home(self) -> None:
+        x_candidate = {"exact_url": "https://x.com/a/status/123", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
+        x_output = {"primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER, "attempted_adapters": [exact_adapter.TRUSTED_BROWSER_ADAPTER],
+                    "page_identity": {"kind": "x_status", "status_id": "123"}, "page_state": "login_wall",
+                    "browser_surface": "iab", "browser_session_boundary": "current_task", "dom_text_path": "/tmp/dom", "screenshot_path": "/tmp/shot"}
+        with self.assertRaisesRegex(exact_adapter.AdapterContractError, "not visibly open"):
+            exact_adapter.validate_primary_adapter(x_candidate, x_output)
+        claude_candidate = {"exact_url": "https://claude.com/blog/how-people-are-using-claude-cowork", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
+        claude_output = {**x_output, "page_identity": {"kind": "claude_blog", "path": "/blog/how-people-are-using-claude-cowork"}, "page_state": "generic_home"}
+        with self.assertRaisesRegex(exact_adapter.AdapterContractError, "not visibly open"):
+            exact_adapter.validate_primary_adapter(claude_candidate, claude_output)
+
+    def test_exact_evidence_builder_keeps_one_primary_adapter(self) -> None:
+        candidate = {"candidate_id": "c1", "exact_url": "https://x.com/a/status/123", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
+        output = exact_evidence.build_output(candidate, {
+            "final_url": candidate["exact_url"], "page_identity": {"kind": "x_status", "status_id": "123"},
+            "page_state": "exact_post", "exact_title": "Visible post", "visible_body": "Complete visible post body",
+            "author": "@a", "browser_surface": "iab", "browser_session_boundary": "current_task",
+            "dom_text_path": "/tmp/dom", "screenshot_path": "/tmp/shot",
+        })
+        self.assertEqual(output["attempted_adapters"], [exact_adapter.TRUSTED_BROWSER_ADAPTER])
+        self.assertEqual(len(output["content_evidence"]), 1)
+    def test_dossier_builder_produces_contract_hash(self) -> None:
+        spec = {
+            "source_content_hash": "a" * 64,
+            "queries": ["query"],
+            "results": [],
+            "external_corroboration_state": "no_accessible_corroboration",
+            "confidence": "low",
+            "corroboration_gap": "No accessible independent page.",
+            "research_summary": "Source-only summary.",
+            "hook_analysis": {
+                "audience_hook": "A concrete result promise",
+                "why_unfamiliar_audience_clicks": "The result is understandable without knowing the product.",
+                "hook_evidence_ids": ["source:1"],
+                "product_name_is_not_hook": True,
+                "hook_type": ["result_promise"],
+            },
+            "claim_evidence": [],
+            "completed_at": "2026-07-12T00:00:00+00:00",
+        }
+        dossier = dossier_builder.build_dossier(spec)
+        clean = {key: value for key, value in dossier.items() if key != "dossier_hash"}
+        self.assertEqual(dossier["dossier_hash"], research.hash_json(clean))
+
+    def test_source_open_fails_closed_without_exact_open(self) -> None:
+        candidate = {
+            "exact_url": "https://example.com/article/123",
+            "primary_adapter": exact_adapter.TRUSTED_WEB_ADAPTER,
+        }
+        result = research.validate_source_open(candidate, {
+            "open_status": "failed",
+            "primary_adapter": exact_adapter.TRUSTED_WEB_ADAPTER,
+            "attempted_adapters": [exact_adapter.TRUSTED_WEB_ADAPTER],
+        })
+        self.assertFalse(result["eligible"])
+        self.assertEqual(result["failure_reason"], "exact_source_not_opened")
+
+    def test_source_open_rejects_home_page_substitution(self) -> None:
+        candidate = {
+            "exact_url": "https://example.com/article/123",
+            "primary_adapter": exact_adapter.TRUSTED_WEB_ADAPTER,
+        }
+        payload = {
+            "primary_adapter": exact_adapter.TRUSTED_WEB_ADAPTER,
+            "attempted_adapters": [exact_adapter.TRUSTED_WEB_ADAPTER],
+            "open_status": "opened", "exact_url": candidate["exact_url"],
+            "final_url": "https://example.com/profile", "exact_title": "x", "platform": "web",
+            "author": "a", "opened_at": "2026-07-11T00:00:00Z",
+            "captured_content_hash": "a" * 64, "source_type": "article", "source_summary": "s",
+            "content_evidence": [{"evidence_id": "src-1", "text": "e"}],
+        }
+        with self.assertRaises(research.ContractError):
+            research.validate_source_open(candidate, payload)
+
+    def test_persona_only_material_claim_is_rejected(self) -> None:
+        dossier = {
+            "source": {"content_evidence": [{"evidence_id": "src-1"}]},
+            "results": [{"evidence_id": "web-1"}],
+        }
+        with self.assertRaises(research.ContractError):
+            research.validate_claim_trace({
+                "audience_hook": "这个工具已经能完成商业交付",
+                "natural_austin_angle": "", "selected_visible_title": "", "public_decision_summary": "",
+                "research_evidence_ids": "", "hook_evidence_ids": "",
+            }, dossier)
+
+    def test_research_hash_mutation_fails_closed(self) -> None:
+        source = {
+            "open_status": "opened", "eligible": True, "captured_content_hash": "a" * 64,
+            "content_evidence": [{"evidence_id": "src-1", "text": "verified source"}],
+        }
+        spec = {
+            "source_content_hash": "a" * 64, "queries": ["query"], "results": [],
+            "external_corroboration_state": "no_accessible_corroboration", "confidence": "low",
+            "corroboration_gap": "No accessible corroboration.", "research_summary": "summary",
+            "hook_analysis": {"audience_hook": "result promise", "why_unfamiliar_audience_clicks": "clear result",
+                "hook_evidence_ids": ["src-1"], "product_name_is_not_hook": True, "hook_type": ["result"]},
+            "claim_evidence": [{"claim_id": "c1", "claim": "claim", "evidence_ids": ["src-1"], "persona_only": False}],
+            "completed_at": "2026-07-12T00:00:00+00:00",
+        }
+        dossier = dossier_builder.build_dossier(spec)
+        dossier["research_summary"] = "mutated after hashing"
+        with self.assertRaisesRegex(research.ContractError, "hash mismatch"):
+            research.validate_research_dossier({}, source, dossier)
+
+
+class PersonaIsolationTests(unittest.TestCase):
+    def test_runtime_layers_exclude_experience_archive_and_case_scaffolding(self) -> None:
+        authority = Path("/Users/congcong/Desktop/AI/AI项目/AI账号工作流/00_资料库/04_案例库/我的案例库.docx")
+        if not authority.exists():
+            self.skipTest("private persona authority unavailable")
+        with tempfile.TemporaryDirectory() as temp:
+            manifest = persona.build_bundle(authority, Path(temp))
+            facts = json.loads((Path(temp) / "persona_facts.private.json").read_text())
+            examples = json.loads((Path(temp) / "judgment_and_style_examples.private.json").read_text())
+        self.assertEqual(manifest["experience_archive_runtime"], "excluded")
+        runtime_text = json.dumps({"facts": facts, "examples": examples}, ensure_ascii=False)
+        self.assertNotIn("案例名：", runtime_text)
+        self.assertNotIn("source_situation", runtime_text)
+        self.assertNotIn("persona_context", runtime_text)
+        self.assertNotIn("natural_expression", runtime_text)
+
+
+class DynamicRankingTests(unittest.TestCase):
+    def test_all_recommended_rows_survive_without_dynamic_ranking_cap(self) -> None:
+        decisions = [decision(index) for index in range(7)]
+        ranked = runner.apply_global_ranking(decisions, [ranking_row(row, index + 1) for index, row in enumerate(decisions)])
+        self.assertEqual(len(ranked), 7)
+        self.assertEqual([row["locked_global_rank_position"] for row in ranked], [str(i) for i in range(1, 8)])
+        self.assertTrue(all(row["locked_should_produce"] == "是" for row in ranked))
+
+    def test_ranking_cannot_downgrade_eligibility(self) -> None:
+        row = decision(0)
+        output = ranking_row(row, 1)
+        output["global_daily_level"] = "暂存观察"
+        with self.assertRaisesRegex(RuntimeError, "change eligibility"):
+            runner.apply_global_ranking([row], [output])
+
+    def test_ranking_requires_lossless_positions(self) -> None:
+        decisions = [decision(0), decision(1)]
+        outputs = [ranking_row(decisions[0], 1), ranking_row(decisions[1], 1)]
+        with self.assertRaisesRegex(RuntimeError, "lossless"):
+            runner.apply_global_ranking(decisions, outputs)
+
+
+class CardPaginationTests(unittest.TestCase):
+    def records(self, count: int) -> list[dict]:
+        return [{
+            "record_id": f"rec-{index}",
+            "fields": {
+                "选题标题": f"topic-{index}", "原始来源标题": f"source-{index}",
+                "来源链接": f"https://example.com/article/{index}", "研究摘要": "summary",
+                "受众钩子": "hook", "内容结构": "1. opening 2. conflict 3. evidence",
+                "推荐动作": "生成脚本包", "title_permission": "可发布标题",
+                "是否建议进入制作": "是", "状态": "待判断",
+            },
+        } for index in range(count)]
+
+    def test_lossless_pages_for_required_sizes(self) -> None:
+        for count in [0, 1, 3, 7, 12]:
+            with self.subTest(count=count):
+                manifest = card.build_card_pages(self.records(count), "run", page_size=5)
+                self.assertEqual(manifest["candidate_count"], count)
+                self.assertEqual([value for page in manifest["pages"] for value in page["candidate_ids"]], manifest["candidate_ids"])
+                self.assertEqual(len(set(manifest["candidate_ids"])), count)
+
+    def test_pagination_rejects_missing_or_duplicate_ids(self) -> None:
+        missing = self.records(1)
+        missing[0]["record_id"] = ""
+        with self.assertRaisesRegex(ValueError, "requires record_id"):
+            card.build_card_pages(missing, "run")
+        duplicate = self.records(2)
+        duplicate[1]["record_id"] = duplicate[0]["record_id"]
+        with self.assertRaisesRegex(ValueError, "must be unique"):
+            card.build_card_pages(duplicate, "run")
+
+    def test_each_page_uses_a_distinct_message_key(self) -> None:
+        source = Path(inspect.getsourcefile(card) or "").read_text(encoding="utf-8")
+        self.assertIn('message_key=f"page-{page[\'page\']:02d}"', source)
+        self.assertIn("message_key", inspect.signature(card.send_card).parameters)
+
+    def test_unselected_candidates_remain_pending(self) -> None:
+        decisions = card.decisions_from_form({card.ENTER_SCRIPT_PACKAGE_FORM_KEY: ["rec-1"]}, ["rec-1", "rec-2"])
+        self.assertEqual(set(decisions), {"rec-1"})
+        self.assertEqual(decisions["rec-1"]["status"], card.SCRIPT_PACKAGE_READY_STATUS)
+        self.assertEqual(card.decisions_from_form({}, ["rec-1"], force_no_selection=True), {})
+
+    def test_normal_submit_callback_has_no_implicit_unselected_status(self) -> None:
+        payload = card.build_card(self.records(2), "run")
+        serialized = json.dumps(payload, ensure_ascii=False)
+        submit_marker = f'"action": "{card.SUBMIT_SELECTION_ACTION}"'
+        before_no_selection = serialized.split('"action": "submit_no_selection"', 1)[0]
+        self.assertIn(submit_marker, before_no_selection)
+        self.assertNotIn('"unselected_status": "不做"', before_no_selection)
+
+    def test_card_displays_exact_clickable_source_and_research(self) -> None:
+        markdown = card.card_markdown_for_candidate(1, self.records(1)[0]["fields"])
+        self.assertIn("[source-0](https://example.com/article/0)", markdown)
+        self.assertIn("来源摘要：summary", markdown)
+        self.assertIn("受众钩子：hook", markdown)
+        self.assertIn("内容结构：", markdown)
+
+
+class LegacyCliTests(unittest.TestCase):
+    def test_legacy_runner_fails_before_output_creation(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            output = Path(temp) / "business.csv"
+            result = subprocess.run([
+                sys.executable, str(Path(__file__).with_name("editorial_skill_runner.py")),
+                "--engine", "deterministic", "--input", str(Path(temp) / "missing.csv"), "--output", str(output),
+            ], text=True, capture_output=True)
+            self.assertNotEqual(result.returncode, 0)
+            self.assertIn("zero-fallback", result.stderr)
+            self.assertFalse(output.exists())
+
+
+if __name__ == "__main__":
+    unittest.main()

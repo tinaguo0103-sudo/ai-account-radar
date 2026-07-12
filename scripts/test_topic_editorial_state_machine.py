@@ -16,6 +16,18 @@ import topic_skill_replay_evaluation as replay
 
 
 class TopicEditorialStateMachineTests(unittest.TestCase):
+    def test_stage2_decisions_follow_candidate_index_not_rank_order(self) -> None:
+        source = Path(inspect.getsourcefile(machine) or "")
+        text = source.read_text(encoding="utf-8")
+        self.assertIn('ranked_by_index = {int(item["index"]): item for item in ranked}', text)
+        self.assertIn('decisions = [ranked_by_index[start + offset] for offset in range(len(rows))]', text)
+
+    def test_finalize_marks_upstream_candidate_failures_visible(self) -> None:
+        source = Path(inspect.getsourcefile(machine) or "")
+        text = source.read_text(encoding="utf-8")
+        self.assertIn('"stage": "completed_with_failures"', text)
+        self.assertIn('"failure_semantics": "failed candidates were excluded before editorial decision and cards"', text)
+
     def test_stage1_payload_is_minimized_allowlist(self) -> None:
         row = {
             "来源类型": "对标视频",
@@ -32,11 +44,22 @@ class TopicEditorialStateMachineTests(unittest.TestCase):
             "市场验证依据": "标题有明确工具组合和结果承诺",
         }
 
-        payload = machine.minimized_stage1_row(row, 0)
+        payload = machine.minimized_stage1_row(
+            {"candidate_id": "candidate-1"},
+            {
+                "source": {"exact_url": "https://example.invalid/article/1", "exact_title": row["原始来源标题"]},
+                "research_summary": "已打开来源并完成研究。",
+                "results": [{"evidence_id": "web-1", "url": "https://example.invalid/evidence"}],
+                "conflicts": [], "confidence": "high", "dossier_hash": "a" * 64,
+                "hook_analysis": {"audience_hook": "明确结果承诺", "hook_evidence_ids": ["web-1"]},
+            },
+            {"account_role": "AI业务系统导演"},
+            [{"text": "先看冲突，再决定是否选择。", "reference_only": True}],
+        )
         text = json.dumps(payload, ensure_ascii=False)
 
-        self.assertEqual(set(payload) - {"index"}, machine.STAGE1_ALLOWLIST)
-        self.assertNotIn("来源链接", text)
+        self.assertEqual(set(payload), machine.STAGE1_ALLOWLIST)
+        self.assertIn("https://example.invalid/article/1", text)
         self.assertNotIn("secret-fingerprint", text)
         self.assertNotIn("forbidden deterministic angle", text)
         self.assertNotIn("forbidden old 04 field", text)
