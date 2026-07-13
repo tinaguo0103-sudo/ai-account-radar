@@ -70,6 +70,10 @@ def parse_evidence_ids(value: Any) -> set[str]:
     return {item for item in re.split(r"[,，、\s]+", str(value or "")) if item}
 
 
+def normalized_capture_text(value: str) -> str:
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
 def validate_claim_trace(decision: dict[str, Any], dossier: dict[str, Any]) -> None:
     known_ids = evidence_ids(dossier)
     evidence = parse_evidence_ids(decision.get("research_evidence_ids")) | parse_evidence_ids(
@@ -174,8 +178,9 @@ def validate_research_dossier(candidate: dict[str, Any], source: dict[str, Any],
         raise ContractError("Source-only research must explain the corroboration gap")
     for item in opened:
         required_result_fields = (
-            "title", "publisher", "opened_at", "captured_content_hash",
-            "dom_text_path", "source_class", "supported_claim",
+            "title", "publisher", "opened_at", "captured_at", "captured_content_hash",
+            "dom_text_path", "source_class", "supported_claim", "supporting_excerpt",
+            "evidence_locator", "capture_method", "final_url",
         )
         missing_result = [name for name in required_result_fields if not str(item.get(name) or "").strip()]
         if missing_result:
@@ -187,8 +192,20 @@ def validate_research_dossier(candidate: dict[str, Any], source: dict[str, Any],
         dom_path = Path(str(item["dom_text_path"]))
         if not dom_path.is_file() or not dom_path.read_text(encoding="utf-8").strip():
             raise ContractError("Opened research result has no readable DOM text artifact")
+        raw_text = dom_path.read_text(encoding="utf-8")
+        normalized_raw = normalized_capture_text(raw_text)
+        if len(normalized_raw) < 500 or normalized_raw.startswith("Opened evidence:"):
+            raise ContractError("Opened research result raw capture is synthetic or lacks page body text")
         if hashlib.sha256(dom_path.read_bytes()).hexdigest() != item["captured_content_hash"]:
             raise ContractError("Opened research result DOM hash mismatch")
+        excerpt = normalized_capture_text(item["supporting_excerpt"])
+        if len(excerpt) < 20 or excerpt not in normalized_raw:
+            raise ContractError("Research supporting excerpt is not a literal substring of the raw capture")
+        for timestamp_field in ("opened_at", "captured_at"):
+            try:
+                datetime.fromisoformat(str(item[timestamp_field]).replace("Z", "+00:00"))
+            except ValueError as exc:
+                raise ContractError(f"Invalid research capture timestamp: {timestamp_field}") from exc
     ids = {str(item.get("evidence_id")) for item in source.get("content_evidence", []) if item.get("evidence_id")}
     ids.update(str(item.get("evidence_id")) for item in opened)
     hook = dossier.get("hook_analysis") or {}

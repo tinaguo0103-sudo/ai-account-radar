@@ -67,6 +67,18 @@ class ResearchContractTests(unittest.TestCase):
         self.assertTrue(douyin_stage.should_attempt({"source_attempt_count": 1}, {"open_status": "failed"}))
         self.assertFalse(douyin_stage.should_attempt({"source_attempt_count": 2}, {"open_status": "failed"}))
         self.assertFalse(douyin_stage.should_attempt({"source_attempt_count": 1}, {"open_status": "opened"}))
+
+    def test_source_attempt_is_reserved_before_browser_process(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            state_path = Path(temp) / "editorial_state_machine.json"
+            state_path.write_text(json.dumps({"stages": {"source_open": {"candidates": {
+                "candidate": {"status": "failed", "source_attempt_count": 1},
+            }}}}), encoding="utf-8")
+            self.assertEqual(douyin_stage.reserve_attempt(state_path, "candidate"), 2)
+            state = json.loads(state_path.read_text(encoding="utf-8"))
+            self.assertEqual(state["stages"]["source_open"]["candidates"]["candidate"]["source_attempt_count"], 2)
+            with self.assertRaisesRegex(RuntimeError, "retry bound exceeded"):
+                douyin_stage.reserve_attempt(state_path, "candidate")
     def test_research_cache_requires_fresh_exact_source_identity(self) -> None:
         now = datetime(2026, 7, 12, 8, tzinfo=timezone.utc)
         source = {"exact_url": "https://example.com/a", "exact_title": "A", "author": "Austin", "captured_content_hash": "a" * 64}
@@ -293,9 +305,12 @@ class ResearchContractTests(unittest.TestCase):
                 "source_content_hash": "a" * 64, "queries": [{"query": "real topical query"}],
                 "results": [{
                     "evidence_id": "web-1", "open_status": "opened", "url": "https://example.com/a",
-                    "title": "Article", "publisher": "Publisher", "opened_at": "2026-07-13T00:00:00Z",
+                    "final_url": "https://example.com/a", "title": "Article", "publisher": "Publisher",
+                    "opened_at": "2026-07-13T00:00:00Z", "captured_at": "2026-07-13T00:00:01Z",
                     "captured_content_hash": "b" * 64, "dom_text_path": "/private/tmp/missing",
                     "source_class": "independent", "supported_claim": "claim",
+                    "supporting_excerpt": "literal excerpt from page body", "evidence_locator": "body",
+                    "capture_method": "trusted_browser_dom",
                     "evidence_surface": forbidden_surface,
                 }],
                 "external_corroboration_state": "opened", "confidence": "medium", "corroboration_gap": "",
@@ -307,6 +322,64 @@ class ResearchContractTests(unittest.TestCase):
             dossier = dossier_builder.build_dossier(spec)
             with self.assertRaisesRegex(research.ContractError, "not research evidence"):
                 research.validate_research_dossier({}, source, dossier)
+
+    def _validated_source(self) -> dict:
+        return {
+            "open_status": "opened", "eligible": True, "captured_content_hash": "a" * 64,
+            "content_evidence": [{"evidence_id": "src-1", "text": "verified source"}],
+        }
+
+    def _research_spec(self, dom_path: Path, excerpt: str) -> dict:
+        return {
+            "source_content_hash": "a" * 64, "queries": [{"query": "entity material claim context"}],
+            "results": [{
+                "evidence_id": "web-1", "open_status": "opened", "url": "https://example.com/a",
+                "final_url": "https://example.com/a", "title": "Article", "publisher": "Publisher",
+                "opened_at": "2026-07-13T00:00:00Z", "captured_at": "2026-07-13T00:00:01Z",
+                "captured_content_hash": hashlib.sha256(dom_path.read_bytes()).hexdigest(),
+                "dom_text_path": str(dom_path), "source_class": "independent",
+                "supported_claim": "The opened page supports the material claim.",
+                "supporting_excerpt": excerpt, "evidence_locator": "body paragraph 2",
+                "capture_method": "current_task_trusted_browser_dom",
+                "evidence_surface": "current_task_trusted_web_open",
+            }],
+            "external_corroboration_state": "opened_support", "confidence": "medium",
+            "corroboration_gap": "Only the cited claim is supported.", "research_summary": "Factual summary.",
+            "hook_analysis": {"audience_hook": "Public consequence", "why_unfamiliar_audience_clicks": "Clear consequence",
+                "hook_evidence_ids": ["web-1"], "product_name_is_not_hook": True},
+            "claim_evidence": [{"claim_id": "c1", "claim": "claim", "evidence_ids": ["web-1"]}],
+        }
+
+    def test_hash_valid_synthetic_claim_file_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            dom = Path(temp) / "raw.txt"
+            dom.write_text("Title\nPublisher\nCanonical URL\nOpened evidence: generated claim", encoding="utf-8")
+            dossier = dossier_builder.build_dossier(self._research_spec(dom, "Opened evidence: generated claim"))
+            with self.assertRaisesRegex(research.ContractError, "synthetic or lacks page body"):
+                research.validate_research_dossier({}, self._validated_source(), dossier)
+
+    def test_raw_capture_missing_body_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            dom = Path(temp) / "raw.txt"; dom.write_text("", encoding="utf-8")
+            dossier = dossier_builder.build_dossier(self._research_spec(dom, "missing literal excerpt long enough"))
+            with self.assertRaisesRegex(research.ContractError, "no readable DOM"):
+                research.validate_research_dossier({}, self._validated_source(), dossier)
+
+    def test_excerpt_not_found_in_raw_capture_fails(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            dom = Path(temp) / "raw.txt"; dom.write_text("Actual opened page body. " * 40, encoding="utf-8")
+            dossier = dossier_builder.build_dossier(self._research_spec(dom, "This literal excerpt is absent from capture"))
+            with self.assertRaisesRegex(research.ContractError, "not a literal substring"):
+                research.validate_research_dossier({}, self._validated_source(), dossier)
+
+    def test_valid_raw_capture_and_literal_excerpt_pass(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            excerpt = "The opened article states a concrete material claim for readers."
+            dom = Path(temp) / "raw.txt"
+            dom.write_text(("Actual browser-captured page paragraph with context. " * 12) + excerpt, encoding="utf-8")
+            dossier = dossier_builder.build_dossier(self._research_spec(dom, excerpt))
+            validated = research.validate_research_dossier({}, self._validated_source(), dossier)
+            self.assertTrue(validated["eligible"])
 
     def test_claim_or_hook_without_known_evidence_fails(self) -> None:
         dossier = {"source": {"content_evidence": [{"evidence_id": "src-1"}]}, "results": []}

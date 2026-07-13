@@ -50,7 +50,7 @@ def mapping(decision: dict, direction: str) -> dict:
         "可调用案例": "",
         "内容核心冲突": decision["audience_hook"],
         "视频呈现方式": "口播 + 精确来源画面/页面 + 证据与判断分层展示",
-        "证据强度": "以 research dossier confidence 为准",
+        "证据强度": decision["research_confidence"],
         "不建议做的原因": decision["why_i_would_not_choose"],
         "编辑判断分": "locked_by_stage1",
         "标题质量分": "validated_by_stage1",

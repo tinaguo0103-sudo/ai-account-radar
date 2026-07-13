@@ -7,6 +7,7 @@ import json
 import os
 import subprocess
 import sys
+from datetime import datetime, timezone
 from pathlib import Path
 
 
@@ -17,6 +18,18 @@ def should_attempt(record: dict, validated: dict | None) -> bool:
     if validated and validated.get("open_status") == "opened":
         return False
     return int(record.get("source_attempt_count", 0) or 0) < MAX_SOURCE_ATTEMPTS
+
+
+def reserve_attempt(state_path: Path, candidate_id: str) -> int:
+    state = json.loads(state_path.read_text(encoding="utf-8"))
+    record = state["stages"]["source_open"]["candidates"][candidate_id]
+    count = int(record.get("source_attempt_count", 0) or 0) + 1
+    if count > MAX_SOURCE_ATTEMPTS:
+        raise RuntimeError(f"Source-open retry bound exceeded for {candidate_id}")
+    record["source_attempt_count"] = count
+    record["source_attempt_reserved_at"] = datetime.now(timezone.utc).isoformat()
+    state_path.write_text(json.dumps(state, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    return count
 
 
 def main() -> int:
@@ -57,6 +70,7 @@ def main() -> int:
             results.append({"candidate_id": candidate["candidate_id"], "locked": True})
             continue
         os.close(lock_fd)
+        reserve_attempt(out_dir / "editorial_state_machine.json", candidate["candidate_id"])
         attempted += 1
         capture_dir = candidate_dir / "cdp_capture"
         command = [

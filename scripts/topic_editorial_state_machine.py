@@ -351,7 +351,6 @@ def validate_source_open(args: argparse.Namespace) -> dict[str, Any]:
     output_path = Path(args.evidence_json) if getattr(args, "evidence_json", "") else out_dir / "source_open" / args.candidate_id / "output.pending.json"
     if not output_path.exists():
         raise RuntimeError(f"Current task must write {output_path}")
-    record["source_attempt_count"] = int(record.get("source_attempt_count", 0) or 0) + 1
     record["primary_adapter"] = candidate["primary_adapter"]
     try:
         validated = research_contract.validate_source_open(candidate, read_json(output_path))

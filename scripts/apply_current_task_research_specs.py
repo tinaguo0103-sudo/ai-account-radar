@@ -19,6 +19,19 @@ def main() -> int:
     root = Path(__file__).resolve().parents[1]
     out_dir = Path(args.out_dir)
     specs = json.loads(Path(args.specs).read_text(encoding="utf-8"))
+    state = json.loads((out_dir / "editorial_state_machine.json").read_text(encoding="utf-8"))
+    researchable = {
+        candidate_id
+        for candidate_id, candidate in state["stages"]["source_open"]["candidates"].items()
+        if candidate["status"] == "completed"
+    }
+    if set(specs) != researchable:
+        missing = sorted(researchable - set(specs))
+        unexpected = sorted(set(specs) - researchable)
+        raise RuntimeError(
+            f"Research specs must cover every successfully opened candidate exactly once; "
+            f"missing={missing}, unexpected={unexpected}"
+        )
     results = []
     for candidate_id, authored in specs.items():
         source = json.loads((out_dir / "source_open" / candidate_id / "validated.json").read_text(encoding="utf-8"))
@@ -34,7 +47,7 @@ def main() -> int:
         ], text=True, capture_output=True)
         results.append({"candidate_id": candidate_id, "returncode": completed.returncode, "stderr": completed.stderr[-500:]})
     print(json.dumps({"results": results}, ensure_ascii=False, indent=2))
-    return 0 if len(results) == 19 and all(item["returncode"] == 0 for item in results) else 1
+    return 0 if len(results) == len(researchable) and all(item["returncode"] == 0 for item in results) else 1
 
 
 if __name__ == "__main__":

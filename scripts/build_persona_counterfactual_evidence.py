@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import csv
 import json
 from pathlib import Path
 
@@ -43,7 +44,12 @@ def main() -> int:
                 (pair_dir / name).write_text(json.dumps(value, ensure_ascii=False, indent=2), encoding="utf-8")
             pairs.append({"with_persona": with_output, "without_persona": without_output})
     retrievals = [json.loads(path.read_text(encoding="utf-8")) for path in sorted((out_dir / "persona_retrieval").glob("*.json"))]
-    result = audit.write_report(out_dir / "persona_counterfactual", pairs, rows, retrievals)
+    final_rows_path = out_dir / "skill_replay_rows.csv"
+    metric_rows = rows
+    if final_rows_path.is_file():
+        with final_rows_path.open(encoding="utf-8-sig", newline="") as handle:
+            metric_rows = list(csv.DictReader(handle))
+    result = audit.write_report(out_dir / "persona_counterfactual", pairs, metric_rows, retrievals)
     if len(pairs) != 6 or not result["all_facts_stable"] or not result["all_eligibility_stable"]:
         raise RuntimeError("Persona counterfactual evidence failed")
     if result["leakage"]["all_candidates_same_retrieval"]:
