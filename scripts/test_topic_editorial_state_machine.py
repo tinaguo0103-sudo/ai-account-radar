@@ -28,6 +28,26 @@ class TopicEditorialStateMachineTests(unittest.TestCase):
         self.assertIn('"stage": "completed_with_failures"', text)
         self.assertIn('"failure_semantics": "failed candidates were excluded before editorial decision and cards"', text)
 
+    def test_one_failed_candidate_does_not_block_completed_candidates(self) -> None:
+        state = {"stages": {"source_open": machine.stage_record("prepared", candidates={
+            "failed": machine.stage_record("failed", error="video_unavailable"),
+            "opened-a": machine.stage_record("completed"),
+            "opened-b": machine.stage_record("completed"),
+        })}}
+        machine.update_terminal_stage(state, "source_open")
+        self.assertEqual(state["stages"]["source_open"]["status"], "completed_with_failures")
+        self.assertEqual(state["stages"]["source_open"]["failure_count"], 1)
+        self.assertEqual(machine.completed_candidate_ids(state, "source_open"), {"opened-a", "opened-b"})
+
+    def test_all_failed_is_terminal_with_no_downstream_candidates(self) -> None:
+        state = {"stages": {"source_open": machine.stage_record("prepared", candidates={
+            "failed-a": machine.stage_record("failed", error="unavailable"),
+            "failed-b": machine.stage_record("failed", error="identity_mismatch"),
+        })}}
+        machine.update_terminal_stage(state, "source_open")
+        self.assertEqual(state["stages"]["source_open"]["status"], "completed_with_failures")
+        self.assertEqual(machine.completed_candidate_ids(state, "source_open"), set())
+
     def test_stage1_payload_is_minimized_allowlist(self) -> None:
         row = {
             "来源类型": "对标视频",

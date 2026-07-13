@@ -240,6 +240,13 @@ def require_terminal(state: dict[str, Any], stage_name: str) -> None:
         raise RuntimeError(f"Stage {stage_name} is not terminal; later stages are blocked")
 
 
+def completed_candidate_ids(state: dict[str, Any], stage_name: str) -> set[str]:
+    return {
+        candidate_id for candidate_id, record in state["stages"][stage_name].get("candidates", {}).items()
+        if record.get("status") == "completed"
+    }
+
+
 def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -344,6 +351,8 @@ def validate_source_open(args: argparse.Namespace) -> dict[str, Any]:
     output_path = Path(args.evidence_json) if getattr(args, "evidence_json", "") else out_dir / "source_open" / args.candidate_id / "output.pending.json"
     if not output_path.exists():
         raise RuntimeError(f"Current task must write {output_path}")
+    record["source_attempt_count"] = int(record.get("source_attempt_count", 0) or 0) + 1
+    record["primary_adapter"] = candidate["primary_adapter"]
     try:
         validated = research_contract.validate_source_open(candidate, read_json(output_path))
         write_json(out_dir / "source_open" / args.candidate_id / "validated.json", validated)
@@ -431,7 +440,8 @@ def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
     facts = read_json(out_dir / "private_persona" / "persona_facts.private.json")
     examples = read_json(out_dir / "private_persona" / "judgment_and_style_examples.private.json")
     candidates = candidate_rows_from_state(state)
-    eligible = [item for item in candidates if state["stages"]["research"]["candidates"][item["candidate_id"]]["status"] == "completed"]
+    eligible_ids = completed_candidate_ids(state, "research")
+    eligible = [item for item in candidates if item["candidate_id"] in eligible_ids]
     eligible = [{**item, "eligible_index": index} for index, item in enumerate(eligible)]
     if not eligible:
         raise RuntimeError("No fully researched candidates; Stage 1 is blocked")
@@ -541,6 +551,7 @@ def validate_stage1(args: argparse.Namespace) -> dict[str, Any]:
             if unknown_ids:
                 raise RuntimeError(f"Stage 1 used unknown evidence IDs: {unknown_ids}")
             research_contract.validate_claim_trace(decision, dossier)
+            research_contract.validate_recommendation_research_eligibility(decision, dossier)
         write_json(batch_dir / "decisions.json", decisions)
         write_json(batch_dir / "meta.json", meta)
         complete_stage(record, hash_json(decisions), decision_count=len(decisions), raw_output_hash=raw_output_hash)

@@ -86,7 +86,8 @@ def main() -> int:
         completed = subprocess.run([sys.executable, str(root / "scripts" / "topic_editorial_state_machine.py"), "validate-stage2", "--out-dir", str(out_dir), "--batch-id", batch_dir.name], text=True, capture_output=True)
         results.append({"batch_id": batch_dir.name, "returncode": completed.returncode, "stdout": completed.stdout[-500:], "stderr": completed.stderr[-500:]})
     print(json.dumps({"results": results}, ensure_ascii=False, indent=2))
-    return 0 if len(results) == 7 and all(item["returncode"] == 0 for item in results) else 1
+    expected_batches = len(list((out_dir / "stage2").glob("batch_*")))
+    return 0 if results and len(results) == expected_batches and all(item["returncode"] == 0 for item in results) else 1
 
 
 if __name__ == "__main__":

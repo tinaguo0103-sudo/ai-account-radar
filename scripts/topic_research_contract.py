@@ -6,6 +6,7 @@ import hashlib
 import json
 import re
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 
@@ -80,6 +81,33 @@ def validate_claim_trace(decision: dict[str, Any], dossier: dict[str, Any]) -> N
     assert_claim_trace(text, sorted(evidence), known_ids, hypothesis=False)
 
 
+def validate_recommendation_research_eligibility(
+    decision: dict[str, Any], dossier: dict[str, Any]
+) -> None:
+    """Fail closed when a producible decision lacks freshly opened web context."""
+    if str(decision.get("decision") or "") != "select" and str(
+        decision.get("recommendation_status") or ""
+    ) != "生成脚本包":
+        return
+    opened_ids = {
+        str(item.get("evidence_id"))
+        for item in dossier.get("results", [])
+        if item.get("open_status") == "opened"
+        and item.get("evidence_id")
+        and item.get("url")
+        and item.get("captured_content_hash")
+        and item.get("dom_text_path")
+        and item.get("opened_at")
+    }
+    used_ids = parse_evidence_ids(decision.get("research_evidence_ids")) | parse_evidence_ids(
+        decision.get("hook_evidence_ids")
+    )
+    if not opened_ids:
+        raise ContractError("Recommended candidate has no freshly opened external research evidence")
+    if not (opened_ids & used_ids):
+        raise ContractError("Recommended candidate does not cite opened external research evidence")
+
+
 def validate_source_open(candidate: dict[str, Any], output: dict[str, Any]) -> dict[str, Any]:
     try:
         source_adapter.validate_primary_adapter(candidate, output)
@@ -132,6 +160,10 @@ def validate_research_dossier(candidate: dict[str, Any], source: dict[str, Any],
     results = dossier.get("results") or []
     if not queries:
         raise ContractError("Research query ledger is empty")
+    exact_url = canonical_url(candidate.get("exact_url", "")) if candidate.get("exact_url") else ""
+    normalized_queries = [str(item.get("query") if isinstance(item, dict) else item).strip() for item in queries]
+    if exact_url and not any(query and query != exact_url and exact_url not in query for query in normalized_queries):
+        raise ContractError("Research requires a topical/entity/claim query beyond the exact source URL")
     opened = [item for item in results if item.get("open_status") == "opened" and item.get("url") and item.get("evidence_id")]
     corroboration_state = str(dossier.get("external_corroboration_state") or "")
     if not opened and corroboration_state != "no_accessible_corroboration":
@@ -140,6 +172,23 @@ def validate_research_dossier(candidate: dict[str, Any], source: dict[str, Any],
         raise ContractError("Source-only research must use low confidence")
     if not opened and not str(dossier.get("corroboration_gap") or "").strip():
         raise ContractError("Source-only research must explain the corroboration gap")
+    for item in opened:
+        required_result_fields = (
+            "title", "publisher", "opened_at", "captured_content_hash",
+            "dom_text_path", "source_class", "supported_claim",
+        )
+        missing_result = [name for name in required_result_fields if not str(item.get(name) or "").strip()]
+        if missing_result:
+            raise ContractError(
+                "Opened research result missing fields: " + ", ".join(missing_result)
+            )
+        if item.get("evidence_surface") in {"search_snippet", "model_memory", "prior_dossier"}:
+            raise ContractError("Search snippets, model memory, and prior dossiers are not research evidence")
+        dom_path = Path(str(item["dom_text_path"]))
+        if not dom_path.is_file() or not dom_path.read_text(encoding="utf-8").strip():
+            raise ContractError("Opened research result has no readable DOM text artifact")
+        if hashlib.sha256(dom_path.read_bytes()).hexdigest() != item["captured_content_hash"]:
+            raise ContractError("Opened research result DOM hash mismatch")
     ids = {str(item.get("evidence_id")) for item in source.get("content_evidence", []) if item.get("evidence_id")}
     ids.update(str(item.get("evidence_id")) for item in opened)
     hook = dossier.get("hook_analysis") or {}

@@ -19,6 +19,7 @@ import persona_counterfactual_audit as persona_audit
 import topic_research_contract as research
 import topic_research_dossier_builder as dossier_builder
 import topic_research_cache_revalidator as cache_revalidator
+import run_douyin_exact_source_stage as douyin_stage
 import topic_editorial_state_machine as machine
 import trusted_exact_source_adapter as exact_adapter
 import trusted_exact_source_evidence as exact_evidence
@@ -61,6 +62,11 @@ def ranking_row(row: dict, position: int) -> dict:
 
 
 class ResearchContractTests(unittest.TestCase):
+    def test_douyin_retry_is_same_adapter_bounded_to_two_attempts(self) -> None:
+        self.assertTrue(douyin_stage.should_attempt({"source_attempt_count": 0}, None))
+        self.assertTrue(douyin_stage.should_attempt({"source_attempt_count": 1}, {"open_status": "failed"}))
+        self.assertFalse(douyin_stage.should_attempt({"source_attempt_count": 2}, {"open_status": "failed"}))
+        self.assertFalse(douyin_stage.should_attempt({"source_attempt_count": 1}, {"open_status": "opened"}))
     def test_research_cache_requires_fresh_exact_source_identity(self) -> None:
         now = datetime(2026, 7, 12, 8, tzinfo=timezone.utc)
         source = {"exact_url": "https://example.com/a", "exact_title": "A", "author": "Austin", "captured_content_hash": "a" * 64}
@@ -234,6 +240,105 @@ class ResearchContractTests(unittest.TestCase):
         dossier["research_summary"] = "mutated after hashing"
         with self.assertRaisesRegex(research.ContractError, "hash mismatch"):
             research.validate_research_dossier({}, source, dossier)
+
+    def test_exact_source_only_cannot_be_recommended(self) -> None:
+        decision = {
+            "decision": "select", "recommendation_status": "生成脚本包",
+            "research_evidence_ids": "src-1", "hook_evidence_ids": "src-1",
+        }
+        dossier = {"source": {"content_evidence": [{"evidence_id": "src-1"}]}, "results": []}
+        with self.assertRaisesRegex(research.ContractError, "no freshly opened"):
+            research.validate_recommendation_research_eligibility(decision, dossier)
+
+    def test_query_only_cannot_be_recommended(self) -> None:
+        decision = {
+            "decision": "select", "recommendation_status": "生成脚本包",
+            "research_evidence_ids": "src-1", "hook_evidence_ids": "src-1",
+        }
+        dossier = {
+            "queries": [{"query": "topic and claim"}],
+            "source": {"content_evidence": [{"evidence_id": "src-1"}]},
+            "results": [{"evidence_id": "web-1", "open_status": "failed"}],
+        }
+        with self.assertRaisesRegex(research.ContractError, "no freshly opened"):
+            research.validate_recommendation_research_eligibility(decision, dossier)
+
+    def test_exact_url_recheck_is_not_web_research(self) -> None:
+        source = {
+            "open_status": "opened", "eligible": True, "captured_content_hash": "a" * 64,
+            "content_evidence": [{"evidence_id": "src-1", "text": "verified source"}],
+        }
+        spec = {
+            "source_content_hash": "a" * 64,
+            "queries": ["复核精确来源：https://example.com/article/123"], "results": [],
+            "external_corroboration_state": "no_accessible_corroboration", "confidence": "low",
+            "corroboration_gap": "No accessible corroboration.", "research_summary": "summary",
+            "hook_analysis": {"audience_hook": "hook", "why_unfamiliar_audience_clicks": "reason",
+                "hook_evidence_ids": ["src-1"], "product_name_is_not_hook": True},
+            "claim_evidence": [{"claim_id": "c1", "claim": "claim", "evidence_ids": ["src-1"]}],
+        }
+        dossier = dossier_builder.build_dossier(spec)
+        with self.assertRaisesRegex(research.ContractError, "topical/entity/claim query"):
+            research.validate_research_dossier(
+                {"exact_url": "https://example.com/article/123"}, source, dossier
+            )
+
+    def test_opened_research_must_be_real_artifact_not_snippet_or_prior_state(self) -> None:
+        source = {
+            "open_status": "opened", "eligible": True, "captured_content_hash": "a" * 64,
+            "content_evidence": [{"evidence_id": "src-1", "text": "verified source"}],
+        }
+        for forbidden_surface in ("search_snippet", "model_memory", "prior_dossier"):
+            spec = {
+                "source_content_hash": "a" * 64, "queries": [{"query": "real topical query"}],
+                "results": [{
+                    "evidence_id": "web-1", "open_status": "opened", "url": "https://example.com/a",
+                    "title": "Article", "publisher": "Publisher", "opened_at": "2026-07-13T00:00:00Z",
+                    "captured_content_hash": "b" * 64, "dom_text_path": "/private/tmp/missing",
+                    "source_class": "independent", "supported_claim": "claim",
+                    "evidence_surface": forbidden_surface,
+                }],
+                "external_corroboration_state": "opened", "confidence": "medium", "corroboration_gap": "",
+                "research_summary": "summary",
+                "hook_analysis": {"audience_hook": "hook", "why_unfamiliar_audience_clicks": "reason",
+                    "hook_evidence_ids": ["web-1"], "product_name_is_not_hook": True},
+                "claim_evidence": [{"claim_id": "c1", "claim": "claim", "evidence_ids": ["web-1"]}],
+            }
+            dossier = dossier_builder.build_dossier(spec)
+            with self.assertRaisesRegex(research.ContractError, "not research evidence"):
+                research.validate_research_dossier({}, source, dossier)
+
+    def test_claim_or_hook_without_known_evidence_fails(self) -> None:
+        dossier = {"source": {"content_evidence": [{"evidence_id": "src-1"}]}, "results": []}
+        with self.assertRaises(research.ContractError):
+            research.validate_claim_trace({
+                "audience_hook": "外部结果承诺", "natural_austin_angle": "", "selected_visible_title": "",
+                "public_decision_summary": "", "research_evidence_ids": "missing", "hook_evidence_ids": "",
+            }, dossier)
+
+    def test_no_accessible_corroboration_can_only_observe_or_reject(self) -> None:
+        dossier = {"source": {"content_evidence": [{"evidence_id": "src-1"}]}, "results": []}
+        research.validate_recommendation_research_eligibility({
+            "decision": "observe", "recommendation_status": "补证据",
+            "research_evidence_ids": "src-1", "hook_evidence_ids": "src-1",
+        }, dossier)
+        research.validate_recommendation_research_eligibility({
+            "decision": "reject", "recommendation_status": "不做",
+        }, dossier)
+
+    def test_opened_matching_corroboration_can_be_recommended(self) -> None:
+        dossier = {
+            "source": {"content_evidence": [{"evidence_id": "src-1"}]},
+            "results": [{
+                "evidence_id": "web-1", "open_status": "opened", "url": "https://example.com/a",
+                "captured_content_hash": "b" * 64, "dom_text_path": "/private/tmp/web-1.txt",
+                "opened_at": "2026-07-13T00:00:00Z",
+            }],
+        }
+        research.validate_recommendation_research_eligibility({
+            "decision": "select", "recommendation_status": "生成脚本包",
+            "research_evidence_ids": "src-1,web-1", "hook_evidence_ids": "web-1",
+        }, dossier)
 
 
 class PersonaIsolationTests(unittest.TestCase):
