@@ -283,7 +283,7 @@ def candidate_caveat(fields: dict[str, Any]) -> str:
 def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     title = compact(fields.get("选题标题"), 50) or f"候选 {index}"
     source_title = compact(fields.get("原始来源标题"), 88)
-    source_caption = compact(fields.get("原始发布文案") or fields.get("原始来源摘录"), 120)
+    source_caption = compact(fields.get("原始发布文案"), 120)
     source_url = normalize(fields.get("来源链接"))
     research_summary = compact(fields.get("研究摘要"), 120)
     audience_hook = compact(fields.get("受众钩子"), 100)
@@ -301,8 +301,7 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     if source_url:
         lines.append(f"精确来源：[{f'查看原始{source_kind}'}]({source_url})")
     lines.append(f"原始标题：{source_title or '平台未提供独立标题'}")
-    if source_caption:
-        lines.append(f"原始发布文案：{source_caption}")
+    lines.append(f"原始发布文案：{source_caption or '平台未提供独立发布文案'}")
     if research_summary:
         lines.append(f"来源摘要：{research_summary}")
     if audience_hook:

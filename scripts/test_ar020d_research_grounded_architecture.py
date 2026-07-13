@@ -536,7 +536,7 @@ class CardPaginationTests(unittest.TestCase):
         }
         mapped = topic_writer.map_row(row, 1, "2026-07-12", "run")
         self.assertEqual(mapped["原始来源标题"], "Exact article title")
-        self.assertEqual(mapped["原始发布文案"], "Long post caption")
+        self.assertEqual(mapped["原始发布文案"], "")
         self.assertEqual(mapped["研究摘要"], "What the source establishes")
         self.assertEqual(mapped["受众钩子"], "Why an unfamiliar viewer cares")
         self.assertEqual(mapped["内容结构"], "1. conflict 2. evidence 3. decision")
@@ -740,6 +740,45 @@ class VisibleClosureTests(unittest.TestCase):
         with self.assertRaisesRegex(visible_closure.VisibleClosureError, "研究摘要"):
             visible_closure.validate_content_closure(
                 expected, readback, manifest, dom, required_marker="[AR-020D R7 VISIBLE RETEST]"
+            )
+
+    def test_writer_never_fills_publication_copy_from_excerpt_or_source_content(self) -> None:
+        row = {
+            "选题命题": "Article topic",
+            "原始来源标题": "Exact article title",
+            "原始发布文案": "",
+            "原始来源摘录": "Excerpt must not become publication copy",
+            "来源内容": "Source content must not become publication copy",
+        }
+        mapped = topic_writer.map_row(row, 1, "2026-07-13", "run")
+        self.assertEqual(mapped["原始来源标题"], "Exact article title")
+        self.assertEqual(mapped["原始发布文案"], "")
+
+    def test_card_shows_missing_publication_copy_without_fabricating_source_content(self) -> None:
+        fields = self.fields("Article topic", "https://example.com/article")
+        fields.update({"原始来源标题": "Exact article title", "原始发布文案": "", "来源内容": "Other source text", "原始来源摘录": "Other excerpt"})
+        markdown = card.card_markdown_for_candidate(1, fields)
+        self.assertIn("原始标题：Exact article title", markdown)
+        self.assertIn("原始发布文案：平台未提供独立发布文案", markdown)
+        self.assertNotIn("Other source text", markdown)
+        self.assertNotIn("Other excerpt", markdown)
+
+    def test_original_row_validator_rejects_writer_injected_caption_fallback(self) -> None:
+        original = self.fields("Article topic", "https://example.com/article")
+        original.update({
+            "选题命题": "Article topic", "原始来源标题": "Exact article title",
+            "原始发布文案": "", "来源内容": "Injected fallback",
+        })
+        marker = "[AR-020D R7 SOURCE ID RETEST] "
+        expected = visible_closure.expected_staging_rows_from_original([original], marker)
+        readback_fields = dict(expected[0])
+        readback_fields["原始发布文案"] = "Injected fallback"
+        readback = [{"record_id": "rec-new", "fields": readback_fields}]
+        manifest = card.build_card_pages(readback, "run")
+        dom = [self.dom(readback_fields)]
+        with self.assertRaisesRegex(visible_closure.VisibleClosureError, "原始发布文案"):
+            visible_closure.validate_original_content_closure(
+                [original], readback, manifest, dom, visible_title_marker=marker
             )
 
 

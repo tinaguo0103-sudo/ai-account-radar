@@ -46,6 +46,29 @@ def canonical_snapshot(fields: dict[str, Any]) -> dict[str, str]:
     return {name: normalized(fields.get(name, "")) for name in VISIBLE_FIELDS}
 
 
+def expected_staging_rows_from_original(
+    original_rows: list[dict[str, Any]], visible_title_marker: str
+) -> list[dict[str, str]]:
+    """Map original final rows without consulting writer output or fallback helpers."""
+    expected = []
+    for row in original_rows:
+        title = normalized(row.get("选题命题") or row.get("我的选题标题"))
+        expected.append({
+            "选题标题": f"{visible_title_marker}{title}",
+            "来源链接": normalized(row.get("来源链接")),
+            "原始来源标题": normalized(row.get("原始来源标题")),
+            "原始发布文案": normalized(row.get("原始发布文案")),
+            "研究摘要": normalized(row.get("研究摘要")),
+            "受众钩子": normalized(row.get("受众钩子")),
+            "研究置信度": normalized(row.get("研究置信度")),
+            "我的切入": normalized(row.get("我的切入") or row.get("locked_natural_austin_angle")),
+            "内容结构": normalized(row.get("内容结构")),
+            "需要补的证据": normalized(row.get("需要补的证据")),
+            "推荐动作": normalized(row.get("推荐动作")),
+        })
+    return expected
+
+
 def snapshot_hash(fields: dict[str, Any]) -> str:
     payload = json.dumps(canonical_snapshot(fields), ensure_ascii=False, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -147,7 +170,9 @@ def validate_content_closure(
             elif name == "原始来源标题":
                 matches = display_equivalent(source[name], displayed[name], empty_placeholder="平台未提供独立标题")
             elif name == "原始发布文案":
-                matches = display_equivalent(source[name], displayed[name])
+                matches = display_equivalent(
+                    source[name], displayed[name], empty_placeholder="平台未提供独立发布文案"
+                )
             else:
                 matches = source[name] == displayed[name]
             if not matches:
@@ -183,3 +208,39 @@ def validate_content_closure(
         "record_snapshots": record_results,
         "page_snapshots": page_hashes,
     }
+
+
+def validate_original_content_closure(
+    original_rows: list[dict[str, Any]],
+    readback_records: list[dict[str, Any]],
+    manifest: dict[str, Any],
+    dom_pages: list[tuple[str, str]],
+    *,
+    visible_title_marker: str,
+    forbidden_markers: tuple[str, ...] = ("[AR-020D R5 TEST]",),
+) -> dict[str, Any]:
+    expected_rows = expected_staging_rows_from_original(original_rows, visible_title_marker)
+    result = validate_content_closure(
+        expected_rows,
+        readback_records,
+        manifest,
+        dom_pages,
+        required_marker=visible_title_marker.strip(),
+        forbidden_markers=forbidden_markers,
+    )
+    result["original_source_snapshots"] = [
+        {
+            "source_url": normalized(row.get("来源链接")),
+            "original_source_title": normalized(row.get("原始来源标题")),
+            "original_publication_copy": normalized(row.get("原始发布文案")),
+            "source_semantics_hash": hashlib.sha256(json.dumps({
+                "来源链接": normalized(row.get("来源链接")),
+                "原始来源标题": normalized(row.get("原始来源标题")),
+                "原始发布文案": normalized(row.get("原始发布文案")),
+                "研究摘要": normalized(row.get("研究摘要")),
+                "受众钩子": normalized(row.get("受众钩子")),
+            }, ensure_ascii=False, sort_keys=True, separators=(",", ":")).encode()).hexdigest(),
+        }
+        for row in original_rows
+    ]
+    return result
