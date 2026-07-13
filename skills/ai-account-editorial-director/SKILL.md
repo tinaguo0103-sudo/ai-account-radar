@@ -59,9 +59,12 @@ deterministic shortlist
 - near miss / gap
 - 公开主编判断摘要
 - research dossier hash 与支撑 angle/title/hook 的 evidence IDs
+- 面向用户的中文 `source_read`、中文 `audience_hook` 与 `research_confidence`
 - 3-5 拍内容结构（推荐制作时必填）
 
 Stage 1 禁止看到或输出实验、验证、资产、母场景、旧 04 字段、deterministic angle/title hint。标题借原始市场入口但不能照抄，也不能凭 persona 发明内容主张。
+
+风格片段按本候选真实需要的判断动作检索，例如公开矛盾、故事/社会证明、证据怀疑、结果承诺或取舍；不得把同一组片段当通用底稿。标题先服从来源事实和自然判断，再检查全批可生成标题的句式族。任一句式族占比超过 30% 时整批失败并重做判断，但检查器不得生成或机械改写标题。
 
 ## Global Ranking
 

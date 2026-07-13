@@ -21,6 +21,7 @@ def build_output(candidate: dict[str, Any], capture: dict[str, Any]) -> dict[str
     primary = str(candidate.get("primary_adapter") or "")
     final_url = str(capture.get("final_url") or "")
     identity = dict(capture.get("page_identity") or adapter.expected_identity(final_url))
+    is_post = identity.get("kind") == "x_status"
     content_hash = hashlib.sha256(
         json.dumps({"url": final_url, "title": title, "author": author, "body": body}, ensure_ascii=False, sort_keys=True).encode("utf-8")
     ).hexdigest()
@@ -41,9 +42,10 @@ def build_output(candidate: dict[str, Any], capture: dict[str, Any]) -> dict[str
         "open_status": "opened",
         "failure_reason": "",
         "page_state": capture.get("page_state", "exact_page"),
-        "exact_title": title,
+        "exact_title": "" if is_post else title,
+        "independent_title_verified": not is_post,
         "source_summary": body[:4000],
-        "caption_body": body,
+        "caption_body": body if is_post else "",
         "author": author,
         "platform": capture.get("platform") or ("X" if identity.get("kind") == "x_status" else "Web"),
         "publish_metadata": str(capture.get("publish_metadata") or ""),

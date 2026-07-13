@@ -43,6 +43,7 @@ REQUIRED_FIELDS = [
     "研究摘要",
     "受众钩子",
     "内容结构",
+    "研究置信度",
     "我的切入",
     "原始发布文案",
 ]
@@ -278,8 +279,22 @@ def list_tables(token: str, app_token: str) -> dict[str, str]:
 
 
 def list_fields(token: str, app_token: str, table_id: str) -> dict[str, dict[str, Any]]:
-    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields", token=token)
-    return {item["field_name"]: item for item in payload.get("data", {}).get("items", [])}
+    fields: dict[str, dict[str, Any]] = {}
+    page_token = ""
+    while True:
+        suffix = f"?page_size=500{('&page_token=' + page_token) if page_token else ''}"
+        payload = feishu.request_json(
+            "GET",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields{suffix}",
+            token=token,
+        )
+        data = payload.get("data", {})
+        fields.update({item["field_name"]: item for item in data.get("items", [])})
+        if not data.get("has_more"):
+            return fields
+        page_token = str(data.get("page_token") or "")
+        if not page_token:
+            raise RuntimeError("Feishu fields pagination reported has_more without page_token")
 
 
 def list_views(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
@@ -362,6 +377,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "研究摘要": row.get("研究摘要", ""),
         "受众钩子": row.get("受众钩子", ""),
         "内容结构": row.get("内容结构", ""),
+        "研究置信度": row.get("研究置信度", ""),
         "我的切入": row.get("我的切入") or row.get("natural_austin_angle", ""),
         "一句话Brief": row.get("一句话Brief", ""),
         "主编判断摘要": row.get("主编判断摘要", ""),

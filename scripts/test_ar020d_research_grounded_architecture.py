@@ -7,6 +7,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from unittest import mock
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -18,6 +19,7 @@ import persona_counterfactual_audit as persona_audit
 import topic_research_contract as research
 import topic_research_dossier_builder as dossier_builder
 import topic_research_cache_revalidator as cache_revalidator
+import topic_editorial_state_machine as machine
 import trusted_exact_source_adapter as exact_adapter
 import trusted_exact_source_evidence as exact_evidence
 
@@ -264,6 +266,37 @@ class PersonaIsolationTests(unittest.TestCase):
         self.assertNotEqual([item["example_id"] for item in first], [item["example_id"] for item in second])
         self.assertTrue(all(item["verbatim_text"].startswith("原文段落") for item in first + second))
 
+    def test_operation_inference_varies_with_evidence_shape(self) -> None:
+        story = machine.infer_judgment_operations({
+            "hook_analysis": {"hook_type": ["story", "social_proof"]},
+            "confidence": "high", "claim_evidence": [], "conflicts": [],
+        })
+        uncertain = machine.infer_judgment_operations({
+            "hook_analysis": {"hook_type": ["audience_benefit"]},
+            "confidence": "low", "claim_evidence": [], "conflicts": ["conflict"],
+        })
+        self.assertIn("story_or_social_proof", story)
+        self.assertIn("evidence_skepticism", uncertain)
+        self.assertIn("public_contradiction", uncertain)
+        self.assertNotEqual(story, uncertain)
+
+    def test_actionable_title_family_gate_detects_contrast_dominance(self) -> None:
+        rows = [
+            {"今日建议级别": "推荐制作", "选题命题": title}
+            for title in ["不是工具，是结果", "不缺模型，缺现场", "不是会聊，是做完", "一个公开问题"]
+        ]
+        report = persona_audit.actionable_title_family_report(rows)
+        self.assertFalse(report["ok"])
+        self.assertGreater(report["max_family_rate"], 0.30)
+
+    def test_douyin_row_and_card_do_not_duplicate_caption_as_title(self) -> None:
+        source = {"platform": "抖音", "exact_title": "完整发布文案", "caption_body": "完整发布文案"}
+        self.assertFalse(source.get("independent_title_verified"))
+        fields = {"选题标题": "建议选题", "原始来源标题": "", "原始发布文案": source["caption_body"]}
+        markdown = card.card_markdown_for_candidate(1, fields)
+        self.assertIn("原始标题：平台未提供独立标题", markdown)
+        self.assertEqual(markdown.count("完整发布文案"), 1)
+
     def test_counterfactual_computes_fact_stability_and_expression_change(self) -> None:
         base = {
             "candidate_id": "c1", "source": {"hash": "s"}, "research": {"hash": "r"},
@@ -335,7 +368,9 @@ class CardPaginationTests(unittest.TestCase):
             "fields": {
                 "选题标题": f"topic-{index}", "原始来源标题": f"source-{index}",
                 "来源链接": f"https://example.com/article/{index}", "研究摘要": "summary",
-                "受众钩子": "hook", "内容结构": "1. opening 2. conflict 3. evidence",
+                "受众钩子": "陌生观众为什么会点", "研究置信度": "中",
+                "内容结构": "1. opening 2. conflict 3. evidence", "我的切入": "Austin 自然角度",
+                "需要补的证据": "无关键缺口",
                 "推荐动作": "生成脚本包", "title_permission": "可发布标题",
                 "是否建议进入制作": "是", "状态": "待判断",
             },
@@ -383,7 +418,7 @@ class CardPaginationTests(unittest.TestCase):
         self.assertIn("[查看原始文章](https://example.com/article/0)", markdown)
         self.assertIn("原始标题：source-0", markdown)
         self.assertIn("来源摘要：summary", markdown)
-        self.assertIn("受众钩子：hook", markdown)
+        self.assertIn("受众钩子：陌生观众为什么会点", markdown)
         self.assertIn("内容结构：", markdown)
 
     def test_card_uses_natural_angle_and_page_scoped_reject(self) -> None:
@@ -403,6 +438,27 @@ class CardPaginationTests(unittest.TestCase):
         markdown = card.card_markdown_for_candidate(1, fields)
         expected = ["精确来源：", "原始标题：", "原始发布文案：", "来源摘要：", "受众钩子：", "Austin 角度：", "内容结构："]
         self.assertEqual([markdown.index(value) for value in expected], sorted(markdown.index(value) for value in expected))
+
+    def test_topic_writer_lists_every_field_page_before_schema_setup(self) -> None:
+        calls = []
+
+        def fake_request(_method, path, **_kwargs):
+            calls.append(path)
+            if "page_token=next" in path:
+                return {"data": {"items": [{"field_name": "研究置信度"}], "has_more": False}}
+            return {
+                "data": {
+                    "items": [{"field_name": "我的选题标题"}],
+                    "has_more": True,
+                    "page_token": "next",
+                }
+            }
+
+        with mock.patch.object(topic_writer.feishu, "request_json", side_effect=fake_request):
+            fields = topic_writer.list_fields("token", "app", "table")
+        self.assertEqual(set(fields), {"我的选题标题", "研究置信度"})
+        self.assertIn("page_size=500", calls[0])
+        self.assertIn("page_token=next", calls[1])
 
 
 class LegacyCliTests(unittest.TestCase):

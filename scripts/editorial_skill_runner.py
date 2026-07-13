@@ -282,6 +282,7 @@ EDITORIAL_DECISION_FIELDS = [
     "audience_hook",
     "hook_evidence_ids",
     "source_read",
+    "research_confidence",
     "decision",
     "why_i_would_choose",
     "why_i_would_not_choose",
@@ -432,6 +433,10 @@ VISIBLE_TEXT_REPLACEMENTS = {
 
 def normalize_space(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def contains_chinese(value: Any) -> bool:
+    return bool(re.search(r"[\u4e00-\u9fff]", str(value or "")))
 
 
 def short_sentence(value: Any, limit: int = 120) -> str:
@@ -1239,7 +1244,14 @@ def _apply_stage2_payload(
         out["Austin改写理由"] = out.get("Austin改写理由") or str(decision.get("source_hook_usage", ""))
         out["研究摘要"] = str(decision.get("source_read") or decision.get("public_decision_summary") or "")
         out["受众钩子"] = str(decision.get("audience_hook") or "")
+        out["研究置信度"] = str(decision.get("research_confidence") or out.get("研究置信度") or "")
         out["内容结构"] = str(decision.get("proposed_content_structure") or "")
+        if not contains_chinese(out["研究摘要"]):
+            raw_issues.append("user-visible research summary must be concise Chinese")
+        if not contains_chinese(out["受众钩子"]):
+            raw_issues.append("user-visible audience hook must be concise Chinese")
+        if not out["研究置信度"]:
+            raw_issues.append("user-visible research confidence is required")
         if normalize_space(out["研究摘要"]) == normalize_space(out["受众钩子"]):
             raw_issues.append("research summary must state facts and differ from audience hook")
         if normalize_space(decision.get("natural_austin_angle")) == normalize_space(out.get("对应方向")):

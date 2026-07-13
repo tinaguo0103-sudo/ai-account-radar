@@ -36,6 +36,23 @@ TOPIC_CREATE_KIND = "topic_candidate_create"
 TOPIC_CARD_SEND_KIND = "topic_card_send"
 DEFAULT_LIMIT = 0
 CARD_PAGE_SIZE = 5
+EVIDENCE_FIRST_REQUIRED_FIELDS = ("来源链接", "研究摘要", "受众钩子", "研究置信度", "内容结构", "我的切入", "需要补的证据")
+
+
+def validate_evidence_first_record(record: dict[str, Any]) -> None:
+    fields = record.get("fields", {}) or {}
+    if normalize(fields.get("今日建议级别")) != "推荐制作":
+        return
+    missing = [name for name in EVIDENCE_FIRST_REQUIRED_FIELDS if not normalize(fields.get(name))]
+    if missing:
+        raise ValueError(f"Evidence-first card candidate missing fields: {', '.join(missing)}")
+    for name in ("研究摘要", "受众钩子"):
+        if not re.search(r"[\u4e00-\u9fff]", normalize(fields.get(name))):
+            raise ValueError(f"Evidence-first card field must be Chinese: {name}")
+    title = normalize(fields.get("原始来源标题"))
+    caption = normalize(fields.get("原始发布文案"))
+    if title and caption and title == caption:
+        raise ValueError("Original title and post caption must not duplicate")
 CARD_EXPIRE_DAYS = 5
 DEFAULT_STATUS_FILTER = {"待判断", ""}
 ENTER_SCRIPT_PACKAGE_FORM_KEY = "script_package_records"
@@ -271,6 +288,7 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     research_summary = compact(fields.get("研究摘要"), 120)
     audience_hook = compact(fields.get("受众钩子"), 100)
     content_structure = compact(fields.get("内容结构"), 140)
+    research_confidence = compact(fields.get("研究置信度"), 24)
     editorial_trace = compact(fields.get("主编判断摘要"), 96)
     title_thinking = compact(fields.get("标题思路"), 82)
     experiment = compact(fields.get("我要做的实验"), 76)
@@ -293,6 +311,8 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
         lines.append(f"Austin 角度：{natural_angle}")
     if content_structure:
         lines.append(f"内容结构：{content_structure}")
+    if research_confidence:
+        lines.append(f"研究置信度：{research_confidence}")
     if evidence:
         lines.append(f"证据：{evidence}")
     if missing:
@@ -318,6 +338,8 @@ def build_card_pages(records: list[dict[str, Any]], run_id: str, page_size: int 
         raise ValueError("Every card candidate requires record_id")
     if len(set(ids)) != len(ids):
         raise ValueError("Card pagination candidate IDs must be unique")
+    for record in records:
+        validate_evidence_first_record(record)
     pages: list[dict[str, Any]] = []
     for start in range(0, len(records), page_size):
         page_records = records[start:start + page_size]

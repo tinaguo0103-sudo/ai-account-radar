@@ -95,10 +95,15 @@ def validate_source_open(candidate: dict[str, Any], output: dict[str, Any]) -> d
         raise ContractError("Opened URL does not match the exact shortlisted source URL")
     if not is_concrete_source_url(final):
         raise ContractError("Source URL is not a concrete article/video page")
-    required = ["exact_title", "platform", "author", "opened_at", "captured_content_hash", "source_type", "source_summary"]
+    required = ["platform", "author", "opened_at", "captured_content_hash", "source_type", "source_summary"]
     missing = [field for field in required if not str(output.get(field) or "").strip()]
     if missing:
         raise ContractError(f"Source-open output missing fields: {', '.join(missing)}")
+    if output.get("independent_title_verified"):
+        if not str(output.get("exact_title") or "").strip():
+            raise ContractError("Verified independent title is empty")
+    elif not str(output.get("caption_body") or "").strip():
+        raise ContractError("Platform without an independent title requires caption/post text")
     if not re.fullmatch(r"[0-9a-f]{64}", str(output.get("captured_content_hash"))):
         raise ContractError("captured_content_hash must be SHA256")
     if not output.get("content_evidence"):

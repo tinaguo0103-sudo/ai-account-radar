@@ -185,8 +185,10 @@ export async function openExactVideo(options) {
     classification.status = "opened_partial";
     classification.reason = "expected_title_not_verified_on_exact_page";
   }
-  const exactTitle = titleResult.exact_title;
-  const captionBody = titleResult.verified ? titleResult.caption_body : String(page.caption_body || "").trim();
+  // Douyin exposes one publish-description surface, not a separately
+  // provenance-backed title field. Keep the full text as caption only.
+  const exactTitle = "";
+  const captionBody = String(page.exact_title || page.caption_body || "").trim();
   const contentForHash = JSON.stringify({
     video_id: inputVideoId, final_url: page.final_url, exact_title: page.exact_title,
     caption_body: page.caption_body, transcript: page.transcript, visible_text: page.visible_text,
@@ -201,6 +203,7 @@ export async function openExactVideo(options) {
     open_status: classification.status, failure_reason: classification.reason,
     login_state: page.verification_state === "needs_login" ? "required" : "available",
     verification_state: page.verification_state || "unknown", exact_title: exactTitle,
+    independent_title_verified: false,
     title_verification_state: titleResult.verified ? "visible_prefix_match" : "unverified",
     page_state: page.page_state || "unknown",
     page_identity: { kind: "concrete_url", path: `/video/${inputVideoId}` },

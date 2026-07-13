@@ -26,6 +26,32 @@ import trusted_exact_source_adapter as source_adapter
 
 VERSION = "ar020d_research_grounded_state_machine_v2"
 ACCOUNT_DIRECTIONS = ["AI业务定调", "真实工作流改造", "汽车与内容营销", "AI导演工作流"]
+
+
+def infer_judgment_operations(dossier: dict[str, Any]) -> list[str]:
+    """Infer the editorial operation from evidence shape, not source keywords."""
+    hook = dossier.get("hook_analysis", {}) or {}
+    hook_types = set(hook.get("hook_type") or [])
+    claims = list(dossier.get("claim_evidence") or [])
+    confidence = str(dossier.get("confidence") or "").lower()
+    operations = {"natural_voice"}
+    if hook_types & {"story", "social_proof", "story_or_social_proof"}:
+        operations.add("story_or_social_proof")
+    if hook_types & {"result_promise", "audience_benefit"}:
+        operations.add("result_promise")
+    if dossier.get("conflicts") or hook_types & {"contradiction", "conflict", "public_contradiction"}:
+        operations.add("public_contradiction")
+    if confidence in {"low", "弱"} or any(
+        str(item.get("strength") or "").lower() in {"low", "weak", "弱"} for item in claims
+    ):
+        operations.add("evidence_skepticism")
+    if "decision_tradeoff" in hook_types:
+        operations.add("decision_tradeoff")
+    if "shallow_take_rejection" in hook_types:
+        operations.add("shallow_take_rejection")
+    if not (operations & {"story_or_social_proof", "result_promise", "public_contradiction", "evidence_skepticism"}):
+        operations.add("shallow_take_rejection")
+    return [name for name in persona_builder.OPERATION_PATTERNS if name in operations]
 STAGE1_ALLOWLIST = {
     "candidate_id", "source", "research", "hook_analysis", "persona_facts",
     "judgment_and_style_examples",
@@ -416,16 +442,7 @@ def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
         stage_rows = []
         for offset, item in enumerate(rows):
             dossier = read_json(out_dir / "research" / item["candidate_id"] / "validated.json")
-            hook_types = set(dossier.get("hook_analysis", {}).get("hook_type") or [])
-            operations = ["natural_voice", "decision_tradeoff"]
-            if hook_types & {"story", "social_proof"}:
-                operations.append("story_or_social_proof")
-            if hook_types & {"result_promise", "audience_benefit"}:
-                operations.append("result_promise")
-            if dossier.get("conflicts"):
-                operations.extend(["public_contradiction", "evidence_skepticism"])
-            else:
-                operations.append("shallow_take_rejection")
+            operations = infer_judgment_operations(dossier)
             retrieved = persona_builder.retrieve_style_examples(
                 examples, operations, candidate_id=item["candidate_id"], limit=min(6, len(examples))
             )
@@ -434,9 +451,11 @@ def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
                 "requested_operations": operations,
                 "example_ids": [example["example_id"] for example in retrieved],
                 "source_hashes": [example["source_hash"] for example in retrieved],
-                "retrieval_reasons": [
-                    sorted(set(example["judgment_operations"]) & set(operations)) for example in retrieved
-                ],
+                "retrieval_reasons": [{
+                    "example_id": example["example_id"],
+                    "matched_operations": sorted(set(example["judgment_operations"]) & set(operations)),
+                    "reason": "该原文片段展示了本候选所需的判断动作，而非复用案例事实或句式。",
+                } for example in retrieved],
             })
             stage_rows.append({"index": start + offset, **minimized_stage1_row(item, dossier, facts, retrieved)})
         payload = {
@@ -472,9 +491,10 @@ def eligible_source_rows(out_dir: Path, state: dict[str, Any]) -> list[dict[str,
     for item in eligible:
         row = dict(pre["pre_skill_pool"][int(item["index"])])
         source = read_json(out_dir / "source_open" / item["candidate_id"] / "validated.json")
-        is_video = str(source.get("platform") or "").lower() in {"douyin", "x"} or source.get("page_identity", {}).get("kind") in {"douyin_video", "x_status"}
-        row["原始来源标题"] = str(source.get("exact_title") or "") if not is_video else ""
-        row["原始发布文案"] = str(source.get("caption_body") or source.get("source_summary") or "") if is_video else ""
+        is_video = str(source.get("platform") or "").lower() in {"douyin", "抖音", "x"} or source.get("page_identity", {}).get("kind") in {"douyin_video", "x_status"}
+        has_independent_title = bool(source.get("independent_title_verified"))
+        row["原始来源标题"] = str(source.get("exact_title") or "") if (not is_video or has_independent_title) else ""
+        row["原始发布文案"] = str(source.get("caption_body") or source.get("exact_title") or "") if is_video else ""
         row["来源链接"] = str(source.get("final_url") or source.get("exact_url") or "")
         rows.append(row)
     return rows

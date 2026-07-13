@@ -37,6 +37,33 @@ def sentence_family(value: str) -> str:
     return re.sub(r"\s+", "", text)[:80]
 
 
+def editorial_title_family(value: str) -> str:
+    text = str(value or "").replace(" ", "")
+    if ("不是" in text and ("是" in text or "而是" in text)) or ("不缺" in text and "缺" in text):
+        return "contrast_not_but"
+    if "为什么" in text or text.endswith("吗") or "什么" in text:
+        return "public_question"
+    if any(token in text for token in ["出圈", "火了", "爆"]):
+        return "story_social_proof"
+    if any(token in text for token in ["之后", "以后", "最后"]):
+        return "result_consequence"
+    return "declarative_other"
+
+
+def actionable_title_family_report(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    actionable = [row for row in rows if row.get("今日建议级别") == "推荐制作"]
+    families = Counter(editorial_title_family(row.get("选题命题") or row.get("selected_visible_title") or "") for row in actionable)
+    maximum = max(families.values(), default=0)
+    rate = maximum / len(actionable) if actionable else 0
+    return {
+        "actionable_count": len(actionable),
+        "family_counts": dict(families),
+        "max_family_rate": rate,
+        "threshold": 0.30,
+        "ok": rate <= 0.30,
+    }
+
+
 def leakage_report(rows: list[dict[str, Any]], retrievals: list[dict[str, Any]]) -> dict[str, Any]:
     sets = [tuple(item.get("example_ids") or []) for item in retrievals]
     families = Counter(sentence_family(row.get("selected_visible_title") or row.get("public_decision_summary") or "") for row in rows)
@@ -50,6 +77,7 @@ def leakage_report(rows: list[dict[str, Any]], retrievals: list[dict[str, Any]])
         "persona_case_anchor_count": sum(
             1 for row in rows if row.get("case_id") or row.get("case_name") or row.get("case_citation")
         ),
+        "actionable_title_families": actionable_title_family_report(rows),
     }
 
 

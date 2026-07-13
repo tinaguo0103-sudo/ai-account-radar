@@ -79,6 +79,14 @@ def make_decision(index: int = 0, *, decision_value: str = "select") -> dict[str
         "recommendation_status": recommendation,
         "near_miss_reason": "" if decision_value == "select" else "今天不进入制作。",
         "public_decision_summary": "来源证据和 Austin 场景形成了公开可解释的取舍。",
+        "source_read": "来源展示了一个可核验的具体结果。",
+        "audience_hook": "陌生观众能立刻理解这个结果为什么值得关注。",
+        "research_confidence": "中",
+        "research_dossier_hash": "dossier-hash",
+        "research_evidence_ids": "src-1",
+        "hook_evidence_ids": "src-1",
+        "proposed_content_structure": "1. 来源事实；2. 业务矛盾；3. 判断取舍",
+        "state_or_gap": "证据完整",
     }, index, {"original_title": f"source {index}"})
 
 
@@ -519,6 +527,7 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                     "audience_hook": "陌生观众能看到可编辑 PPT 的结果承诺。",
                     "hook_evidence_ids": "src-1,web-1",
                     "source_read": "来源演示 Word Brief 生成可编辑 PPT。",
+                    "research_confidence": "中",
                     "decision": "select",
                     "why_i_would_choose": "能接到交付现场。",
                     "why_i_would_not_choose": "不能照抄教程。",

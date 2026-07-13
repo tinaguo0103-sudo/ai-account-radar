@@ -20,6 +20,7 @@ from typing import Any
 
 import content_sampler
 import editorial_skill_runner
+import persona_counterfactual_audit
 import topic_field_contract as field_contract
 import topic_flow_rework as flow
 import topic_replay_evaluation as deterministic_replay
@@ -1062,6 +1063,8 @@ def aggregate_replay_outputs(
         guard_blocked_count = sum(1 for row in skill_rows if str(row.get("guard_blocked") or "").lower() == "true")
         global_ranking_meta = engine_meta.get("global_ranking") or {}
         ranking_bijection_ok = bool(global_ranking_meta.get("ranking_bijection_ok"))
+        actionable_title_families = persona_counterfactual_audit.actionable_title_family_report(skill_rows)
+        write_json(out_dir / "actionable_title_family_check.json", actionable_title_families)
         replay_completed_ok = completed and failed_batch_count == 0
         summary = {
             "ok": replay_completed_ok,
@@ -1075,6 +1078,7 @@ def aggregate_replay_outputs(
                 and raw_stage2_drift_count == 0
                 and guard_blocked_count == 0
                 and ranking_bijection_ok
+                and actionable_title_families["ok"]
             ),
             "engine": engine,
             "engine_meta": engine_meta,
@@ -1101,6 +1105,8 @@ def aggregate_replay_outputs(
             "raw_stage2_drift_count": raw_stage2_drift_count,
             "guard_blocked_count": guard_blocked_count,
             "ranking_bijection_ok": ranking_bijection_ok,
+            "actionable_title_family_ok": actionable_title_families["ok"],
+            "actionable_title_max_family_rate": actionable_title_families["max_family_rate"],
             "writes_feishu": False,
             "outputs": {
                 "candidate_universe": str(out_dir / "candidate_universe.csv"),
