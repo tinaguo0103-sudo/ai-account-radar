@@ -23,6 +23,8 @@ import run_douyin_exact_source_stage as douyin_stage
 import topic_editorial_state_machine as machine
 import trusted_exact_source_adapter as exact_adapter
 import trusted_exact_source_evidence as exact_evidence
+import validate_ar020d_visible_closure as visible_closure
+import write_ar020d_visible_retest as visible_retest_writer
 
 
 def decision(index: int, action: str = "生成脚本包") -> dict:
@@ -660,6 +662,85 @@ class LegacyCliTests(unittest.TestCase):
         active = ["editorial_skill_runner.py", "topic_editorial_state_machine.py", "topic_skill_replay_evaluation.py"]
         text = "\n".join(Path(__file__).with_name(name).read_text(encoding="utf-8") for name in active)
         self.assertEqual([marker for marker in prohibited if marker in text], [])
+
+
+class VisibleClosureTests(unittest.TestCase):
+    def test_visible_retest_writer_requires_explicit_nonproduction_table(self) -> None:
+        with self.assertRaisesRegex(RuntimeError, "Explicit staging"):
+            visible_retest_writer.validate_staging_target("", "", "staging")
+        with self.assertRaisesRegex(RuntimeError, "blocked in production"):
+            visible_retest_writer.validate_staging_target(
+                visible_retest_writer.PRODUCTION_TOPIC_TABLE_ID, "FEISHU_TOPIC_TABLE_ID", "staging"
+            )
+        with self.assertRaisesRegex(RuntimeError, "blocked in production"):
+            visible_retest_writer.validate_staging_target("tbl-test", "FEISHU_TOPIC_TABLE_ID", "production")
+        visible_retest_writer.validate_staging_target("tbl-test", "FEISHU_TOPIC_TABLE_ID", "staging")
+
+    def fields(self, title: str, url: str) -> dict[str, str]:
+        return {
+            "选题标题": title,
+            "来源链接": url,
+            "原始来源标题": "平台未提供独立标题",
+            "原始发布文案": "发布文案",
+            "研究摘要": "来源事实摘要",
+            "受众钩子": "陌生观众会关心的矛盾",
+            "研究置信度": "medium",
+            "我的切入": "自然 Austin 角度",
+            "内容结构": "1. 事实；2. 矛盾；3. 判断",
+            "需要补的证据": "补一段现场画面",
+            "推荐动作": "生成脚本包",
+        }
+
+    def dom(self, fields: dict[str, str]) -> tuple[str, str]:
+        text = "\n".join([
+            "今日选题速选 · 2026-07-13", "[AR-020D R7 VISIBLE RETEST]",
+            f"1. {fields['选题标题']}", "精确来源：查看原始视频",
+            f"原始标题：{fields['原始来源标题']}", f"原始发布文案：{fields['原始发布文案']}",
+            f"来源摘要：{fields['研究摘要']}", f"受众钩子：{fields['受众钩子']}",
+            f"Austin 角度：{fields['我的切入']}", f"内容结构：{fields['内容结构']}",
+            f"研究置信度：{fields['研究置信度']}", f"缺口：{fields['需要补的证据']}", "本页都不选",
+        ])
+        html = f'<a href="{fields["来源链接"]}">查看原始视频</a>'
+        return text, html
+
+    def fixture(self) -> tuple[list[dict], list[dict], dict, list[tuple[str, str]]]:
+        fields = self.fields("[AR-020D R7 VISIBLE RETEST] 新标题", "https://www.douyin.com/video/123")
+        expected = [fields]
+        readback = [{"record_id": "rec-new", "fields": dict(fields)}]
+        manifest = card.build_card_pages([{"record_id": "rec-new", "fields": dict(fields)}], "ar020d_r7_visible_retest")
+        return expected, readback, manifest, [self.dom(fields)]
+
+    def test_content_closure_accepts_exact_record_manifest_dom_identity(self) -> None:
+        expected, readback, manifest, dom = self.fixture()
+        result = visible_closure.validate_content_closure(
+            expected, readback, manifest, dom, required_marker="[AR-020D R7 VISIBLE RETEST]"
+        )
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["candidate_ids"], ["rec-new"])
+
+    def test_content_closure_rejects_stale_marker(self) -> None:
+        expected, readback, manifest, dom = self.fixture()
+        dom[0] = (dom[0][0].replace("[AR-020D R7 VISIBLE RETEST]", "[AR-020D R5 TEST]"), dom[0][1])
+        with self.assertRaisesRegex(visible_closure.VisibleClosureError, "required_marker_missing|stale_marker"):
+            visible_closure.validate_content_closure(
+                expected, readback, manifest, dom, required_marker="[AR-020D R7 VISIBLE RETEST]"
+            )
+
+    def test_content_closure_rejects_readback_source_identity_mismatch(self) -> None:
+        expected, readback, manifest, dom = self.fixture()
+        readback[0]["fields"]["来源链接"] = "https://www.douyin.com/video/999"
+        with self.assertRaisesRegex(visible_closure.VisibleClosureError, "来源链接"):
+            visible_closure.validate_content_closure(
+                expected, readback, manifest, dom, required_marker="[AR-020D R7 VISIBLE RETEST]"
+            )
+
+    def test_content_closure_rejects_dom_content_or_order_mismatch(self) -> None:
+        expected, readback, manifest, dom = self.fixture()
+        dom[0] = (dom[0][0].replace("来源事实摘要", "旧摘要"), dom[0][1])
+        with self.assertRaisesRegex(visible_closure.VisibleClosureError, "研究摘要"):
+            visible_closure.validate_content_closure(
+                expected, readback, manifest, dom, required_marker="[AR-020D R7 VISIBLE RETEST]"
+            )
 
 
 if __name__ == "__main__":
