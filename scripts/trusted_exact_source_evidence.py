@@ -22,9 +22,13 @@ def build_output(candidate: dict[str, Any], capture: dict[str, Any]) -> dict[str
     final_url = str(capture.get("final_url") or "")
     identity = dict(capture.get("page_identity") or adapter.expected_identity(final_url))
     is_post = identity.get("kind") == "x_status"
-    content_hash = hashlib.sha256(
-        json.dumps({"url": final_url, "title": title, "author": author, "body": body}, ensure_ascii=False, sort_keys=True).encode("utf-8")
-    ).hexdigest()
+    dom_text_path = Path(str(capture.get("dom_text_path") or ""))
+    if not dom_text_path.is_file():
+        raise adapter.AdapterContractError("Exact-page capture lacks persisted raw DOM/body artifact")
+    raw_text = dom_text_path.read_text(encoding="utf-8")
+    if body not in raw_text and " ".join(body.split()) not in " ".join(raw_text.split()):
+        raise adapter.AdapterContractError("Visible body is not present in raw DOM/body artifact")
+    content_hash = hashlib.sha256(dom_text_path.read_bytes()).hexdigest()
     requested_screenshot = Path(str(capture.get("screenshot_path") or "")) if capture.get("screenshot_path") else None
     screenshot_path = str(requested_screenshot) if requested_screenshot and requested_screenshot.exists() else ""
     visual_status = "completed" if screenshot_path else "failed"
@@ -56,7 +60,7 @@ def build_output(candidate: dict[str, Any], capture: dict[str, Any]) -> dict[str
         "retrieval_surface": primary,
         "browser_surface": str(capture.get("browser_surface") or ""),
         "browser_session_boundary": str(capture.get("browser_session_boundary") or ""),
-        "dom_text_path": str(capture.get("dom_text_path") or ""),
+        "dom_text_path": str(dom_text_path),
         "screenshot_path": screenshot_path,
         "visual_capture_status": visual_status,
         "visual_capture_error": visual_error,

@@ -16,6 +16,7 @@ import feishu_topic_decision_card as card
 import push_today10_to_feishu as topic_writer
 import persona_reference_builder as persona
 import persona_counterfactual_audit as persona_audit
+import build_persona_counterfactual_evidence as counterfactual_builder
 import topic_research_contract as research
 import topic_research_dossier_builder as dossier_builder
 import topic_research_cache_revalidator as cache_revalidator
@@ -124,12 +125,14 @@ class ResearchContractTests(unittest.TestCase):
 
     def test_exact_evidence_builder_keeps_one_primary_adapter(self) -> None:
         candidate = {"candidate_id": "c1", "exact_url": "https://x.com/a/status/123", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
-        output = exact_evidence.build_output(candidate, {
-            "final_url": candidate["exact_url"], "page_identity": {"kind": "x_status", "status_id": "123"},
-            "page_state": "exact_post", "exact_title": "Visible post", "visible_body": "Complete visible post body",
-            "author": "@a", "browser_surface": "iab", "browser_session_boundary": "current_task",
-            "dom_text_path": "/tmp/dom", "screenshot_path": "", "visual_capture_error": "timeout",
-        })
+        with tempfile.TemporaryDirectory() as temp:
+            dom = Path(temp) / "dom.txt"; dom.write_text("Complete visible post body " * 8, encoding="utf-8")
+            output = exact_evidence.build_output(candidate, {
+                "final_url": candidate["exact_url"], "page_identity": {"kind": "x_status", "status_id": "123"},
+                "page_state": "exact_post", "exact_title": "Visible post", "visible_body": "Complete visible post body",
+                "author": "@a", "browser_surface": "iab", "browser_session_boundary": "current_task",
+                "dom_text_path": str(dom), "screenshot_path": "", "visual_capture_error": "timeout",
+            })
         self.assertEqual(output["attempted_adapters"], [exact_adapter.TRUSTED_BROWSER_ADAPTER])
         self.assertEqual(len(output["content_evidence"]), 1)
         self.assertEqual(output["visual_capture_status"], "failed")
@@ -138,12 +141,14 @@ class ResearchContractTests(unittest.TestCase):
 
     def test_screenshot_timeout_with_complete_dom_is_opened_with_warning(self) -> None:
         candidate = {"candidate_id": "c1", "exact_url": "https://x.com/a/status/123", "primary_adapter": exact_adapter.TRUSTED_BROWSER_ADAPTER}
-        output = exact_evidence.build_output(candidate, {
-            "final_url": candidate["exact_url"], "page_identity": {"kind": "x_status", "status_id": "123"},
-            "page_state": "exact_post", "exact_title": "Exact post", "visible_body": "Complete post body",
-            "author": "@a", "browser_surface": "iab", "browser_session_boundary": "current_task",
-            "dom_text_path": "/tmp/fresh-dom", "screenshot_path": "", "visual_capture_error": "timeout",
-        })
+        with tempfile.TemporaryDirectory() as temp:
+            dom = Path(temp) / "dom.txt"; dom.write_text("Complete post body " * 10, encoding="utf-8")
+            output = exact_evidence.build_output(candidate, {
+                "final_url": candidate["exact_url"], "page_identity": {"kind": "x_status", "status_id": "123"},
+                "page_state": "exact_post", "exact_title": "Exact post", "visible_body": "Complete post body",
+                "author": "@a", "browser_surface": "iab", "browser_session_boundary": "current_task",
+                "dom_text_path": str(dom), "screenshot_path": "", "visual_capture_error": "timeout",
+            })
         self.assertEqual(output["open_status"], "opened")
         self.assertEqual(output["visual_capture_status"], "failed")
         self.assertEqual(output["screenshot_path"], "")
@@ -163,10 +168,11 @@ class ResearchContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as temp:
             screenshot = Path(temp) / "page.png"
             screenshot.write_bytes(b"png")
+            dom = Path(temp) / "dom.txt"; dom.write_text("Complete post body " * 10, encoding="utf-8")
             output = exact_evidence.build_output(candidate, {
                 "final_url": candidate["exact_url"], "page_identity": {"kind": "x_status", "status_id": "123"},
                 "page_state": "exact_post", "exact_title": "Exact post", "visible_body": "Complete post body", "author": "@a",
-                "browser_surface": "iab", "browser_session_boundary": "current_task", "dom_text_path": "/tmp/dom",
+                "browser_surface": "iab", "browser_session_boundary": "current_task", "dom_text_path": str(dom),
                 "screenshot_path": str(screenshot),
             })
         self.assertEqual(output["visual_capture_status"], "completed")
@@ -224,6 +230,47 @@ class ResearchContractTests(unittest.TestCase):
         with self.assertRaises(research.ContractError):
             research.validate_source_open(candidate, payload)
 
+    def _source_payload(self, candidate: dict, raw_path: Path, excerpt: str) -> dict:
+        return {
+            "primary_adapter": candidate["primary_adapter"], "attempted_adapters": [candidate["primary_adapter"]],
+            "open_status": "opened", "exact_url": candidate["exact_url"], "final_url": candidate["exact_url"],
+            "page_identity": exact_adapter.expected_identity(candidate["exact_url"]), "page_state": "exact_page",
+            "browser_surface": "current_task_trusted_web", "browser_session_boundary": "current_task",
+            "visual_capture_status": "failed", "visual_capture_error": "not_required_for_semantic_capture", "screenshot_path": "",
+            "exact_title": "Exact article", "independent_title_verified": True, "platform": "web", "author": "Publisher",
+            "opened_at": "2026-07-13T00:00:00Z", "captured_content_hash": hashlib.sha256(raw_path.read_bytes()).hexdigest(),
+            "source_type": "article", "source_summary": "Factual source summary", "dom_text_path": str(raw_path),
+            "content_evidence": [{"evidence_id": "src-1", "text": excerpt}],
+        }
+
+    def test_source_open_requires_real_raw_file_hash_body_and_literal_excerpt(self) -> None:
+        candidate = {"exact_url": "https://example.com/article/123", "primary_adapter": exact_adapter.TRUSTED_WEB_ADAPTER}
+        with tempfile.TemporaryDirectory() as temp:
+            raw = Path(temp) / "raw.txt"; excerpt = "Literal source sentence establishing the exact opened article identity."
+            raw.write_text(("Visible exact article body. " * 12) + excerpt, encoding="utf-8")
+            valid = self._source_payload(candidate, raw, excerpt)
+            self.assertTrue(research.validate_source_open(candidate, valid)["eligible"])
+            with self.assertRaisesRegex(research.ContractError, "missing"):
+                research.validate_source_open(candidate, {**valid, "dom_text_path": str(Path(temp) / "absent")})
+            with self.assertRaisesRegex(research.ContractError, "hash mismatch"):
+                research.validate_source_open(candidate, {**valid, "captured_content_hash": "f" * 64})
+            short = Path(temp) / "short.txt"; short.write_text("tiny", encoding="utf-8")
+            with self.assertRaisesRegex(research.ContractError, "too short"):
+                research.validate_source_open(candidate, {**valid, "dom_text_path": str(short), "captured_content_hash": hashlib.sha256(short.read_bytes()).hexdigest()})
+            with self.assertRaisesRegex(research.ContractError, "literal substring"):
+                research.validate_source_open(candidate, {**valid, "content_evidence": [{"evidence_id": "src-1", "text": "Absent literal excerpt long enough to be checked"}]})
+
+    def test_writer_does_not_cross_fill_source_owned_fields(self) -> None:
+        mapped = topic_writer.map_row({
+            "选题命题": "Topic", "来源标题": "legacy title", "来源内容": "legacy body",
+            "原始来源摘录": "legacy excerpt", "原始来源标题": "", "原始发布文案": "",
+            "研究摘要": "", "受众钩子": "", "主编判断摘要": "public summary",
+        }, 1, "2026-07-13", "run")
+        self.assertEqual(mapped["原始来源标题"], "")
+        self.assertEqual(mapped["原始发布文案"], "")
+        self.assertEqual(mapped["研究摘要"], "")
+        self.assertEqual(mapped["受众钩子"], "")
+
     def test_persona_only_material_claim_is_rejected(self) -> None:
         dossier = {
             "source": {"content_evidence": [{"evidence_id": "src-1"}]},
@@ -241,19 +288,13 @@ class ResearchContractTests(unittest.TestCase):
             "open_status": "opened", "eligible": True, "captured_content_hash": "a" * 64,
             "content_evidence": [{"evidence_id": "src-1", "text": "verified source"}],
         }
-        spec = {
-            "source_content_hash": "a" * 64, "queries": ["query"], "results": [],
-            "external_corroboration_state": "no_accessible_corroboration", "confidence": "low",
-            "corroboration_gap": "No accessible corroboration.", "research_summary": "summary",
-            "hook_analysis": {"audience_hook": "result promise", "why_unfamiliar_audience_clicks": "clear result",
-                "hook_evidence_ids": ["src-1"], "product_name_is_not_hook": True, "hook_type": ["result"]},
-            "claim_evidence": [{"claim_id": "c1", "claim": "claim", "evidence_ids": ["src-1"], "persona_only": False}],
-            "completed_at": "2026-07-12T00:00:00+00:00",
-        }
-        dossier = dossier_builder.build_dossier(spec)
-        dossier["research_summary"] = "mutated after hashing"
-        with self.assertRaisesRegex(research.ContractError, "hash mismatch"):
-            research.validate_research_dossier({}, source, dossier)
+        with tempfile.TemporaryDirectory() as temp:
+            excerpt = "The opened article states a concrete material claim for readers."
+            dom = Path(temp) / "raw.txt"; dom.write_text(("Captured body context. " * 30) + excerpt, encoding="utf-8")
+            dossier = dossier_builder.build_dossier(self._research_spec(dom, excerpt))
+            dossier["research_summary"] = "mutated after hashing"
+            with self.assertRaisesRegex(research.ContractError, "hash mismatch"):
+                research.validate_research_dossier({}, source, dossier)
 
     def test_exact_source_only_cannot_be_recommended(self) -> None:
         decision = {
@@ -276,6 +317,34 @@ class ResearchContractTests(unittest.TestCase):
         }
         with self.assertRaisesRegex(research.ContractError, "no freshly opened"):
             research.validate_recommendation_research_eligibility(decision, dossier)
+
+    def test_no_opened_external_result_is_ineligible_before_stage1(self) -> None:
+        source = self._validated_source()
+        spec = {
+            "source_content_hash": "a" * 64, "queries": [{"query": "real topical query"}], "results": [],
+            "external_corroboration_state": "no_accessible_corroboration", "confidence": "low",
+            "corroboration_gap": "No opened page.", "research_summary": "Source-only summary.",
+            "hook_analysis": {"audience_hook": "Hook", "why_unfamiliar_audience_clicks": "Reason",
+                "hook_evidence_ids": ["src-1"], "product_name_is_not_hook": True},
+            "claim_evidence": [],
+        }
+        with self.assertRaisesRegex(research.ContractError, "ineligible before Stage 1"):
+            research.validate_research_dossier({}, source, dossier_builder.build_dossier(spec))
+
+    def test_counterfactual_rejects_constructed_non_independent_outputs(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp); pair = out / "persona_counterfactual" / "candidate-1"; pair.mkdir(parents=True)
+            shared = {"source": {"id": 1}, "research": {"id": 2}, "hook_analysis": {"id": 3}}
+            for variant in ("with_persona", "without_persona"):
+                envelope = {"execution_surface": "current_codex_task", "input_hash": variant, "input": shared}
+                (pair / f"{variant}.input.json").write_text(json.dumps(envelope), encoding="utf-8")
+                (pair / f"{variant}.output.json").write_text(json.dumps({
+                    "execution_surface": "current_codex_task", "input_hash": variant,
+                    "independent_execution_id": "same-constructed-output",
+                    "editorial_decision": {"decision": "observe", "recommendation_status": "补证据"},
+                }), encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "not independently executed"):
+                counterfactual_builder.validate(out)
 
     def test_exact_url_recheck_is_not_web_research(self) -> None:
         source = {
@@ -780,6 +849,12 @@ class VisibleClosureTests(unittest.TestCase):
             visible_closure.validate_original_content_closure(
                 [original], readback, manifest, dom, visible_title_marker=marker
             )
+
+    def test_visible_retest_has_no_fixed_recommendation_count(self) -> None:
+        source = (Path(__file__).resolve().parent / "write_ar020d_visible_retest.py").read_text(encoding="utf-8")
+        self.assertNotIn("len(mapped) != 9", source)
+        self.assertNotIn("created != 9", source)
+        self.assertIn("created != len(mapped)", source)
 
 
 if __name__ == "__main__":

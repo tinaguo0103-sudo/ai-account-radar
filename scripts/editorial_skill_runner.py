@@ -476,7 +476,7 @@ def extract_original_title(value: Any) -> str:
 
 
 def original_title_hook_from(row: dict[str, str]) -> str:
-    title = extract_original_title(row.get("原始来源标题") or row.get("来源内容") or row.get("来源标题"))
+    title = extract_original_title(row.get("原始来源标题"))
     if not title:
         return ""
     hook_terms: list[str] = []
@@ -541,12 +541,12 @@ def runtime_provenance() -> dict[str, Any]:
 
 
 def safe_source_facts(row: dict[str, str]) -> dict[str, str]:
-    source_title = row.get("原始来源标题") or row.get("来源内容") or row.get("来源标题") or ""
-    source_title_hook = row.get("原始标题钩子") or original_title_hook_from(row)
+    source_title = row.get("原始来源标题") or ""
+    source_title_hook = row.get("原始标题钩子") or ""
     return {
         "source_title": source_title,
         "source_title_hook": source_title_hook,
-        "source_excerpt": short_sentence(row.get("来源内容") or source_title, 360),
+        "source_excerpt": short_sentence(row.get("来源内容") or "", 360),
         "source_account": row.get("原始来源账号") or row.get("账号名/公众号名") or "",
         "source_link": row.get("来源链接") or "",
         "source_type": row.get("来源类型") or "",
@@ -1238,11 +1238,11 @@ def _apply_stage2_payload(
         out["editorial_thinking_json"] = out.get("editorial_thinking_json") or out["editorial_decision_json"]
         out["editorial_decision_id"] = str(decision.get("editorial_decision_id", ""))
         out["editorial_decision_hash"] = str(decision.get("editorial_decision_hash", ""))
-        out["主编判断摘要"] = out.get("主编判断摘要") or str(decision.get("public_decision_summary", ""))
-        out["标题思路"] = out.get("标题思路") or str(decision.get("title_rationale", ""))
-        out["原始标题钩子"] = out.get("原始标题钩子") or str(decision.get("source_title_hook", ""))
-        out["Austin改写理由"] = out.get("Austin改写理由") or str(decision.get("source_hook_usage", ""))
-        out["研究摘要"] = str(decision.get("source_read") or decision.get("public_decision_summary") or "")
+        out["主编判断摘要"] = str(decision.get("public_decision_summary", ""))
+        out["标题思路"] = str(decision.get("title_rationale", ""))
+        out["原始标题钩子"] = str(decision.get("source_title_hook", ""))
+        out["Austin改写理由"] = str(decision.get("source_hook_usage", ""))
+        out["研究摘要"] = str(decision.get("source_read") or "")
         out["受众钩子"] = str(decision.get("audience_hook") or "")
         out["研究置信度"] = str(decision.get("research_confidence") or out.get("研究置信度") or "")
         out["内容结构"] = str(decision.get("proposed_content_structure") or "")

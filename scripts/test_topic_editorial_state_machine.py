@@ -27,6 +27,9 @@ class TopicEditorialStateMachineTests(unittest.TestCase):
         text = source.read_text(encoding="utf-8")
         self.assertIn('"stage": "completed_with_failures"', text)
         self.assertIn('"failure_semantics": "failed candidates were excluded before editorial decision and cards"', text)
+        self.assertIn('"quality_gate_ok": False', text)
+        self.assertIn('"survivor_quality_gate_ok": True', text)
+        self.assertIn('"full_run_success": False', text)
 
     def test_one_failed_candidate_does_not_block_completed_candidates(self) -> None:
         state = {"stages": {"source_open": machine.stage_record("prepared", candidates={

@@ -145,7 +145,7 @@ def candidate_title(fields: dict[str, Any]) -> str:
 
 def candidate_dedupe_key(fields: dict[str, Any]) -> str:
     title = candidate_title(fields)
-    source = normalize(fields.get("原始来源标题") or fields.get("来源URL") or fields.get("来源内容"))
+    source = normalize(fields.get("来源链接"))
     key = "|".join(part for part in [source, title] if part)
     return hashlib.sha1(key.encode("utf-8")).hexdigest() if key else ""
 

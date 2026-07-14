@@ -189,10 +189,10 @@ export async function openExactVideo(options) {
   // provenance-backed title field. Keep the full text as caption only.
   const exactTitle = "";
   const captionBody = String(page.exact_title || page.caption_body || "").trim();
-  const contentForHash = JSON.stringify({
-    video_id: inputVideoId, final_url: page.final_url, exact_title: page.exact_title,
-    caption_body: page.caption_body, transcript: page.transcript, visible_text: page.visible_text,
-  });
+  const rawText = String(page.visible_text || "").trim();
+  const rawPath = path.join(outDir, "page_dom_text.txt");
+  if (classification.status === "opened") fs.writeFileSync(rawPath, rawText, "utf8");
+  const rawHash = classification.status === "opened" ? sha256(fs.readFileSync(rawPath)) : "";
   const result = {
     protocol: "ar020d_douyin_exact_source_v1", input_url: inputUrl, exact_url: inputUrl,
     primary_adapter: "douyin_cdp_exact_video_v1",
@@ -217,7 +217,8 @@ export async function openExactVideo(options) {
     publish_metadata: page.publish_metadata || "", transcript: page.transcript || "",
     transcript_state: page.transcript_state || "absent", visible_text: page.visible_text || "",
     source_type: "douyin_exact_video", opened_at: new Date().toISOString(),
-    captured_content_hash: sha256(contentForHash), page_content_hash: sha256(contentForHash),
+    captured_content_hash: rawHash, page_content_hash: rawHash,
+    dom_text_path: classification.status === "opened" ? rawPath : "",
     screenshot_path: path.join(outDir, "page.png"), retrieval_surface: "dedicated_local_chrome_cdp",
     content_evidence: classification.status === "opened" && page.visible_text ? [{
       evidence_id: `douyin-page-${inputVideoId}`,

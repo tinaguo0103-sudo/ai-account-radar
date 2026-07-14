@@ -38,8 +38,8 @@ def main() -> int:
 
     rows, omitted = writer.feishu_visible_rows(writer.read_today10(Path(args.input)))
     mapped = [writer.map_row(row, index, writer.today_slug(), args.run_id) for index, row in enumerate(rows, start=1)]
-    if omitted or len(mapped) != 9:
-        raise SystemExit(f"Expected exactly 9 visible rows; mapped={len(mapped)} omitted={omitted}")
+    if omitted or not mapped:
+        raise SystemExit(f"Expected every visible input row to map without omission; mapped={len(mapped)} omitted={omitted}")
     if not args.write:
         print(json.dumps({"ok": True, "mode": "dry-run", "rows": len(mapped), "table_id": table_id}, ensure_ascii=False))
         return 0
@@ -54,7 +54,7 @@ def main() -> int:
         record for record in writer.all_records(token, app_token, table_id)
         if str(record.get("fields", {}).get("运行批次", "")) == args.run_id
     ]
-    if created != 9 or len(records) != 9:
+    if created != len(mapped) or len(records) != len(mapped):
         raise RuntimeError(f"Isolated create/read-back mismatch: created={created} records={len(records)}")
     by_title = {str(record.get("fields", {}).get("选题标题", "")): record for record in records}
     ordered = [by_title.get(row["选题标题"]) for row in mapped]

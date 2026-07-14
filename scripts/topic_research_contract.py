@@ -74,6 +74,23 @@ def normalized_capture_text(value: str) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
+def validate_raw_capture(output: dict[str, Any]) -> None:
+    raw_path = Path(str(output.get("dom_text_path") or ""))
+    if not raw_path.is_file():
+        raise ContractError("Source-open raw DOM/body artifact is missing")
+    raw_bytes = raw_path.read_bytes()
+    raw_text = raw_bytes.decode("utf-8")
+    normalized_raw = normalized_capture_text(raw_text)
+    if len(normalized_raw) < 100:
+        raise ContractError("Source-open raw DOM/body artifact is blank or too short")
+    if hashlib.sha256(raw_bytes).hexdigest() != str(output.get("captured_content_hash") or ""):
+        raise ContractError("Source-open raw artifact hash mismatch")
+    evidence = output.get("content_evidence") or []
+    literal_excerpts = [normalized_capture_text(item.get("text")) for item in evidence]
+    if not any(len(excerpt) >= 20 and excerpt in normalized_raw for excerpt in literal_excerpts):
+        raise ContractError("Source-open evidence excerpt is not a literal substring of raw artifact")
+
+
 def validate_claim_trace(decision: dict[str, Any], dossier: dict[str, Any]) -> None:
     known_ids = evidence_ids(dossier)
     evidence = parse_evidence_ids(decision.get("research_evidence_ids")) | parse_evidence_ids(
@@ -140,6 +157,7 @@ def validate_source_open(candidate: dict[str, Any], output: dict[str, Any]) -> d
         raise ContractError("captured_content_hash must be SHA256")
     if not output.get("content_evidence"):
         raise ContractError("Opened source has no content evidence")
+    validate_raw_capture(output)
     if "douyin.com" in expected:
         if output.get("retrieval_surface") != "dedicated_local_chrome_cdp":
             raise ContractError("Douyin exact source must use the dedicated local Chrome CDP")
@@ -147,9 +165,6 @@ def validate_source_open(candidate: dict[str, Any], output: dict[str, Any]) -> d
             raise ContractError("Douyin exact video identity is unverified")
         if output.get("title_verification_state") != "visible_prefix_match":
             raise ContractError("Douyin exact title was not verified against visible page content")
-        screenshot_path = str(output.get("screenshot_path") or "")
-        if not screenshot_path:
-            raise ContractError("Douyin exact source has no screenshot evidence path")
     return {**output, "exact_url": exact, "final_url": final, "eligible": True, "failure_reason": ""}
 
 
@@ -170,12 +185,8 @@ def validate_research_dossier(candidate: dict[str, Any], source: dict[str, Any],
         raise ContractError("Research requires a topical/entity/claim query beyond the exact source URL")
     opened = [item for item in results if item.get("open_status") == "opened" and item.get("url") and item.get("evidence_id")]
     corroboration_state = str(dossier.get("external_corroboration_state") or "")
-    if not opened and corroboration_state != "no_accessible_corroboration":
-        raise ContractError("Research has no opened supporting result and no explicit no-corroboration state")
-    if not opened and str(dossier.get("confidence") or "").lower() not in {"low", "弱"}:
-        raise ContractError("Source-only research must use low confidence")
-    if not opened and not str(dossier.get("corroboration_gap") or "").strip():
-        raise ContractError("Source-only research must explain the corroboration gap")
+    if not opened:
+        raise ContractError("Research has no freshly opened external result; candidate is ineligible before Stage 1")
     for item in opened:
         required_result_fields = (
             "title", "publisher", "opened_at", "captured_at", "captured_content_hash",

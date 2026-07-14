@@ -418,7 +418,7 @@ def validate_research(args: argparse.Namespace) -> dict[str, Any]:
         validated = {
             **validated,
             "source": source,
-            "research_summary": validated.get("research_summary") or validated.get("summary") or "",
+            "research_summary": validated.get("research_summary", ""),
         }
         write_json(out_dir / "research" / args.candidate_id / "validated.json", validated)
         if validated.get("eligible"):
@@ -503,7 +503,7 @@ def eligible_source_rows(out_dir: Path, state: dict[str, Any]) -> list[dict[str,
         is_video = str(source.get("platform") or "").lower() in {"douyin", "抖音", "x"} or source.get("page_identity", {}).get("kind") in {"douyin_video", "x_status"}
         has_independent_title = bool(source.get("independent_title_verified"))
         row["原始来源标题"] = str(source.get("exact_title") or "") if (not is_video or has_independent_title) else ""
-        row["原始发布文案"] = str(source.get("caption_body") or source.get("exact_title") or "") if is_video else ""
+        row["原始发布文案"] = str(source.get("caption_body") or "") if is_video else ""
         row["来源链接"] = str(source.get("final_url") or source.get("exact_url") or "")
         rows.append(row)
     return rows
@@ -821,8 +821,11 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
         if candidate_failures:
             summary.update({
                 "ok": False,
+                "full_run_success": False,
                 "completed": True,
                 "stage": "completed_with_failures",
+                "survivor_quality_gate_ok": True,
+                "quality_gate_ok": False,
                 "candidate_failure_count": candidate_failures,
                 "source_open_failure_count": source_failures,
                 "research_failure_count": research_failures,
@@ -831,7 +834,16 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
             replay.write_json(out_dir / "skill_replay_summary.json", summary)
             replay.write_markdown_report(out_dir, summary, replay.sample_rows(rows))
             replay.write_ar020d_self_acceptance_report(out_dir, summary, replay.sample_rows(rows))
-        complete_stage(record, hash_json(summary), quality_gate_ok=True, candidate_failure_count=candidate_failures)
+        if not candidate_failures:
+            summary["full_run_success"] = True
+            summary["survivor_quality_gate_ok"] = bool(summary.get("quality_gate_ok"))
+        complete_stage(
+            record,
+            hash_json(summary),
+            quality_gate_ok=not candidate_failures and bool(summary.get("quality_gate_ok")),
+            survivor_quality_gate_ok=bool(summary.get("survivor_quality_gate_ok")),
+            candidate_failure_count=candidate_failures,
+        )
         if candidate_failures:
             record["status"] = "completed_with_failures"
     except Exception as exc:

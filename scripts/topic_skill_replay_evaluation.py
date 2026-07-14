@@ -956,6 +956,17 @@ def aggregate_replay_outputs(
                 and ranking_bijection_ok
                 and actionable_title_families["ok"]
             ),
+            "full_run_success": replay_completed_ok,
+            "survivor_quality_gate_ok": (
+                contract_failure_count == 0
+                and int(provenance.get("prohibited_path_count", 0) or 0) == 0
+                and title_quality_failure_count == 0
+                and stage2_selection_drift_count == 0
+                and raw_stage2_drift_count == 0
+                and guard_blocked_count == 0
+                and ranking_bijection_ok
+                and actionable_title_families["ok"]
+            ),
             "engine": engine,
             "engine_meta": engine_meta,
             "provenance_manifest": provenance,
