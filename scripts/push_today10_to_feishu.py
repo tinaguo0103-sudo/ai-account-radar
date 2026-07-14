@@ -169,36 +169,13 @@ def clean_short_proposition(value: str) -> str:
 
 
 def proposition_for(row: dict[str, str]) -> str:
-    for field in ["选题命题", "我要做的实验"]:
-        value = clean_short_proposition(row.get(field, ""))
-        if value:
-            return value
-    experiment = experiment_for(row)
-    value = clean_short_proposition(experiment)
-    if value and experiment != FALLBACK_EXPERIMENT_PROMPT:
-        return value
-    trigger = workflow_trigger_for(row)
-    action = "先暂存，等补出具体实验动作"
-    if experiment != FALLBACK_EXPERIMENT_PROMPT:
-        action = short_text(experiment, 56)
-    return short_text(f"{short_text(trigger, 24)}触发的实验：{action}", 90)
+    """Return the approved proposition owner without semantic substitution."""
+    return row.get("选题命题", "")
 
 
 def display_title_for(row: dict[str, str]) -> str:
-    if is_visible_action_candidate(row) and row.get("我的选题标题"):
-        return short_text(row["我的选题标题"], 88)
-    proposition = proposition_for(row)
-    if proposition:
-        return proposition
-    level = normalize_level(row.get("今日建议级别", ""))
-    direction = row.get("对应方向") or row.get("对应栏目") or "候选"
-    source = row.get("来源内容") or row.get("原始来源标题") or row.get("我的选题标题") or "未命名来源"
-    source_label = short_text(source, 42)
-    if level == "不建议制作":
-        return f"不建议制作｜{source_label}"
-    if level == "暂存观察":
-        return f"暂存观察｜{source_label}"
-    return row.get("我的选题标题") or f"{direction}候选：{short_text(source)}"
+    """Keep the visible title bound to the approved proposition owner."""
+    return row.get("选题命题", "")
 ACTION_STATUS = {
     "立即蹭热点": "待判断",
     "生成脚本包": "待判断",
@@ -352,11 +329,11 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str, str]:
     status = ACTION_STATUS.get(row.get("推荐动作", ""), "待判断")
     level = normalize_level(row.get("今日建议级别", ""))
-    proposition = row.get("选题命题") or row.get("我的选题标题") or proposition_for(row)
+    proposition = row.get("选题命题", "")
     experiment = row.get("我要做的实验", "")
     trigger = row.get("热点触发点") or workflow_trigger_for(row)
     pain = row.get("我的工作流痛点", "")
-    display_title = proposition or display_title_for(row)
+    display_title = proposition
     recommendation_reason = row.get("推荐理由", "")
     mapped = {
         "选题标题": display_title,
@@ -378,7 +355,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "受众钩子": row.get("受众钩子", ""),
         "内容结构": row.get("内容结构", ""),
         "研究置信度": row.get("研究置信度", ""),
-        "我的切入": row.get("我的切入") or row.get("natural_austin_angle", ""),
+        "我的切入": row.get("我的切入", ""),
         "一句话Brief": row.get("一句话Brief", ""),
         "主编判断摘要": row.get("主编判断摘要", ""),
         "标题思路": row.get("标题思路", ""),
@@ -742,24 +719,17 @@ def main() -> int:
     created_fields = ensure_fields(token, app_token, table_id)
 
     existing = all_records(token, app_token, table_id)
-    existing_by_source = {
-        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("原始来源标题", ""))): record
+    existing_by_source_url = {
+        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("来源链接", ""))): record
         for record in existing
-        if record.get("fields", {}).get("原始来源标题")
-    }
-    existing_by_title = {
-        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("选题标题", ""))): record
-        for record in existing
+        if record.get("fields", {}).get("来源链接")
     }
     to_create = []
     updated_existing = 0
     updated_titles: list[str] = []
     created_titles: list[str] = []
     for row in mapped:
-        record = (
-            existing_by_source.get((row["推荐日期"], row.get("原始来源标题", "")))
-            or existing_by_title.get((row["推荐日期"], row["选题标题"]))
-        )
+        record = existing_by_source_url.get((row["推荐日期"], row.get("来源链接", "")))
         if record:
             update_existing_top10(token, app_token, table_id, record, row)
             updated_existing += 1

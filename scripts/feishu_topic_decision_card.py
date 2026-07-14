@@ -140,7 +140,7 @@ def candidate_rank(fields: dict[str, Any]) -> int:
 
 
 def candidate_title(fields: dict[str, Any]) -> str:
-    return normalize(fields.get("选题标题") or fields.get("选题命题") or fields.get("一句话Brief"))
+    return normalize(fields.get("选题标题"))
 
 
 def candidate_dedupe_key(fields: dict[str, Any]) -> str:
@@ -294,7 +294,7 @@ def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     experiment = compact(fields.get("我要做的实验"), 76)
     evidence = compact(fields.get("可展示证据"), 64)
     missing = compact(fields.get("需要补的证据"), 52)
-    natural_angle = compact(fields.get("我的切入") or fields.get("natural_austin_angle"), 100)
+    natural_angle = compact(fields.get("我的切入"), 100)
     category = compact(fields.get("对应方向"), 18)
     lines = [f"**{index}. {title}**"]
     source_kind = "视频" if "douyin" in source_url else "文章"

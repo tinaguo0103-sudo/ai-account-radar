@@ -883,6 +883,36 @@ class VisibleClosureTests(unittest.TestCase):
         self.assertEqual(progress["原始来源标题"], "Independent title")
         self.assertEqual(progress["原始发布文案"], "Publication copy")
 
+    def test_sample_rewrite_reason_does_not_fallback_to_title_thinking(self) -> None:
+        row = {
+            "原始来源标题": "Codex联动Obsidian", "内容指纹": "fp-reason",
+            "Austin改写理由": "", "标题思路": "This must remain title thinking only",
+            "选题命题": "Codex联动Obsidian", "推荐动作": "生成脚本包",
+        }
+        sample = replay.sample_rows([row])[0]
+        self.assertEqual(sample["austin_rewrite_reason"], "")
+        self.assertEqual(sample["title_thinking"], "This must remain title thinking only")
+
+    def test_visible_expected_snapshot_fails_when_proposition_owner_is_missing(self) -> None:
+        row = self.fields("Legacy title", "https://example.com/article")
+        row.update({"选题命题": "", "我的选题标题": "Legacy title", "我的切入": "Natural angle"})
+        with self.assertRaisesRegex(visible_closure.VisibleClosureError, "missing_owner:选题命题"):
+            visible_closure.expected_staging_rows_from_original([row], "[TEST] ")
+
+    def test_visible_expected_snapshot_fails_when_angle_owner_is_missing(self) -> None:
+        row = self.fields("Topic", "https://example.com/article")
+        row.update({"选题命题": "Topic", "我的切入": "", "locked_natural_austin_angle": "Locked alias"})
+        with self.assertRaisesRegex(visible_closure.VisibleClosureError, "missing_owner:我的切入"):
+            visible_closure.expected_staging_rows_from_original([row], "[TEST] ")
+
+    def test_source_open_input_does_not_treat_video_caption_as_expected_title(self) -> None:
+        row = {
+            "来源链接": "https://www.douyin.com/video/1234567890123456789",
+            "原始来源标题": "", "来源内容": "Caption body", "原始发布文案": "Publication copy",
+            "原始来源账号": "Account", "来源类型": "competitor", "平台": "douyin",
+        }
+        self.assertEqual(machine.source_open_candidate(row, 0)["csv_title"], "")
+
     def test_semantic_zero_fallback_audit_rejects_each_owner_substitution(self) -> None:
         self.assertEqual(replay.semantic_cross_field_fallback_violations(), [])
         mutations = [
@@ -891,6 +921,12 @@ class VisibleClosureTests(unittest.TestCase):
             '(row.get("研究摘要") or row.get("受众钩子"))',
             '(row.get("受众钩子") or row.get("主编判断摘要"))',
             '(row.get("主编判断摘要") or row.get("标题思路"))',
+            '(row.get("Austin改写理由") or row.get("标题思路"))',
+            '(row.get("选题命题") or row.get("我的选题标题"))',
+            '(row.get("选题命题") or row.get("可发布标题"))',
+            '(row.get("我的切入") or row.get("locked_natural_austin_angle"))',
+            '(row.get("研究摘要") if row.get("研究摘要") else row.get("主编判断摘要"))',
+            '(row["可发布标题"] or row["选题命题"])',
         ]
         for expression in mutations:
             source = f'def bad(row):\n    return {expression}\n'

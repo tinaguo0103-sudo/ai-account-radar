@@ -205,6 +205,7 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
     def test_legacy_script_candidate_gets_executable_experiment(self) -> None:
         row = {
             "我的选题标题": "Prompt退环境后，真正要学的是把AI任务跑成闭环",
+            "选题命题": "Prompt退环境后，真正要学的是把AI任务跑成闭环",
             "推荐动作": "生成脚本包",
             "是否建议进入制作": "是",
             "今日建议级别": "",
@@ -220,7 +221,7 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
         self.assertNotEqual(push_today10_to_feishu.experiment_for(row), push_today10_to_feishu.FALLBACK_EXPERIMENT_PROMPT)
         self.assertIn("输入", push_today10_to_feishu.experiment_for(row))
         self.assertIn("记录输出物", push_today10_to_feishu.validation_for(row))
-        self.assertEqual(push_today10_to_feishu.display_title_for(row), row["我的选题标题"])
+        self.assertEqual(push_today10_to_feishu.display_title_for(row), row["选题命题"])
 
 
 if __name__ == "__main__":

@@ -247,6 +247,22 @@ def completed_candidate_ids(state: dict[str, Any], stage_name: str) -> set[str]:
     }
 
 
+def source_open_candidate(row: dict[str, Any], index: int) -> dict[str, Any]:
+    exact_url = str(row.get("来源链接") or "").strip()
+    return {
+        "index": index,
+        "candidate_id": candidate_id(row, index),
+        "exact_url": exact_url,
+        "csv_title": str(row.get("原始来源标题") or ""),
+        "source_account": str(row.get("原始来源账号") or ""),
+        "source_type": str(row.get("来源类型") or ""),
+        "platform": str(row.get("平台") or ""),
+        "local_trace_hash": hash_json(row),
+        "primary_adapter": source_adapter.primary_adapter_for_url(exact_url),
+        "expected_page_identity": source_adapter.expected_identity(exact_url),
+    }
+
+
 def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -257,19 +273,7 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
     candidates: list[dict[str, Any]] = []
     source_state: dict[str, Any] = {}
     for index, row in enumerate(pool):
-        exact_url = str(row.get("来源链接") or "").strip()
-        item = {
-            "index": index,
-            "candidate_id": candidate_id(row, index),
-            "exact_url": exact_url,
-            "csv_title": str(row.get("原始来源标题") or row.get("来源内容") or ""),
-            "source_account": str(row.get("原始来源账号") or ""),
-            "source_type": str(row.get("来源类型") or ""),
-            "platform": str(row.get("平台") or ""),
-            "local_trace_hash": hash_json(row),
-            "primary_adapter": source_adapter.primary_adapter_for_url(exact_url),
-            "expected_page_identity": source_adapter.expected_identity(exact_url),
-        }
+        item = source_open_candidate(row, index)
         candidates.append(item)
         path = out_dir / "source_open" / item["candidate_id"]
         write_json(path / "input.json", {

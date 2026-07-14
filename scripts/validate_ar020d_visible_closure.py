@@ -52,8 +52,13 @@ def expected_staging_rows_from_original(
 ) -> list[dict[str, str]]:
     """Map original final rows without consulting writer output or fallback helpers."""
     expected = []
-    for row in original_rows:
-        title = normalized(row.get("选题命题") or row.get("我的选题标题"))
+    for index, row in enumerate(original_rows):
+        title = normalized(row.get("选题命题"))
+        natural_angle = normalized(row.get("我的切入"))
+        if not title:
+            raise VisibleClosureError(f"original_row_{index}_missing_owner:选题命题")
+        if not natural_angle:
+            raise VisibleClosureError(f"original_row_{index}_missing_owner:我的切入")
         expected.append({
             "选题标题": f"{visible_title_marker}{title}",
             "来源链接": normalized(row.get("来源链接")),
@@ -62,7 +67,7 @@ def expected_staging_rows_from_original(
             "研究摘要": normalized(row.get("研究摘要")),
             "受众钩子": normalized(row.get("受众钩子")),
             "研究置信度": normalized(row.get("研究置信度")),
-            "我的切入": normalized(row.get("我的切入") or row.get("locked_natural_austin_angle")),
+            "我的切入": natural_angle,
             "内容结构": normalized(row.get("内容结构")),
             "需要补的证据": normalized(row.get("需要补的证据")),
             "推荐动作": normalized(row.get("推荐动作")),

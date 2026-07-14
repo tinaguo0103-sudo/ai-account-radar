@@ -49,11 +49,24 @@ SAMPLE_LABELS = {
     "agent_execution": "Agent / 业务执行边界",
 }
 HASHTAG_PATTERN = re.compile(r"\s*#[^\s#]+")
-SEMANTIC_OWNER_FIELDS = {
-    "原始来源标题", "原始发布文案", "来源内容", "来源标题", "原始来源摘录",
-    "研究摘要", "受众钩子", "主编判断摘要", "标题思路",
-    "source_read", "public_decision_summary", "audience_hook", "title_rationale",
+SEMANTIC_OWNER_GROUPS = {
+    "source_identity": {"原始来源标题", "原始发布文案", "来源内容", "来源标题", "原始来源摘录"},
+    "research": {"研究摘要", "受众钩子", "research_summary", "audience_hook"},
+    "editorial_rationale": {
+        "主编判断摘要", "Austin改写理由", "标题思路", "source_read",
+        "public_decision_summary", "title_rationale",
+    },
+    "visible_title": {"选题命题", "选题标题", "我的选题标题", "可发布标题", "selected_visible_title"},
+    "natural_angle": {"我的切入", "natural_austin_angle", "locked_natural_austin_angle"},
 }
+SEMANTIC_OWNER_FIELDS = set().union(*SEMANTIC_OWNER_GROUPS.values())
+ACTIVE_SEMANTIC_AUDIT_PATHS = (
+    Path(__file__),
+    Path(__file__).with_name("topic_editorial_state_machine.py"),
+    Path(__file__).with_name("validate_ar020d_visible_closure.py"),
+    Path(__file__).with_name("push_today10_to_feishu.py"),
+    Path(__file__).with_name("feishu_topic_decision_card.py"),
+)
 
 
 def now_iso() -> str:
@@ -135,26 +148,43 @@ def original_title_hook(row: dict[str, Any]) -> str:
     return f"{label}：{title}"
 
 
-def semantic_cross_field_fallback_violations(source_text: str | None = None) -> list[dict[str, Any]]:
-    """Find `a.get(owner) or a.get(other_owner)` substitutions in report code."""
-    text = source_text if source_text is not None else Path(__file__).read_text(encoding="utf-8")
+def _semantic_fallback_violations(text: str, source_name: str) -> list[dict[str, Any]]:
+    """Find expressions that substitute one user-semantic owner for another."""
     tree = ast.parse(text)
     violations: list[dict[str, Any]] = []
     for node in ast.walk(tree):
-        if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
+        if not ((isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)) or isinstance(node, ast.IfExp)):
             continue
         keys: list[str] = []
         for child in ast.walk(node):
-            if not isinstance(child, ast.Call) or not isinstance(child.func, ast.Attribute):
-                continue
-            if child.func.attr != "get" or not child.args or not isinstance(child.args[0], ast.Constant):
-                continue
-            key = child.args[0].value
+            key: Any = None
+            if (
+                isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Attribute)
+                and child.func.attr == "get"
+                and child.args
+                and isinstance(child.args[0], ast.Constant)
+            ):
+                key = child.args[0].value
+            elif isinstance(child, ast.Subscript):
+                slice_node = child.slice
+                if isinstance(slice_node, ast.Constant):
+                    key = slice_node.value
             if isinstance(key, str) and key in SEMANTIC_OWNER_FIELDS:
                 keys.append(key)
         distinct = list(dict.fromkeys(keys))
         if len(distinct) > 1:
-            violations.append({"line": getattr(node, "lineno", 0), "fields": distinct})
+            violations.append({"source": source_name, "line": getattr(node, "lineno", 0), "fields": distinct})
+    return violations
+
+
+def semantic_cross_field_fallback_violations(source_text: str | None = None) -> list[dict[str, Any]]:
+    """Audit every active AR-020D user-semantic surface, or one mutation source."""
+    if source_text is not None:
+        return _semantic_fallback_violations(source_text, "mutation")
+    violations: list[dict[str, Any]] = []
+    for path in ACTIVE_SEMANTIC_AUDIT_PATHS:
+        violations.extend(_semantic_fallback_violations(path.read_text(encoding="utf-8"), path.name))
     return violations
 
 
@@ -428,7 +458,7 @@ def final_batch_notes(rows: list[dict[str, Any]]) -> str:
     level_counts = collections.Counter(str(row.get("今日建议级别") or row.get("候选状态") or "未知") for row in rows)
     action_counts = collections.Counter(str(row.get("推荐动作") or "未知") for row in rows)
     generated_titles = [
-        str(row.get("选题命题") or row.get("可发布标题") or row.get("原始来源标题") or "")[:40]
+        str(row.get("选题命题") or "")[:40]
         for row in rows
         if str(row.get("推荐动作") or "") == "生成脚本包"
     ]
@@ -586,7 +616,7 @@ def title_body_check_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "推荐动作": row.get("推荐动作", ""),
             "今日建议级别": row.get("今日建议级别") or row.get("候选状态", ""),
             "可发布标题": row.get("可发布标题", ""),
-            "选题命题": row.get("选题命题") or row.get("选题标题", ""),
+            "选题命题": row.get("选题命题", ""),
             "title_pattern_family": row.get("title_pattern_family", ""),
             "title_quality_status": row.get("title_quality_status", ""),
             "title_quality_issues": row.get("title_quality_issues", ""),
@@ -676,13 +706,13 @@ def sample_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                     "source_publication_copy": source_publication_copy,
                     "source_excerpt": source_excerpt,
                     "source_title_hook": original_title_hook(row),
-                    "austin_rewrite_reason": row.get("Austin改写理由") or row.get("标题思路", ""),
+                    "austin_rewrite_reason": row.get("Austin改写理由", ""),
                     "source_account": row.get("原始来源账号") or row.get("账号名/公众号名", ""),
                     "skill_decision": row.get("主编筛选") or row.get("主编判断", ""),
                     "editorial_trace": row.get("主编判断摘要", ""),
                     "title_thinking": row.get("标题思路", ""),
                     "publish_title": row.get("可发布标题", ""),
-                    "topic": row.get("选题命题") or row.get("选题标题", ""),
+                    "topic": row.get("选题命题", ""),
                     "brief": row.get("一句话Brief", ""),
                     "experiment": row.get("我要做的实验", ""),
                     "pain": row.get("我的工作流痛点", ""),
@@ -887,7 +917,8 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
             f"- source_publication_copy: {row.get('source_publication_copy') or '（平台未提供独立发布文案）'}",
             f"- source_title_hook: {row.get('source_title_hook')}",
             f"- Austin rewrite reason: {row.get('austin_rewrite_reason')}",
-            f"- visible title/proposition: {row.get('publish_title') or row.get('topic')}",
+            f"- visible proposition: {row.get('topic') or '（未提供选题命题）'}",
+            f"- publish title: {row.get('publish_title') or '（未提供可发布标题）'}",
             f"- title thinking: {row.get('title_thinking')}",
             f"- decision/status/action: {row.get('status')} / {row.get('action')}",
             f"- contract: {row.get('contract_status')} {row.get('contract_issues')}",
@@ -904,7 +935,7 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
     actionable_path = out_dir / "skill_actionable.csv"
     for row in read_csv(actionable_path) if actionable_path.exists() else []:
         lines.extend([
-            f"- [{row.get('global_rank_position') or row.get('locked_global_rank_position') or '?'}] {row.get('选题命题') or row.get('可发布标题')}",
+            f"- [{row.get('global_rank_position') or row.get('locked_global_rank_position') or '?'}] {row.get('选题命题') or '（未提供选题命题）'}",
             f"  - source_title: {row.get('原始来源标题') or '（平台未提供独立标题）'}",
             f"  - source_publication_copy: {row.get('原始发布文案') or '（平台未提供独立发布文案）'}",
             f"  - exact_url: {row.get('来源链接')}",
