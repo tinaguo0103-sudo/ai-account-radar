@@ -20,6 +20,7 @@ import editorial_skill_runner as runner
 import topic_replay_evaluation as deterministic_replay
 import topic_skill_replay_evaluation as replay
 import topic_research_contract as research_contract
+import editorial_expression_policy as expression_policy
 import persona_reference_builder as persona_builder
 import trusted_exact_source_adapter as source_adapter
 
@@ -555,6 +556,7 @@ def validate_stage1(args: argparse.Namespace) -> dict[str, Any]:
                 raise RuntimeError(f"Stage 1 used unknown evidence IDs: {unknown_ids}")
             research_contract.validate_claim_trace(decision, dossier)
             research_contract.validate_recommendation_research_eligibility(decision, dossier)
+            expression_policy.validate_editorial_decision(decision, dossier)
         write_json(batch_dir / "decisions.json", decisions)
         write_json(batch_dir / "meta.json", meta)
         complete_stage(record, hash_json(decisions), decision_count=len(decisions), raw_output_hash=raw_output_hash)

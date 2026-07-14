@@ -298,6 +298,10 @@ EDITORIAL_DECISION_FIELDS = [
     "public_decision_summary",
     "proposed_content_structure",
     "state_or_gap",
+    "hook_first_rationale",
+    "hard_fact_usage",
+    "fact_boundary_note",
+    "editorial_expression_mode",
 ]
 
 NON_AUTHORITATIVE_HINT_FIELDS = {
@@ -674,6 +678,10 @@ def editorial_decision_hash(decision: dict[str, Any]) -> str:
         "selected_visible_title": decision.get("selected_visible_title", ""),
         "title_rationale": decision.get("title_rationale", ""),
         "public_decision_summary": decision.get("public_decision_summary", ""),
+        "hook_first_rationale": decision.get("hook_first_rationale", ""),
+        "hard_fact_usage": decision.get("hard_fact_usage", ""),
+        "fact_boundary_note": decision.get("fact_boundary_note", ""),
+        "editorial_expression_mode": decision.get("editorial_expression_mode", ""),
     }
     return sha256_text(json.dumps(stable, ensure_ascii=False, sort_keys=True))
 

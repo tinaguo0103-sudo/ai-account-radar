@@ -87,6 +87,10 @@ def make_decision(index: int = 0, *, decision_value: str = "select") -> dict[str
         "hook_evidence_ids": "src-1",
         "proposed_content_structure": "1. 来源事实；2. 业务矛盾；3. 判断取舍",
         "state_or_gap": "证据完整",
+        "hook_first_rationale": "公共结果和业务冲突比产品名更能驱动点击。",
+        "hard_fact_usage": "none",
+        "fact_boundary_note": "来源事实与 Austin 编辑判断已分开。",
+        "editorial_expression_mode": "hook_first_aggressive_honest",
     }, index, {"original_title": f"source {index}"})
 
 
@@ -543,6 +547,10 @@ class AR020DEditorialArchitectureTests(unittest.TestCase):
                     "public_decision_summary": "来源入口是 Codex 做 PPT，我会看它能不能变成方案资产。",
                     "proposed_content_structure": "来源承诺 / Austin 矛盾 / 证据 / 判断",
                     "state_or_gap": "证据完整",
+                    "hook_first_rationale": "可编辑 PPT 的结果承诺比产品名更值得点击。",
+                    "hard_fact_usage": "none",
+                    "fact_boundary_note": "可编辑 PPT 是来源事实；方案资产是 Austin 判断。",
+                    "editorial_expression_mode": "hook_first_aggressive_honest",
                 }],
             }
         decisions, _meta = runner.validate_stage1_payload([row], payload, start_index=3)

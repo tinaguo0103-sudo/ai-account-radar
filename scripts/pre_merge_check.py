@@ -29,6 +29,8 @@ PY_COMPILE_TARGETS = (
     "scripts/topic_field_contract.py",
     "scripts/topic_replay_evaluation.py",
     "scripts/topic_skill_replay_evaluation.py",
+    "scripts/editorial_expression_policy.py",
+    "scripts/ar020e_expression_calibration.py",
     "scripts/semantic_owner_dataflow.py",
     "scripts/ar020d_semantic_owner_gate.py",
     "scripts/feishu_schema_cleanup_audit.py",

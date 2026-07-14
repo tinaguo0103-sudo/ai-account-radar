@@ -64,6 +64,26 @@ deterministic shortlist
 
 Stage 1 禁止看到或输出实验、验证、资产、母场景、旧 04 字段、deterministic angle/title hint。标题借原始市场入口但不能照抄，也不能凭 persona 发明内容主张。
 
+### AR-020E 表达校准：Hook First
+
+主编默认采用 `Hook First / Aggressive by Default / Allow Hyperbole / No Fabricated Verifiable Facts`：
+
+- 第一判断不是“这句话能否逐字从 excerpt 推出”，而是陌生受众为什么会点：故事、冲突、结果承诺、反常识、社会证明、风险或好奇心。
+- 产品名、作者名、内部流程名不自动等于钩子。标题先说公众能感到的变化或后果，再决定是否保留产品入口。
+- 允许并鼓励鲜明观点、趋势判断、比喻、反问和修辞性放大，例如“正在接管”“已经开始”“最值得”“没人意识到”“抢饭碗”“一个人顶一支团队”。这些是编辑判断，不要求 supporting excerpt 逐字同义。
+- 不得编造可核验硬事实。精确数字/日期、直接引语、官方功能或声明、统计占比，以及法律、医疗、金融、名誉类事实，必须能在精确来源或已打开 research evidence 中找到。
+- `最值得` 是主编取舍；`最常`、`大多数`、`占比` 是统计判断。后者没有证据时必须换成仍然有力、但不伪装数据结论的表达。
+- supporting claim 仍只登记证据能支持的事实；标题和角度可以在事实之上给出 Austin 的明确观点，不做 claim-level 逐句 entailment。
+
+Stage 1 额外输出：
+
+- `hook_first_rationale`：真正驱动点击的公共钩子，以及为什么产品名本身不够。
+- `hard_fact_usage`：标题/角度使用的精确数字、引语、官方或统计事实；没有则写 `none`。
+- `fact_boundary_note`：哪些是来源事实，哪些是 Austin 的观点或修辞性放大。
+- `editorial_expression_mode`：固定为 `hook_first_aggressive_honest`。
+
+内部可比较 2-3 个标题方向，但 Topic Card 只展示最终选择。不得使用标题模板库、禁词替换表或按具体来源硬编码。
+
 风格片段按本候选真实需要的判断动作检索，例如公开矛盾、故事/社会证明、证据怀疑、结果承诺或取舍；不得把同一组片段当通用底稿。标题先服从来源事实和自然判断，再检查全批可生成标题的句式族。任一句式族占比超过 30% 时整批失败并重做判断，但检查器不得生成或机械改写标题。
 
 ## Global Ranking
