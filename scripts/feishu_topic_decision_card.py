@@ -340,13 +340,37 @@ def build_card_pages(records: list[dict[str, Any]], run_id: str, page_size: int 
     for record in records:
         validate_evidence_first_record(record)
     pages: list[dict[str, Any]] = []
+    page_count = (len(records) + page_size - 1) // page_size
     for start in range(0, len(records), page_size):
         page_records = records[start:start + page_size]
         page_ids = ids[start:start + page_size]
         card = build_card(page_records, run_id)
+        page_index = len(pages) + 1
+        page_label = f"第 {page_index}/{page_count} 页 · 本页 {len(page_ids)} 条"
+        card["header"]["title"]["content"] += f" · {page_label}"
+        card["body"]["elements"][0]["content"] = page_label + "\n\n" + card["body"]["elements"][0]["content"]
+        for element in card["body"]["elements"]:
+            if element.get("tag") != "form":
+                continue
+            for form_element in element.get("elements", []):
+                for column in form_element.get("columns", []):
+                    for button in column.get("elements", []):
+                        for behavior in button.get("behaviors", []):
+                            value = behavior.get("value")
+                            if isinstance(value, dict):
+                                value.update({
+                                    "page_index": page_index,
+                                    "page_count": page_count,
+                                    "page_candidate_ids": page_ids,
+                                })
+        first_fields = page_records[0].get("fields", {}) if page_records else {}
         pages.append({
-            "page": len(pages) + 1,
+            "page": page_index,
+            "page_count": page_count,
             "candidate_ids": page_ids,
+            "candidate_count": len(page_ids),
+            "first_candidate_id": page_ids[0] if page_ids else "",
+            "first_candidate_title": candidate_title(first_fields),
             "card": card,
         })
     flattened = [value for page in pages for value in page["candidate_ids"]]

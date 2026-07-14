@@ -239,7 +239,8 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
     def test_sample_summary_separates_internal_label_title_and_excerpt(self) -> None:
         rows = [{
             "内容指纹": "fp_kb",
-            "原始来源标题": "Codex联动Obsidian，搭建超强知识库，手把手教程 用Codex+Obsidian 搭建可以“自生长”的知识库 帮你把信息的利用效率 直接拉高到next level 它能定时抓取热点 #AI新星计划 #知识库",
+            "原始来源标题": "Codex联动Obsidian，搭建超强知识库，手把手教程",
+            "原始发布文案": "用Codex+Obsidian 搭建可以“自生长”的知识库，帮你把信息利用效率直接拉高到next level。",
             "原始来源账号": "xuan酱",
             "选题命题": "Codex+Obsidian 搭知识库，最值钱的是留下为什么选它",
             "一句话Brief": "Brief",
@@ -271,10 +272,10 @@ class TopicSkillReplayObservabilityTests(unittest.TestCase):
         self.assertEqual(samples[0]["source_title"], "Codex联动Obsidian，搭建超强知识库，手把手教程")
         self.assertIn("工具组合", samples[0]["source_title_hook"])
         self.assertIn("原始标题：Codex联动Obsidian，搭建超强知识库，手把手教程", markdown)
+        self.assertIn("原始发布文案：用Codex+Obsidian", markdown)
         self.assertIn("原始标题钩子：工具组合 / 结果承诺 / 学习入口", markdown)
         self.assertIn("Austin rewrite reason: 保留 Codex+Obsidian", markdown)
         self.assertNotIn("knowledge_base |", markdown)
-        self.assertNotIn("直接拉高到next level 它能定", markdown)
 
     def test_sample_rows_cover_user_review_categories_when_available(self) -> None:
         rows = [

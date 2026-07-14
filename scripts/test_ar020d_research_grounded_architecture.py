@@ -18,6 +18,7 @@ import persona_reference_builder as persona
 import persona_counterfactual_audit as persona_audit
 import build_persona_counterfactual_evidence as counterfactual_builder
 import topic_research_contract as research
+import topic_skill_replay_evaluation as replay
 import topic_research_dossier_builder as dossier_builder
 import topic_research_cache_revalidator as cache_revalidator
 import run_douyin_exact_source_stage as douyin_stage
@@ -855,6 +856,115 @@ class VisibleClosureTests(unittest.TestCase):
         self.assertNotIn("len(mapped) != 9", source)
         self.assertNotIn("created != 9", source)
         self.assertIn("created != len(mapped)", source)
+
+    def test_pm_artifacts_keep_original_title_and_publication_copy_separate(self) -> None:
+        row = {
+            "原始来源标题": "", "原始发布文案": "第20集 | 多宫格故事板2.0",
+            "来源内容": "legacy content must not become title", "来源标题": "legacy title",
+            "选题标题": "一张参考图生成故事板", "选题命题": "一张参考图生成故事板",
+            "内容指纹": "fp-1", "推荐动作": "生成脚本包", "今日建议级别": "推荐制作",
+            "title_quality_status": "pass", "field_contract_status": "pass",
+        }
+        self.assertEqual(replay.original_title_hook(row), "")
+        self.assertEqual(replay.progress_rows([row], "ready")[0]["原始来源标题"], "")
+        self.assertEqual(replay.progress_event(status="ready", stage="x", row=row)["原始来源标题"], "")
+        self.assertEqual(replay.title_body_check_rows([row])[0]["原始来源标题"], "")
+        self.assertEqual(replay.decision_rank_final_trace_rows([row])[0]["原始来源标题"], "")
+        sample = replay.sample_rows([row])[0]
+        self.assertEqual(sample["source_title"], "")
+        self.assertEqual(sample["source_publication_copy"], "第20集 | 多宫格故事板2.0")
+
+    def test_pm_artifacts_do_not_swap_present_title_and_publication_copy(self) -> None:
+        row = {
+            "原始来源标题": "Independent title", "原始发布文案": "Publication copy",
+            "来源内容": "Other text", "选题标题": "Codex联动Obsidian", "内容指纹": "fp-2",
+        }
+        progress = replay.progress_rows([row], "ready")[0]
+        self.assertEqual(progress["原始来源标题"], "Independent title")
+        self.assertEqual(progress["原始发布文案"], "Publication copy")
+
+    def test_semantic_zero_fallback_audit_rejects_each_owner_substitution(self) -> None:
+        self.assertEqual(replay.semantic_cross_field_fallback_violations(), [])
+        mutations = [
+            '(row.get("原始来源标题") or row.get("原始发布文案"))',
+            '(row.get("原始发布文案") or row.get("来源内容"))',
+            '(row.get("研究摘要") or row.get("受众钩子"))',
+            '(row.get("受众钩子") or row.get("主编判断摘要"))',
+            '(row.get("主编判断摘要") or row.get("标题思路"))',
+        ]
+        for expression in mutations:
+            source = f'def bad(row):\n    return {expression}\n'
+            self.assertTrue(replay.semantic_cross_field_fallback_violations(source), expression)
+
+    def screenshot_fixture(self, temp: Path, count: int = 12) -> tuple[dict, list[dict]]:
+        records = []
+        for index in range(1, count + 1):
+            fields = self.fields(f"候选 {index}", f"https://example.com/{index}")
+            records.append({"record_id": f"rec-{index}", "fields": fields})
+        manifest = card.build_card_pages(records, "run", page_size=5)
+        evidence = []
+        for page in manifest["pages"]:
+            page_index = page["page"]
+            label = f"第 {page_index}/{manifest['page_count']} 页"
+            page_records = records[(page_index - 1) * 5:(page_index - 1) * 5 + len(page["candidate_ids"])]
+            text_lines = [f"今日选题速选 · 2026-07-14 · {label}", "[AR-020D SCREENSHOT RETEST]", label]
+            html_links = []
+            for item_index, record in enumerate(page_records, start=1):
+                fields = record["fields"]
+                text_lines.extend([
+                    f"{item_index}. {fields['选题标题']}", "精确来源：查看原始文章",
+                    f"原始标题：{fields['原始来源标题']}", f"原始发布文案：{fields['原始发布文案']}",
+                    f"来源摘要：{fields['研究摘要']}", f"受众钩子：{fields['受众钩子']}",
+                    f"Austin 角度：{fields['我的切入']}", f"内容结构：{fields['内容结构']}",
+                    f"研究置信度：{fields['研究置信度']}", f"缺口：{fields['需要补的证据']}",
+                ])
+                html_links.append(f'<a href="{fields["来源链接"]}">查看原始文章</a>')
+            text_lines.append("本页都不选")
+            text = "\n".join(text_lines); html = "\n".join(html_links)
+            text_path = temp / f"page{page_index}.txt"; html_path = temp / f"page{page_index}.html"
+            text_path.write_text(text); html_path.write_text(html)
+            for position in ("top", "bottom"):
+                shot = temp / f"page{page_index}_{position}.png"
+                shot.write_bytes(f"png-{page_index}-{position}".encode())
+                evidence.append({
+                    "page_index": page_index, "page_count": manifest["page_count"], "position": position,
+                    "screenshot_path": str(shot), "screenshot_sha256": hashlib.sha256(shot.read_bytes()).hexdigest(),
+                    "dom_text_path": str(text_path), "dom_html_path": str(html_path),
+                    "dom_snapshot_hash": visible_closure.dom_snapshot_hash(text, html),
+                    "first_candidate_id": page["first_candidate_id"],
+                    "first_candidate_title": page["first_candidate_title"],
+                    "viewport_first_candidate_title": page["first_candidate_title"] if position == "top" else "",
+                    "viewport_text": f"今日选题速选 {label} {page['first_candidate_title']}" if position == "top" else "本页都不选",
+                })
+        return manifest, evidence
+
+    def test_screenshot_page_identity_accepts_correct_5_5_2_pages(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            manifest, evidence = self.screenshot_fixture(Path(temp))
+            result = visible_closure.validate_screenshot_page_identity(
+                manifest, evidence, run_marker="[AR-020D SCREENSHOT RETEST]"
+            )
+            self.assertTrue(result["ok"])
+            self.assertEqual([page["candidate_count"] for page in manifest["pages"]], [5, 5, 2])
+            self.assertEqual(manifest["pages"][0]["first_candidate_id"], "rec-1")
+            self.assertEqual(manifest["pages"][2]["first_candidate_id"], "rec-11")
+
+    def test_screenshot_page_identity_rejects_wrong_duplicate_and_mid_card(self) -> None:
+        mutations = [
+            lambda rows: rows[0].update(page_index=3),
+            lambda rows: rows[2].update(screenshot_path=rows[0]["screenshot_path"], screenshot_sha256=rows[0]["screenshot_sha256"]),
+            lambda rows: rows[0].update(first_candidate_id="rec-11"),
+            lambda rows: rows[0].update(viewport_first_candidate_title="候选 2"),
+            lambda rows: rows[0].update(viewport_text="候选 2 的中段内容"),
+        ]
+        for mutate in mutations:
+            with tempfile.TemporaryDirectory() as temp:
+                manifest, evidence = self.screenshot_fixture(Path(temp))
+                mutate(evidence)
+                with self.assertRaises(visible_closure.VisibleClosureError):
+                    visible_closure.validate_screenshot_page_identity(
+                        manifest, evidence, run_marker="[AR-020D SCREENSHOT RETEST]"
+                    )
 
 
 if __name__ == "__main__":

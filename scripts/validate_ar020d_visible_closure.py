@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+from pathlib import Path
 from typing import Any
 
 
@@ -142,6 +143,80 @@ def parse_dom_page(text: str, html: str) -> list[dict[str, Any]]:
         values["推荐动作"] = "生成脚本包"
         rows.append({"fields": values})
     return rows
+
+
+def dom_snapshot_hash(text: str, html: str) -> str:
+    return hashlib.sha256((normalized(text) + "\n" + html).encode("utf-8")).hexdigest()
+
+
+def validate_screenshot_page_identity(
+    manifest: dict[str, Any], evidence: list[dict[str, Any]], *, run_marker: str
+) -> dict[str, Any]:
+    """Bind each screenshot to the same page DOM and viewport identity captured beside it."""
+    page_count = int(manifest.get("page_count") or 0)
+    if len(evidence) != page_count * 2:
+        raise VisibleClosureError("screenshot_evidence_count_mismatch")
+    by_key: dict[tuple[int, str], dict[str, Any]] = {}
+    screenshot_hashes: set[str] = set()
+    results: list[dict[str, Any]] = []
+    for item in evidence:
+        page_index = int(item.get("page_index") or 0)
+        position = normalized(item.get("position"))
+        key = (page_index, position)
+        if key in by_key or position not in {"top", "bottom"}:
+            raise VisibleClosureError("screenshot_duplicate_page_or_position")
+        if page_index < 1 or page_index > page_count or int(item.get("page_count") or 0) != page_count:
+            raise VisibleClosureError("screenshot_wrong_page_identity")
+        page = manifest["pages"][page_index - 1]
+        screenshot = Path(str(item.get("screenshot_path") or ""))
+        dom_text_path = Path(str(item.get("dom_text_path") or ""))
+        dom_html_path = Path(str(item.get("dom_html_path") or ""))
+        if not screenshot.is_file() or not dom_text_path.is_file() or not dom_html_path.is_file():
+            raise VisibleClosureError("screenshot_or_dom_artifact_missing")
+        screenshot_hash = hashlib.sha256(screenshot.read_bytes()).hexdigest()
+        if screenshot_hash != normalized(item.get("screenshot_sha256")):
+            raise VisibleClosureError("screenshot_hash_mismatch")
+        if screenshot_hash in screenshot_hashes:
+            raise VisibleClosureError("screenshot_duplicate_page_capture")
+        screenshot_hashes.add(screenshot_hash)
+        dom_text = dom_text_path.read_text(encoding="utf-8")
+        dom_html = dom_html_path.read_text(encoding="utf-8")
+        if dom_snapshot_hash(dom_text, dom_html) != normalized(item.get("dom_snapshot_hash")):
+            raise VisibleClosureError("screenshot_dom_snapshot_hash_mismatch")
+        dom_rows = parse_dom_page(dom_text, dom_html)
+        if len(dom_rows) != len(page.get("candidate_ids", [])):
+            raise VisibleClosureError("screenshot_manifest_candidate_count_mismatch")
+        expected_first_id = normalized(page.get("first_candidate_id") or page.get("candidate_ids", [""])[0])
+        expected_first_title = normalized(page.get("first_candidate_title"))
+        actual_first_title = normalized(dom_rows[0]["fields"].get("选题标题")) if dom_rows else ""
+        if normalized(item.get("first_candidate_id")) != expected_first_id:
+            raise VisibleClosureError("screenshot_first_candidate_id_mismatch")
+        if not display_equivalent(expected_first_title, actual_first_title):
+            raise VisibleClosureError("screenshot_dom_first_candidate_mismatch")
+        if not display_equivalent(expected_first_title, normalized(item.get("first_candidate_title"))):
+            raise VisibleClosureError("screenshot_first_candidate_title_mismatch")
+        viewport_text = normalized(item.get("viewport_text"))
+        page_label = f"第 {page_index}/{page_count} 页"
+        if run_marker not in dom_text or page_label not in dom_text:
+            raise VisibleClosureError("screenshot_dom_run_or_page_marker_missing")
+        if position == "top":
+            if "今日选题速选" not in viewport_text or page_label not in viewport_text:
+                raise VisibleClosureError("screenshot_top_missing_header_or_page_identity")
+            if not display_equivalent(expected_first_title, normalized(item.get("viewport_first_candidate_title"))):
+                raise VisibleClosureError("screenshot_top_is_mid_card")
+        elif "本页都不选" not in viewport_text:
+            raise VisibleClosureError("screenshot_bottom_missing_page_action")
+        by_key[key] = item
+        results.append({
+            "page_index": page_index,
+            "position": position,
+            "candidate_count": len(dom_rows),
+            "first_candidate_id": expected_first_id,
+            "first_candidate_title": expected_first_title,
+            "screenshot_sha256": screenshot_hash,
+            "dom_snapshot_hash": normalized(item.get("dom_snapshot_hash")),
+        })
+    return {"ok": True, "page_count": page_count, "captures": sorted(results, key=lambda row: (row["page_index"], row["position"]))}
 
 
 def validate_content_closure(

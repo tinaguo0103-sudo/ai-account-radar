@@ -8,6 +8,7 @@ the user-visible topic fields.
 from __future__ import annotations
 
 import argparse
+import ast
 import collections
 import csv
 import json
@@ -48,6 +49,11 @@ SAMPLE_LABELS = {
     "agent_execution": "Agent / 业务执行边界",
 }
 HASHTAG_PATTERN = re.compile(r"\s*#[^\s#]+")
+SEMANTIC_OWNER_FIELDS = {
+    "原始来源标题", "原始发布文案", "来源内容", "来源标题", "原始来源摘录",
+    "研究摘要", "受众钩子", "主编判断摘要", "标题思路",
+    "source_read", "public_decision_summary", "audience_hook", "title_rationale",
+}
 
 
 def now_iso() -> str:
@@ -114,7 +120,7 @@ def extract_original_title(value: Any) -> str:
 def original_title_hook(row: dict[str, Any]) -> str:
     if row.get("原始标题钩子"):
         return clean_source_text(row.get("原始标题钩子"))
-    source = row.get("原始来源标题") or row.get("来源内容") or row.get("来源标题")
+    source = row.get("原始来源标题")
     title = extract_original_title(source)
     if not title:
         return ""
@@ -127,6 +133,29 @@ def original_title_hook(row: dict[str, Any]) -> str:
         hook_terms.append("学习入口")
     label = " / ".join(hook_terms) if hook_terms else "来源表达"
     return f"{label}：{title}"
+
+
+def semantic_cross_field_fallback_violations(source_text: str | None = None) -> list[dict[str, Any]]:
+    """Find `a.get(owner) or a.get(other_owner)` substitutions in report code."""
+    text = source_text if source_text is not None else Path(__file__).read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    violations: list[dict[str, Any]] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.BoolOp) or not isinstance(node.op, ast.Or):
+            continue
+        keys: list[str] = []
+        for child in ast.walk(node):
+            if not isinstance(child, ast.Call) or not isinstance(child.func, ast.Attribute):
+                continue
+            if child.func.attr != "get" or not child.args or not isinstance(child.args[0], ast.Constant):
+                continue
+            key = child.args[0].value
+            if isinstance(key, str) and key in SEMANTIC_OWNER_FIELDS:
+                keys.append(key)
+        distinct = list(dict.fromkeys(keys))
+        if len(distinct) > 1:
+            violations.append({"line": getattr(node, "lineno", 0), "fields": distinct})
+    return violations
 
 
 def append_csv(path: Path, rows: list[dict[str, Any]]) -> None:
@@ -161,7 +190,8 @@ def progress_rows(pool: list[dict[str, Any]], status: str, note: str = "") -> li
             "updated_at": now_iso(),
             "note": note,
             "内容指纹": row.get("内容指纹", ""),
-            "原始来源标题": row.get("原始来源标题") or row.get("来源内容", ""),
+            "原始来源标题": row.get("原始来源标题", ""),
+            "原始发布文案": row.get("原始发布文案", ""),
             "原始来源账号": row.get("原始来源账号") or row.get("账号名/公众号名", ""),
             "来源权重类型": row.get("来源权重类型", ""),
             "主题簇": row.get("主题簇", ""),
@@ -199,7 +229,8 @@ def progress_event(
     if row:
         event.update({
             "内容指纹": row.get("内容指纹", ""),
-            "原始来源标题": row.get("原始来源标题") or row.get("来源内容", ""),
+            "原始来源标题": row.get("原始来源标题", ""),
+            "原始发布文案": row.get("原始发布文案", ""),
             "原始来源账号": row.get("原始来源账号") or row.get("账号名/公众号名", ""),
             "来源权重类型": row.get("来源权重类型", ""),
             "主题簇": row.get("主题簇", ""),
@@ -549,7 +580,8 @@ def title_body_check_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
     out: list[dict[str, Any]] = []
     for row in checked:
         out.append({
-            "原始来源标题": row.get("原始来源标题") or row.get("来源内容", ""),
+            "原始来源标题": row.get("原始来源标题", ""),
+            "原始发布文案": row.get("原始发布文案", ""),
             "原始来源账号": row.get("原始来源账号") or row.get("账号名/公众号名", ""),
             "推荐动作": row.get("推荐动作", ""),
             "今日建议级别": row.get("今日建议级别") or row.get("候选状态", ""),
@@ -576,7 +608,8 @@ def decision_rank_final_trace_rows(rows: list[dict[str, Any]]) -> list[dict[str,
             decision = {}
         trace.append({
             "index": decision.get("index", ""),
-            "原始来源标题": row.get("原始来源标题") or row.get("来源内容", ""),
+            "原始来源标题": row.get("原始来源标题", ""),
+            "原始发布文案": row.get("原始发布文案", ""),
             "Stage1_decision": decision.get("decision", ""),
             "Stage1_recommendation_status": decision.get("recommendation_status", ""),
             "Stage1_title": decision.get("selected_visible_title", ""),
@@ -619,6 +652,7 @@ def sample_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
         for row in rows:
             text = "\n".join(str(row.get(field, "")) for field in [
                 "原始来源标题",
+                "原始发布文案",
                 "来源内容",
                 "选题标题",
                 "选题命题",
@@ -628,17 +662,18 @@ def sample_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "重点体现",
             ])
             if any(keyword.lower() in text.lower() or keyword in text for keyword in keywords):
-                fp = str(row.get("内容指纹") or row.get("原始来源标题") or row.get("选题标题"))
+                fp = str(row.get("内容指纹") or row.get("来源链接") or row.get("选题标题"))
                 if fp in seen:
                     continue
                 seen.add(fp)
-                source_raw = row.get("原始来源标题") or row.get("来源内容", "")
-                source_title = extract_original_title(source_raw)
-                source_excerpt = truncate_on_sentence(source_raw, 70)
+                source_title = clean_source_text(row.get("原始来源标题"))
+                source_publication_copy = truncate_on_sentence(row.get("原始发布文案", ""), 120)
+                source_excerpt = truncate_on_sentence(row.get("原始来源摘录", ""), 70)
                 samples.append({
                     "sample_key": sample_key,
                     "sample_label": SAMPLE_LABELS.get(sample_key, sample_key),
                     "source_title": source_title,
+                    "source_publication_copy": source_publication_copy,
                     "source_excerpt": source_excerpt,
                     "source_title_hook": original_title_hook(row),
                     "austin_rewrite_reason": row.get("Austin改写理由") or row.get("标题思路", ""),
@@ -714,7 +749,8 @@ def write_markdown_report(out_dir: Path, summary: dict[str, Any], samples: list[
         lines.extend([
             f"### 内部分类：{row.get('sample_label') or row['sample_key']}",
             f"- 原始账号：{row['source_account']}",
-            f"- 原始标题：{row.get('source_title') or '（无可用标题）'}",
+            f"- 原始标题：{row.get('source_title') or '（平台未提供独立标题）'}",
+            f"- 原始发布文案：{row.get('source_publication_copy') or '（平台未提供独立发布文案）'}",
             f"- 原始来源摘录：{row.get('source_excerpt') or '（无摘录）'}",
             f"- 原始标题钩子：{row.get('source_title_hook') or '（未识别）'}",
             f"  - status/action: {row['status']} / {row['action']}",
@@ -847,7 +883,8 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
                 }
         lines.extend([
             f"### {row.get('sample_label') or row.get('sample_key')}",
-            f"- source_title: {row.get('source_title') or '（无可用标题）'}",
+            f"- source_title: {row.get('source_title') or '（平台未提供独立标题）'}",
+            f"- source_publication_copy: {row.get('source_publication_copy') or '（平台未提供独立发布文案）'}",
             f"- source_title_hook: {row.get('source_title_hook')}",
             f"- Austin rewrite reason: {row.get('austin_rewrite_reason')}",
             f"- visible title/proposition: {row.get('publish_title') or row.get('topic')}",
@@ -868,7 +905,8 @@ def write_ar020d_self_acceptance_report(out_dir: Path, summary: dict[str, Any], 
     for row in read_csv(actionable_path) if actionable_path.exists() else []:
         lines.extend([
             f"- [{row.get('global_rank_position') or row.get('locked_global_rank_position') or '?'}] {row.get('选题命题') or row.get('可发布标题')}",
-            f"  - source: {row.get('原始来源标题') or row.get('来源标题')}",
+            f"  - source_title: {row.get('原始来源标题') or '（平台未提供独立标题）'}",
+            f"  - source_publication_copy: {row.get('原始发布文案') or '（平台未提供独立发布文案）'}",
             f"  - exact_url: {row.get('来源链接')}",
             f"  - hook: {row.get('受众钩子')}",
             f"  - structure: {row.get('内容结构')}",
@@ -928,6 +966,13 @@ def aggregate_replay_outputs(
         samples = sample_rows(skill_rows)
         write_csv(out_dir / "skill_sample_table.csv", samples)
         provenance = aggregate_provenance(engine_meta, engine)
+        semantic_fallback_violations = semantic_cross_field_fallback_violations()
+        write_json(out_dir / "semantic_zero_fallback_audit.json", {
+            "ok": not semantic_fallback_violations,
+            "violation_count": len(semantic_fallback_violations),
+            "violations": semantic_fallback_violations,
+        })
+        provenance["semantic_cross_field_fallback_count"] = len(semantic_fallback_violations)
         write_json(out_dir / "ar020d_provenance_manifest.json", provenance)
         failed_batch_count = int(engine_meta.get("failed_batch_count", 0) or 0)
         contract_failure_count = len(classified["contract_failures"])
@@ -942,13 +987,14 @@ def aggregate_replay_outputs(
         actionable_title_families = persona_counterfactual_audit.actionable_title_family_report(skill_rows)
         write_json(out_dir / "actionable_title_family_check.json", actionable_title_families)
         replay_completed_ok = completed and failed_batch_count == 0
+        prohibited_path_count = int(provenance.get("prohibited_path_count", 0) or 0) + len(semantic_fallback_violations)
         summary = {
             "ok": replay_completed_ok,
             "completed": replay_completed_ok,
             "stage": "aggregate_success" if replay_completed_ok else "partial_batch_replay",
             "quality_gate_ok": (
                 contract_failure_count == 0
-                and int(provenance.get("prohibited_path_count", 0) or 0) == 0
+                and prohibited_path_count == 0
                 and title_quality_failure_count == 0
                 and stage2_selection_drift_count == 0
                 and raw_stage2_drift_count == 0
@@ -959,7 +1005,7 @@ def aggregate_replay_outputs(
             "full_run_success": replay_completed_ok,
             "survivor_quality_gate_ok": (
                 contract_failure_count == 0
-                and int(provenance.get("prohibited_path_count", 0) or 0) == 0
+                and prohibited_path_count == 0
                 and title_quality_failure_count == 0
                 and stage2_selection_drift_count == 0
                 and raw_stage2_drift_count == 0
@@ -982,7 +1028,8 @@ def aggregate_replay_outputs(
             "observe_count": len(classified["observe"]),
             "rejected_count": len(classified["rejected"]),
             "contract_failure_count": contract_failure_count,
-            "prohibited_path_count": int(provenance.get("prohibited_path_count", 0) or 0),
+            "prohibited_path_count": prohibited_path_count,
+            "semantic_cross_field_fallback_count": len(semantic_fallback_violations),
             "reverse_flags": sum(1 for row in reverse_rows if row.potentially_better),
             "near_miss_count": len(near_misses),
             "title_quality_failure_count": title_quality_failure_count,
