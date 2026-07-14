@@ -216,12 +216,7 @@ def warning_issues(issues: list[ContractIssue]) -> list[ContractIssue]:
 
 
 def title_for_quality(row: dict[str, Any]) -> str:
-    return normalize_space(
-        row.get("可发布标题")
-        or row.get("选题命题")
-        or row.get("我的选题标题")
-        or row.get("选题标题")
-    )
+    return normalize_space(row.get("选题命题"))
 
 
 def title_pattern_family(title: str) -> str:
@@ -264,7 +259,7 @@ def visible_reason_quality_issues(row: dict[str, Any]) -> list[ContractIssue]:
 
 def hint_leak_issues(row: dict[str, Any]) -> list[ContractIssue]:
     """Prevent deterministic hints from becoming visible fields without Skill trace."""
-    thinking = normalize_space(row.get("editorial_thinking_json") or row.get("主编判断摘要") or row.get("标题思路"))
+    thinking = normalize_space(row.get("主编判断摘要"))
     if not thinking:
         return []
     visible = joined_text(row, VISIBLE_MAIN_FIELDS)
@@ -349,7 +344,7 @@ def validate_field_contract(row: dict[str, Any]) -> list[ContractIssue]:
     if normalize_space(row.get("推荐动作")) == "生成脚本包":
         experiment = normalize_space(row.get("我要做的实验"))
         validation = normalize_space(row.get("验证方式"))
-        proposition = normalize_space(row.get("选题命题") or row.get("我的选题标题") or row.get("选题标题"))
+        proposition = normalize_space(row.get("选题命题"))
         permission = normalize_space(row.get("title_permission"))
         if not proposition:
             issues.append(ContractIssue("script_missing_proposition", "生成脚本包缺少选题命题"))

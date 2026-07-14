@@ -29,6 +29,8 @@ PY_COMPILE_TARGETS = (
     "scripts/topic_field_contract.py",
     "scripts/topic_replay_evaluation.py",
     "scripts/topic_skill_replay_evaluation.py",
+    "scripts/semantic_owner_dataflow.py",
+    "scripts/ar020d_semantic_owner_gate.py",
     "scripts/feishu_schema_cleanup_audit.py",
     "scripts/learn_from_daily_feedback.py",
     "scripts/draft_learning_skill_sync.py",
@@ -98,6 +100,17 @@ def check_failure_qa_rules() -> dict[str, Any]:
         "returncode": 0 if not failures else 1,
         "stdout": "all synthetic QA cases passed" if not failures else "\n".join(failures),
         "stderr": "",
+    }
+
+
+def check_ar020d_semantic_owner_gate() -> dict[str, Any]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "scripts")
+    result = run([sys.executable, "scripts/ar020d_semantic_owner_gate.py"], env=env)
+    return {
+        "ok": result["returncode"] == 0,
+        "name": "AR-020D semantic owner dataflow and sentinel gate",
+        **result,
     }
 
 
@@ -227,6 +240,7 @@ def main() -> int:
         check_git_dev(),
         check_git_production(),
         check_py_compile(),
+        check_ar020d_semantic_owner_gate(),
         check_failure_qa_rules(),
         check_feishu_receiver_node_tests(),
         check_topic_card_guard(),

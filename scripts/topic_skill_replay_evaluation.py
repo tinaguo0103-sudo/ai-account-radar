@@ -8,7 +8,6 @@ the user-visible topic fields.
 from __future__ import annotations
 
 import argparse
-import ast
 import collections
 import csv
 import json
@@ -23,6 +22,7 @@ import content_sampler
 import editorial_skill_runner
 import persona_counterfactual_audit
 import topic_field_contract as field_contract
+import semantic_owner_dataflow as semantic_dataflow
 import topic_flow_rework as flow
 import topic_replay_evaluation as deterministic_replay
 
@@ -49,24 +49,8 @@ SAMPLE_LABELS = {
     "agent_execution": "Agent / 业务执行边界",
 }
 HASHTAG_PATTERN = re.compile(r"\s*#[^\s#]+")
-SEMANTIC_OWNER_GROUPS = {
-    "source_identity": {"原始来源标题", "原始发布文案", "来源内容", "来源标题", "原始来源摘录"},
-    "research": {"研究摘要", "受众钩子", "research_summary", "audience_hook"},
-    "editorial_rationale": {
-        "主编判断摘要", "Austin改写理由", "标题思路", "source_read",
-        "public_decision_summary", "title_rationale",
-    },
-    "visible_title": {"选题命题", "选题标题", "我的选题标题", "可发布标题", "selected_visible_title"},
-    "natural_angle": {"我的切入", "natural_austin_angle", "locked_natural_austin_angle"},
-}
+SEMANTIC_OWNER_GROUPS = semantic_dataflow.OWNER_GROUPS
 SEMANTIC_OWNER_FIELDS = set().union(*SEMANTIC_OWNER_GROUPS.values())
-ACTIVE_SEMANTIC_AUDIT_PATHS = (
-    Path(__file__),
-    Path(__file__).with_name("topic_editorial_state_machine.py"),
-    Path(__file__).with_name("validate_ar020d_visible_closure.py"),
-    Path(__file__).with_name("push_today10_to_feishu.py"),
-    Path(__file__).with_name("feishu_topic_decision_card.py"),
-)
 
 
 def now_iso() -> str:
@@ -148,44 +132,11 @@ def original_title_hook(row: dict[str, Any]) -> str:
     return f"{label}：{title}"
 
 
-def _semantic_fallback_violations(text: str, source_name: str) -> list[dict[str, Any]]:
-    """Find expressions that substitute one user-semantic owner for another."""
-    tree = ast.parse(text)
-    violations: list[dict[str, Any]] = []
-    for node in ast.walk(tree):
-        if not ((isinstance(node, ast.BoolOp) and isinstance(node.op, ast.Or)) or isinstance(node, ast.IfExp)):
-            continue
-        keys: list[str] = []
-        for child in ast.walk(node):
-            key: Any = None
-            if (
-                isinstance(child, ast.Call)
-                and isinstance(child.func, ast.Attribute)
-                and child.func.attr == "get"
-                and child.args
-                and isinstance(child.args[0], ast.Constant)
-            ):
-                key = child.args[0].value
-            elif isinstance(child, ast.Subscript):
-                slice_node = child.slice
-                if isinstance(slice_node, ast.Constant):
-                    key = slice_node.value
-            if isinstance(key, str) and key in SEMANTIC_OWNER_FIELDS:
-                keys.append(key)
-        distinct = list(dict.fromkeys(keys))
-        if len(distinct) > 1:
-            violations.append({"source": source_name, "line": getattr(node, "lineno", 0), "fields": distinct})
-    return violations
-
-
 def semantic_cross_field_fallback_violations(source_text: str | None = None) -> list[dict[str, Any]]:
-    """Audit every active AR-020D user-semantic surface, or one mutation source."""
+    """Run the cross-statement provenance audit used by the active pre-merge gate."""
     if source_text is not None:
-        return _semantic_fallback_violations(source_text, "mutation")
-    violations: list[dict[str, Any]] = []
-    for path in ACTIVE_SEMANTIC_AUDIT_PATHS:
-        violations.extend(_semantic_fallback_violations(path.read_text(encoding="utf-8"), path.name))
-    return violations
+        return semantic_dataflow.audit_source(source_text)
+    return semantic_dataflow.audit_active_paths()
 
 
 def append_csv(path: Path, rows: list[dict[str, Any]]) -> None:

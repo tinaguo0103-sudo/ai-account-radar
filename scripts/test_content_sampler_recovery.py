@@ -153,6 +153,7 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
             {
                 "strict_fail_closed": "true",
                 "我的选题标题": "值得推进",
+                "选题命题": "值得推进的测试标题",
                 "推荐动作": "生成脚本包",
                 "是否建议进入制作": "是",
                 "今日建议级别": "",
