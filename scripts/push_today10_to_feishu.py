@@ -12,7 +12,7 @@ import json
 import os
 import sys
 import time
-from datetime import datetime, timedelta
+from datetime import datetime
 from pathlib import Path
 from typing import Any
 
@@ -20,6 +20,7 @@ import feishu_idempotency as idempotency
 import push_to_feishu as feishu
 import topic_field_contract as field_contract
 from feishu_table_registry import TABLES, resolve_table_id, table_name
+from local_env import load_local_env
 from topic_decision_fields import (
     CORE_VISIBLE_FIELDS,
     DAILY_WRITE_FIELDS,
@@ -35,22 +36,24 @@ TODAY10 = OUT / "today_10_topics.csv"
 LATEST_WRITE_TODAY10 = OUT / "latest_write" / "today_10_topics.csv"
 LEGACY_LOG = OUT / "content_sampler_log.json"
 TARGET_TABLE_KEY = "topic_decision"
-CONTENT_INBOX_TABLE_KEY = "content_inbox"
-CONTENT_FINGERPRINT_FIELD = "内容指纹"
-RECENT_DEDUPE_DAYS = int(os.getenv("TOPIC_CARD_RECENT_DEDUPE_DAYS", "5"))
-CONTENT_INBOX_SYNC_RATIO = float(os.getenv("CONTENT_INBOX_SYNC_RATIO", "0.8"))
+TOPIC_TABLE_ID_ENV_KEYS = ("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE_ID")
 TOPIC_CREATE_KIND = "topic_candidate_create"
 REQUIRED_FIELDS = [
     *DAILY_WRITE_FIELDS,
+    "研究摘要",
+    "受众钩子",
+    "内容结构",
+    "研究置信度",
+    "我的切入",
+    "原始发布文案",
 ]
-ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
-FEISHU_VISIBLE_LEVELS = {"今日最值得做", "可选候选"}
+ALLOWED_LEVELS = {"推荐制作", "暂存观察", "不建议制作"}
+FEISHU_VISIBLE_LEVELS = {"推荐制作"}
 VISIBLE_ACTIONS = {"立即蹭热点", "生成脚本包"}
 LEVEL_ALIASES = {
-    "备选": "可选候选",
-    "备选候选": "可选候选",
-    "备选，不占今日前三": "可选候选",
-    "候选": "可选候选",
+    "备选": "推荐制作",
+    "备选候选": "推荐制作",
+    "候选": "推荐制作",
     "观察": "暂存观察",
     "暂存": "暂存观察",
     "不做": "不建议制作",
@@ -67,13 +70,13 @@ def normalize_level(value: str) -> str:
     for key, target in LEVEL_ALIASES.items():
         if key and key in cleaned:
             return target
-    if "最值得" in cleaned:
-        return "今日最值得做"
+    if "最值得" in cleaned or "推荐制作" in cleaned:
+        return "推荐制作"
     if "不建议" in cleaned:
         return "不建议制作"
     if "暂存" in cleaned or "观察" in cleaned:
         return "暂存观察"
-    return "可选候选" if cleaned else ""
+    return "推荐制作" if cleaned else ""
 
 
 def inferred_visible_level(row: dict[str, str], visible_rank: int) -> str:
@@ -81,7 +84,7 @@ def inferred_visible_level(row: dict[str, str], visible_rank: int) -> str:
     if level:
         return level
     if row.get("推荐动作", "") in VISIBLE_ACTIONS and row.get("是否建议进入制作", "") == "是":
-        return "今日最值得做" if visible_rank == 1 else "可选候选"
+        return "推荐制作"
     return ""
 
 
@@ -166,36 +169,13 @@ def clean_short_proposition(value: str) -> str:
 
 
 def proposition_for(row: dict[str, str]) -> str:
-    for field in ["选题命题", "我要做的实验"]:
-        value = clean_short_proposition(row.get(field, ""))
-        if value:
-            return value
-    experiment = experiment_for(row)
-    value = clean_short_proposition(experiment)
-    if value and experiment != FALLBACK_EXPERIMENT_PROMPT:
-        return value
-    trigger = workflow_trigger_for(row)
-    action = "先暂存，等补出具体实验动作"
-    if experiment != FALLBACK_EXPERIMENT_PROMPT:
-        action = short_text(experiment, 56)
-    return short_text(f"{short_text(trigger, 24)}触发的实验：{action}", 90)
+    """Return the approved proposition owner without semantic substitution."""
+    return row.get("选题命题", "")
 
 
 def display_title_for(row: dict[str, str]) -> str:
-    if is_visible_action_candidate(row) and row.get("我的选题标题"):
-        return short_text(row["我的选题标题"], 88)
-    proposition = proposition_for(row)
-    if proposition:
-        return proposition
-    level = normalize_level(row.get("今日建议级别", ""))
-    direction = row.get("对应方向") or row.get("对应栏目") or "候选"
-    source = row.get("来源内容") or row.get("原始来源标题") or row.get("我的选题标题") or "未命名来源"
-    source_label = short_text(source, 42)
-    if level == "不建议制作":
-        return f"不建议制作｜{source_label}"
-    if level == "暂存观察":
-        return f"暂存观察｜{source_label}"
-    return row.get("我的选题标题") or f"{direction}候选：{short_text(source)}"
+    """Keep the visible title bound to the approved proposition owner."""
+    return row.get("选题命题", "")
 ACTION_STATUS = {
     "立即蹭热点": "待判断",
     "生成脚本包": "待判断",
@@ -212,93 +192,12 @@ def read_today10(path: Path) -> list[dict[str, str]]:
     return rows
 
 
-def normalize(value: Any) -> str:
-    return " ".join(str(value or "").split())
-
-
-def parse_date(value: Any) -> datetime | None:
-    text = normalize(value)
-    if not text:
-        return None
-    try:
-        return datetime.strptime(text[:10], "%Y-%m-%d")
-    except ValueError:
-        return None
-
-
-def local_content_item_keys(path: Path) -> set[str]:
-    if not path.exists() or not path.read_text(encoding="utf-8-sig").strip():
-        return set()
-    with path.open("r", encoding="utf-8-sig", newline="") as handle:
-        rows = list(csv.DictReader(handle))
-    keys: set[str] = set()
-    for row in rows:
-        key = (
-            normalize(row.get(CONTENT_FINGERPRINT_FIELD))
-            or normalize(row.get("内容链接"))
-            or normalize(row.get("链接"))
-            or normalize(row.get("内容标题"))
-            or normalize(row.get("标题"))
-        )
-        if key:
-            keys.add(key)
-    return keys
-
-
-def minimum_expected_content_inbox_records(local_count: int) -> int:
-    if local_count <= 0:
-        return 0
-    if local_count <= 20:
-        return local_count
-    return max(20, int(local_count * CONTENT_INBOX_SYNC_RATIO))
-
-
-def validate_content_inbox_synced(token: str, app_token: str, tables: dict[str, str], run_id: str, input_path: Path) -> dict[str, Any]:
-    content_items_path = input_path.parent / "content_items.csv"
-    local_keys = local_content_item_keys(content_items_path)
-    if not local_keys:
-        raise SystemExit(
-            f"Refusing to write Feishu 04: missing or empty local content inbox source {content_items_path}. "
-            "04 must only be written after the matching 03 内容收件箱 source exists."
-        )
-    table_id = resolve_table_id(tables, CONTENT_INBOX_TABLE_KEY)
-    if not table_id:
-        raise SystemExit(f"Missing Feishu table: {table_name(CONTENT_INBOX_TABLE_KEY)}")
-    records = all_records(token, app_token, table_id)
-    today = today_slug()
-    run_records = [
-        record for record in records
-        if normalize(record.get("fields", {}).get("最近参与运行批次")) == run_id
-        or normalize(record.get("fields", {}).get("运行批次")) == run_id
-    ]
-    today_records = [
-        record for record in records
-        if normalize(record.get("fields", {}).get("最近采样日期")) == today
-        or normalize(record.get("fields", {}).get("运行日期")) == today
-    ]
-    minimum = minimum_expected_content_inbox_records(len(local_keys))
-    if len(run_records) < minimum:
-        raise SystemExit(
-            "Refusing to write Feishu 04: Feishu 03 内容收件箱 is not synced for this run. "
-            f"run_id={run_id}; local_unique_items={len(local_keys)}; "
-            f"feishu_run_records={len(run_records)}; required_minimum={minimum}; "
-            f"feishu_today_records={len(today_records)}. "
-            "Fix or backfill 03 before writing 04."
-        )
-    return {
-        "content_items_path": str(content_items_path),
-        "local_unique_items": len(local_keys),
-        "feishu_run_records": len(run_records),
-        "feishu_today_records": len(today_records),
-        "required_minimum": minimum,
-    }
-
-
 def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]], int]:
     visible: list[dict[str, str]] = []
     omitted = 0
-    for row in rows:
-        if row.get("editorial_engine") != "codex" or row.get("fallback_only") == "true" or row.get("not_editorial_quality") == "true":
+    guarded_rows = field_contract.apply_batch_quality_guards(rows)
+    for row in guarded_rows:
+        if row.get("strict_fail_closed") != "true" or row.get("guard_blocked") == "true":
             omitted += 1
             continue
         issues = field_contract.validate_field_contract(row)
@@ -357,8 +256,22 @@ def list_tables(token: str, app_token: str) -> dict[str, str]:
 
 
 def list_fields(token: str, app_token: str, table_id: str) -> dict[str, dict[str, Any]]:
-    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields", token=token)
-    return {item["field_name"]: item for item in payload.get("data", {}).get("items", [])}
+    fields: dict[str, dict[str, Any]] = {}
+    page_token = ""
+    while True:
+        suffix = f"?page_size=500{('&page_token=' + page_token) if page_token else ''}"
+        payload = feishu.request_json(
+            "GET",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields{suffix}",
+            token=token,
+        )
+        data = payload.get("data", {})
+        fields.update({item["field_name"]: item for item in data.get("items", [])})
+        if not data.get("has_more"):
+            return fields
+        page_token = str(data.get("page_token") or "")
+        if not page_token:
+            raise RuntimeError("Feishu fields pagination reported has_more without page_token")
 
 
 def list_views(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
@@ -416,25 +329,40 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str, str]:
     status = ACTION_STATUS.get(row.get("推荐动作", ""), "待判断")
     level = normalize_level(row.get("今日建议级别", ""))
-    proposition = row.get("选题命题") or row.get("我的选题标题") or proposition_for(row)
+    proposition = row.get("选题命题", "")
     experiment = row.get("我要做的实验", "")
     trigger = row.get("热点触发点") or workflow_trigger_for(row)
     pain = row.get("我的工作流痛点", "")
-    display_title = proposition or display_title_for(row)
+    display_title = proposition
     recommendation_reason = row.get("推荐理由", "")
     mapped = {
         "选题标题": display_title,
         "状态": status,
         "今日建议级别": level,
+        "推荐动作": row.get("推荐动作", ""),
+        "title_permission": row.get("title_permission", ""),
+        "可发布标题": row.get("可发布标题", ""),
         "AI味风险": row.get("AI味风险", ""),
         "推荐日期": date,
         "今日排名": str(rank),
         "对应方向": row.get("对应方向", row.get("对应栏目", "")),
-        "原始来源标题": row.get("来源内容") or row.get("原始来源标题", ""),
+        "来源构成": row.get("来源构成", "") or f"{row.get('来源类型', '')} / {row.get('原始来源账号', '')}".strip(" /"),
+        "来源权重类型": row.get("来源权重类型", ""),
+        "原始来源标题": row.get("原始来源标题", ""),
+        "原始发布文案": row.get("原始发布文案", ""),
         "来源链接": row.get("来源链接", ""),
-        CONTENT_FINGERPRINT_FIELD: row.get(CONTENT_FINGERPRINT_FIELD, ""),
+        "研究摘要": row.get("研究摘要", ""),
+        "受众钩子": row.get("受众钩子", ""),
+        "内容结构": row.get("内容结构", ""),
+        "研究置信度": row.get("研究置信度", ""),
+        "我的切入": row.get("我的切入", ""),
         "一句话Brief": row.get("一句话Brief", ""),
+        "主编判断摘要": row.get("主编判断摘要", ""),
+        "标题思路": row.get("标题思路", ""),
+        "标题体感风险": row.get("标题体感风险", ""),
         "推荐理由": recommendation_reason,
+        "对标转译角度": row.get("对标转译角度", "") or row.get("Austin转译角度", ""),
+        "AIHOT重大性说明": row.get("AIHOT重大性说明", ""),
         "不建议做的原因": row.get("不建议做的原因", ""),
         "我要做的实验": experiment,
         "热点触发点": trigger,
@@ -446,57 +374,31 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "我的思考点": row.get("我的思考点", ""),
         "可展示证据": row.get("可展示证据") or row.get("可展示结果", ""),
         "需要补的证据": row.get("需要补的证据", ""),
+        "title_quality_status": row.get("title_quality_status", ""),
+        "title_quality_issues": row.get("title_quality_issues", ""),
         "运行批次": run_id,
     }
     mapped["卡片速读"] = card_summary_from_fields(mapped)
     return mapped
 
 
-def topic_duplicate_keys(fields: dict[str, Any]) -> set[tuple[str, str]]:
-    keys: set[tuple[str, str]] = set()
-    for field in [CONTENT_FINGERPRINT_FIELD, "来源链接", "原始来源标题", "选题标题"]:
-        value = normalize(fields.get(field))
+def explicit_topic_table_id() -> tuple[str, str]:
+    for key in TOPIC_TABLE_ID_ENV_KEYS:
+        value = os.getenv(key, "").strip()
         if value:
-            keys.add((field, value))
-    return keys
+            return value, key
+    return "", ""
 
 
-def recent_duplicate_keys(records: list[dict[str, Any]], date: str, run_id: str, days: int = RECENT_DEDUPE_DAYS) -> set[tuple[str, str]]:
-    current = parse_date(date)
-    if not current or days <= 0:
-        return set()
-    cutoff = current - timedelta(days=days)
-    keys: set[tuple[str, str]] = set()
-    for record in records:
-        fields = record.get("fields", {})
-        if normalize(fields.get("运行批次")) == run_id:
-            continue
-        record_date = parse_date(fields.get("推荐日期"))
-        if not record_date or record_date >= current or record_date < cutoff:
-            continue
-        keys.update(topic_duplicate_keys(fields))
-    return keys
-
-
-def filter_recent_duplicate_rows(
-    rows: list[dict[str, str]],
-    existing_records: list[dict[str, Any]],
-    date: str,
-    run_id: str,
-    days: int = RECENT_DEDUPE_DAYS,
-) -> tuple[list[dict[str, str]], list[dict[str, str]]]:
-    duplicate_keys = recent_duplicate_keys(existing_records, date, run_id, days)
-    if not duplicate_keys:
-        return rows, []
-    kept: list[dict[str, str]] = []
-    skipped: list[dict[str, str]] = []
-    for row in rows:
-        row_keys = topic_duplicate_keys(row)
-        if row_keys & duplicate_keys:
-            skipped.append(row)
-        else:
-            kept.append(row)
-    return kept, skipped
+def get_topic_table(token: str, app_token: str) -> tuple[str, str]:
+    explicit_table_id, source = explicit_topic_table_id()
+    if explicit_table_id:
+        return explicit_table_id, source
+    tables = list_tables(token, app_token)
+    table_id = resolve_table_id(tables, TARGET_TABLE_KEY)
+    if not table_id:
+        raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
+    return table_id, "table_name"
 
 
 def dry_run_print(rows: list[dict[str, str]]) -> None:
@@ -760,14 +662,14 @@ def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: s
     detail_visible = set(DETAIL_VISIBLE_FIELDS)
     return {
         "今日候选池": patch_candidate_view(token, app_token, table_id, "今日候选池", run_id, core_visible),
-        "今日最值得做": patch_candidate_view(
+        "推荐制作": patch_candidate_view(
             token,
             app_token,
             table_id,
-            "今日最值得做",
+            "推荐制作",
             run_id,
             core_visible,
-            {"field": "今日建议级别", "operator": "is", "value": ["今日最值得做"]},
+            {"field": "今日建议级别", "operator": "is", "value": ["推荐制作"]},
         ),
         "暂存观察": patch_candidate_view(
             token,
@@ -783,6 +685,7 @@ def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: s
 
 
 def main() -> int:
+    load_local_env()
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true", help="Actually write to Feishu. Default is dry-run only.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
@@ -812,41 +715,21 @@ def main() -> int:
     if not app_token:
         raise SystemExit("FEISHU_BASE_APP_TOKEN is required")
     token = feishu.tenant_token()
-    tables = list_tables(token, app_token)
-    content_inbox_check = validate_content_inbox_synced(token, app_token, tables, run_id, input_path)
-    table_id = resolve_table_id(tables, TARGET_TABLE_KEY)
-    if not table_id:
-        raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
+    table_id, table_id_source = get_topic_table(token, app_token)
     created_fields = ensure_fields(token, app_token, table_id)
 
     existing = all_records(token, app_token, table_id)
-    mapped, skipped_recent_duplicates = filter_recent_duplicate_rows(mapped, existing, date, run_id)
-    if skipped_recent_duplicates:
-        skipped_titles = [row.get("选题标题", "") for row in skipped_recent_duplicates]
-        print(json.dumps({
-            "event": "skip_recent_duplicates",
-            "days": RECENT_DEDUPE_DAYS,
-            "count": len(skipped_recent_duplicates),
-            "titles": skipped_titles,
-        }, ensure_ascii=False, indent=2))
-    existing_by_source = {
-        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("原始来源标题", ""))): record
+    existing_by_source_url = {
+        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("来源链接", ""))): record
         for record in existing
-        if record.get("fields", {}).get("原始来源标题")
-    }
-    existing_by_title = {
-        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("选题标题", ""))): record
-        for record in existing
+        if record.get("fields", {}).get("来源链接")
     }
     to_create = []
     updated_existing = 0
     updated_titles: list[str] = []
     created_titles: list[str] = []
     for row in mapped:
-        record = (
-            existing_by_source.get((row["推荐日期"], row.get("原始来源标题", "")))
-            or existing_by_title.get((row["推荐日期"], row["选题标题"]))
-        )
+        record = existing_by_source_url.get((row["推荐日期"], row.get("来源链接", "")))
         if record:
             update_existing_top10(token, app_token, table_id, record, row)
             updated_existing += 1
@@ -860,6 +743,8 @@ def main() -> int:
         "ok": True,
         "mode": "write",
         "table": TABLES[TARGET_TABLE_KEY],
+        "table_id": table_id,
+        "table_id_source": table_id_source,
         "run_id": run_id,
         "input": str(input_path),
         "created_fields": created_fields,
@@ -867,8 +752,6 @@ def main() -> int:
         "updated_existing": updated_existing,
         "skipped_existing": len(mapped) - len(to_create),
         "omitted_rows": omitted_rows,
-        "skipped_recent_duplicates": len(skipped_recent_duplicates),
-        "content_inbox_check": content_inbox_check,
         "created_titles": created_titles,
         "updated_titles": updated_titles,
         "today_view": ensure_today_top10_view(token, app_token, table_id, run_id),

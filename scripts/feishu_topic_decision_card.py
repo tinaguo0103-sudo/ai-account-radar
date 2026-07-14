@@ -11,6 +11,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import sys
 import threading
 import time
@@ -23,6 +24,7 @@ from urllib.parse import urlencode
 import feishu_idempotency as idempotency
 import push_to_feishu as feishu
 from feishu_table_registry import TABLES, resolve_table_id
+from local_env import load_local_env
 from topic_decision_fields import SELECTION_REASON_OPTIONS
 
 
@@ -32,11 +34,30 @@ TARGET_TABLE_KEY = "topic_decision"
 TOPIC_TABLE_ID_ENV_KEYS = ("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE_ID")
 TOPIC_CREATE_KIND = "topic_candidate_create"
 TOPIC_CARD_SEND_KIND = "topic_card_send"
-DEFAULT_LIMIT = 7
+DEFAULT_LIMIT = 0
+CARD_PAGE_SIZE = 5
+EVIDENCE_FIRST_REQUIRED_FIELDS = ("来源链接", "研究摘要", "受众钩子", "研究置信度", "内容结构", "我的切入", "需要补的证据")
+
+
+def validate_evidence_first_record(record: dict[str, Any]) -> None:
+    fields = record.get("fields", {}) or {}
+    if normalize(fields.get("今日建议级别")) != "推荐制作":
+        return
+    missing = [name for name in EVIDENCE_FIRST_REQUIRED_FIELDS if not normalize(fields.get(name))]
+    if missing:
+        raise ValueError(f"Evidence-first card candidate missing fields: {', '.join(missing)}")
+    for name in ("研究摘要", "受众钩子"):
+        if not re.search(r"[\u4e00-\u9fff]", normalize(fields.get(name))):
+            raise ValueError(f"Evidence-first card field must be Chinese: {name}")
+    title = normalize(fields.get("原始来源标题"))
+    caption = normalize(fields.get("原始发布文案"))
+    if title and caption and title == caption:
+        raise ValueError("Original title and post caption must not duplicate")
 CARD_EXPIRE_DAYS = 5
 DEFAULT_STATUS_FILTER = {"待判断", ""}
 ENTER_SCRIPT_PACKAGE_FORM_KEY = "script_package_records"
 SCRIPT_PACKAGE_READY_STATUS = "生成脚本包"
+SUPPLEMENT_ACTIONS = {"补证据", "存素材", "观察", "暂存观察", "不做"}
 SUBMIT_SELECTION_ACTION = "submit_topic_decisions"
 SUBMIT_NO_SELECTION_ACTION = "submit_no_selection"
 SUPPORTED_SUBMIT_ACTIONS = {SUBMIT_SELECTION_ACTION, SUBMIT_NO_SELECTION_ACTION}
@@ -119,12 +140,12 @@ def candidate_rank(fields: dict[str, Any]) -> int:
 
 
 def candidate_title(fields: dict[str, Any]) -> str:
-    return normalize(fields.get("选题标题") or fields.get("选题命题") or fields.get("一句话Brief"))
+    return normalize(fields.get("选题标题"))
 
 
 def candidate_dedupe_key(fields: dict[str, Any]) -> str:
     title = candidate_title(fields)
-    source = normalize(fields.get("原始来源标题") or fields.get("来源URL") or fields.get("来源内容"))
+    source = normalize(fields.get("来源链接"))
     key = "|".join(part for part in [source, title] if part)
     return hashlib.sha1(key.encode("utf-8")).hexdigest() if key else ""
 
@@ -188,7 +209,7 @@ def card_candidate_value(card: dict[str, Any]) -> dict[str, Any]:
 
 def write_card_candidate_ledger(card: dict[str, Any], run_id: str, preview_path: str) -> None:
     value = card_candidate_value(card)
-    candidate_ids = [str(item) for item in value.get("candidate_ids", []) if str(item)]
+    candidate_ids = [str(item) for item in value.get("display_candidate_ids") or value.get("candidate_ids", []) if str(item)]
     snapshots = value.get("candidate_snapshots") if isinstance(value.get("candidate_snapshots"), dict) else {}
     if not candidate_ids:
         return
@@ -219,34 +240,151 @@ def option_text(index: int, fields: dict[str, Any]) -> str:
     return f"{index}. {title}" + (f"｜{suffix}" if suffix else "")
 
 
+def candidate_action(fields: dict[str, Any]) -> str:
+    return normalize(fields.get("推荐动作"))
+
+
+def title_permission(fields: dict[str, Any]) -> str:
+    return normalize(fields.get("title_permission"))
+
+
+def is_script_package_candidate(fields: dict[str, Any]) -> bool:
+    action = candidate_action(fields)
+    permission = title_permission(fields)
+    if action == SCRIPT_PACKAGE_READY_STATUS:
+        return permission != "不生成标题"
+    if action in SUPPLEMENT_ACTIONS:
+        return False
+    return normalize(fields.get("今日建议级别")) == "推荐制作" and permission != "不生成标题"
+
+
+def candidate_caveat(fields: dict[str, Any]) -> str:
+    action = candidate_action(fields)
+    level = normalize(fields.get("今日建议级别"))
+    permission = title_permission(fields)
+    missing = compact(fields.get("需要补的证据"), 64)
+    if is_script_package_candidate(fields):
+        return ""
+    parts: list[str] = []
+    if action:
+        parts.append(action)
+    elif level:
+        parts.append(level)
+    if permission == "内部测试标题":
+        parts.append("内部测试标题")
+    elif permission == "不生成标题":
+        parts.append("缺发布标题")
+    if missing:
+        parts.append("需补证据")
+    label = " / ".join(dict.fromkeys(parts)) or "暂不直接生成"
+    return f"处理：{label}；不会进入下方“生成脚本包”勾选列表。"
+
+
 def card_markdown_for_candidate(index: int, fields: dict[str, Any]) -> str:
     title = compact(fields.get("选题标题"), 50) or f"候选 {index}"
-    brief = compact(fields.get("一句话Brief"), 88)
+    source_title = compact(fields.get("原始来源标题"), 88)
+    source_caption = compact(fields.get("原始发布文案"), 120)
+    source_url = normalize(fields.get("来源链接"))
+    research_summary = compact(fields.get("研究摘要"), 120)
+    audience_hook = compact(fields.get("受众钩子"), 100)
+    content_structure = compact(fields.get("内容结构"), 140)
+    research_confidence = compact(fields.get("研究置信度"), 24)
+    editorial_trace = compact(fields.get("主编判断摘要"), 96)
+    title_thinking = compact(fields.get("标题思路"), 82)
     experiment = compact(fields.get("我要做的实验"), 76)
     evidence = compact(fields.get("可展示证据"), 64)
     missing = compact(fields.get("需要补的证据"), 52)
-    direction = compact(fields.get("对应方向"), 18)
-    risk = compact(fields.get("AI味风险"), 8)
-    original_date = compact(fields.get("推荐日期"), 10)
-    original_run_id = compact(fields.get("运行批次"), 40)
+    natural_angle = compact(fields.get("我的切入"), 100)
+    category = compact(fields.get("对应方向"), 18)
     lines = [f"**{index}. {title}**"]
-    meta = "｜".join(part for part in [
-        f"日期：{original_date}" if original_date else "",
-        f"run：{original_run_id}" if original_run_id else "",
-        direction,
-        f"AI味：{risk}" if risk else "",
-    ] if part)
-    if meta:
-        lines.append(meta)
-    if brief:
-        lines.append(f"Brief：{brief}")
-    if experiment:
-        lines.append(f"实验：{experiment}")
+    source_kind = "视频" if "douyin" in source_url else "文章"
+    if source_url:
+        lines.append(f"精确来源：[{f'查看原始{source_kind}'}]({source_url})")
+    lines.append(f"原始标题：{source_title or '平台未提供独立标题'}")
+    lines.append(f"原始发布文案：{source_caption or '平台未提供独立发布文案'}")
+    if research_summary:
+        lines.append(f"来源摘要：{research_summary}")
+    if audience_hook:
+        lines.append(f"受众钩子：{audience_hook}")
+    if natural_angle:
+        lines.append(f"Austin 角度：{natural_angle}")
+    if content_structure:
+        lines.append(f"内容结构：{content_structure}")
+    if research_confidence:
+        lines.append(f"研究置信度：{research_confidence}")
     if evidence:
         lines.append(f"证据：{evidence}")
     if missing:
         lines.append(f"缺口：{missing}")
+    if category:
+        lines.append(f"方向分类：{category}")
+    if editorial_trace:
+        lines.append(f"主编：{editorial_trace}")
+    if title_thinking:
+        lines.append(f"标题思路：{title_thinking}")
+    caveat = candidate_caveat(fields)
+    if caveat:
+        lines.append(caveat)
     return "\n".join(lines)
+
+
+def build_card_pages(records: list[dict[str, Any]], run_id: str, page_size: int = CARD_PAGE_SIZE) -> dict[str, Any]:
+    """Build a lossless immutable page manifest without changing eligibility."""
+    if page_size < 1:
+        raise ValueError("page_size must be positive")
+    ids = [str(record.get("record_id") or "") for record in records]
+    if any(not value for value in ids):
+        raise ValueError("Every card candidate requires record_id")
+    if len(set(ids)) != len(ids):
+        raise ValueError("Card pagination candidate IDs must be unique")
+    for record in records:
+        validate_evidence_first_record(record)
+    pages: list[dict[str, Any]] = []
+    page_count = (len(records) + page_size - 1) // page_size
+    for start in range(0, len(records), page_size):
+        page_records = records[start:start + page_size]
+        page_ids = ids[start:start + page_size]
+        card = build_card(page_records, run_id)
+        page_index = len(pages) + 1
+        page_label = f"第 {page_index}/{page_count} 页 · 本页 {len(page_ids)} 条"
+        card["header"]["title"]["content"] += f" · {page_label}"
+        card["body"]["elements"][0]["content"] = page_label + "\n\n" + card["body"]["elements"][0]["content"]
+        for element in card["body"]["elements"]:
+            if element.get("tag") != "form":
+                continue
+            for form_element in element.get("elements", []):
+                for column in form_element.get("columns", []):
+                    for button in column.get("elements", []):
+                        for behavior in button.get("behaviors", []):
+                            value = behavior.get("value")
+                            if isinstance(value, dict):
+                                value.update({
+                                    "page_index": page_index,
+                                    "page_count": page_count,
+                                    "page_candidate_ids": page_ids,
+                                })
+        first_fields = page_records[0].get("fields", {}) if page_records else {}
+        pages.append({
+            "page": page_index,
+            "page_count": page_count,
+            "candidate_ids": page_ids,
+            "candidate_count": len(page_ids),
+            "first_candidate_id": page_ids[0] if page_ids else "",
+            "first_candidate_title": candidate_title(first_fields),
+            "card": card,
+        })
+    flattened = [value for page in pages for value in page["candidate_ids"]]
+    if flattened != ids:
+        raise RuntimeError("Card pagination lost, duplicated, or reordered candidate IDs")
+    return {
+        "run_id": run_id,
+        "page_size": page_size,
+        "candidate_count": len(ids),
+        "page_count": len(pages),
+        "candidate_ids": ids,
+        "pages": pages,
+        "bijection_ok": True,
+    }
 
 
 def explicit_topic_table_id() -> tuple[str, str]:
@@ -287,6 +425,17 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 
 
 def fetch_candidates(run_id: str, limit: int, include_decided: bool = False) -> tuple[str, str, str, list[dict[str, Any]]]:
+    return fetch_candidates_for_card(run_id, limit, include_decided=include_decided)
+
+
+def fetch_candidates_for_card(
+    run_id: str,
+    limit: int,
+    include_decided: bool = False,
+    *,
+    strict_run_id: bool = False,
+    record_ids: set[str] | None = None,
+) -> tuple[str, str, str, list[dict[str, Any]]]:
     token = feishu.tenant_token()
     app_token = require_app_token()
     table_id = get_topic_table(token, app_token)
@@ -297,13 +446,17 @@ def fetch_candidates(run_id: str, limit: int, include_decided: bool = False) -> 
         fields = record.get("fields", {})
         record_run_id = normalize(fields.get("运行批次"))
         record_date = parse_record_date(fields.get("推荐日期"))
+        record_id = str(record.get("record_id") or "")
+        if record_ids is not None and record_id not in record_ids:
+            continue
         is_today_run = bool(run_id and record_run_id == run_id)
+        if strict_run_id and not is_today_run:
+            continue
         in_compensation_window = bool(record_date and window_start <= record_date <= window_end)
         if not is_today_run and not in_compensation_window:
             continue
         if not is_candidate_pending(fields, include_decided=include_decided):
             continue
-        record_id = str(record.get("record_id") or "")
         if record_id in sent_candidate_ids:
             continue
         dedupe_key = candidate_dedupe_key(fields) or record_id
@@ -323,7 +476,7 @@ def fetch_candidates(run_id: str, limit: int, include_decided: bool = False) -> 
         -(parse_record_date(record.get("fields", {}).get("推荐日期")) or date.min).toordinal(),
         normalize(record.get("fields", {}).get("运行批次")),
     ))
-    return token, app_token, table_id, selected[:limit]
+    return token, app_token, table_id, selected if limit <= 0 else selected[:limit]
 
 
 def select_component(name: str, placeholder: str, options: list[dict[str, str]], required: bool = False) -> dict[str, Any]:
@@ -370,14 +523,31 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         for record in records
         if normalize(record.get("fields", {}).get("推荐日期"))
     })
+    if not coverage_dates:
+        match = re.search(r"(20\d{2})(\d{2})(\d{2})", run_id)
+        coverage_dates = [
+            f"{match.group(1)}-{match.group(2)}-{match.group(3)}" if match else date.today().isoformat()
+        ]
+    script_records = [
+        (index, record)
+        for index, record in enumerate(records, start=1)
+        if record.get("record_id") and is_script_package_candidate(record.get("fields", {}))
+    ]
+    supplement_records = [
+        (index, record)
+        for index, record in enumerate(records, start=1)
+        if record.get("record_id") and not is_script_package_candidate(record.get("fields", {}))
+    ]
     options = [
         {"text": option_text(index, record.get("fields", {})), "value": str(record.get("record_id") or "")}
-        for index, record in enumerate(records, start=1)
-        if record.get("record_id")
+        for index, record in script_records
     ]
+    display_candidate_ids = [str(record.get("record_id") or "") for record in records if record.get("record_id")]
     card_meta = {
         "run_id": run_id,
         "candidate_ids": [option["value"] for option in options],
+        "display_candidate_ids": display_candidate_ids,
+        "supplement_candidate_ids": [str(record.get("record_id") or "") for _index, record in supplement_records],
         "coverage_dates": coverage_dates,
         "card_issued_at": issued_at.isoformat().replace("+00:00", "Z"),
         "card_expires_at": expires_at.isoformat().replace("+00:00", "Z"),
@@ -397,7 +567,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     elements: list[dict[str, Any]] = [
         {
             "tag": "markdown",
-            "content": f"一张卡片处理一批候选。只勾选你愿意继续生成口播稿和制作包的编号；提交后，已选记录进入 `{SCRIPT_PACKAGE_READY_STATUS}`，未选记录标记为 `不做`。如果有选中记录，系统会稍后再发一张卡片让你逐条补制作方向。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n运行批次：`{run_id or '未指定'}`\n\n本次候选覆盖：{('、'.join(coverage_dates) if coverage_dates else '未识别日期')}",
+            "content": f"这是一页证据优先的候选卡。下方“生成脚本包”只包含已经具备制作条件的编号；补证据/观察项只展示判断和缺口。\n\n提交只更新你明确勾选的候选；未勾选、未触碰或其他页面候选全部保持待判断，不会被隐式标记为不做。\n\n这张卡只能提交一次，{CARD_EXPIRE_DAYS} 天后提交无效。\n\n本次候选覆盖：{'、'.join(coverage_dates)}\n可生成候选：{len(script_records)} 条｜补证据/观察候选：{len(supplement_records)} 条",
         }
     ]
     for index, record in enumerate(records, start=1):
@@ -406,7 +576,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
             elements.append({"tag": "hr"})
 
     form_elements: list[dict[str, Any]] = [
-        select_component(ENTER_SCRIPT_PACKAGE_FORM_KEY, "生成脚本包：只选值得继续写口播稿的编号", options),
+        select_component(ENTER_SCRIPT_PACKAGE_FORM_KEY, "生成脚本包：只显示可直接进入 06 的编号", options),
         select_component("positive_reason_tags", "推进原因标签", tag_options(POSITIVE_REASON_OPTIONS)),
         text_input_component("manual_reason", "手工原因：标签不够用时，写一句真实判断"),
         {
@@ -430,7 +600,6 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
                                         "action": SUBMIT_SELECTION_ACTION,
                                         **card_meta,
                                         "candidate_snapshots": candidate_snapshots,
-                                        "unselected_status": "不做",
                                     },
                                 }
                             ],
@@ -445,7 +614,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
                             "tag": "button",
                             "type": "default",
                             "width": "default",
-                            "text": {"tag": "plain_text", "content": "本批都不选"},
+                            "text": {"tag": "plain_text", "content": "本页都不选"},
                             "form_action_type": "submit",
                             "name": "submit_no_selection",
                             "behaviors": [
@@ -564,10 +733,18 @@ def ensure_no_blocking_unknown_for_card_send(run_id: str) -> list[dict[str, Any]
     return idempotency.blocking_unknowns(run_id=run_id, kinds={TOPIC_CREATE_KIND, TOPIC_CARD_SEND_KIND})
 
 
-def send_card(token: str, card: dict[str, Any], run_id: str, receive_id: str, receive_id_type: str, preview_path: str = "") -> dict[str, Any]:
+def send_card(
+    token: str,
+    card: dict[str, Any],
+    run_id: str,
+    receive_id: str,
+    receive_id_type: str,
+    preview_path: str = "",
+    message_key: str = "",
+) -> dict[str, Any]:
     if not receive_id:
         raise SystemExit("Missing receive_id. Set FEISHU_CARD_RECEIVE_ID or pass --receive-id.")
-    seed = "|".join([run_id or datetime.now().strftime("%Y%m%d%H%M"), receive_id_type, receive_id])
+    seed = "|".join([run_id or datetime.now().strftime("%Y%m%d%H%M"), receive_id_type, receive_id, message_key])
     uuid = f"topic-decision-card-{hashlib.sha1(seed.encode('utf-8')).hexdigest()[:16]}"
     body = {
         "receive_id": receive_id,
@@ -736,19 +913,12 @@ def decisions_from_form(
     positive_tags = coerce_list(form_value.get("positive_reason_tags"))
     manual_reason = compact(form_value.get("manual_reason"), 240)
     if force_no_selection:
-        return {
-            record_id: {"status": "不做", "tags": [], "manual_reason": manual_reason}
-            for record_id in candidate_ids or []
-            if record_id
-        }
+        return {}
 
     selected_record_ids = set(coerce_list(form_value.get(ENTER_SCRIPT_PACKAGE_FORM_KEY)))
     for record_id in selected_record_ids:
         decisions[record_id] = {"status": SCRIPT_PACKAGE_READY_STATUS, "tags": positive_tags, "manual_reason": manual_reason}
 
-    for record_id in candidate_ids or []:
-        if record_id and record_id not in selected_record_ids and record_id not in decisions:
-            decisions[record_id] = {"status": "不做", "tags": [], "manual_reason": ""}
     return decisions
 
 
@@ -1025,15 +1195,20 @@ def parse_args() -> argparse.Namespace:
     build.add_argument("--run-id", default="latest")
     build.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     build.add_argument("--include-decided", action="store_true")
+    build.add_argument("--strict-run-id", action="store_true", help="Only include records whose 运行批次 exactly matches --run-id; disables compensation-pool additions.")
+    build.add_argument("--record-id", action="append", default=[], help="Limit preview to specific Feishu record_id. Can be repeated.")
 
     send = sub.add_parser("send", help="Send the daily decision card as one interactive bot message.")
     send.add_argument("--run-id", default="latest")
     send.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     send.add_argument("--include-decided", action="store_true")
+    send.add_argument("--strict-run-id", action="store_true", help="Only include records whose 运行批次 exactly matches --run-id; disables compensation-pool additions.")
+    send.add_argument("--record-id", action="append", default=[], help="Limit send preview to specific Feishu record_id. Can be repeated.")
     send.add_argument("--receive-id", default=os.getenv("FEISHU_CARD_RECEIVE_ID", ""))
     send.add_argument("--receive-id-type", default=os.getenv("FEISHU_CARD_RECEIVE_ID_TYPE", "open_id"))
     send.add_argument("--receive-target", action="append", default=[], help="Receive target in type:id form. Can be repeated. Env FEISHU_CARD_RECEIVE_TARGETS also supports comma-separated type:id values.")
     send.add_argument("--dry-run", action="store_true")
+    send.add_argument("--allow-empty", action="store_true", help="Allow sending an empty strict-run-id card. Intended only for explicit manual diagnostics.")
 
     apply = sub.add_parser("apply", help="Apply submitted form_value JSON back to Feishu 04.")
     apply.add_argument("--run-id", default="latest")
@@ -1057,21 +1232,52 @@ def resolved_run_id(raw: str) -> str:
 
 
 def main() -> int:
+    load_local_env()
     args = parse_args()
     if args.command in {"build", "send"}:
         run_id = resolved_run_id(args.run_id)
-        token, _app_token, _table_id, records = fetch_candidates(run_id, args.limit, include_decided=args.include_decided)
-        card = build_card(records, run_id)
-        preview_path = write_card_preview(card, run_id)
+        record_ids = {str(item).strip() for item in args.record_id if str(item).strip()} or None
+        token, _app_token, _table_id, records = fetch_candidates_for_card(
+            run_id,
+            args.limit,
+            include_decided=args.include_decided,
+            strict_run_id=args.strict_run_id,
+            record_ids=record_ids,
+        )
+        page_manifest = build_card_pages(records, run_id)
+        page_cards = page_manifest["pages"]
+        preview_paths: list[Path] = []
+        if page_cards:
+            for page in page_cards:
+                preview_paths.append(write_card_preview(page["card"], f"{run_id}_page_{page['page']:02d}"))
+        else:
+            preview_paths.append(write_card_preview(build_card([], run_id), run_id))
         summary: dict[str, Any] = {
             "ok": True,
             "run_id": run_id,
             "record_count": len(records),
-            "coverage_dates": card_candidate_value(card).get("coverage_dates", []),
-            "preview_path": str(preview_path),
+            "strict_run_id": args.strict_run_id,
+            "record_id_filter_count": len(record_ids or []),
+            "coverage_dates": sorted({date for page in page_cards for date in card_candidate_value(page["card"]).get("coverage_dates", [])}),
+            "candidate_ids": page_manifest["candidate_ids"],
+            "supplement_candidate_ids": [candidate_id for page in page_cards for candidate_id in card_candidate_value(page["card"]).get("supplement_candidate_ids", [])],
+            "page_count": page_manifest["page_count"],
+            "pagination_bijection_ok": page_manifest["bijection_ok"],
+            "preview_paths": [str(path) for path in preview_paths],
+            "preview_path": str(preview_paths[0]),
             "latest_preview_path": str(OUT / "latest_topic_decision_card.json"),
         }
         if args.command == "send":
+            if args.strict_run_id and not records and not args.allow_empty:
+                summary.update({
+                    "ok": False,
+                    "sent": False,
+                    "send": "blocked_empty_strict_run_id",
+                    "reason": "strict_run_id_empty_card",
+                    "note": "Strict run-id send found 0 records. Build/preview is allowed, but sending an empty validation card is blocked unless --allow-empty is explicit.",
+                })
+                print(json.dumps(summary, ensure_ascii=False, indent=2))
+                return 2
             if args.dry_run:
                 target_inputs = [os.getenv("FEISHU_CARD_RECEIVE_TARGETS", ""), *args.receive_target]
                 if args.receive_id or any(part.strip() for raw in target_inputs for part in raw.split(",")):
@@ -1096,12 +1302,18 @@ def main() -> int:
                 )
                 summary["targets"] = [{"receive_id_type": target_type, "receive_id": target_id} for target_type, target_id in targets]
                 sends = []
-                candidate_ledger_written = False
                 for target_type, target_id in targets:
-                    sends.append(send_card(token, card, run_id, target_id, target_type, preview_path=str(preview_path)).get("data", {}))
-                    if not candidate_ledger_written:
-                        write_card_candidate_ledger(card, run_id, str(preview_path))
-                        candidate_ledger_written = True
+                    for page, preview_path in zip(page_cards, preview_paths):
+                        sends.append(send_card(
+                            token,
+                            page["card"],
+                            run_id,
+                            target_id,
+                            target_type,
+                            preview_path=str(preview_path),
+                            message_key=f"page-{page['page']:02d}",
+                        ).get("data", {}))
+                        write_card_candidate_ledger(page["card"], run_id, str(preview_path))
                 summary["send"] = sends
         print(json.dumps(summary, ensure_ascii=False, indent=2))
         return 0

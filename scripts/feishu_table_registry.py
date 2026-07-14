@@ -17,6 +17,7 @@ TABLES: dict[str, str] = {
     "topic_decision": "04 分析与选题",
     "script_package": "06 完整脚本与制作包",
     "review_assets": "07 资产与复盘",
+    "learning_record": "08 学习记录",
     "rules_dictionary": "99 规则与字典",
 }
 
@@ -27,9 +28,10 @@ VIEW_NAMES: dict[str, list[str]] = {
     "source_sampling": ["当前主对标池", "历史参考池", "系统/官方源", "手动入口"],
     "url_inbox": ["URL投喂入口"],
     "content_inbox": ["内容收件箱", "今日采集", "最近15天", "永久保留"],
-    "topic_decision": ["今日挑选卡片", "今日决策看板", "证据不足", "待学习样本", "今日候选池", "今日最值得做", "暂存观察"],
+    "topic_decision": ["今日挑选卡片", "今日决策看板", "证据不足", "待学习样本", "今日候选池", "推荐制作", "暂存观察"],
     "script_package": ["脚本包主视图", "待处理与异常"],
     "review_assets": ["资产复盘后台"],
+    "learning_record": ["学习日结", "待确认", "已采纳"],
     "rules_dictionary": ["规则与字典"],
 }
 
