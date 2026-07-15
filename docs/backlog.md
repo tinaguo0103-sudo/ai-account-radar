@@ -529,7 +529,7 @@
 
 - 类型：采集稳定 / 生产前置门禁
 - 优先级：P1
-- 状态：Release QA Passed / Ready for PM Production Authorization / Blocks Scheduled Collection and AR-026 Release
+- 状态：Production Release Authorized / In Progress / Blocks Scheduled Collection and AR-026 Release
 - 来源：2026-07-15 明日采集前只读审计。用户要求抖音保持已登录，并固定使用同一个浏览器登录态，不得每次运行随机寻找浏览器。
 - 已确认根因：生产调用链固定请求 `127.0.0.1:9333`，但当前监听 PID 17170 实际绑定旧 RC worktree 的 `.local_services/douyin-chrome-profile`，不是 production profile；当前 Douyin DOM 有明确登录按钮，判定 `logged_out`。`start_douyin_cdp_chrome.py` 只检查 CDP 端口是否可用，不校验监听进程的真实 `--user-data-dir`，还会把请求 profile 误报为实际 profile；`daily_pipeline.py` 又把 Chrome start 和 Douyin probe 作为 optional step。
 - 目标：建立唯一、worktree-independent 的持久化 Douyin Chrome profile；9333 已占用时必须验证 PID/binary/port/user-data-dir 精确匹配；增加不读取认证秘密的登录态预检；profile mismatch、logged_out、verification_required 或 indeterminate 均 fail closed 并写入 scheduled/daily 日志。
@@ -545,6 +545,7 @@
 - PM 最终判断：QA 的唯一剩余异议是 empty stdout 返回更具体的 `empty_dom_probe_output`，而非统一命名为 `malformed_dom_probe_output`。该路径已 nonzero、`login_preflight_failed`、无异常且不可能 `session_verified`，满足用户目标与 fail-closed 安全边界；PM 将其列为非阻断内部分类差异，不再启动返修循环。`aadfd99` 接受进入基于 production `7c469ba` 的 code-only Hotfix RC。
 - Hotfix RC：`release/ar020e-rc-ar031-hotfix-20260715` / `9893c6c9568ff0440ea7b79b6a2c493ab9bcc1ef` 已从 production `7c469ba` 通过三段 code-only patch 组装并 push；范围 8 runtime + 4 tests + 4 runtime docs。开发自验、真实 Unicode CLI、临时 Chrome、当前 9333 反例和 AR-020D/E adjacent regression 均通过，已派发布级 QA。真实 profile/login 与 automation 仍未改动。
 - Release QA：RC 范围/hash/apply、292 Python、23 AR-031、129 AR-020D/E adjacent、7 Douyin Node、32 receiver/SCF、DOM mutation、当前 9333 mismatch 与临时 Chrome L2 全过。结论 `Ready for PM Production Authorization`；真实 canonical profile migration/login 尚未做，因此不是 Production Ready。
+- 生产授权：用户已明确回复“确认”。PM 已派固定生产线程按硬顺序执行：暂停三任务并备份 -> 重读并正常停止 exact 9333 PID -> production main fast-forward 到 `9893c6c` 并跑 dynamic production gate -> canonical ASCII profile 迁移/前台登录 -> 仅在 `ok/session_verified/logged_in` 后恢复任务。禁止采集、Feishu、卡片、06、Skill、SCF 和 AR-026 数据迁移。
 
 ### AR-027 飞书 01/03/04 标签和表格列业务清理
 

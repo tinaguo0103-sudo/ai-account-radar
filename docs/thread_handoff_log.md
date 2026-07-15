@@ -3066,3 +3066,10 @@
 - QA：292 Python、23 AR-031、129 AR-020D/E adjacent、7 Douyin Node/Unicode、32 receiver/SCF、semantic owner、DOM mutation、静态门均通过。当前 9333 PID 17170 仍只读返回旧 RC profile mismatch；临时 Chrome identity 通过并返回真实 logged_out，已只停止自有 PID。
 - 生产授权顺序：pause/read-back 三任务 -> 备份 Git/profile/marker -> 重读并 normal-stop exact PID -> 确认 9333 free -> Git release + production gate -> canonical ASCII foreground -> 仅迁移已停止 profile或 fresh login -> 只接受 ok/session_verified/logged_in -> resume。任一步失败保持 paused 并组件回滚。
 - 边界：QA 未改 production Git/automation/profile，未写 Feishu、未采集、未发卡、未触发 06/Skill/SCF。下一步由用户明确授权后交 production thread 执行。
+
+### 2026-07-15 AR-031 获得生产授权并派发执行
+
+- 用户授权：用户明确回复“确认”，授权 production main fast-forward 到 `9893c6c`、三 automation status-only pause/resume、normal-stop exact 9333 PID、canonical profile 备份/迁移/前台登录与 read-back。
+- 执行硬门：fresh backup；重读 PID/profile；禁止 broad kill；dynamic production gate；不从已知 logged_out 的旧 RC profile 迁移凭证；仅复制已停止且无 lock 的旧 production profile或 fresh login；只接受 `ok=true/status=session_verified/login_state=logged_in`；失败保持任务 PAUSED并按组件回滚。
+- 禁止：本次不运行 automation/采集，不写 Feishu，不发卡/callback，不触发 06，不改 Skill/SCF，不部署 AR-026 或生产 01/03。
+- PM 动作：已派固定生产线程 `019f2bc4-079e-7530-903e-484707590482` 执行。PM 不轮询，等待主动回传；明日 scheduled-day smoke 仍为独立验收。
