@@ -3124,3 +3124,12 @@
 - 已通过部分：12-file scope/hash/apply、其余 mutation、306 Python、AR-031 25、AR-020D/E 129、receiver/SCF 32、semantic/pre-merge、scheduled check-only 33、生产 01/03 GET-only 和 canonical 9333 logged_in 均成立，但不能覆盖真实执行层截断。
 - 生产边界：无 Feishu、采集、卡片/callback、06、Skill/SCF、automation、production Git 或 Chrome/profile 变更；QA 误建的未跟踪 symlink 已删除并复核 production clean。
 - PM 动作：已退回固定开发线程一次集中返修。outer normal、daily、Node 三层必须在 env/Feishu/cache/Chrome/output 前拒绝任意正 cap 并 nonzero；测试子集只能走 production scheduled 不可达的独立 test surface。完成后从 production `178f047` 重建 fresh RC，再做一次完整 QA；PM 不轮询。
+
+### 2026-07-15 AR-026 正 cap 集中返修完成并派 RC2 发布 QA
+
+- RC2：base=`178f04780ddc74b61befab04b02c87c951980ea6`，branch=`release/ar020e-rc-ar026-capgate-20260715`，commit=`5e733cd1a8120185b6c2d35b3f277a2599155fea`，local=remote、clean；首个 RC `0b5a98e` 的失败历史保留。
+- 修复：outer normal、daily、Node 三层在参数解析/环境加载前使用同一 fail-closed 合同；仅缺省或精确双 token value 0 合法。1/3/12/31、负数、畸形、空/缺值、equals alias、重复参数均 exit 2 + `limited_plan_rejected`，且 env/Feishu/cache/CDP/output/collection/notification 均未触发。
+- 物理删除：Node `--only-account-names`、`onlyAccountNames`、`rows.slice` 截断和验证码失败账号子集回流；scheduled check-only 保持 33=31 Douyin+2 other，Node check-only 31 且 cdp_contacted=false。
+- 自验：30/30 cap matrix、310 Python、21 targeted、39 Node account、6 exact-video、32 receiver/SCF、semantic/pre-merge 及 compile/node/diff 全过。combined patch SHA=`db61388c145b0b31d317ed0cfec636f3a4b44218a8aad26cab4c4704f3052169`。
+- 生产边界：01/03 与 9333 仅 fresh read-only；未采集、未写 Feishu、未发卡/callback、未触发 06，未改 Skill/SCF/automation/Chrome/profile/production Git。
+- PM 动作：已派固定 QA 线程执行一次完整 RC2 Release QA，重复 scope、全 mutation、full regression、01/03 GET-only、canonical session 与发布回滚计划；不是 cap-only micro-recheck。PM 不轮询，等待主动回传。
