@@ -516,7 +516,7 @@
 
 - 类型：采集覆盖 / AR-020 上游依赖
 - 优先级：P1
-- 状态：Released / 01 Migration Passed / Automations Paused / Scheduled Smoke Blocked by AR-032
+- 状态：Released / 01 Migration Passed / Automation Resume Authorized / Scheduled Smoke Pending
 - 来源：AR-020 需求确认。用户指出飞书 01 里即使清掉截图污染账号，仍不止 12 个对标账号；用户需要的是全量账号采集，而不是生产默认 12 个账号抽样。
 - 影响：如果上游只采 12 个账号，03 内容库天然缺失大量对标内容，AR-020 的选题转译和反向测试会建立在不完整内容库上，继续漏掉适合 Austin 账号的题。
 - 目标：从飞书 01 获取有效对标账号白名单，清掉截图污染账号后，对剩余有效账号做全量采集覆盖；当前账号量只有几十个，暂不需要分批。若未来量级明显增大或触发平台风险，再升级为分批/频控策略。每次采集必须输出账号级覆盖报告。
@@ -532,12 +532,13 @@
 - Main 回灌：固定开发线程在隔离 worktree 正常 `--no-ff` merge `origin/main@5e733cd`，并合并并发 PM docs lineage，最终 feature local=remote=`e27fbedcf32b92f072e55b249780fc53ba76172f`；`origin/main` 与 PM docs 均为其祖先。16 个发布文件中 13 个 production-exact，3 个差异仅保留既有 feature current-task/editorial、automation worktree guard/failure QA 和更严格 no-side-effect tests，AR-026 已发布合同不变。343 Python、39+6 Douyin Node、32 receiver/SCF、semantic/pre-merge 均通过；production main 未改。
 - 发布后异常：即时只读 QA 发现 production `output/spikes/douyin_cdp_source_watch_probe` 在 22:11:59-22:12:12 被真实刷新，artifact 明确 `check_only=false`、31 attempted、29 succeeded、2 failed，并写入 raw resolver 文件。未产生 scheduled outer log、new run、Feishu PUT、latest_write、card、06或script package，但触发来源尚未归因，因此发布后回归判失败，不能视为 scheduled smoke。PM 已按 stop discipline 派生产线程 status-only 暂停三任务并查 scheduler/process lineage，同时要求 QA 自审精确命令；Git、01迁移、03和Chrome保持不动，完成归因前不得恢复任务。
 - Safety review：三任务已 status-only `ACTIVE -> PAUSED`，prompt/schedule/target/cwd/model 不变。release、QA、dev 的真实命令轨迹均排除自身触发；automation_runs 对三个 replacement IDs 为 0，且无 last_run_at、执行线程、memory 或 launcher command。22:10:04 恢复至 22:11:32 首个 incident file 的 88 秒只支持 catch-up 假设，不能证明。现状定为 `Unattributed / Keep Automations Paused / Needs Fix`；Git `5e733cd` 与已验证生产 01 迁移不回滚，真实 scheduled smoke 由 AR-032 阻断。
+- PM 产品决策：用户明确认为本次误触不值得继续加重防护，接受其作为已知非阻断事件，并要求明天正常开始跑。AR-032 已取消，不再开发/RC/发布；PM 已授权三任务仅做 status-only 恢复 ACTIVE，不手动采集或补跑旧 schedule。明日仍按正常 08:00/09:15/10:00 链路验收，22:11 artifact 不计入 scheduled smoke。
 
 ### AR-031 固定抖音 Chrome Profile 与登录态硬门
 
 - 类型：采集稳定 / 生产前置门禁
 - 优先级：P1
-- 状态：Hotfix Done / Canonical Logged In / Automations Paused by AR-032
+- 状态：Hotfix Done / Canonical Logged In / Automation Resume Authorized / Scheduled Smoke Pending
 - 来源：2026-07-15 明日采集前只读审计。用户要求抖音保持已登录，并固定使用同一个浏览器登录态，不得每次运行随机寻找浏览器。
 - 已确认根因：生产调用链固定请求 `127.0.0.1:9333`，但当前监听 PID 17170 实际绑定旧 RC worktree 的 `.local_services/douyin-chrome-profile`，不是 production profile；当前 Douyin DOM 有明确登录按钮，判定 `logged_out`。`start_douyin_cdp_chrome.py` 只检查 CDP 端口是否可用，不校验监听进程的真实 `--user-data-dir`，还会把请求 profile 误报为实际 profile；`daily_pipeline.py` 又把 Chrome start 和 Douyin probe 作为 optional step。
 - 目标：建立唯一、worktree-independent 的持久化 Douyin Chrome profile；9333 已占用时必须验证 PID/binary/port/user-data-dir 精确匹配；增加不读取认证秘密的登录态预检；profile mismatch、logged_out、verification_required 或 indeterminate 均 fail closed 并写入 scheduled/daily 日志。
@@ -564,13 +565,14 @@
 
 - 类型：自动化安全 / 生产可观测性 / AR-026/031 发布后阻断
 - 优先级：P1
-- 状态：Development In Progress / Automations Paused
+- 状态：Cancelled by PM / No Release
 - 来源：AR-026 发布后 22:11 出现非 check-only 31-account probe；release、QA、dev 命令轨迹均排除自身，Codex automation execution records 又缺失，无法证明或排除 `PAUSED -> ACTIVE` 后 catch-up 补跑。
 - 目标：不信任 scheduler 是否正确记账，由 08:00 collection、09:15 editorial、10:00 Topic Card 三个业务入口独立判断 activation freshness；错过时刻后的启动只记录拒绝，不得触发采集、04、卡片或 06，并留下可追溯 execution lineage。
 - 核心合同：统一 Asia/Shanghai start-window guard；允许路径生成 atomic activation decision；collection outer 发行短期一次性 lease，Node non-check-only 必须绑定 automation/run/date/head/PID lineage 并消费；editorial 与 Topic Card send 同样需要 owned activation decision。拒绝路径仅写无秘密 append-only telemetry，包含 scheduled_for、next_run_at、execution_id、PID/PPID、cwd/head、child command hash 和完成状态。
 - 零后门：不提供 `--force`、`--run-now`、环境绕过、stale lease、旧 run、cache 或 alternate entrypoint fallback；PM 授权恢复不通过通用 CLI 绕过 scheduled path。
 - 验证：fake-clock 覆盖 22:10 catch-up、窗口边界、时区/回拨、lease tamper/replay/PID/head/cwd/run mismatch、direct Node/editorial/card 调用、denied no-business-side-effect、completion lineage；保留 AR-026/031/020E 全回归。不得 live catch-up experiment。
 - 生产边界：三 automation 保持 PAUSED；开发/QA 不改 live TOML，不采集、不写 Feishu、不发卡、不触发 06，不改 Skill/SCF/Chrome/profile/production Git。完成 feature 自验后从 production `5e733cd` 建窄 RC，再做独立 QA与新生产授权。
+- PM 决策：用户认为单次误触可接受，不需要为 scheduler 不可归因继续做重型 activation/lease 重构；本需求停止，不提交、不建 RC、不发布。事件证据和未归因结论保留，明日正常 scheduled chain 继续作为业务验收。
 
 ### AR-027 飞书 01/03/04 标签和表格列业务清理
 
