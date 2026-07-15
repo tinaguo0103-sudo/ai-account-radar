@@ -3133,3 +3133,11 @@
 - 自验：30/30 cap matrix、310 Python、21 targeted、39 Node account、6 exact-video、32 receiver/SCF、semantic/pre-merge 及 compile/node/diff 全过。combined patch SHA=`db61388c145b0b31d317ed0cfec636f3a4b44218a8aad26cab4c4704f3052169`。
 - 生产边界：01/03 与 9333 仅 fresh read-only；未采集、未写 Feishu、未发卡/callback、未触发 06，未改 Skill/SCF/automation/Chrome/profile/production Git。
 - PM 动作：已派固定 QA 线程执行一次完整 RC2 Release QA，重复 scope、全 mutation、full regression、01/03 GET-only、canonical session 与发布回滚计划；不是 cap-only micro-recheck。PM 不轮询，等待主动回传。
+
+### 2026-07-15 AR-026 RC2 Release QA 通过，等待生产授权
+
+- 结论：`AR-026 RC2 Release QA Passed / Ready for PM Production Authorization`。前一 RC `0b5a98e` 的失败历史保留，本结论仅适用于 `5e733cd1a8120185b6c2d35b3f277a2599155fea`。
+- QA：16/16 scope/hash/apply、cap 30/30、parser/defer/quarantine 9/9、lineage 10/10、310 Python、AR-026/031 41、AR-020D/E 129、receiver/SCF 32、semantic/pre-merge 全通过。scheduled check-only=33（31+2），Node check-only=31且未接触 CDP。
+- 生产只读：01 fresh GET=51（8 target+43 untouched，untouched hash=`c69642b61ee02133d8601ac1215fce7cd6d2baff83ed93acea7486d9ed955625`）；03=670、historical match=51、no-touch；9333 PID 33282 identity/session/logged_in verified、secrets_read=false。
+- 授权范围：暂停三任务并备份；fresh 01 hash gate；production main 发布 exact `5e733cd` 并跑 dynamic/cap gate；仅写精确 8 条为 quarantine，8/8 read-back 且 43 条 hash 不变；03 GET-only no-touch；复核 canonical session；仅恢复三任务 status，不即时运行。
+- 停止/回滚：任一 Git/hash/01 identity/03 no-touch/session/automation read-back 不一致即保持 PAUSED，revert RC2并仅恢复精确8条备份；不改历史03、Chrome或canonical profile。真实33-account业务完成只由下一个 scheduled-day smoke判定。
