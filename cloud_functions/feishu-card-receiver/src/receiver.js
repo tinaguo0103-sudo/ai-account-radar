@@ -15,6 +15,7 @@ const PRODUCTION_DIRECTION_CARD_SUBMITTED = "已提交";
 const PRODUCTION_DIRECTION_CARD_FAILED = "发送失败";
 const PRODUCTION_DIRECTION_CARD_IGNORED = "已忽略";
 const SCRIPT_PACKAGE_READY_STATUS = "生成脚本包";
+const PAGE_NO_SELECTION_STATUS = "不做";
 const SUBMIT_SELECTION_ACTION = "submit_topic_decisions";
 const SUBMIT_NO_SELECTION_ACTION = "submit_no_selection";
 const SUBMIT_PRODUCTION_DIRECTIONS_ACTION = "submit_production_directions";
@@ -857,7 +858,7 @@ function snapshotAllowsRunMismatch(record, snapshot) {
   return Boolean(actualRunId && normalize(snapshot?.run_id) === actualRunId);
 }
 
-async function selectionCardGuard(env, token, tableId, candidateIds, runId, options, snapshots = {}) {
+async function selectionCardGuard(env, token, tableId, candidateIds, runId, options, snapshots = {}, expectedStatus = "") {
   const records = await recordsById(env, token, tableId, candidateIds, options);
   const missing = candidateIds.filter((recordId) => recordId && !records[recordId]);
   if (missing.length) return { blocked: true, reason: "card_records_missing", missing };
@@ -865,12 +866,12 @@ async function selectionCardGuard(env, token, tableId, candidateIds, runId, opti
   const mismatched = candidateIds.filter((recordId) => runIdMismatch(records[recordId], runId) && !snapshotAllowsRunMismatch(records[recordId], snapshots[recordId]));
   if (mismatched.length) return { blocked: true, reason: "card_run_mismatch", record_ids: mismatched };
 
-  const processed = candidateIds.filter((recordId) => {
+  const conflicting = candidateIds.filter((recordId) => {
     const status = normalize(records[recordId]?.fields?.["状态"]);
-    return !OPEN_SELECTION_STATUSES.has(status);
+    return !OPEN_SELECTION_STATUSES.has(status) && status !== expectedStatus;
   });
-  if (processed.length) return { blocked: true, reason: "selection_card_already_submitted", record_ids: processed };
-  return { blocked: false };
+  if (conflicting.length) return { blocked: true, reason: "selection_card_already_submitted", record_ids: conflicting };
+  return { blocked: false, records };
 }
 
 async function productionDirectionCardGuard(env, token, tableId, candidateIds, runId, options, snapshots = {}) {
@@ -887,13 +888,22 @@ async function productionDirectionCardGuard(env, token, tableId, candidateIds, r
 }
 
 async function fieldsByName(env, token, tableId, options) {
-  const payload = await requestJson(
-    env,
-    "GET",
-    `/bitable/v1/apps/${env.FEISHU_BASE_APP_TOKEN}/tables/${tableId}/fields`,
-    { ...options, token },
-  );
-  return Object.fromEntries((payload.data?.items || []).map((field) => [field.field_name, field]));
+  const fields = [];
+  let pageToken = "";
+  do {
+    const query = new URLSearchParams({ page_size: "100" });
+    if (pageToken) query.set("page_token", pageToken);
+    const payload = await requestJson(
+      env,
+      "GET",
+      `/bitable/v1/apps/${env.FEISHU_BASE_APP_TOKEN}/tables/${tableId}/fields?${query.toString()}`,
+      { ...options, token },
+    );
+    fields.push(...(payload.data?.items || []));
+    pageToken = payload.data?.has_more ? normalize(payload.data?.page_token) : "";
+    if (payload.data?.has_more && !pageToken) throw new Error("Feishu field metadata pagination missing page_token");
+  } while (pageToken);
+  return Object.fromEntries(fields.map((field) => [field.field_name, field]));
 }
 
 async function ensureTextFields(env, token, tableId, fieldNames, options) {
@@ -918,26 +928,45 @@ function decisionsFromForm(formValue, candidateIds, forceNoSelection = false) {
     return Object.fromEntries(
       candidateIds.filter(Boolean).map((recordId) => [
         recordId,
-        { status: "不做", tags: [], manual_reason: manualReason },
+        { status: PAGE_NO_SELECTION_STATUS, tags: [], manual_reason: manualReason },
       ]),
     );
   }
 
   const decisions = {};
-  const selected = new Set(coerceList(formValue[ENTER_SCRIPT_PACKAGE_FORM_KEY]));
+  const selected = coerceList(formValue[ENTER_SCRIPT_PACKAGE_FORM_KEY]);
   for (const recordId of selected) {
     decisions[recordId] = { status: SCRIPT_PACKAGE_READY_STATUS, tags: positiveTags, manual_reason: manualReason };
-  }
-  for (const recordId of candidateIds || []) {
-    if (recordId && !decisions[recordId]) {
-      decisions[recordId] = { status: "不做", tags: [], manual_reason: "" };
-    }
   }
   return decisions;
 }
 
+function selectionInputStatus(formValue, candidateIds, forceNoSelection) {
+  const pageIds = coerceList(candidateIds);
+  if (!pageIds.length) return { ok: false, reason: "empty_candidate_ids" };
+  if (new Set(pageIds).size !== pageIds.length) return { ok: false, reason: "duplicate_candidate_ids" };
+  if (forceNoSelection) return { ok: true, intendedIds: pageIds, expectedStatus: PAGE_NO_SELECTION_STATUS };
+
+  const selectedIds = coerceList(formValue[ENTER_SCRIPT_PACKAGE_FORM_KEY]);
+  if (!selectedIds.length) return { ok: false, reason: "empty_selection" };
+  if (new Set(selectedIds).size !== selectedIds.length) return { ok: false, reason: "duplicate_selected_ids" };
+  const pageIdSet = new Set(pageIds);
+  const outsidePage = selectedIds.filter((recordId) => !pageIdSet.has(recordId));
+  if (outsidePage.length) return { ok: false, reason: "selected_ids_outside_page", record_ids: outsidePage };
+  return { ok: true, intendedIds: selectedIds, expectedStatus: SCRIPT_PACKAGE_READY_STATUS };
+}
+
 function fieldsEqual(current, next) {
   return Object.entries(next).every(([fieldName, value]) => normalize(current[fieldName]) === normalize(value));
+}
+
+function selectionReasonValue(tags, field) {
+  if (!field) throw new Error("Missing required field metadata: 选择原因标签");
+  const values = coerceList(tags);
+  const fieldType = Number(field.type);
+  if (fieldType === 1) return values.join("、");
+  if (fieldType === 4) return values;
+  throw new Error(`Unsupported 选择原因标签 field type: ${field.type}`);
 }
 
 function selectionQueueFields(decision, queueInfo) {
@@ -951,9 +980,12 @@ function selectionQueueFields(decision, queueInfo) {
   };
 }
 
-async function applyFormValue(env, token, tableId, formValue, { candidateIds, runId, forceNoSelection, options, queueInfo, snapshots = {} }) {
+async function applyFormValue(env, token, tableId, formValue, { candidateIds, runId, forceNoSelection, options, queueInfo, snapshots = {}, records = {} }) {
   const decisions = decisionsFromForm(formValue, candidateIds, forceNoSelection);
-  const records = Object.fromEntries((await allRecords(env, token, tableId, options)).map((record) => [record.record_id, record]));
+  const reasonField = forceNoSelection ? null : (await fieldsByName(env, token, tableId, options))["选择原因标签"];
+  const reasonValues = forceNoSelection
+    ? {}
+    : Object.fromEntries(Object.entries(decisions).map(([recordId, decision]) => [recordId, selectionReasonValue(decision.tags, reasonField)]));
   const updates = [];
   const skipped = [];
   const dryRun = String(env.DRY_RUN || "").toLowerCase() === "true";
@@ -972,13 +1004,18 @@ async function applyFormValue(env, token, tableId, formValue, { candidateIds, ru
         continue;
       }
     }
-    const updateFields = {
-      "状态": decision.status,
-      "学习状态": "待学习",
-      "选择原因标签": decision.tags,
-      "人工一句话判断": decision.manual_reason || "",
-      ...selectionQueueFields(decision, queueInfo),
-    };
+    const effectiveQueueInfo = queueInfo?.submissionId && normalize(fields[SELECTION_SUBMISSION_ID_FIELD]) === queueInfo.submissionId
+      ? { ...queueInfo, submittedAt: normalize(fields[SELECTION_SUBMITTED_AT_FIELD]) || queueInfo.submittedAt }
+      : queueInfo;
+    const updateFields = forceNoSelection
+      ? { "状态": PAGE_NO_SELECTION_STATUS }
+      : {
+          "状态": decision.status,
+          "学习状态": "待学习",
+          "选择原因标签": reasonValues[recordId],
+          "人工一句话判断": decision.manual_reason || "",
+          ...selectionQueueFields(decision, effectiveQueueInfo),
+        };
     if (fieldsEqual(fields, updateFields)) {
       skipped.push({ record_id: recordId, title: normalize(fields["选题标题"]), reason: "no_change" });
       continue;
@@ -990,61 +1027,26 @@ async function applyFormValue(env, token, tableId, formValue, { candidateIds, ru
     });
   }
 
+  let updatedCount = 0;
   if (!dryRun) {
-    await Promise.all(updates.map((update) => updateRecordFields(env, token, tableId, update.record_id, update.fields, options)));
+    for (const update of updates) {
+      await updateRecordFields(env, token, tableId, update.record_id, update.fields, options);
+      updatedCount += 1;
+    }
   }
 
   return {
     ok: true,
     mode: dryRun ? "dry-run" : "write",
     run_id: runId,
-    updated_count: dryRun ? 0 : updates.length,
+    intended_count: Object.keys(decisions).length,
+    updated_count: dryRun ? 0 : updatedCount,
     candidate_update_count: updates.length,
     updates,
     skipped,
     selected_records: (candidateIds || [])
       .filter((recordId) => decisions[recordId]?.status === SCRIPT_PACKAGE_READY_STATUS && records[recordId])
       .map((recordId) => records[recordId]),
-  };
-}
-
-async function applyFormValueFast(env, token, tableId, formValue, { candidateIds, runId, forceNoSelection, options, snapshots, queueInfo }) {
-  const decisions = decisionsFromForm(formValue, candidateIds, forceNoSelection);
-  const dryRun = String(env.DRY_RUN || "").toLowerCase() === "true";
-  const updates = [];
-  const skipped = [];
-
-  for (const [recordId, decision] of Object.entries(decisions)) {
-    const snapshot = snapshots[recordId] || {};
-    updates.push({
-      record_id: recordId,
-      title: normalize(snapshot.title),
-      fields: {
-        "状态": decision.status,
-        "学习状态": "待学习",
-        "选择原因标签": decision.tags,
-        "人工一句话判断": decision.manual_reason || "",
-        ...selectionQueueFields(decision, queueInfo),
-      },
-    });
-  }
-
-  if (!dryRun) {
-    await Promise.all(updates.map((update) => updateRecordFields(env, token, tableId, update.record_id, update.fields, options)));
-  }
-
-  return {
-    ok: true,
-    mode: dryRun ? "dry-run" : "write",
-    fast_path: true,
-    run_id: runId,
-    updated_count: dryRun ? 0 : updates.length,
-    candidate_update_count: updates.length,
-    updates,
-    skipped,
-    selected_records: (candidateIds || [])
-      .filter((recordId) => decisions[recordId]?.status === SCRIPT_PACKAGE_READY_STATUS)
-      .map((recordId) => snapshotRecord(recordId, snapshots[recordId] || {})),
   };
 }
 
@@ -1141,7 +1143,24 @@ export async function processCardSubmission(env, value, formValue, options = {})
     return directionSummary;
   }
 
-  const guard = await selectionCardGuard(env, token, tableId, candidateIds, runId, options, candidateSnapshots);
+  const forceNoSelection = actionName === SUBMIT_NO_SELECTION_ACTION;
+  const inputStatus = selectionInputStatus(effectiveFormValue, candidateIds, forceNoSelection);
+  if (!inputStatus.ok) {
+    return {
+      ok: false,
+      blocked: true,
+      reason: inputStatus.reason,
+      record_ids: inputStatus.record_ids || [],
+      action: actionName,
+      run_id: runId,
+      intended_count: 0,
+      updated_count: 0,
+      candidate_update_count: 0,
+    };
+  }
+
+  const intendedIds = inputStatus.intendedIds;
+  const guard = await selectionCardGuard(env, token, tableId, intendedIds, runId, options, candidateSnapshots, inputStatus.expectedStatus);
   if (guard.blocked) {
     return {
       ok: false,
@@ -1153,31 +1172,22 @@ export async function processCardSubmission(env, value, formValue, options = {})
     };
   }
 
-  const receiptKey = await submissionFingerprint(actionName, runId, candidateIds, effectiveFormValue);
+  const receiptKey = await submissionFingerprint(actionName, runId, intendedIds, effectiveFormValue);
   const submittedAt = new Date(currentTimeMs(options)).toISOString();
   const queueInfo = {
     enabled: actionName === SUBMIT_SELECTION_ACTION && String(env.SEND_PRODUCTION_DIRECTION_CARD || "true").toLowerCase() !== "false",
     submissionId: `${runId || "selection"}:${receiptKey.slice(0, 12)}`,
     submittedAt,
   };
-  const hasSnapshots = Object.keys(candidateSnapshots).length > 0;
-  const summary = hasSnapshots
-    ? await applyFormValueFast(env, token, tableId, effectiveFormValue, {
-        candidateIds,
-        runId,
-        forceNoSelection: actionName === SUBMIT_NO_SELECTION_ACTION,
-        options,
-        snapshots: candidateSnapshots,
-        queueInfo,
-      })
-    : await applyFormValue(env, token, tableId, effectiveFormValue, {
-        candidateIds,
-        runId,
-        forceNoSelection: actionName === SUBMIT_NO_SELECTION_ACTION,
-        options,
-        queueInfo,
-        snapshots: candidateSnapshots,
-      });
+  const summary = await applyFormValue(env, token, tableId, effectiveFormValue, {
+    candidateIds: intendedIds,
+    runId,
+    forceNoSelection,
+    options,
+    queueInfo,
+    snapshots: candidateSnapshots,
+    records: guard.records,
+  });
   if (shouldQueueProductionDirectionCard(env, actionName, summary)) {
     summary.production_direction_card = {
       queued: true,
@@ -1187,7 +1197,9 @@ export async function processCardSubmission(env, value, formValue, options = {})
     };
   }
   summary.action = actionName;
-  summary.receipt_key = receiptKey;
+  if (summary.mode === "write" && summary.updated_count + summary.skipped.filter((item) => item.reason === "no_change").length === summary.intended_count) {
+    summary.receipt_key = receiptKey;
+  }
   return summary;
 }
 
@@ -1227,6 +1239,9 @@ export async function handlePayload(payload, env, options = {}) {
       if (summary.reason === "production_direction_card_already_submitted") return toast("warning", "这张制作方向卡已经保存过，不再重复处理");
       if (summary.reason === "card_run_mismatch") return toast("warning", "这张卡对应的记录批次已变化，请使用最新卡片");
       if (summary.reason === "card_records_missing") return toast("warning", "这张卡对应的记录不存在，请使用最新卡片");
+      if (summary.reason === "empty_selection") return toast("warning", "请至少勾选一条；如需拒绝本页，请使用“本页都不选”");
+      if (summary.reason === "selected_ids_outside_page") return toast("warning", "勾选项不属于当前页面，请刷新后重试");
+      if (summary.reason === "empty_candidate_ids" || summary.reason === "duplicate_candidate_ids" || summary.reason === "duplicate_selected_ids") return toast("warning", "卡片候选数据无效，请使用最新卡片");
       return toast("warning", "这张卡当前不能提交，请使用最新卡片");
     }
     if (summary.action === SUBMIT_PRODUCTION_DIRECTIONS_ACTION) {
