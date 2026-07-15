@@ -3141,3 +3141,11 @@
 - 生产只读：01 fresh GET=51（8 target+43 untouched，untouched hash=`c69642b61ee02133d8601ac1215fce7cd6d2baff83ed93acea7486d9ed955625`）；03=670、historical match=51、no-touch；9333 PID 33282 identity/session/logged_in verified、secrets_read=false。
 - 授权范围：暂停三任务并备份；fresh 01 hash gate；production main 发布 exact `5e733cd` 并跑 dynamic/cap gate；仅写精确 8 条为 quarantine，8/8 read-back 且 43 条 hash 不变；03 GET-only no-touch；复核 canonical session；仅恢复三任务 status，不即时运行。
 - 停止/回滚：任一 Git/hash/01 identity/03 no-touch/session/automation read-back 不一致即保持 PAUSED，revert RC2并仅恢复精确8条备份；不改历史03、Chrome或canonical profile。真实33-account业务完成只由下一个 scheduled-day smoke判定。
+
+### 2026-07-15 AR-026 获得生产授权并派发执行
+
+- 用户授权：用户明确回复“确认”，授权 production main 从 `178f047` 发布 exact RC2 `5e733cd1a8120185b6c2d35b3f277a2599155fea`，生产 01 精确 8 条 quarantine 迁移/read-back，以及三条 automation status-only pause/resume。
+- 执行顺序：暂停并 read-back 三任务 -> fresh Git/automation/01 rollback backup -> fresh 01/03/session gate -> normal fast-forward/push + dynamic/cap gate -> 仅写 exact 8 IDs -> 8/8 + untouched-43 hash -> 03 no-touch -> canonical logged_in -> status-only resume，不即时运行。
+- Stop/rollback：任一 Git、patch、01 identity/value/hash、03 count/hash、session 或 automation 配置/read-back mismatch 均保持 PAUSED；normal revert RC2并仅恢复精确8条备份。禁止 reset/force、历史03改写、Chrome/profile、Skill/SCF及其他 automation 字段变更。
+- 明确边界：发布窗口不采集、不回放旧 run、不发卡/callback、不触发 06、不清理历史或测试记录。真实 33-account 完成只在下一正常 scheduled-day chain 验收。
+- PM 动作：已派固定生产线程执行；PM 不轮询，等待主动回传。

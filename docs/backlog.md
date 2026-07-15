@@ -516,7 +516,7 @@
 
 - 类型：采集覆盖 / AR-020 上游依赖
 - 优先级：P1
-- 状态：RC2 Release QA Passed / Ready for PM Production Authorization
+- 状态：Production Authorized / Release In Progress
 - 来源：AR-020 需求确认。用户指出飞书 01 里即使清掉截图污染账号，仍不止 12 个对标账号；用户需要的是全量账号采集，而不是生产默认 12 个账号抽样。
 - 影响：如果上游只采 12 个账号，03 内容库天然缺失大量对标内容，AR-020 的选题转译和反向测试会建立在不完整内容库上，继续漏掉适合 Austin 账号的题。
 - 目标：从飞书 01 获取有效对标账号白名单，清掉截图污染账号后，对剩余有效账号做全量采集覆盖；当前账号量只有几十个，暂不需要分批。若未来量级明显增大或触发平台风险，再升级为分批/频控策略。每次采集必须输出账号级覆盖报告。
@@ -527,6 +527,7 @@
 - 上线推进：production-base RC `release/ar020e-rc-ar026-20260715@0b5a98e` 的 scope、33-account check-only、01/03 GET-only、canonical login 和其余 fail-closed 合同均通过，但独立 Release QA 发现唯一阻断：实际 Node 层仍接受 `--account-limit 12/3` 并把 31 账号静默截断，daily 与 non-check-only outer 也未在副作用前拒绝正 cap。该 RC 已判失败，不得生产授权。PM 已退回一次集中返修，要求 outer/daily/Node 三层对任意正 cap 在 env、Feishu、cache、Chrome、output 前 typed nonzero，并从 production `178f047` 重建新 RC。
 - RC2：fresh branch `release/ar020e-rc-ar026-capgate-20260715@5e733cd` 已完成集中返修与开发自验。outer normal、daily、Node 三层在参数解析/环境加载前共用正 cap 硬门；1/3/12/31、负数、畸形、空/缺值、equals alias、重复参数均 typed nonzero，Node 子集参数、`rows.slice` 截断和失败账号子集重试已物理删除。scheduled check-only 仍为 33=31+2。PM 已派一次完整 RC2 Release QA，不以 cap micro-recheck 代替全范围回归。
 - RC2 Release QA：exact target `5e733cd1a8120185b6c2d35b3f277a2599155fea` 的 16-file scope/hash/apply、三层 cap 30/30、parser/defer/quarantine 9/9、lineage 10/10、310 Python、41 AR-026/031、129 AR-020D/E、32 receiver/SCF 与全静态门均通过。生产 01 fresh GET=51（8 target+43 untouched）、03=670/no-touch、canonical 9333 logged_in 均只读成立。结论 `Ready for PM Production Authorization`；真实 31 个 Douyin 账号采集仍只在下一个 scheduled day 验收。
+- 生产授权：用户已明确回复“确认”。PM 已派固定生产线程按 audited plan 执行：三任务 status-only pause + fresh backup；production main exact `5e733cd` 发布与 dynamic/cap gate；仅迁移生产 01 精确 8 条为 quarantine 并 8/8 read-back、43 条 hash 不变；03 GET-only no-touch；canonical session read-back；三任务 status-only resume且不即时运行。任一 mismatch 保持 PAUSED 并按组件回滚；真实 33-account 业务验收仍留给下一 scheduled day。
 
 ### AR-031 固定抖音 Chrome Profile 与登录态硬门
 
