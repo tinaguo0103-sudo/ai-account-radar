@@ -659,7 +659,7 @@ def load_today_10() -> dict[str, Any]:
 
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
-    top_row = next((row for row in rows if row.get("今日建议级别") == "今日最值得做"), rows[0] if rows else {})
+    top_row = next((row for row in rows if row.get("今日建议级别") == "推荐制作"), rows[0] if rows else {})
     top = (
         top_row.get("选题命题")
         or top_row.get("选题标题")

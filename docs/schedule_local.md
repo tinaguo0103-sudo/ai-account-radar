@@ -15,7 +15,7 @@
 每日生产链路依赖本机 Codex 和网络环境。为了降低“不插电、屏幕熄灭、系统空闲睡眠”导致 08:00 任务延迟的风险，生产机应安装一个本机唤醒/保活窗口：
 
 ```bash
-python3 scripts/install_production_keepawake.py --configure-wake
+python3 scripts/install_production_keepawake.py --install --configure-wake
 ```
 
 默认行为：
@@ -66,7 +66,7 @@ python3 scripts/install_script_package_watcher_launch_agent.py --interval-minute
 python3 scripts/feishu_user_oauth.py --timeout-seconds 240
 ```
 
-授权信息写入本机 `.env.local`，不进入 Git。生产自动化使用 `~/.codex/ai-account-radar-runtime/.env.local` 作为唯一生产 token 写入点；LaunchAgent 从 runtime copy 运行，刷新 token 时不会写 Desktop 仓库 `.env.local`，避免 macOS 桌面权限导致 refresh token 已使用但未保存。生产仓库 `.env.local` 只作为手工命令配置副本；从仓库手工运行 runner 时会优先读取两边更新的一份 token。开发者后台需要先开通 `offline_access`（持续访问已授权的数据），否则飞书不会下发 refresh token；如果 token 缺失、过期或被飞书判定为 revoked，runner 仍会生成本地 Markdown 和 06 记录，但 `文档同步状态` 会报警，并尝试发送“飞书文档同步失败”通知。授权失效时需要重新运行 `python3 scripts/feishu_user_oauth.py --timeout-seconds 240`。
+授权信息写入 `.env.local`，不进入 Git。生产仓库和 `~/.codex/ai-account-radar-runtime` 会通过 `RUNTIME_SOURCE.txt` 绑定，授权脚本和 runner 自动刷新 token 时会把用户 OAuth token 同步写回两边；如果 dev/test worktree 没有这个绑定，不会误写生产 runtime。开发者后台需要先开通 `offline_access`（持续访问已授权的数据），否则飞书不会下发 refresh token；如果 token 缺失、过期或被飞书判定为 revoked，runner 仍会生成本地 Markdown 和 06 记录，但 `文档同步状态` 会报警，并尝试发送“飞书文档同步授权失效”通知。
 
 之后如果改了 watcher、runner、Skill 镜像或字段映射，要重新运行一次安装命令，或只同步 runtime：
 
@@ -130,16 +130,18 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 
 当前 watcher 只负责生成 `06`，不会生成新选题，也不会发送第一张选题卡。
 
-生产定时由 Codex automation 触发，不再使用本机 LaunchAgent：
+每日采集和第一张选题卡发送由 Codex automation 触发，不使用本机 LaunchAgent：
 
 - 08:00：同步 `01 来源与采样`，然后跑全源采集和选题。
 - 10:00：发送第一张选题卡。发送前会检查当天 `daily_pipeline` 是否成功、`latest_write` 是否为当天正式运行、候选 CSV 是否非空；不满足就跳过，避免误发旧候选。
 
-08:00 采集任务会使用 `--defer-editorial`：仓库脚本只负责同步来源、采集素材、写入 `03 内容收件箱`、生成 raw `today_10_topics.csv`，然后停止在“等待外层 Codex 主编判断”状态。这样避免在 Codex automation 内部再次调用 `codex exec`。当前外层 Codex automation 会直接读取全局 `ai-account-editorial-director` Skill，把 raw 候选补成正式主编字段，再运行 `scripts/finalize_daily_pipeline_after_editorial.py --write-feishu --update-scheduled-log` 写入 `04`、校验并把当天日志标记为成功。
+08:00 采集任务会使用 `--defer-editorial`：仓库脚本只负责同步来源、采集素材、写入 `03 内容收件箱`、生成 raw shortlist，然后停止在“等待外层 Codex 主编判断”状态。外层 Codex automation 必须使用 Git 管理的 `skills/ai-account-editorial-director/SKILL.md` 和 `topic_editorial_state_machine.py`，依次完成精确来源打开、网页研究、主编判断、无损排序与运营字段映射；不得调用旧 one-shot runner、环境切换 Skill 或 deterministic editorial fallback。发布时才把 repo Skill 显式同步到 global private Skill 并做 hash read-back。
 
 在外层 Codex 完成收尾前，`daily_pipeline_YYYY-MM-DD.json` 会保持 `ok=false`，所以 10:00 守卫不会误发 raw 候选卡。只有收尾脚本成功后，10:00 才会正常发卡。
 
 Codex 定时任务负责触发本仓库脚本和执行外层主编 Skill；迁移时需要重新创建同名 Codex automation，并保留这个“defer editorial -> outer Codex editorial -> finalizer”的边界。
+
+`06 完整脚本与制作包` 是另一条本机生成链路：它由本机 LaunchAgent watcher 负责，只扫描飞书 `04` 中已确认且已提交制作方向的记录。空队列只做飞书 API 检查，不调用 Codex；有待生成记录时才调用本机 `codex exec` 和全局私有 Skill。
 
 如果 08:00 已完成本地采集和候选生成，但写入 `03 内容收件箱` 时遇到飞书超时，且 `output/runs/<run_id>/content_items.csv` 已存在，不要重新采集。先用已有 run 产物补写 03，再走既有收尾：
 
@@ -165,6 +167,7 @@ python3 scripts/finalize_daily_pipeline_after_editorial.py \
 - 10:00 发卡成功：选题卡本身就是反馈。
 - 10:00 因当天采集失败、候选为空或 latest_write 不是当天结果而跳过：通过飞书发送“AI账号雷达今日未发选题卡”。
 - 10:00 发卡命令失败：通过飞书发送“AI账号雷达选题卡发送失败”。
+- 06 生成成功：如果配置了 `FEISHU_SCRIPT_PACKAGE_FEEDBACK_RECEIVE_TARGETS`，生成器只发送一张“06 完整脚本与制作包已生成”汇总卡，集中列出本轮所有交付文档，并把质量反馈写回 06。预合并/测试时该目标只允许指向个人，避免打扰正式群。
 
 默认通知目标读取 `FEISHU_AUTOMATION_NOTIFY_TARGETS`；如果没有配置，就复用 `FEISHU_CARD_RECEIVE_TARGETS`。手动排障不想发通知时可加 `--no-notify`。
 
@@ -219,15 +222,18 @@ python3 scripts/daily_pipeline.py --resolve-url-intake
 python3 scripts/daily_pipeline.py --no-fetch-aihot
 ```
 
-只测试 Skill 或标题判断时，不要重新采集，直接复用最近一次正式输出：
+只测试 Skill 或标题判断时，不要重新采集。用当前 Codex 任务状态机复用只读 `content_items.csv`：
 
 ```bash
-python3 scripts/editorial_skill_runner.py \
-  --engine codex \
-  --input output/latest_write/today_10_topics.csv \
-  --output output/latest_write/today_10_topics.csv \
-  --report output/latest_write/editorial_skill_report.json
+PYTHONPATH=scripts python3 scripts/topic_editorial_state_machine.py prepare-source-open \
+  --out-dir /private/tmp/ar020d_current_task_replay \
+  --persona-docx "/absolute/private/path/to/我的案例库.docx" \
+  --content-csv output/runs/<run_id>/content_items.csv \
+  --since <YYYY-MM-DD> \
+  --batch-size 3
 ```
+
+当前 Codex 任务随后按 `validate-source-open -> prepare-research -> validate-research -> prepare-stage1 -> validate-stage1 -> prepare-ranking -> validate-ranking -> prepare-stage2 -> validate-stage2 -> finalize` 协议执行。精确来源和研究失败均 fail closed；旧 one-shot/deterministic/nested CLI 会在读写业务输出前失败。
 
 写入边界：
 

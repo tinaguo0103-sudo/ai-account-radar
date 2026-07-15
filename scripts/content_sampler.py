@@ -1838,17 +1838,9 @@ def apply_editorial_judgement(topics: list[dict[str, Any]], item_by_fp: dict[str
 
 
 def assign_today_priority(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    recommended = sorted(
-        [topic for topic in topics if topic.get("是否建议进入制作") == "是"],
-        key=lambda row: int(row.get("编辑判断分", 0) or 0),
-        reverse=True,
-    )
-    top_fps = {topic.get("内容指纹") for topic in recommended[:3]}
     for topic in topics:
-        if topic.get("内容指纹") in top_fps:
-            topic["今日建议级别"] = "今日最值得做"
-        elif topic.get("是否建议进入制作") == "是":
-            topic["今日建议级别"] = "可选候选"
+        if topic.get("是否建议进入制作") == "是":
+            topic["今日建议级别"] = "推荐制作"
         elif topic.get("是否建议进入制作") == "暂存观察":
             topic["今日建议级别"] = "暂存观察"
         else:
@@ -3111,7 +3103,8 @@ def include_in_skill_review_pool(row: dict[str, Any]) -> bool:
     noise before the editorial Skill sees the batch: empty/duplicate rows,
     unsupported fetch failures, very low-information rows, and high-AI-risk
     rows with no scene grounding. The Skill then decides whether each surviving
-    row is 今日最值得做、可选候选、暂存观察 or 不建议制作.
+    row is 推荐制作、暂存观察 or 不建议制作. Final eligibility remains
+    owned by the research-grounded editorial state machine.
     """
     if not row.get("内容指纹"):
         return False

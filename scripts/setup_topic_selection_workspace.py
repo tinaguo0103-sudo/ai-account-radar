@@ -99,11 +99,11 @@ VIEW_SPECS = [
         "latest_run": True,
     },
     {
-        "name": "今日最值得做",
+        "name": "推荐制作",
         "type": "grid",
         "visible": CORE_VISIBLE_FIELDS,
         "latest_run": True,
-        "level": "今日最值得做",
+        "level": "推荐制作",
     },
     {
         "name": "暂存观察",
