@@ -181,6 +181,45 @@ class DouyinChromeRuntimeTests(unittest.TestCase):
         self.assertFalse(payload["ok"])
         self.assertIn("unexpected_dom_probe_exit", payload["error"])
 
+    @mock.patch.object(session, "verify_listener_identity")
+    def test_dom_probe_schema_mutations_fail_typed_without_exceptions(self, identity_mock) -> None:
+        identity_mock.return_value = runtime.ProcessIdentity(
+            True, "profile_identity_verified", 9333, 42, "/tmp/p", "/tmp/p", 9333, "hash"
+        )
+        mutations = {
+            "markers_string": {"state": "logged_in", "markers": "yes"},
+            "markers_list": {"state": "logged_in", "markers": []},
+            "markers_null": {"state": "logged_in", "markers": None},
+            "unknown_state": {"state": "authenticated", "markers": {}},
+            "non_string_state": {"state": 1, "markers": {}},
+            "null_state": {"state": None, "markers": {}},
+            "marker_string_value": {"state": "logged_in", "markers": {"headerSelfLink": "true"}},
+            "marker_integer_value": {"state": "logged_in", "markers": {"headerSelfLink": 1}},
+            "url_wrong_type": {"state": "logged_in", "markers": {}, "url": []},
+            "title_wrong_type": {"state": "logged_in", "markers": {}, "title": 42},
+            "error_wrong_type": {"state": "indeterminate", "markers": {}, "error": {}},
+        }
+        for name, mutation in mutations.items():
+            with self.subTest(name=name):
+                completed = subprocess.CompletedProcess([], 0, json.dumps(mutation), "")
+                code, payload = session.preflight(9333, Path("/tmp/p"), runner=lambda *a, **k: completed)
+                self.assertEqual(code, 4)
+                self.assertFalse(payload["ok"])
+                self.assertEqual(payload["status"], "login_preflight_failed")
+                self.assertEqual(payload["login_state"], "indeterminate")
+                self.assertEqual(payload["error"], "malformed_dom_probe_output")
+
+    def test_dom_probe_schema_accepts_nullable_optional_strings(self) -> None:
+        payload, error = session.parse_dom_probe_output(json.dumps({
+            "state": "indeterminate",
+            "markers": {"loginButton": False},
+            "url": None,
+            "title": "",
+            "error": None,
+        }))
+        self.assertEqual(error, "")
+        self.assertEqual(payload["state"], "indeterminate")
+
 
 if __name__ == "__main__":
     unittest.main()

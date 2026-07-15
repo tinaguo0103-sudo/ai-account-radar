@@ -12,6 +12,7 @@ from pathlib import Path
 from douyin_chrome_runtime import DEFAULT_PORT, configured_profile, verify_listener_identity
 
 ROOT = Path(__file__).resolve().parents[1]
+LOGIN_STATES = {"logged_in", "logged_out", "verification_required", "indeterminate"}
 
 
 def cdp_version(port: int) -> dict | None:
@@ -32,6 +33,15 @@ def parse_dom_probe_output(stdout: str) -> tuple[dict, str]:
         return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
     if not isinstance(payload, dict):
         return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+    state = payload.get("state")
+    markers = payload.get("markers")
+    if not isinstance(state, str) or state not in LOGIN_STATES:
+        return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+    if not isinstance(markers, dict) or any(type(value) is not bool for value in markers.values()):
+        return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+    for field in ("url", "title", "error"):
+        if field in payload and payload[field] is not None and not isinstance(payload[field], str):
+            return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
     return payload, ""
 
 
