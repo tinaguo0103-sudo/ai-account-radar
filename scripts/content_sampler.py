@@ -27,6 +27,7 @@ from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 import push_to_feishu as feishu
+import topic_flow_rework as flow
 from feishu_table_registry import resolve_table_id, table_name
 
 
@@ -598,6 +599,9 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
         item.learn_focus = item.learn_focus or source_meta.get("learn_focus", "")
         item.do_not_copy = item.do_not_copy or source_meta.get("do_not_copy", "")
         item.convert_direction = item.convert_direction or source_meta.get("convert_direction", "")
+        if flow.is_quarantined_source(item):
+            logs.append(f"{item.account_name}: skipped_quarantined_source")
+            continue
         items.append(item)
 
     seen: set[str] = set()
