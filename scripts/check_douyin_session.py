@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import subprocess
 import urllib.request
 from datetime import datetime
@@ -13,6 +14,12 @@ from douyin_chrome_runtime import DEFAULT_PORT, configured_profile, verify_liste
 
 ROOT = Path(__file__).resolve().parents[1]
 LOGIN_STATES = {"logged_in", "logged_out", "verification_required", "indeterminate"}
+VISIBILITY_COUNT_FIELDS = {
+    "visibleHeaderSelfMarkerCount",
+    "visibleLoginMarkerCount",
+    "visibleVerificationMarkerCount",
+}
+VISIBILITY_FIELDS = VISIBILITY_COUNT_FIELDS | {"viewport", "verificationIframeRects"}
 
 
 def cdp_version(port: int) -> dict | None:
@@ -42,6 +49,33 @@ def parse_dom_probe_output(stdout: str) -> tuple[dict, str]:
     for field in ("url", "title", "error"):
         if field in payload and payload[field] is not None and not isinstance(payload[field], str):
             return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+    visibility = payload.get("visibility")
+    if visibility is not None:
+        if not isinstance(visibility, dict) or set(visibility) != VISIBILITY_FIELDS:
+            return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+        viewport = visibility.get("viewport")
+        if not isinstance(viewport, dict) or set(viewport) != {"width", "height"}:
+            return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+        if any(
+            type(viewport[key]) not in (int, float) or not math.isfinite(viewport[key]) or viewport[key] < 0
+            for key in ("width", "height")
+        ):
+            return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+        if any(type(visibility.get(key)) is not int or visibility[key] < 0 for key in VISIBILITY_COUNT_FIELDS):
+            return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+        rects = visibility.get("verificationIframeRects")
+        if not isinstance(rects, list):
+            return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+        for rect in rects:
+            if not isinstance(rect, dict) or set(rect) != {"width", "height", "visible"}:
+                return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+            if any(
+                type(rect[key]) not in (int, float) or not math.isfinite(rect[key]) or rect[key] < 0
+                for key in ("width", "height")
+            ):
+                return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+            if type(rect["visible"]) is not bool:
+                return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
     return payload, ""
 
 
@@ -55,6 +89,7 @@ def preflight(port: int, profile: Path, runner=subprocess.run) -> tuple[int, dic
         "identity": identity.to_dict(),
         "page": {"url": "", "title": ""},
         "dom_markers": {},
+        "visibility": {},
         "secrets_read": False,
     }
     if not identity.ok:
@@ -78,6 +113,7 @@ def preflight(port: int, profile: Path, runner=subprocess.run) -> tuple[int, dic
         "login_state": state,
         "page": {"url": str(login.get("url") or ""), "title": str(login.get("title") or "")},
         "dom_markers": {str(key): bool(value) for key, value in (login.get("markers") or {}).items()},
+        "visibility": login.get("visibility") or {},
         "error": probe_error,
     })
     return (0 if payload["ok"] else 4), payload
