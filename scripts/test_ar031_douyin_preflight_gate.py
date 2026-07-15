@@ -40,6 +40,17 @@ class Ar031DouyinPreflightGateTests(unittest.TestCase):
         healthy = [{"name": "source", "returncode": 0}, {"name": "defer editorial", "returncode": 75, "deferred": True}]
         self.assertEqual(daily_pipeline.deferred_exit_code(healthy), 0)
 
+    def test_deferred_editorial_does_not_mask_partial_douyin_coverage(self) -> None:
+        partial = [{
+            "name": "fetch daily Douyin homepage title/caption samples through Chrome CDP",
+            "returncode": 0,
+            "optional_returncode": 3,
+            "optional_failed": True,
+        }]
+        partial.append({"name": "defer editorial", "returncode": 75, "deferred": True})
+        self.assertEqual(daily_pipeline.deferred_exit_code(partial), 1)
+        self.assertEqual(len(daily_pipeline.collection_failure_steps(partial)), 1)
+
     def test_outer_scheduled_log_is_non_success_for_partial_pipeline(self) -> None:
         with tempfile.TemporaryDirectory() as tmp, mock.patch.object(run_daily_collection_job, "LOG_DIR", Path(tmp)):
             path = run_daily_collection_job.write_job_log([

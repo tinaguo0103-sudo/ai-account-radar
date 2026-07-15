@@ -14,6 +14,7 @@ from automation_failure_qa import qa_for_steps
 from automation_worktree_guard import check_automation_worktree, guard_failure_summary
 from local_env import load_local_env
 from feishu_automation_notify import notify
+import topic_flow_rework as flow
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -77,9 +78,32 @@ def failure_summary(steps: list[dict[str, Any]], log_path: Path) -> str:
     return qa_for_steps("08:00 每日全源采集", steps, log_path=str(log_path))
 
 
+def scheduled_collection_plan(config_path: Path, douyin_account_limit: int) -> dict[str, Any]:
+    sources = flow.load_json_config(config_path).get("sources", [])
+    governance = flow.source_governance_plan(sources)
+    active = governance["active_competitor_accounts"]
+    douyin = [row for row in active if row.get("platform") == "抖音"]
+    other = [row for row in active if row.get("platform") != "抖音"]
+    unlimited = douyin_account_limit == 0
+    return {
+        "ok": governance["active_competitor_count"] > 0 and unlimited,
+        "status": "planned" if unlimited else "limited_plan_rejected",
+        "check_only": True,
+        "writes_feishu": False,
+        "collection_started": False,
+        "planned_accounts": governance["active_competitor_count"],
+        "planned_douyin_accounts": len(douyin),
+        "planned_other_accounts": len(other),
+        "planned_account_names": [row["name"] for row in active],
+        "douyin_account_limit": douyin_account_limit,
+        "polluted_sources_excluded": governance["polluted_match_count"],
+        "touches_historical_03": False,
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run daily full-source collection then write Feishu 04.")
-    parser.add_argument("--douyin-account-limit", type=int, default=50)
+    parser.add_argument("--douyin-account-limit", type=int, default=0, help="0 means every eligible Douyin competitor account.")
     parser.add_argument("--douyin-video-limit", type=int, default=3)
     parser.add_argument("--wechat-feed-limit", type=int, default=5)
     parser.add_argument("--wechat-fulltext-provider", default="wewe_rss_local")
@@ -89,12 +113,19 @@ def main() -> int:
         help="Generate raw candidates only; the outer Codex automation must apply the editorial Skill and finalize.",
     )
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu exception notifications.")
+    parser.add_argument("--check-only", action="store_true", help="Print the full scheduled account plan without browser, collection, or Feishu I/O.")
+    parser.add_argument("--source-config", default=str(ROOT / "config" / "content_sources.yaml"), help="Source config used by --check-only.")
     parser.add_argument(
         "--allow-non-production-worktree",
         action="store_true",
         help="Allow this scheduled-production entrypoint to run outside the configured production worktree.",
     )
     args = parser.parse_args()
+
+    if args.check_only:
+        plan = scheduled_collection_plan(Path(args.source_config), args.douyin_account_limit)
+        print(json.dumps(plan, ensure_ascii=False, indent=2))
+        return 0 if plan["ok"] else 2
 
     load_local_env()
     py = sys.executable
@@ -143,6 +174,7 @@ def main() -> int:
         str(args.douyin_account_limit),
         "--douyin-video-limit",
         str(args.douyin_video_limit),
+        "--force-fetch-douyin",
         "--douyin-verification-action",
         "log-only",
         "--write-feishu",

@@ -78,7 +78,10 @@ def douyin_probe_allowed(chrome_step: dict[str, Any], preflight_step: dict[str, 
 
 
 def collection_failure_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    return [step for step in steps if step.get("returncode") != 0 and not step.get("deferred")]
+    return [
+        step for step in steps
+        if not step.get("deferred") and (step.get("returncode") != 0 or step.get("optional_failed"))
+    ]
 
 
 def deferred_exit_code(steps: list[dict[str, Any]]) -> int:
@@ -290,7 +293,7 @@ def main() -> int:
     parser.add_argument("--fetch-douyin-cdp-source-watch", action="store_true", help="Compatibility flag: Douyin homepage title/caption sampling is now attempted by default unless --no-fetch-douyin is set.")
     parser.add_argument("--no-fetch-douyin-cdp-source-watch", "--no-fetch-douyin", dest="no_fetch_douyin_cdp_source_watch", action="store_true", help="Skip daily Douyin homepage title/caption sampling.")
     parser.add_argument("--douyin-cdp", default=os.getenv("DOUYIN_CDP_URL", "http://127.0.0.1:9333"), help="Chrome DevTools endpoint for explicit Douyin homepage probe.")
-    parser.add_argument("--douyin-account-limit", type=int, default=12, help="Max Douyin accounts to probe in daily source-watch sampling.")
+    parser.add_argument("--douyin-account-limit", type=int, default=0, help="Max Douyin accounts to probe; 0 means every eligible account.")
     parser.add_argument("--douyin-video-limit", type=int, default=3, help="Max videos per Douyin account when --fetch-douyin-cdp-source-watch is enabled.")
     parser.add_argument("--douyin-retries", type=int, default=2, help="Retries per Douyin account before skipping to the next account.")
     parser.add_argument("--douyin-verification-action", choices=["foreground", "log-only"], default="foreground", help="When a Douyin account needs login/verification, foreground the dedicated Chrome for user handling or only log it.")
