@@ -3032,3 +3032,10 @@
 - 修复与证据：CLI main-module 判断改为 `fileURLToPath + realpathSync + path.resolve`；中文、空格和 macOS `/var -> /private/var` symlink 的真实 spawn 均输出单一 JSON，`logged_in=0`，其余三态=4。Python 对 empty/malformed/non-object/state-exit mismatch 均 typed fail。`/private/tmp` 19434 临时 Chrome 的 identity 通过并真实返回 `verification_required`；PID 已停止。当前 9333 PID 17170 未修改，仍明确为旧 RC profile mismatch。
 - 自验：326 Python、21 AR-031 targeted、6 Douyin Node、4 状态 Unicode CLI、32 receiver adjacent 及 pycompile/node/diff/premerge 全过。production main `7c469ba` 的 hunk-level transplant check 通过，未带入 feature-only AR-026/full-account coverage 或 automation guard/QA refactor。
 - PM 动作：已派独立 QA recheck。QA 通过前状态为 `Ready for QA Recheck`，不组 Hotfix RC、不迁移/登录真实 canonical profile；AR-026 继续 Release Blocked。
+
+### 2026-07-15 AR-031 QA recheck 发现 payload schema 异常
+
+- QA 结果：Unicode、空格、macOS symlink 的真实 CLI spawn 四态均通过；`/private/tmp` 临时 Chrome identity 后真实返回 `verification_required`，当前 9333 仍准确返回旧 RC profile mismatch。核心 Unicode 缺陷已关闭。
+- 剩余代码 blocker：Python parser 只校验顶层 dict，合法 JSON 中 `markers` 为字符串时会在 `.items()` 抛 `AttributeError`。这违反 malformed payload 必须 typed fail 的合同；需对 state/markers/url/title/error 做最小 schema validation，并覆盖 wrong-type/unknown-state/state-exit mismatch。
+- 范围判断：QA 指出 `d9aab42..ffe93e4` 因中间 PM docs commit 实际为 7 files。PM 不要求 rewrite/rebase/force-push；后续用 code-only patch、production hunk apply 和 RC manifest 排除 PM docs，避免把历史美化当产品修复。
+- PM 动作：已派开发做最后一次集中返修与完整自验。通过前不组 Hotfix RC，不迁移/登录 profile，AR-026 继续 Release Blocked。
