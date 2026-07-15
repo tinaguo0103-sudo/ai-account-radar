@@ -15,7 +15,7 @@ import { spawnSync } from "node:child_process";
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_CONFIG = path.join(ROOT, "config/content_sources.yaml");
 const DEFAULT_OUT = path.join(ROOT, "output/spikes/douyin_cdp_source_watch_probe");
-const DEFAULT_CDP = "http://127.0.0.1:9222";
+const DEFAULT_CDP = "http://127.0.0.1:9333";
 const RESOLVER = path.join(ROOT, "scripts/url_content_resolver.py");
 
 function parseArgs() {
@@ -370,7 +370,7 @@ async function main() {
       status: "cdp_unavailable",
       cdp: options.cdp,
       failure_reason: `无法连接 Chrome DevTools：${error.message}`,
-      next_step: "请用抖音小号登录 Chrome，并以远程调试方式启动 Chrome：/Applications/Google\\ Chrome.app/Contents/MacOS/Google\\ Chrome --remote-debugging-port=9222 --user-data-dir=.local_services/douyin-chrome-profile",
+      next_step: "先运行 python3 scripts/start_douyin_cdp_chrome.py --port 9333 --foreground 登录，再运行 python3 scripts/check_douyin_session.py --port 9333；不得改用其他 profile 或端口。",
     };
     fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(failure, null, 2), "utf8");
     console.log(JSON.stringify(failure, null, 2));

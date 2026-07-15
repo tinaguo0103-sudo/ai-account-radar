@@ -17,13 +17,14 @@ import urllib.request
 import urllib.parse
 from pathlib import Path
 
+from douyin_chrome_runtime import configured_profile, listener_pids, verify_listener_identity, write_identity_marker
+
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_PROFILE = ROOT / ".local_services" / "douyin-chrome-profile"
+DEFAULT_PROFILE = configured_profile()
 DEFAULT_URL = "https://www.douyin.com/"
 CHROME_BUNDLE_ID = "com.google.Chrome"
 DEFAULT_CHROME_APP = Path("/Applications/Google Chrome.app")
-DEFAULT_CHROME_BINARY = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
 
 
 def chrome_app_path() -> Path:
@@ -31,13 +32,6 @@ def chrome_app_path() -> Path:
     if configured:
         return Path(configured).expanduser()
     return DEFAULT_CHROME_APP
-
-
-def chrome_binary() -> Path:
-    configured = os.getenv("CHROME_BINARY", "").strip()
-    if configured:
-        return Path(configured).expanduser()
-    return DEFAULT_CHROME_BINARY
 
 
 def cdp_version(port: int) -> dict | None:
@@ -75,21 +69,10 @@ def chrome_arg_list(port: int, profile: Path, url: str, mode: str) -> list[str]:
         "--no-first-run",
         "--no-default-browser-check",
     ]
-    if mode == "headless":
-        cmd.extend([
-            "--headless=new",
-            "--disable-gpu",
-            "--disable-dev-shm-usage",
-            "--disable-background-networking",
-        ])
-    elif mode == "hidden":
+    if mode == "hidden":
         cmd.append("--start-minimized")
     cmd.append(url)
     return cmd
-
-
-def chrome_launch_command(binary: Path, port: int, profile: Path, url: str, mode: str) -> list[str]:
-    return [str(binary), *chrome_arg_list(port, profile, url, mode)]
 
 
 def chrome_app_launch_command(app_path: Path, port: int, profile: Path, url: str, mode: str) -> list[str]:
@@ -101,15 +84,8 @@ def chrome_app_launch_command(app_path: Path, port: int, profile: Path, url: str
     return cmd
 
 
-def launch_headless_chrome(binary: Path, port: int, profile: Path, url: str) -> tuple[subprocess.Popen, Path]:
-    profile = profile.expanduser().resolve()
-    profile.mkdir(parents=True, exist_ok=True)
-    log_path = ROOT / ".local_services" / f"douyin-chrome-headless-{port}.log"
-    log_path.parent.mkdir(parents=True, exist_ok=True)
-    cmd = chrome_launch_command(binary, port, profile, url, "headless")
-    handle = log_path.open("ab")
-    proc = subprocess.Popen(cmd, cwd=ROOT, stdout=handle, stderr=handle)
-    return proc, log_path
+def launch_status(ok: bool, identity: object | None) -> str:
+    return "started" if ok else (str(getattr(identity, "status")) if identity is not None else "launch_failed_or_not_ready")
 
 
 def launch_chrome(port: int, profile: Path, url: str, mode: str) -> tuple[subprocess.CompletedProcess, Path]:
@@ -135,25 +111,25 @@ def launch_chrome(port: int, profile: Path, url: str, mode: str) -> tuple[subpro
 def main() -> int:
     parser = argparse.ArgumentParser(description="Start/check dedicated Douyin Chrome CDP profile.")
     parser.add_argument("--port", type=int, default=9333)
-    parser.add_argument("--profile", default=str(DEFAULT_PROFILE))
     parser.add_argument("--url", default=DEFAULT_URL)
-    parser.add_argument("--mode", choices=["hidden", "foreground", "headless"], default="hidden", help="hidden opens a background/minimized app; foreground is for login/verification; headless is experimental and may not work with Douyin login.")
+    parser.add_argument("--mode", choices=["hidden", "foreground"], default="hidden", help="hidden opens a background/minimized app; foreground is for login/verification.")
     parser.add_argument("--foreground", action="store_true", help="Alias for --mode foreground, useful for login/verification.")
     parser.add_argument("--hidden-window", action="store_true", help="Alias for --mode hidden, the normal background sampling mode.")
-    parser.add_argument("--headless", action="store_true", help="Alias for --mode headless. Experimental; use only when no login/verification is required.")
     parser.add_argument("--check-only", action="store_true", help="Only check whether CDP is already available.")
     parser.add_argument("--wait-seconds", type=float, default=4.0)
     args = parser.parse_args()
-    profile_path = Path(args.profile).expanduser().resolve()
+    profile_path = configured_profile()
     if args.foreground:
         args.mode = "foreground"
     if args.hidden_window:
         args.mode = "hidden"
-    if args.headless:
-        args.mode = "headless"
 
     existing = cdp_version(args.port)
     if existing:
+        identity = verify_listener_identity(args.port, profile_path, existing)
+        if not identity.ok:
+            print(json.dumps({"ok": False, **identity.to_dict()}, ensure_ascii=False, indent=2))
+            return 3
         opened_target = None
         if args.mode == "foreground":
             opened_target = open_cdp_target(args.port, args.url)
@@ -164,7 +140,8 @@ def main() -> int:
             "status": "already_running_foreground" if args.mode == "foreground" else "already_running",
             "cdp": f"http://127.0.0.1:{args.port}",
             "browser": existing.get("Browser", ""),
-            "profile": str(profile_path),
+            "profile": identity.actual_profile,
+            "profile_identity": identity.to_dict(),
             "mode": args.mode,
             "opened_url": args.url if opened_target else "",
             "opened_target_id": (opened_target or {}).get("id", ""),
@@ -181,9 +158,8 @@ def main() -> int:
         }, ensure_ascii=False, indent=2))
         return 2
 
-    binary = chrome_binary()
     app_path = chrome_app_path()
-    if args.mode != "headless" and not app_path.exists():
+    if not app_path.exists():
         print(json.dumps({
             "ok": False,
             "status": "chrome_app_not_found",
@@ -193,45 +169,40 @@ def main() -> int:
             "next_step": "Set CHROME_APP_PATH to Google Chrome.app or install Google Chrome in /Applications.",
         }, ensure_ascii=False, indent=2))
         return 1
-    if args.mode == "headless" and not binary.exists():
-        print(json.dumps({
-            "ok": False,
-            "status": "chrome_binary_not_found",
-            "chrome_binary": str(binary),
-            "default_chrome_binary": str(DEFAULT_CHROME_BINARY),
-            "env_var": "CHROME_BINARY",
-            "next_step": "Set CHROME_BINARY to the Google Chrome executable path or install Google Chrome in /Applications.",
-        }, ensure_ascii=False, indent=2))
-        return 1
-
     launch_error = ""
-    if args.mode == "headless":
-        proc, log_path = launch_headless_chrome(binary, args.port, profile_path, args.url)
-        stdout = ""
-        stderr = f"headless log: {log_path}"
-    else:
-        try:
-            proc, log_path = launch_chrome(args.port, profile_path, args.url, args.mode)
-        except OSError as exc:
-            launch_error = str(exc)
-            proc = None
-            log_path = ROOT / ".local_services" / f"douyin-chrome-{args.mode}-{args.port}.log"
-        stdout = (getattr(proc, "stdout", "") or "")[-1000:]
-        stderr = ((getattr(proc, "stderr", "") or "")[-1000:]) if not launch_error else launch_error
+    try:
+        proc, log_path = launch_chrome(args.port, profile_path, args.url, args.mode)
+    except OSError as exc:
+        launch_error = str(exc)
+        proc = None
+        log_path = ROOT / ".local_services" / f"douyin-chrome-{args.mode}-{args.port}.log"
+    stdout = (getattr(proc, "stdout", "") or "")[-1000:]
+    stderr = ((getattr(proc, "stderr", "") or "")[-1000:]) if not launch_error else launch_error
     time.sleep(args.wait_seconds)
     version = cdp_version(args.port)
-    ok = version is not None
+    identity = None
+    marker_path = ""
+    if version:
+        pids = listener_pids(args.port)
+        if len(pids) == 1:
+            try:
+                marker_path = str(write_identity_marker(args.port, profile_path, pids[0], version))
+            except Exception as exc:
+                launch_error = f"identity_marker_write_failed:{exc}"
+        identity = verify_listener_identity(args.port, profile_path, version)
+    ok = version is not None and identity is not None and identity.ok
     print(json.dumps({
         "ok": ok,
-        "status": "started" if ok else "launch_failed_or_not_ready",
+        "status": launch_status(ok, identity),
         "cdp": f"http://127.0.0.1:{args.port}",
         "browser": (version or {}).get("Browser", ""),
-        "profile": str(profile_path),
+        "profile": (identity.actual_profile if identity else str(profile_path)),
+        "profile_identity": identity.to_dict() if identity else {},
+        "identity_marker_path": marker_path,
         "mode": args.mode,
-        "launch_strategy": "app_path" if args.mode != "headless" else "chrome_binary",
+        "launch_strategy": "app_path",
         "chrome_app_path": str(app_path),
         "chrome_bundle_id": CHROME_BUNDLE_ID,
-        "chrome_binary": str(binary),
         "pid": getattr(proc, "pid", None),
         "stdout": stdout,
         "stderr": stderr,

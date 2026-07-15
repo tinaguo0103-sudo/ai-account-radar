@@ -24,28 +24,6 @@ class StartDouyinCdpChromeTests(unittest.TestCase):
         self.assertIn(f"--user-data-dir={profile}", command)
         self.assertIn("--start-minimized", command)
 
-    def test_headless_launch_uses_explicit_chrome_binary(self) -> None:
-        binary = Path("/Applications/Google Chrome.app/Contents/MacOS/Google Chrome")
-        profile = Path("/tmp/douyin-profile")
-
-        command = chrome.chrome_launch_command(binary, 9333, profile, "https://www.douyin.com/", "headless")
-
-        self.assertEqual(command[0], str(binary))
-        self.assertIn("--headless=new", command)
-
-    def test_chrome_binary_can_be_overridden_by_env(self) -> None:
-        original = os.environ.get("CHROME_BINARY")
-        with tempfile.TemporaryDirectory() as tmp:
-            override = Path(tmp) / "Chrome"
-            os.environ["CHROME_BINARY"] = str(override)
-            try:
-                self.assertEqual(chrome.chrome_binary(), override)
-            finally:
-                if original is None:
-                    os.environ.pop("CHROME_BINARY", None)
-                else:
-                    os.environ["CHROME_BINARY"] = original
-
     def test_chrome_app_path_can_be_overridden_by_env(self) -> None:
         original = os.environ.get("CHROME_APP_PATH")
         with tempfile.TemporaryDirectory() as tmp:
@@ -59,14 +37,12 @@ class StartDouyinCdpChromeTests(unittest.TestCase):
                 else:
                     os.environ["CHROME_APP_PATH"] = original
 
-    def test_default_chrome_binary_points_to_application_executable(self) -> None:
-        original = os.environ.get("CHROME_BINARY")
-        os.environ.pop("CHROME_BINARY", None)
-        try:
-            self.assertEqual(chrome.chrome_binary(), chrome.DEFAULT_CHROME_BINARY)
-        finally:
-            if original is not None:
-                os.environ["CHROME_BINARY"] = original
+    def test_default_profile_is_canonical_not_repo_local(self) -> None:
+        self.assertIn(".codex/ai-account-radar-runtime/browser_profiles", str(chrome.DEFAULT_PROFILE))
+        self.assertNotIn(".local_services", str(chrome.DEFAULT_PROFILE))
+
+    def test_not_ready_status_does_not_dereference_missing_identity(self) -> None:
+        self.assertEqual(chrome.launch_status(False, None), "launch_failed_or_not_ready")
 
 
 if __name__ == "__main__":

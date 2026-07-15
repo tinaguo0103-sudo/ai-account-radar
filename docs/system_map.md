@@ -50,7 +50,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 当前可用的抖音主页轻量探针是 `scripts/douyin_source_watch_probe.py`，但日常默认使用的是登录态更稳定的 `scripts/douyin_cdp_source_watch_probe.mjs`。它输出本地 ContentItem 后进入 `daily_pipeline.py` 的候选输入；正式 `--write-feishu` 时会和其他来源一样写入 `03 内容收件箱` 并参与 `04 分析与选题`。
 
-`scripts/douyin_cdp_source_watch_probe.mjs` 通过 Chrome DevTools Protocol 低频打开主对标抖音主页，只在发现可信账号作品 ID 时才复用单条视频 resolver；如果页面返回服务异常或混入热门推荐，脚本会标记为 `needs_login_or_verification` / `partial_untrusted`，不输出 ContentItem。为避免打扰日常工作，`daily_pipeline.py` 会先用 `scripts/start_douyin_cdp_chrome.py --port 9333` 以默认 `hidden` 模式后台启动/复用专用 Chrome；采样时脚本使用后台 target 并尽量最小化专用 Chrome。若某个账号需要登录/验证码，daily pipeline 会前台打开专用 Chrome 到该账号主页，等待用户处理后只重试这些账号；仍失败才记录为待处理并继续其他来源。采集成功后会写入 `output/source_collection_cache/YYYY-MM-DD/douyin_cdp_source_watch.json`，当天后续运行默认复用缓存；只有测试采集逻辑时才加 `--force-fetch-douyin`。
+`scripts/douyin_cdp_source_watch_probe.mjs` 通过 Chrome DevTools Protocol 低频打开主对标抖音主页，只在发现可信账号作品 ID 时才复用单条视频 resolver。`daily_pipeline.py` 在探针和同日缓存复用之前，先通过 `start_douyin_cdp_chrome.py` 核验 `9333` 监听进程与 canonical profile，再通过 `check_douyin_session.py` 做无秘密登录态检查。任一身份、登录或验证状态不明确都会阻断抖音探针并使整次运行保持失败/部分状态；不会复用其他 worktree profile、随机浏览器或 headless。canonical profile 和迁移规则见 `docs/douyin_canonical_profile_runbook.md`。
 
 测试路径原则：日常正式命令写飞书；测试选题、Skill、标题质量或飞书字段时，不重新采集平台数据，优先复用 `output/latest_write/` 和当天采集缓存。
 
