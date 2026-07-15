@@ -3116,3 +3116,11 @@
 - 生产只读：01 为 51 条，迁移 target=8、untouched=43；03 为 670 条，历史污染匹配 51 条且明确 no-touch；canonical PID 33282 返回 identity/session/logged_in。上述均未写入或采集。
 - 自验：RC Python 306、targeted 17、AR-026 Node 25、receiver/SCF 32、semantic/pre-merge 7/7 及 compile/node/diff 均通过。combined patch SHA=`c4c72e69ee5f2fde3380dc6a33a97693680faf0f7eef9ae8564830f4a61a98b6`。
 - PM 动作：已派固定 QA 线程执行一次完整 RC Release QA，覆盖 scope、scheduled path、mutation、01/03 fresh GET、canonical session 和生产回滚计划；不做局部 micro-recheck，不写 Feishu、不运行真实 31 账号采集。PM 不轮询，等待主动回传。
+
+### 2026-07-15 AR-026 RC Release QA 失败并退回集中返修
+
+- 结论：`AR-026 RC Release QA Failed / Development Rework Required`。目标 RC=`0b5a98e59fea4a4a3d42693ed980477fa26221a6`，不得进入生产授权。
+- 唯一代码阻断：Node 实际层仍接受 `--account-limit 12/3`，把 31 个账号截断为 12/3 并 exit 0、ok=true；daily pipeline 与 non-check-only outer 也未在副作用前拒绝正 cap。仓库 Node 测试还把 cap12 截断断言为期望行为。
+- 已通过部分：12-file scope/hash/apply、其余 mutation、306 Python、AR-031 25、AR-020D/E 129、receiver/SCF 32、semantic/pre-merge、scheduled check-only 33、生产 01/03 GET-only 和 canonical 9333 logged_in 均成立，但不能覆盖真实执行层截断。
+- 生产边界：无 Feishu、采集、卡片/callback、06、Skill/SCF、automation、production Git 或 Chrome/profile 变更；QA 误建的未跟踪 symlink 已删除并复核 production clean。
+- PM 动作：已退回固定开发线程一次集中返修。outer normal、daily、Node 三层必须在 env/Feishu/cache/Chrome/output 前拒绝任意正 cap 并 nonzero；测试子集只能走 production scheduled 不可达的独立 test surface。完成后从 production `178f047` 重建 fresh RC，再做一次完整 QA；PM 不轮询。
