@@ -516,7 +516,7 @@
 
 - 类型：采集覆盖 / AR-020 上游依赖
 - 优先级：P1
-- 状态：QA Passed / Release Blocked by AR-031 + Narrow RC
+- 状态：QA Passed / Production-base Narrow RC Building
 - 来源：AR-020 需求确认。用户指出飞书 01 里即使清掉截图污染账号，仍不止 12 个对标账号；用户需要的是全量账号采集，而不是生产默认 12 个账号抽样。
 - 影响：如果上游只采 12 个账号，03 内容库天然缺失大量对标内容，AR-020 的选题转译和反向测试会建立在不完整内容库上，继续漏掉适合 Austin 账号的题。
 - 目标：从飞书 01 获取有效对标账号白名单，清掉截图污染账号后，对剩余有效账号做全量采集覆盖；当前账号量只有几十个，暂不需要分批。若未来量级明显增大或触发平台风险，再升级为分批/频控策略。每次采集必须输出账号级覆盖报告。
@@ -524,12 +524,13 @@
 - 不在范围：不直接改 AR-020 选题打分；不清理历史 03；不把截图之外的来源一并删除。
 - 验证方式：staging/test 或只读/低风险生产 dry-run 先输出计划账号数；正式启用前必须验证计划账号数、实际尝试账号数、成功账号数、失败账号与原因、内容条数和 03 read-back。不得只用 `ok=true` 或默认 12 账号作为通过证据。
 - 备注：AR-026 可以和 AR-020 同一开发计划里并行设计，但验收口径必须分开：AR-026 验证“内容库是否全量覆盖”，AR-020 验证“选题是否更适合 Austin”。2026-07-06 开发线程已提交并 push `8adce16`，新增 `topic_flow_rework.py` / `source_pool_governance.py`；`sync_source_sampling.py --dry-run` 显示当前有效对标账号 33 个、隔离账号 8 个。测试线程 Round 1 判定控制逻辑大体成立，但发现 CSV probe 会把 `video_links` JSON 字符串长度误算成视频数，且生产 01 当前仍显示 8 个污染来源为 enabled/current_aux_competitor。Round 2 开发提交 `07be5a5` 已修复 CSV probe 计数：`video_links` 为 stringified JSON/list 时先解析后计数；`/private/tmp/ar026_round2_csv_probe/source_governance_report.json` 中临时 CSV probe `video_links=[a,b]` 计数为 `2`。同时新增 `polluted_source_release_sync_plan.md`，说明 8 个污染源发布时如何从 current/enabled 切到 `quarantined_source` / inactive，历史 03 不动。`/private/tmp/ar026_round2_source_governance/source_governance_report.json` 显示 `planned_account_count=33`、`polluted_source_count=8`、`writes_feishu=false`、`touches_historical_03=false`。Round 2 独立 QA 通过：CSV/JSON 计数稳定；production read-only 01 report 显示有效对标账号 planned=33、污染源=8，release sync plan 明确只改 8 个污染源并不触碰历史 03。PM 注意：当前真实 artifact 仍来自 12 个尝试账号，不等于生产全量采集已经跑过；发布/恢复时必须按正常覆盖验证 planned/attempted/succeeded/failed 账号数和 03 read-back。
+- 上线推进：AR-031 已发布并恢复 automation，现从 production `178f047` 组装 AR-026 独立窄 RC。必须沿真实 08:00 scheduled path 消除 12/3 缩限、保留 canonical logged-in 硬门和 AR-020E 链路；生产 01 八条隔离仅做 GET-only 计划，待 RC QA 后另行授权。
 
 ### AR-031 固定抖音 Chrome Profile 与登录态硬门
 
 - 类型：采集稳定 / 生产前置门禁
 - 优先级：P1
-- 状态：Follow-up Release Authorized / In Progress / Automations Paused / Blocks AR-026
+- 状态：Hotfix Done / Canonical Logged In / Automations Active / Scheduled Smoke Pending
 - 来源：2026-07-15 明日采集前只读审计。用户要求抖音保持已登录，并固定使用同一个浏览器登录态，不得每次运行随机寻找浏览器。
 - 已确认根因：生产调用链固定请求 `127.0.0.1:9333`，但当前监听 PID 17170 实际绑定旧 RC worktree 的 `.local_services/douyin-chrome-profile`，不是 production profile；当前 Douyin DOM 有明确登录按钮，判定 `logged_out`。`start_douyin_cdp_chrome.py` 只检查 CDP 端口是否可用，不校验监听进程的真实 `--user-data-dir`，还会把请求 profile 误报为实际 profile；`daily_pipeline.py` 又把 Chrome start 和 Douyin probe 作为 optional step。
 - 目标：建立唯一、worktree-independent 的持久化 Douyin Chrome profile；9333 已占用时必须验证 PID/binary/port/user-data-dir 精确匹配；增加不读取认证秘密的登录态预检；profile mismatch、logged_out、verification_required 或 indeterminate 均 fail closed 并写入 scheduled/daily 日志。
@@ -550,6 +551,7 @@
 - Follow-up RC：feature `068aab5` 与 production-base RC `178f047` 仅改 4 个 DOM probe/parser/tests 文件。visible/effective marker 合同覆盖 display/visibility/opacity、尺寸、viewport 和隐藏祖先；当前真实 PID 33282 在 feature/RC 下均返回 `profile_identity_verified + session_verified + logged_in`，visible self=2、login=0、verification=0。RC 已 push，已派发布 QA；三任务仍 PAUSED，production 仍为 `9893c6c`。
 - Follow-up Release QA：RC `178f04780ddc74b61befab04b02c87c951980ea6` 的 4-file scope/hash/apply、14 visibility mutations、7 diagnostics schema、293 Python、24 AR-031、129 AR-020D/E adjacent、7 Node、32 receiver/SCF 与 fresh real 9333 closure 全过。结论 `Ready for PM Production Authorization`；授权动作仅 Git-only release + gate + session read-back + status-only resume，不停止 PID 33282、不再迁移 profile。
 - Follow-up 授权：用户已明确回复“确认”。PM 已派生产线程只执行 production `9893c6c -> 178f047` fast-forward/push、dynamic gate、当前 canonical 9333 session read-back 和三任务 status-only resume。禁止停止/重启 Chrome、复制/迁移 profile、运行 automation 或触发任何业务写入；失败仅回滚 follow-up code并保持 PAUSED。
+- 最终发布：production main local=remote=`178f047`，dynamic gate 通过；canonical PID 33282 未停止或修改，identity verified、session verified、logged_in，visible self=2 且 visible login/verification=0。三任务仅 `PAUSED -> ACTIVE`，08:00/09:15/10:00 与 prompt/target/cwd 不变，无即时 run。AR-031 发布闭环完成；明日 07:45 和 scheduled-day smoke 仍独立待验。
 
 ### AR-027 飞书 01/03/04 标签和表格列业务清理
 

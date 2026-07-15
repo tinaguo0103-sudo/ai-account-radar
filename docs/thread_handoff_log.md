@@ -3100,3 +3100,11 @@
 - 用户授权：用户明确回复“确认”，授权 production main `9893c6c -> 178f047` Git-only fast-forward/push、dynamic gate、当前 canonical 9333 session read-back，以及通过后 exact 三任务 status-only resume。
 - 严格边界：不停止/重启 PID 33282，不复制/迁移 profile，不运行 automation，不写 Feishu、不发卡/callback、不采集、不触发 06/Skill/SCF。任何 branch/hash/PID/profile/gate/session/read-back mismatch 均回滚 follow-up code并保持任务 PAUSED。
 - PM 动作：已派固定生产线程执行；PM 不轮询。成功后仍只表示 AR-031 release closed，明日 07:45 与 08:00/09:15/10:00 scheduled-day smoke 单独验收。
+
+### 2026-07-15 AR-031 可见性 Follow-up 发布完成并恢复任务
+
+- 生产：main `9893c6c -> 178f04780ddc74b61befab04b02c87c951980ea6` fast-forward/push，dynamic production gate 通过；4-file patch hash 和范围匹配，worktree clean、local=remote。
+- 登录：未停止、重启、复制或迁移当前 canonical Chrome。PID 33282、9333、canonical path/profile hash 保持；read-back=`profile_identity_verified + session_verified + logged_in`，visible self=2、login=0、verification=0，隐藏 iframe 仅 0x0/visible=false，secrets_read=false。
+- Automation：`ai-rebuild`、`ai-04-rebuild`、`ai-rebuild-2` 仅 `PAUSED -> ACTIVE`，08:00/09:15/10:00、prompt、parent target、production cwd 不变，无新增 memory/run。
+- 边界：无 Feishu、卡片/callback、采集、06、Skill/SCF 或 Chrome/profile 副作用。备份根=`/private/tmp/ar031_visible_production_release_20260715_205924`。
+- 下一步：AR-031 只待明日 07:45 与 scheduled-day smoke。AR-026 前置解除，PM 已派开发从 production `178f047` 组独立窄 RC；不把 RC 自验冒充真实 33 账号采集完成。
