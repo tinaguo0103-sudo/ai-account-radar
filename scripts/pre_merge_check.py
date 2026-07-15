@@ -24,9 +24,6 @@ PY_COMPILE_TARGETS = (
     "scripts/watch_script_package_queue.py",
     "scripts/local_env.py",
     "scripts/check_feishu_card_cloud_receiver.py",
-    "scripts/topic_field_contract.py",
-    "scripts/topic_replay_evaluation.py",
-    "scripts/topic_skill_replay_evaluation.py",
     "scripts/install_production_keepawake.py",
 )
 DEFAULT_FEISHU_READ_TABLE_KEYS = ("topic_decision", "script_package")

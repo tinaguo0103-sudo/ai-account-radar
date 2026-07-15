@@ -18,7 +18,6 @@ from typing import Any
 
 import feishu_idempotency as idempotency
 import push_to_feishu as feishu
-import topic_field_contract as field_contract
 from feishu_table_registry import TABLES, resolve_table_id, table_name
 from topic_decision_fields import (
     CORE_VISIBLE_FIELDS,
@@ -298,14 +297,7 @@ def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]
     visible: list[dict[str, str]] = []
     omitted = 0
     for row in rows:
-        if row.get("editorial_engine") != "codex" or row.get("fallback_only") == "true" or row.get("not_editorial_quality") == "true":
-            omitted += 1
-            continue
-        issues = field_contract.validate_field_contract(row)
-        if issues:
-            omitted += 1
-            continue
-        if not row.get("我要做的实验") or not has_experiment_action(row.get("我要做的实验", "")):
+        if experiment_for(row) == FALLBACK_EXPERIMENT_PROMPT:
             omitted += 1
             continue
         level = inferred_visible_level(row, len(visible) + 1)
@@ -416,11 +408,11 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str, str]:
     status = ACTION_STATUS.get(row.get("推荐动作", ""), "待判断")
     level = normalize_level(row.get("今日建议级别", ""))
-    proposition = row.get("选题命题") or row.get("我的选题标题") or proposition_for(row)
-    experiment = row.get("我要做的实验", "")
-    trigger = row.get("热点触发点") or workflow_trigger_for(row)
-    pain = row.get("我的工作流痛点", "")
-    display_title = proposition or display_title_for(row)
+    proposition = proposition_for(row)
+    experiment = experiment_for(row)
+    trigger = workflow_trigger_for(row)
+    pain = workflow_pain_for(row)
+    display_title = display_title_for(row)
     recommendation_reason = row.get("推荐理由", "")
     mapped = {
         "选题标题": display_title,
@@ -441,7 +433,7 @@ def map_row(row: dict[str, str], rank: int, date: str, run_id: str) -> dict[str,
         "我的工作流痛点": pain,
         "旧流程痛点": row.get("旧流程痛点", ""),
         "AI介入点": row.get("AI介入点", ""),
-        "验证方式": row.get("验证方式", ""),
+        "验证方式": validation_for(row),
         "可沉淀资产": row.get("可沉淀资产", ""),
         "我的思考点": row.get("我的思考点", ""),
         "可展示证据": row.get("可展示证据") or row.get("可展示结果", ""),

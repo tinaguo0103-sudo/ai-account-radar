@@ -24,7 +24,6 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-import topic_field_contract as field_contract
 from local_env import load_local_env
 
 
@@ -88,7 +87,6 @@ EXTRA_FIELDS = [
     "旧流程痛点",
     "AI介入点",
     "验证方式",
-    "可沉淀资产",
     "我的思考点",
     "重点体现",
     "可调用案例",
@@ -97,12 +95,6 @@ EXTRA_FIELDS = [
     "证据强度",
     "Skill编辑层",
     "Skill参考文件",
-    "editorial_engine",
-    "fallback_only",
-    "not_editorial_quality",
-    "field_contract_status",
-    "field_contract_issues",
-    "field_contract_owner",
 ]
 
 SKILL_FIELDS = [
@@ -142,7 +134,6 @@ SKILL_FIELDS = [
     "旧流程痛点",
     "AI介入点",
     "验证方式",
-    "可沉淀资产",
     "我的思考点",
     "重点体现",
     "可调用案例",
@@ -200,20 +191,6 @@ CANDIDATE_CONTEXT_FIELDS = [
     "业务变化判断",
     "候选来源方式",
     "内容指纹",
-    "来源权重类型",
-    "来源影响权重",
-    "来源构成",
-    "原始来源账号",
-    "AIHOT重大性说明",
-    "对标转译角度",
-    "Austin映射方向",
-    "Austin转译角度",
-    "Austin转译质量",
-    "Austin转译质量原因",
-    "主题簇",
-    "主题簇说明",
-    "市场验证依据",
-    "需要补的案例/工具/工作流",
 ]
 
 MOTHER_SCENES = [
@@ -738,36 +715,14 @@ def normalize_level(value: str) -> str:
 
 def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     out = dict(row)
-    def finalize(candidate: dict[str, str]) -> dict[str, str]:
-        sanitized = sanitize_visible_language(candidate)
-        return field_contract.downgrade_for_contract(sanitized, field_contract.validate_field_contract(sanitized))  # type: ignore[return-value]
-
-    real_skill = out.get("editorial_engine") == "codex" and out.get("fallback_only") != "true"
-    if real_skill:
-        out["热点触发点"] = out.get("热点触发点") or workflow_trigger_for(out)
-        if not out.get("我的工作流痛点"):
-            out["我的工作流痛点"] = "待补工作流痛点：Skill 未写清这条来源对应我的哪个真实卡点。"
-        if not out.get("旧流程痛点"):
-            out["旧流程痛点"] = "待补旧流程痛点：Skill 未写清过去谁在做、卡在哪一步。"
-        if not out.get("可沉淀资产") or is_generic_asset(out.get("可沉淀资产", "")):
-            out["可沉淀资产"] = derived_asset_from_skill_text(out) or "待补具体资产：Skill 未命名这条选题会留下的表、清单、记录或对比物。"
-        if not out.get("我要做的实验"):
-            out["我要做的实验"] = FALLBACK_EXPERIMENT_PROMPT
-        if not out.get("AI介入点"):
-            out["AI介入点"] = "待补AI介入点：Skill 未写清 AI 具体接管哪一步。"
-        if not out.get("验证方式"):
-            out["验证方式"] = "待补最小验证步骤：Skill 未写清输入材料、动作、输出物和通过/失败标准。"
-        if not out.get("选题命题"):
-            out["选题命题"] = proposition_for(out)
-    else:
-        out["热点触发点"] = workflow_trigger_for(out)
-        out["我的工作流痛点"] = workflow_pain_for(out)
-        out["旧流程痛点"] = old_flow_pain_for(out)
-        out["可沉淀资产"] = asset_for(out)
-        out["我要做的实验"] = experiment_for(out)
-        out["AI介入点"] = ai_intervention_for(out)
-        out["验证方式"] = validation_for(out)
-        out["选题命题"] = proposition_for(out)
+    out["热点触发点"] = workflow_trigger_for(out)
+    out["我的工作流痛点"] = workflow_pain_for(out)
+    out["旧流程痛点"] = old_flow_pain_for(out)
+    out["可沉淀资产"] = asset_for(out)
+    out["我要做的实验"] = experiment_for(out)
+    out["AI介入点"] = ai_intervention_for(out)
+    out["验证方式"] = validation_for(out)
+    out["选题命题"] = proposition_for(out)
     out["我的选题标题"] = out["选题命题"]
     out["选题标题"] = out["选题命题"]
     if tension_looks_classification(out.get("我的真实矛盾", "")):
@@ -827,7 +782,7 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
             out["推荐动作"] = "放弃"
         elif out.get("推荐动作") not in {"补证据", "存素材", "观察"}:
             out["推荐动作"] = "观察"
-        return finalize(out)
+        return out
 
     if title_permission != "可发布标题":
         if publishable or alternatives:
@@ -843,7 +798,7 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
         if level == "今日最值得做":
             out["今日建议级别"] = "可选候选"
             out["候选状态"] = "可选候选"
-        return finalize(out)
+        return sanitize_visible_language(out)
 
     if not publishable:
         reason = out.get("不建议做的原因") or out.get("降级原因") or out.get("推荐动作原因")
@@ -861,7 +816,7 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
         if level == "今日最值得做":
             out["今日建议级别"] = "可选候选"
             out["候选状态"] = "可选候选"
-        return finalize(out)
+        return sanitize_visible_language(out)
 
     if publishable and is_same_as_source(publishable, out):
         reason = out.get("降级原因") or out.get("推荐动作原因") or out.get("不建议做的原因")
@@ -888,7 +843,7 @@ def normalize_skill_row(row: dict[str, str]) -> dict[str, str]:
     if publishable:
         out["我的选题标题"] = out["选题命题"]
         out["选题标题"] = out["选题命题"]
-    return finalize(out)
+    return sanitize_visible_language(out)
 
 
 def sanitize_visible_language(row: dict[str, str]) -> dict[str, str]:
@@ -1277,9 +1232,6 @@ def enrich(row: dict[str, str]) -> dict[str, str]:
     out["证据强度"] = row.get("证据强度") or evidence_strength(out)
     out["Skill编辑层"] = "ai-account-editorial-director"
     out["Skill参考文件"] = str(SKILL_REFERENCE)
-    out["editorial_engine"] = "deterministic"
-    out["fallback_only"] = "true"
-    out["not_editorial_quality"] = "true"
     return out
 
 
@@ -1304,25 +1256,6 @@ def compact_candidate(row: dict[str, str], index: int) -> dict[str, str | int]:
             continue
         if value:
             payload[field] = value[:1800]
-    payload["主编字段所有权"] = "Skill 输出为 04/Topic Card/06 主字段唯一质量来源；代码字段仅作来源事实、候选池治理和一致性校验。"
-    payload["fallback_boundary"] = "若候选里已有 deterministic 主字段，只能作为参考或反例；最终可见主字段必须由本轮 Skill 判断重写或确认。"
-    payload["source_governance_evidence"] = json.dumps({
-        "source_weight_label": row.get("来源权重类型") or row.get("来源类型") or "",
-        "source_influence_weight": row.get("来源影响权重") or "",
-        "source_composition": row.get("来源构成") or "",
-        "aihot_major_news": row.get("AIHOT重大性说明") or "",
-        "competitor_account": row.get("原始来源账号") or row.get("账号名/公众号名") or "",
-        "market_validation": row.get("市场验证依据") or "",
-        "theme_hint": row.get("主题簇") or "",
-        "translation_hint": row.get("Austin转译角度") or row.get("对标转译角度") or "",
-        "translation_quality": row.get("Austin转译质量") or "",
-    }, ensure_ascii=False)
-    payload["field_contract_guardrails"] = json.dumps({
-        "knowledge_terms_cannot_coexist_with_video_main_fields": True,
-        "aihot_actionable_requires_major_news_and_austin_angle": True,
-        "generate_script_requires_experiment_validation_and_title_permission": True,
-        "topic_direction_experiment_pain_and_evidence_must_agree": True,
-    }, ensure_ascii=False)
     payload["关联母场景候选"] = json.dumps(matched_mother_scenes(row), ensure_ascii=False)
     payload["热点钩子候选"] = hot_hook(row)
     payload["场景依据候选"] = scene_basis(row)
@@ -1385,17 +1318,6 @@ def build_codex_prompt(rows: list[dict[str, str]]) -> str:
 - 如果没有足够强的候选，可以 0 条 `今日最值得做`；不要为了分数高就自动补强推。
 - 抖音浅层内容可以进入候选，也可以成为强候选；但只能基于标题、文案、封面、公开元数据判断，不能声称看过口播、评论、镜头结构或完整视频。
 - 前台字段必须第一人称，不要写“用户当前/用户可以/适合用户/帮助用户”。
-
-AR-020B 字段契约：
-- 你是 04 / Topic Card / 06 用户可见主字段的质量 owner。`选题命题`、`一句话Brief`、`我要做的实验`、`我的工作流痛点`、`旧流程痛点`、`AI介入点`、`验证方式`、`可沉淀资产`、`我的思考点`、`重点体现`、`对应方向`、`推荐动作`、`今日建议级别`、`title_permission`、`可发布标题` 必须由你重写或确认。
-- 候选里的 `source_governance_evidence`、`来源权重类型`、`来源构成`、`原始来源标题`、`原始来源账号`、`AIHOT重大性说明`、`市场验证依据` 是事实证据；可以引用、吸收和校验。
-- 候选里的 `Austin映射方向`、`Austin转译角度`、`主题簇`、`Austin转译质量` 只是代码在 Skill 之前给出的 hint。它们不能替代你的主编判断；如果 hint 和来源证据冲突，以来源证据和用户账号现场为准。
-- 候选里已有的 `我的工作流痛点`、`我要做的实验`、`重点体现` 可能来自旧 deterministic prefill，不能默认沿用。你必须检查它是否和原始来源一致；不一致就重写或降级。
-- 知识库 / Obsidian / RAG / 内容资产来源，不能在主字段里写成 AI 视频、分镜、成片验收，除非原始来源本身就是 AI 视频知识库。
-- AI 视频 / AIGC / 分镜来源，不能写成纯知识库或办公表格选题，除非来源明确在讲视频素材管理知识库。
-- AI Hot 只有在有重大模型/产品/行业变化，并且能落到 Austin 的工作流影响时，才可以进入可行动候选；普通 AI Hot 只观察。
-- `推荐动作=生成脚本包` 必须有可执行的 `我要做的实验`、`验证方式` 和不为 `不生成标题` 的 `title_permission`。否则请降级为 `暂存观察` 或 `不建议制作`。
-- 如果你无法从来源证据写出具体 Austin 现场，不要用空泛句凑字段；直接标 `暂存观察`，写清缺什么证据。
 
 核心流程只有三步：
 1. `gate / 主编门控`
@@ -1538,9 +1460,6 @@ def run_codex_skill(rows: list[dict[str, str]], model: str, timeout: int) -> tup
         out.update(judgement)
         out["Skill编辑层"] = "ai-account-editorial-director"
         out["Skill参考文件"] = str(SKILL_REFERENCE)
-        out["editorial_engine"] = "codex"
-        out["fallback_only"] = "false"
-        out["not_editorial_quality"] = "false"
         enriched.append(out)
     return normalize_batch(enriched), {
         "codex_rows": len(by_index),
@@ -1611,8 +1530,6 @@ def main() -> int:
             enriched = normalize_batch([enrich(row) for row in rows])
             engine_meta = {
                 "mode": "explicit_deterministic",
-                "fallback_only": True,
-                "not_editorial_quality": True,
                 "approved_selection_learning": str(APPROVED_SELECTION_LEARNING_MD) if APPROVED_SELECTION_LEARNING_MD.exists() else "",
             }
     except Exception as exc:
@@ -1622,8 +1539,6 @@ def main() -> int:
         enriched = normalize_batch([enrich(row) for row in rows])
         engine_meta = {
             "fallback_after_error": str(exc),
-            "fallback_only": True,
-            "not_editorial_quality": True,
             "approved_selection_learning": str(APPROVED_SELECTION_LEARNING_MD) if APPROVED_SELECTION_LEARNING_MD.exists() else "",
         }
     fields = fieldnames_for(enriched, original_fields)
