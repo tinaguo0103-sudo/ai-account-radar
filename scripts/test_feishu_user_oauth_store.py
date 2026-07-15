@@ -58,6 +58,16 @@ class FeishuUserOauthStoreTest(unittest.TestCase):
                 )
                 self.assertEqual(related_env_files(root, other_runtime), [(root / ".env.local").resolve()])
 
+    def test_related_env_files_runtime_copy_writes_only_runtime_env(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp) / "repo"
+            runtime = Path(tmp) / "runtime"
+            root.mkdir()
+            runtime.mkdir()
+            (runtime / "RUNTIME_SOURCE.txt").write_text(f"Synced from: {root}\n", encoding="utf-8")
+            with patch.dict(os.environ, {}, clear=True):
+                self.assertEqual(related_env_files(runtime, runtime), [(runtime / ".env.local").resolve()])
+
     def test_preserve_latest_user_tokens_chooses_newest_refresh_expiry(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp) / "repo"

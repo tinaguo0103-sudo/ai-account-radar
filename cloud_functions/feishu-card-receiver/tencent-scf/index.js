@@ -2,24 +2,9 @@ const crypto = require("crypto");
 
 const DEFAULT_API_HOST = "https://open.feishu.cn";
 const TOPIC_TABLE_NAMES = ["04 分析与选题"];
-const SCRIPT_PACKAGE_TABLE_NAMES = ["06 完整脚本与制作包"];
-const LEARNING_RECORD_TABLE_NAMES = ["08 学习记录"];
 const ENTER_SCRIPT_PACKAGE_FORM_KEY = "script_package_records";
 const PRODUCTION_DIRECTION_FIELD = "我的制作补充";
 const PRODUCTION_DIRECTION_FORM_PREFIX = "production_direction__";
-const SCRIPT_PACKAGE_QUALITY_FORM_PREFIX = "script_quality__";
-const SCRIPT_PACKAGE_ISSUES_FORM_PREFIX = "script_issues__";
-const SCRIPT_PACKAGE_NOTE_FORM_PREFIX = "script_note__";
-const LEARNING_CONFIRMATION_NOTE_KEYS = ["learning_confirmation_note", "learning_confirmation_note__2", "learning_confirmation_note__3"];
-const SCRIPT_PACKAGE_QUALITY_FIELDS = [
-  "人工质量反馈",
-  "质量问题标签",
-  "人工修改意见",
-  "反馈时间",
-  "反馈来源",
-  "内容学习状态",
-];
-const LEARNING_CONFIRMATION_FIELDS = ["确认状态", "确认时间", "确认备注", "Skill同步状态"];
 const PRODUCTION_DIRECTION_CARD_STATUS_FIELD = "制作方向卡状态";
 const SELECTION_SUBMISSION_ID_FIELD = "选择提交批次";
 const SELECTION_SUBMITTED_AT_FIELD = "选择提交时间";
@@ -32,18 +17,15 @@ const PRODUCTION_DIRECTION_CARD_SUBMITTED = "已提交";
 const PRODUCTION_DIRECTION_CARD_FAILED = "发送失败";
 const PRODUCTION_DIRECTION_CARD_IGNORED = "已忽略";
 const SCRIPT_PACKAGE_READY_STATUS = "生成脚本包";
+const PAGE_NO_SELECTION_STATUS = "不做";
 const SUBMIT_SELECTION_ACTION = "submit_topic_decisions";
 const SUBMIT_NO_SELECTION_ACTION = "submit_no_selection";
 const SUBMIT_PRODUCTION_DIRECTIONS_ACTION = "submit_production_directions";
-const SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION = "submit_script_package_quality_feedback";
-const SUBMIT_LEARNING_CONFIRMATION_ACTION = "submit_learning_feedback_confirmation";
 const SEND_PENDING_PRODUCTION_DIRECTION_CARDS_ACTION = "send_pending_production_direction_cards";
 const SUPPORTED_SUBMIT_ACTIONS = new Set([
   SUBMIT_SELECTION_ACTION,
   SUBMIT_NO_SELECTION_ACTION,
   SUBMIT_PRODUCTION_DIRECTIONS_ACTION,
-  SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION,
-  SUBMIT_LEARNING_CONFIRMATION_ACTION,
 ]);
 const TOKEN_CACHE_SAFETY_SECONDS = 300;
 const DEFAULT_CARD_EXPIRE_DAYS = 5;
@@ -242,30 +224,12 @@ async function listTables(token) {
 }
 
 async function topicTableId(token) {
-  if (envValue("FEISHU_TOPIC_TABLE_ID") || envValue("FEISHU_TOPIC_DECISION_TABLE_ID")) {
-    return envValue("FEISHU_TOPIC_TABLE_ID") || envValue("FEISHU_TOPIC_DECISION_TABLE_ID");
-  }
+  if (envValue("FEISHU_TOPIC_TABLE_ID")) return envValue("FEISHU_TOPIC_TABLE_ID");
   if (cachedTopicTableId) return cachedTopicTableId;
   const tables = await listTables(token);
   const found = tables.find((table) => TOPIC_TABLE_NAMES.includes(table.name));
   if (!found?.table_id) throw new Error(`Missing topic table. Expected one of: ${TOPIC_TABLE_NAMES.join(", ")}`);
   cachedTopicTableId = found.table_id;
-  return found.table_id;
-}
-
-async function scriptPackageTableId(token) {
-  if (envValue("FEISHU_SCRIPT_PACKAGE_TABLE_ID")) return envValue("FEISHU_SCRIPT_PACKAGE_TABLE_ID");
-  const tables = await listTables(token);
-  const found = tables.find((table) => SCRIPT_PACKAGE_TABLE_NAMES.includes(table.name));
-  if (!found?.table_id) throw new Error(`Missing script package table. Expected one of: ${SCRIPT_PACKAGE_TABLE_NAMES.join(", ")}`);
-  return found.table_id;
-}
-
-async function learningRecordTableId(token) {
-  if (envValue("FEISHU_LEARNING_TABLE_ID")) return envValue("FEISHU_LEARNING_TABLE_ID");
-  const tables = await listTables(token);
-  const found = tables.find((table) => LEARNING_RECORD_TABLE_NAMES.includes(table.name));
-  if (!found?.table_id) throw new Error(`Missing learning record table. Expected one of: ${LEARNING_RECORD_TABLE_NAMES.join(", ")}`);
   return found.table_id;
 }
 
@@ -639,23 +603,6 @@ function productionDirectionKey(recordId) {
   return `${PRODUCTION_DIRECTION_FORM_PREFIX}${recordId}`;
 }
 
-function scriptPackageQualityKey(recordId) {
-  return `${SCRIPT_PACKAGE_QUALITY_FORM_PREFIX}${recordId}`;
-}
-
-function scriptPackageIssuesKey(recordId) {
-  return `${SCRIPT_PACKAGE_ISSUES_FORM_PREFIX}${recordId}`;
-}
-
-function scriptPackageNoteKey(recordId) {
-  return `${SCRIPT_PACKAGE_NOTE_FORM_PREFIX}${recordId}`;
-}
-
-function scriptPackageNoteKeys(recordId) {
-  const base = scriptPackageNoteKey(recordId);
-  return [base, `${base}__2`, `${base}__3`];
-}
-
 function candidateSnapshotsFromValue(value) {
   const raw = value?.candidate_snapshots;
   if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
@@ -894,7 +841,7 @@ function snapshotAllowsRunMismatch(record, snapshot) {
   return Boolean(actualRunId && normalize(snapshot?.run_id) === actualRunId);
 }
 
-async function selectionCardGuard(token, tableId, candidateIds, runId, snapshots = {}) {
+async function selectionCardGuard(token, tableId, candidateIds, runId, snapshots = {}, expectedStatus = "") {
   const records = await recordsById(token, tableId, candidateIds);
   const missing = candidateIds.filter((recordId) => recordId && !records[recordId]);
   if (missing.length) return { blocked: true, reason: "card_records_missing", missing };
@@ -902,12 +849,12 @@ async function selectionCardGuard(token, tableId, candidateIds, runId, snapshots
   const mismatched = candidateIds.filter((recordId) => runIdMismatch(records[recordId], runId) && !snapshotAllowsRunMismatch(records[recordId], snapshots[recordId]));
   if (mismatched.length) return { blocked: true, reason: "card_run_mismatch", record_ids: mismatched };
 
-  const processed = candidateIds.filter((recordId) => {
+  const conflicting = candidateIds.filter((recordId) => {
     const status = normalize(records[recordId]?.fields?.["状态"]);
-    return !OPEN_SELECTION_STATUSES.has(status);
+    return !OPEN_SELECTION_STATUSES.has(status) && status !== expectedStatus;
   });
-  if (processed.length) return { blocked: true, reason: "selection_card_already_submitted", record_ids: processed };
-  return { blocked: false };
+  if (conflicting.length) return { blocked: true, reason: "selection_card_already_submitted", record_ids: conflicting };
+  return { blocked: false, records };
 }
 
 async function productionDirectionCardGuard(token, tableId, candidateIds, runId, snapshots = {}) {
@@ -923,73 +870,22 @@ async function productionDirectionCardGuard(token, tableId, candidateIds, runId,
   return { blocked: false };
 }
 
-async function scriptPackageQualityCardGuard(token, tableId, candidateIds) {
-  const records = await recordsById(token, tableId, candidateIds);
-  const missing = candidateIds.filter((recordId) => recordId && !records[recordId]);
-  if (missing.length) return { blocked: true, reason: "card_records_missing", missing };
-  return { blocked: false };
-}
-
-function normalizeLearningDecision(value) {
-  const decision = normalize(value.decision || value.learning_decision);
-  if (["已采纳", "采纳", "accept", "accepted"].includes(decision)) return "已采纳";
-  if (["部分采纳", "partial", "partially_accepted"].includes(decision)) return "部分采纳";
-  if (["暂不采纳", "不采纳", "reject", "rejected"].includes(decision)) return "暂不采纳";
-  return "";
-}
-
-function learningConfirmationNote(formValue) {
-  return compact(LEARNING_CONFIRMATION_NOTE_KEYS.map((key) => normalize(formValue[key])).filter(Boolean).join("\n"), 2000);
-}
-
-function learningSkillSyncStatus(decision) {
-  return decision === "暂不采纳" ? "不同步" : "待同步";
-}
-
-function sourceLearningStatus(decision) {
-  return decision === "暂不采纳" ? "忽略" : "已学习";
-}
-
-function learningCardRequiresExplicitTables(value) {
-  const environment = normalize(value.environment).toLowerCase();
-  return environment && !["prod", "production"].includes(environment);
-}
-
-function learningExplicitTableGuard(value) {
-  if (!learningCardRequiresExplicitTables(value)) return { blocked: false };
-  const missing = [];
-  if (!envValue("FEISHU_LEARNING_TABLE_ID")) missing.push("FEISHU_LEARNING_TABLE_ID");
-  if (coerceList(value.topic_record_ids).length && !(envValue("FEISHU_TOPIC_TABLE_ID") || envValue("FEISHU_TOPIC_DECISION_TABLE_ID"))) {
-    missing.push("FEISHU_TOPIC_TABLE_ID/FEISHU_TOPIC_DECISION_TABLE_ID");
-  }
-  if (coerceList(value.script_record_ids).length && !envValue("FEISHU_SCRIPT_PACKAGE_TABLE_ID")) {
-    missing.push("FEISHU_SCRIPT_PACKAGE_TABLE_ID");
-  }
-  return missing.length ? { blocked: true, reason: "learning_test_tables_not_explicit", missing } : { blocked: false };
-}
-
-async function learningConfirmationCardGuard(token, tableId, learningRecordId, learningBatchId) {
-  const record = learningRecordId ? await getRecord(token, tableId, learningRecordId) : null;
-  if (!record) return { blocked: true, reason: "card_records_missing", missing: learningRecordId ? [learningRecordId] : [] };
-  const fields = record.fields || {};
-  const actualBatchId = normalize(fields["学习批次"]);
-  if (learningBatchId && actualBatchId && actualBatchId !== learningBatchId) {
-    return { blocked: true, reason: "card_run_mismatch", record_ids: [learningRecordId] };
-  }
-  const status = normalize(fields["确认状态"]);
-  if (status && status !== "待确认") {
-    return { blocked: true, reason: "learning_record_already_confirmed", record_ids: [learningRecordId] };
-  }
-  return { blocked: false, record };
-}
-
 async function fieldsByName(token, tableId) {
-  const payload = await requestJson(
-    "GET",
-    `/bitable/v1/apps/${envValue("FEISHU_BASE_APP_TOKEN")}/tables/${tableId}/fields`,
-    { token },
-  );
-  return Object.fromEntries((payload.data?.items || []).map((field) => [field.field_name, field]));
+  const fields = [];
+  let pageToken = "";
+  do {
+    const query = new URLSearchParams({ page_size: "100" });
+    if (pageToken) query.set("page_token", pageToken);
+    const payload = await requestJson(
+      "GET",
+      `/bitable/v1/apps/${envValue("FEISHU_BASE_APP_TOKEN")}/tables/${tableId}/fields?${query.toString()}`,
+      { token },
+    );
+    fields.push(...(payload.data?.items || []));
+    pageToken = payload.data?.has_more ? normalize(payload.data?.page_token) : "";
+    if (payload.data?.has_more && !pageToken) throw new Error("Feishu field metadata pagination missing page_token");
+  } while (pageToken);
+  return Object.fromEntries(fields.map((field) => [field.field_name, field]));
 }
 
 async function ensureTextFields(token, tableId, fieldNames) {
@@ -1013,22 +909,31 @@ function decisionsFromForm(formValue, candidateIds, forceNoSelection = false) {
     return Object.fromEntries(
       candidateIds.filter(Boolean).map((recordId) => [
         recordId,
-        { status: "不做", tags: [], manual_reason: manualReason },
+        { status: PAGE_NO_SELECTION_STATUS, tags: [], manual_reason: manualReason },
       ]),
     );
   }
 
   const decisions = {};
-  const selected = new Set(coerceList(formValue[ENTER_SCRIPT_PACKAGE_FORM_KEY]));
+  const selected = coerceList(formValue[ENTER_SCRIPT_PACKAGE_FORM_KEY]);
   for (const recordId of selected) {
     decisions[recordId] = { status: SCRIPT_PACKAGE_READY_STATUS, tags: positiveTags, manual_reason: manualReason };
   }
-  for (const recordId of candidateIds || []) {
-    if (recordId && !decisions[recordId]) {
-      decisions[recordId] = { status: "不做", tags: [], manual_reason: "" };
-    }
-  }
   return decisions;
+}
+
+function selectionInputStatus(formValue, candidateIds, forceNoSelection) {
+  const pageIds = coerceList(candidateIds);
+  if (!pageIds.length) return { ok: false, reason: "empty_candidate_ids" };
+  if (new Set(pageIds).size !== pageIds.length) return { ok: false, reason: "duplicate_candidate_ids" };
+  if (forceNoSelection) return { ok: true, intendedIds: pageIds, expectedStatus: PAGE_NO_SELECTION_STATUS };
+  const selectedIds = coerceList(formValue[ENTER_SCRIPT_PACKAGE_FORM_KEY]);
+  if (!selectedIds.length) return { ok: false, reason: "empty_selection" };
+  if (new Set(selectedIds).size !== selectedIds.length) return { ok: false, reason: "duplicate_selected_ids" };
+  const pageIdSet = new Set(pageIds);
+  const outsidePage = selectedIds.filter((recordId) => !pageIdSet.has(recordId));
+  if (outsidePage.length) return { ok: false, reason: "selected_ids_outside_page", record_ids: outsidePage };
+  return { ok: true, intendedIds: selectedIds, expectedStatus: SCRIPT_PACKAGE_READY_STATUS };
 }
 
 function fieldsEqual(current, next) {
@@ -1036,9 +941,12 @@ function fieldsEqual(current, next) {
 }
 
 function selectionReasonValue(tags, field) {
+  if (!field) throw new Error("Missing required field metadata: 选择原因标签");
   const values = coerceList(tags);
-  if (Number(field?.type) === 4) return values;
-  return values.join("、");
+  const fieldType = Number(field.type);
+  if (fieldType === 1) return values.join("、");
+  if (fieldType === 4) return values;
+  throw new Error(`Unsupported 选择原因标签 field type: ${field.type}`);
 }
 
 function selectionQueueFields(decision, queueInfo) {
@@ -1052,11 +960,12 @@ function selectionQueueFields(decision, queueInfo) {
   };
 }
 
-async function applyFormValue(token, tableId, formValue, { candidateIds, runId, forceNoSelection, queueInfo, snapshots = {} }) {
+async function applyFormValue(token, tableId, formValue, { candidateIds, runId, forceNoSelection, queueInfo, snapshots = {}, records = {} }) {
   const decisions = decisionsFromForm(formValue, candidateIds, forceNoSelection);
-  const fieldMap = await fieldsByName(token, tableId);
-  const reasonField = fieldMap["选择原因标签"];
-  const records = Object.fromEntries((await allRecords(token, tableId)).map((record) => [record.record_id, record]));
+  const reasonField = forceNoSelection ? null : (await fieldsByName(token, tableId))["选择原因标签"];
+  const reasonValues = forceNoSelection
+    ? {}
+    : Object.fromEntries(Object.entries(decisions).map(([recordId, decision]) => [recordId, selectionReasonValue(decision.tags, reasonField)]));
   const updates = [];
   const skipped = [];
   const dryRun = String(envValue("DRY_RUN")).toLowerCase() === "true";
@@ -1075,13 +984,18 @@ async function applyFormValue(token, tableId, formValue, { candidateIds, runId, 
         continue;
       }
     }
-    const updateFields = {
-      "状态": decision.status,
-      "学习状态": "待学习",
-      "选择原因标签": selectionReasonValue(decision.tags, reasonField),
-      "人工一句话判断": decision.manual_reason || "",
-      ...selectionQueueFields(decision, queueInfo),
-    };
+    const effectiveQueueInfo = queueInfo?.submissionId && normalize(fields[SELECTION_SUBMISSION_ID_FIELD]) === queueInfo.submissionId
+      ? { ...queueInfo, submittedAt: normalize(fields[SELECTION_SUBMITTED_AT_FIELD]) || queueInfo.submittedAt }
+      : queueInfo;
+    const updateFields = forceNoSelection
+      ? { "状态": PAGE_NO_SELECTION_STATUS }
+      : {
+          "状态": decision.status,
+          "学习状态": "待学习",
+          "选择原因标签": reasonValues[recordId],
+          "人工一句话判断": decision.manual_reason || "",
+          ...selectionQueueFields(decision, effectiveQueueInfo),
+        };
     if (fieldsEqual(fields, updateFields)) {
       skipped.push({ record_id: recordId, title: normalize(fields["选题标题"]), reason: "no_change" });
       continue;
@@ -1093,63 +1007,26 @@ async function applyFormValue(token, tableId, formValue, { candidateIds, runId, 
     });
   }
 
+  let updatedCount = 0;
   if (!dryRun) {
-    await Promise.all(updates.map((update) => updateRecordFields(token, tableId, update.record_id, update.fields)));
+    for (const update of updates) {
+      await updateRecordFields(token, tableId, update.record_id, update.fields);
+      updatedCount += 1;
+    }
   }
 
   return {
     ok: true,
     mode: dryRun ? "dry-run" : "write",
     run_id: runId,
-    updated_count: dryRun ? 0 : updates.length,
+    intended_count: Object.keys(decisions).length,
+    updated_count: dryRun ? 0 : updatedCount,
     candidate_update_count: updates.length,
     updates,
     skipped,
     selected_records: (candidateIds || [])
       .filter((recordId) => decisions[recordId]?.status === SCRIPT_PACKAGE_READY_STATUS && records[recordId])
       .map((recordId) => records[recordId]),
-  };
-}
-
-async function applyFormValueFast(token, tableId, formValue, { candidateIds, runId, forceNoSelection, snapshots, queueInfo }) {
-  const decisions = decisionsFromForm(formValue, candidateIds, forceNoSelection);
-  const fieldMap = await fieldsByName(token, tableId);
-  const reasonField = fieldMap["选择原因标签"];
-  const dryRun = String(envValue("DRY_RUN")).toLowerCase() === "true";
-  const updates = [];
-  const skipped = [];
-
-  for (const [recordId, decision] of Object.entries(decisions)) {
-    const snapshot = snapshots[recordId] || {};
-    updates.push({
-      record_id: recordId,
-      title: normalize(snapshot.title),
-      fields: {
-        "状态": decision.status,
-        "学习状态": "待学习",
-        "选择原因标签": selectionReasonValue(decision.tags, reasonField),
-        "人工一句话判断": decision.manual_reason || "",
-        ...selectionQueueFields(decision, queueInfo),
-      },
-    });
-  }
-
-  if (!dryRun) {
-    await Promise.all(updates.map((update) => updateRecordFields(token, tableId, update.record_id, update.fields)));
-  }
-
-  return {
-    ok: true,
-    mode: dryRun ? "dry-run" : "write",
-    fast_path: true,
-    run_id: runId,
-    updated_count: dryRun ? 0 : updates.length,
-    candidate_update_count: updates.length,
-    updates,
-    skipped,
-    selected_records: (candidateIds || [])
-      .filter((recordId) => decisions[recordId]?.status === SCRIPT_PACKAGE_READY_STATUS)
-      .map((recordId) => snapshotRecord(recordId, snapshots[recordId] || {})),
   };
 }
 
@@ -1193,156 +1070,6 @@ async function applyProductionDirections(token, tableId, formValue, { candidateI
   };
 }
 
-async function applyScriptPackageQualityFeedback(token, tableId, formValue, { candidateIds }) {
-  const dryRun = String(envValue("DRY_RUN")).toLowerCase() === "true";
-  const updates = [];
-  const skipped = [];
-  const feedbackAt = new Date().toISOString();
-
-  if (!dryRun && String(envValue("ENSURE_SCRIPT_PACKAGE_QUALITY_FIELDS") || "true").toLowerCase() !== "false") {
-    await ensureTextFields(token, tableId, SCRIPT_PACKAGE_QUALITY_FIELDS);
-  }
-
-  for (const recordId of candidateIds || []) {
-    const quality = compact(formValue[scriptPackageQualityKey(recordId)], 80);
-    const issues = coerceList(formValue[scriptPackageIssuesKey(recordId)]);
-    const note = compact(scriptPackageNoteKeys(recordId).map((key) => normalize(formValue[key])).filter(Boolean).join("\n"), 2000);
-    if (!quality && issues.length === 0 && !note) {
-      skipped.push({ record_id: recordId, reason: "empty_feedback" });
-      continue;
-    }
-    updates.push({
-      record_id: recordId,
-      fields: {
-        "人工质量反馈": quality,
-        "质量问题标签": issues.join("、"),
-        "人工修改意见": note,
-        "反馈时间": feedbackAt,
-        "反馈来源": "06完成卡",
-        "内容学习状态": "待学习",
-      },
-    });
-  }
-
-  if (!dryRun) {
-    await Promise.all(updates.map((update) => updateRecordFields(token, tableId, update.record_id, update.fields)));
-  }
-
-  return {
-    ok: true,
-    mode: dryRun ? "dry-run" : "write",
-    updated_count: dryRun ? 0 : updates.length,
-    candidate_update_count: updates.length,
-    updates,
-    skipped,
-  };
-}
-
-async function applyLearningFeedbackConfirmation(token, formValue, { value }) {
-  const dryRun = String(envValue("DRY_RUN")).toLowerCase() === "true";
-  const learningRecordId = normalize(value.learning_record_id);
-  const learningBatchId = normalize(value.learning_batch_id);
-  const decision = normalizeLearningDecision(value);
-  if (!decision) {
-    return {
-      ok: false,
-      blocked: true,
-      reason: "missing_learning_decision",
-      action: SUBMIT_LEARNING_CONFIRMATION_ACTION,
-      updated_count: 0,
-      candidate_update_count: 0,
-    };
-  }
-  const explicitGuard = learningExplicitTableGuard(value);
-  if (explicitGuard.blocked) {
-    return {
-      ok: false,
-      ...explicitGuard,
-      action: SUBMIT_LEARNING_CONFIRMATION_ACTION,
-      updated_count: 0,
-      candidate_update_count: 0,
-    };
-  }
-
-  const learningTableId = await learningRecordTableId(token);
-  const guard = await learningConfirmationCardGuard(token, learningTableId, learningRecordId, learningBatchId);
-  if (guard.blocked) {
-    return {
-      ok: false,
-      ...guard,
-      action: SUBMIT_LEARNING_CONFIRMATION_ACTION,
-      updated_count: 0,
-      candidate_update_count: 0,
-    };
-  }
-
-  const topicIds = coerceList(value.topic_record_ids);
-  const scriptIds = coerceList(value.script_record_ids);
-  const topicTable = topicIds.length ? await topicTableId(token) : "";
-  const scriptTable = scriptIds.length ? await scriptPackageTableId(token) : "";
-  const topicRecords = topicIds.length ? await recordsById(token, topicTable, topicIds) : {};
-  const scriptRecords = scriptIds.length ? await recordsById(token, scriptTable, scriptIds) : {};
-  const missingSources = [
-    ...topicIds.filter((recordId) => !topicRecords[recordId]),
-    ...scriptIds.filter((recordId) => !scriptRecords[recordId]),
-  ];
-  if (missingSources.length) {
-    return {
-      ok: false,
-      blocked: true,
-      reason: "card_records_missing",
-      action: SUBMIT_LEARNING_CONFIRMATION_ACTION,
-      updated_count: 0,
-      candidate_update_count: 0,
-      missing: missingSources,
-    };
-  }
-  const confirmedAt = new Date().toISOString();
-  const note = learningConfirmationNote(formValue);
-  const summaryText = compact(value.learning_summary, 1000);
-  const learningFields = {
-    "确认状态": decision,
-    "确认时间": confirmedAt,
-    "确认备注": note,
-    "Skill同步状态": learningSkillSyncStatus(decision),
-  };
-  const sourceStatus = sourceLearningStatus(decision);
-  const topicFields = {
-    "学习状态": sourceStatus,
-    "选择学习批次": learningBatchId,
-    "选择学习摘要": summaryText,
-  };
-  const scriptFields = {
-    "内容学习状态": sourceStatus,
-    "内容学习批次": learningBatchId,
-    "内容学习摘要": summaryText,
-  };
-  const updates = [
-    { table: "learning", table_id: learningTableId, record_id: learningRecordId, fields: learningFields },
-    ...topicIds.map((recordId) => ({ table: "topic", table_id: topicTable, record_id: recordId, fields: topicFields })),
-    ...scriptIds.map((recordId) => ({ table: "script", table_id: scriptTable, record_id: recordId, fields: scriptFields })),
-  ];
-
-  if (!dryRun) {
-    await ensureTextFields(token, learningTableId, LEARNING_CONFIRMATION_FIELDS);
-    if (topicIds.length) await ensureTextFields(token, topicTable, ["学习状态", "选择学习批次", "选择学习摘要"]);
-    if (scriptIds.length) await ensureTextFields(token, scriptTable, ["内容学习状态", "内容学习批次", "内容学习摘要"]);
-    await Promise.all(updates.map((update) => updateRecordFields(token, update.table_id, update.record_id, update.fields)));
-  }
-
-  return {
-    ok: true,
-    mode: dryRun ? "dry-run" : "write",
-    action: SUBMIT_LEARNING_CONFIRMATION_ACTION,
-    decision,
-    learning_batch_id: learningBatchId,
-    learning_record_id: learningRecordId,
-    updated_count: dryRun ? 0 : updates.length,
-    candidate_update_count: topicIds.length + scriptIds.length,
-    updates,
-  };
-}
-
 async function processCardSubmission(value, formValue) {
   const actionName = String(value.action || "");
   if (!SUPPORTED_SUBMIT_ACTIONS.has(actionName)) {
@@ -1373,37 +1100,6 @@ async function processCardSubmission(value, formValue) {
   }
 
   const token = await tenantToken();
-  if (actionName === SUBMIT_LEARNING_CONFIRMATION_ACTION) {
-    const learningSummary = await applyLearningFeedbackConfirmation(token, effectiveFormValue, {
-      value,
-    });
-    learningSummary.receipt_key = submissionFingerprint(actionName, runId, [
-      value.learning_record_id,
-      ...coerceList(value.topic_record_ids),
-      ...coerceList(value.script_record_ids),
-    ], effectiveFormValue);
-    return learningSummary;
-  }
-  if (actionName === SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION) {
-    const tableId = await scriptPackageTableId(token);
-    const guard = await scriptPackageQualityCardGuard(token, tableId, candidateIds);
-    if (guard.blocked) {
-      return {
-        ok: false,
-        ...guard,
-        action: actionName,
-        updated_count: 0,
-        candidate_update_count: 0,
-      };
-    }
-    const feedbackSummary = await applyScriptPackageQualityFeedback(token, tableId, effectiveFormValue, {
-      candidateIds,
-    });
-    feedbackSummary.action = actionName;
-    feedbackSummary.receipt_key = submissionFingerprint(actionName, runId, candidateIds, effectiveFormValue);
-    return feedbackSummary;
-  }
-
   const tableId = await topicTableId(token);
   if (actionName === SUBMIT_PRODUCTION_DIRECTIONS_ACTION) {
     const guard = await productionDirectionCardGuard(token, tableId, candidateIds, runId, candidateSnapshots);
@@ -1426,7 +1122,14 @@ async function processCardSubmission(value, formValue) {
     return directionSummary;
   }
 
-  const guard = await selectionCardGuard(token, tableId, candidateIds, runId, candidateSnapshots);
+  const forceNoSelection = actionName === SUBMIT_NO_SELECTION_ACTION;
+  const inputStatus = selectionInputStatus(effectiveFormValue, candidateIds, forceNoSelection);
+  if (!inputStatus.ok) {
+    return { ok: false, blocked: true, reason: inputStatus.reason, record_ids: inputStatus.record_ids || [], action: actionName, run_id: runId, intended_count: 0, updated_count: 0, candidate_update_count: 0 };
+  }
+
+  const intendedIds = inputStatus.intendedIds;
+  const guard = await selectionCardGuard(token, tableId, intendedIds, runId, candidateSnapshots, inputStatus.expectedStatus);
   if (guard.blocked) {
     return {
       ok: false,
@@ -1438,28 +1141,20 @@ async function processCardSubmission(value, formValue) {
     };
   }
 
-  const receiptKey = submissionFingerprint(actionName, runId, candidateIds, effectiveFormValue);
+  const receiptKey = submissionFingerprint(actionName, runId, intendedIds, effectiveFormValue);
   const queueInfo = {
     enabled: actionName === SUBMIT_SELECTION_ACTION && String(envValue("SEND_PRODUCTION_DIRECTION_CARD") || "true").toLowerCase() !== "false",
     submissionId: `${runId || "selection"}:${receiptKey.slice(0, 12)}`,
     submittedAt: new Date().toISOString(),
   };
-  const hasSnapshots = Object.keys(candidateSnapshots).length > 0;
-  const summary = hasSnapshots
-    ? await applyFormValueFast(token, tableId, effectiveFormValue, {
-        candidateIds,
-        runId,
-        forceNoSelection: actionName === SUBMIT_NO_SELECTION_ACTION,
-        snapshots: candidateSnapshots,
-        queueInfo,
-      })
-    : await applyFormValue(token, tableId, effectiveFormValue, {
-        candidateIds,
-        runId,
-        forceNoSelection: actionName === SUBMIT_NO_SELECTION_ACTION,
-        queueInfo,
-        snapshots: candidateSnapshots,
-      });
+  const summary = await applyFormValue(token, tableId, effectiveFormValue, {
+    candidateIds: intendedIds,
+    runId,
+    forceNoSelection,
+    queueInfo,
+    snapshots: candidateSnapshots,
+    records: guard.records,
+  });
   if (shouldQueueProductionDirectionCard(actionName, summary)) {
     summary.production_direction_card = {
       queued: true,
@@ -1469,7 +1164,7 @@ async function processCardSubmission(value, formValue) {
     };
   }
   summary.action = actionName;
-  summary.receipt_key = receiptKey;
+  if (summary.mode === "write" && summary.updated_count + summary.skipped.filter((item) => item.reason === "no_change").length === summary.intended_count) summary.receipt_key = receiptKey;
   return summary;
 }
 
@@ -1507,25 +1202,17 @@ async function handlePayload(payload) {
       if (summary.reason === "card_expired") return toast("warning", "这张卡已超过 5 天，不再处理，请使用最新卡片");
       if (summary.reason === "selection_card_already_submitted") return toast("warning", "这张选题卡已经提交过，不再重复处理");
       if (summary.reason === "production_direction_card_already_submitted") return toast("warning", "这张制作方向卡已经保存过，不再重复处理");
-      if (summary.reason === "learning_record_already_confirmed") return toast("warning", "这条学习日结已经确认过，不再重复处理");
-      if (summary.reason === "missing_learning_decision") return toast("warning", "没有识别到学习确认结论，请使用卡片按钮提交");
-      if (summary.reason === "learning_test_tables_not_explicit") return toast("warning", "测试学习卡缺少显式测试表配置，已拒绝回写");
       if (summary.reason === "card_run_mismatch") return toast("warning", "这张卡对应的记录批次已变化，请使用最新卡片");
       if (summary.reason === "card_records_missing") return toast("warning", "这张卡对应的记录不存在，请使用最新卡片");
+      if (summary.reason === "empty_selection") return toast("warning", "请至少勾选一条；如需拒绝本页，请使用“本页都不选”");
+      if (summary.reason === "selected_ids_outside_page") return toast("warning", "勾选项不属于当前页面，请刷新后重试");
+      if (summary.reason === "empty_candidate_ids" || summary.reason === "duplicate_candidate_ids" || summary.reason === "duplicate_selected_ids") return toast("warning", "卡片候选数据无效，请使用最新卡片");
       return toast("warning", "这张卡当前不能提交，请使用最新卡片");
     }
     if (summary.action === SUBMIT_PRODUCTION_DIRECTIONS_ACTION) {
       const count = summary.updated_count;
       if (count === 0) return toast("warning", "没有保存新的制作方向");
       return toast("success", `已保存 ${count} 条制作方向`);
-    }
-    if (summary.action === SUBMIT_SCRIPT_PACKAGE_QUALITY_ACTION) {
-      const count = summary.updated_count;
-      if (count === 0) return toast("warning", "没有保存新的质量反馈");
-      return toast("success", `已保存 ${count} 条质量反馈`);
-    }
-    if (summary.action === SUBMIT_LEARNING_CONFIRMATION_ACTION) {
-      return toast("success", `已确认学习日结：${summary.decision}`);
     }
     const count = summary.updated_count;
     const skippedNoChange = (summary.skipped || []).filter((item) => item.reason === "no_change").length;

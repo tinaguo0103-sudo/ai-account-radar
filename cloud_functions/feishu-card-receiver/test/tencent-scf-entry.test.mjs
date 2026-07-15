@@ -1,6 +1,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
+import { handlePayload as handleSrcPayload } from "../src/receiver.js";
 
 const require = createRequire(import.meta.url);
 const { main_handler } = require("../tencent-scf/index.js");
@@ -9,47 +10,70 @@ function bodyJson(response) {
   return JSON.parse(response.body || "{}");
 }
 
-function toastBody(type, content) {
-  return { code: 0, toast: { type, content } };
+function selectionPayload(action, candidateIds, selectedIds = []) {
+  return {
+    header: { token: "verify_test" },
+    event: {
+      action: {
+        value: { action, run_id: "run_contract", candidate_ids: candidateIds },
+        form_value: { script_package_records: selectedIds, positive_reason_tags: ["证据够"], manual_reason: "" },
+      },
+    },
+  };
 }
 
-function makeScfMockFetch(records, calls) {
+function contractFetch(records, calls, { reasonFieldType = 1 } = {}) {
   return async (url, init = {}) => {
-    const parsed = new URL(url);
-    const path = parsed.pathname + parsed.search;
-    calls.push({ method: init.method || "GET", path, body: init.body ? JSON.parse(init.body) : undefined });
-    if (path.endsWith("/auth/v3/tenant_access_token/internal")) {
-      return Response.json({ code: 0, tenant_access_token: "tenant_test" });
-    }
-    if (path.includes("/bitable/v1/apps/base_test/tables") && !path.includes("/records") && !path.includes("/fields")) {
-      return Response.json({
-        code: 0,
-        data: {
-          items: [
-            { name: "04 分析与选题", table_id: "tbl_topic" },
-            { name: "06 完整脚本与制作包", table_id: "tbl_script_package" },
-            { name: "08 学习记录", table_id: "tbl_learning" },
-          ],
-        },
-      });
-    }
-    const recordMatch = path.match(/\/records\/([^/?]+)$/);
-    if (recordMatch && (init.method || "GET") === "GET") {
-      const record = records.find((item) => item.record_id === decodeURIComponent(recordMatch[1]));
+    const path = new URL(url).pathname + new URL(url).search;
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    calls.push({ method: init.method || "GET", path, body });
+    if (path.endsWith("/auth/v3/tenant_access_token/internal")) return Response.json({ code: 0, tenant_access_token: "tenant_test" });
+    if (path.includes("/fields") && (init.method || "GET") === "GET") return Response.json({ code: 0, data: { items: [{ field_name: "选择原因标签", type: reasonFieldType }], has_more: false } });
+    const match = path.match(/\/records\/([^/?]+)$/);
+    if (match && (init.method || "GET") === "GET") {
+      const record = records.find((item) => item.record_id === decodeURIComponent(match[1]));
       if (!record) return Response.json({ code: 1254045, msg: "record not found" }, { status: 404 });
       return Response.json({ code: 0, data: { record } });
     }
-    if (path.endsWith("/fields")) {
-      return Response.json({ code: 0, data: { items: [] } });
-    }
-    if (path.includes("/fields")) {
-      return Response.json({ code: 0, data: {} });
-    }
-    if (path.includes("/records/")) {
-      return Response.json({ code: 0, data: {} });
-    }
+    if (match && (init.method || "GET") === "PUT") return Response.json({ code: 0, data: {} });
     return Response.json({ code: 999, msg: `unexpected path ${path}` }, { status: 500 });
   };
+}
+
+async function runScfContract(payload, records, fetchOptions = {}) {
+  const keys = ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_BASE_APP_TOKEN", "FEISHU_TOPIC_TABLE_ID", "FEISHU_VERIFICATION_TOKEN", "SEND_PRODUCTION_DIRECTION_CARD"];
+  const oldEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const oldFetch = globalThis.fetch;
+  const calls = [];
+  try {
+    Object.assign(process.env, {
+      FEISHU_APP_ID: "cli_test_app",
+      FEISHU_APP_SECRET: "cli_test_secret",
+      FEISHU_BASE_APP_TOKEN: "base_test",
+      FEISHU_TOPIC_TABLE_ID: "tbl_topic",
+      FEISHU_VERIFICATION_TOKEN: "verify_test",
+      SEND_PRODUCTION_DIRECTION_CARD: "false",
+    });
+    globalThis.fetch = contractFetch(records, calls, fetchOptions);
+    const response = await main_handler({ httpMethod: "POST", body: JSON.stringify(payload) });
+    return { body: bodyJson(response), calls };
+  } finally {
+    globalThis.fetch = oldFetch;
+    for (const [key, value] of Object.entries(oldEnv)) {
+      if (value === undefined) delete process.env[key];
+      else process.env[key] = value;
+    }
+  }
+}
+
+async function runSrcContract(payload, records, fetchOptions = {}) {
+  const calls = [];
+  const response = await handleSrcPayload(
+    payload,
+    { FEISHU_APP_ID: "cli_test_app", FEISHU_APP_SECRET: "cli_test_secret", FEISHU_BASE_APP_TOKEN: "base_test", FEISHU_TOPIC_TABLE_ID: "tbl_topic", FEISHU_VERIFICATION_TOKEN: "verify_test", SEND_PRODUCTION_DIRECTION_CARD: "false" },
+    { fetchImpl: contractFetch(records, calls, fetchOptions) },
+  );
+  return { body: await response.json(), calls };
 }
 
 test("Tencent SCF entry returns Feishu challenge", async () => {
@@ -59,59 +83,6 @@ test("Tencent SCF entry returns Feishu challenge", async () => {
   });
   assert.equal(response.statusCode, 200);
   assert.deepEqual(bodyJson(response), { challenge: "hello" });
-});
-
-test("Tencent SCF entry writes learning confirmation feedback", async () => {
-  const originalEnv = { ...process.env };
-  const originalFetch = global.fetch;
-  const calls = [];
-  process.env.FEISHU_APP_ID = "cli_test_app";
-  process.env.FEISHU_APP_SECRET = "cli_test_secret";
-  process.env.FEISHU_BASE_APP_TOKEN = "base_test";
-  process.env.FEISHU_VERIFICATION_TOKEN = "verify_test";
-  process.env.FEISHU_TOPIC_DECISION_TABLE_ID = "tbl_topic";
-  process.env.FEISHU_SCRIPT_PACKAGE_TABLE_ID = "tbl_script_package";
-  process.env.FEISHU_LEARNING_TABLE_ID = "tbl_learning";
-  global.fetch = makeScfMockFetch([
-    { record_id: "learn_a", fields: { "学习批次": "learn_1", "确认状态": "待确认" } },
-    { record_id: "topic_a", fields: { "选题标题": "A", "学习状态": "待确认学习" } },
-    { record_id: "pkg_a", fields: { "脚本标题": "A 脚本包", "内容学习状态": "待确认学习" } },
-  ], calls);
-  try {
-    const response = await main_handler({
-      httpMethod: "POST",
-      body: JSON.stringify({
-        header: { token: "verify_test" },
-        event: {
-          action: {
-            value: {
-              action: "submit_learning_feedback_confirmation",
-              decision: "已采纳",
-              environment: "staging",
-              learning_record_id: "learn_a",
-              learning_batch_id: "learn_1",
-              topic_record_ids: ["topic_a"],
-              script_record_ids: ["pkg_a"],
-              learning_summary: "学习确认 SCF 入口测试。",
-            },
-            form_value: {
-              learning_confirmation_note: "入口测试通过。",
-            },
-          },
-        },
-      }),
-    });
-    assert.deepEqual(bodyJson(response), toastBody("success", "已确认学习日结：已采纳"));
-    const puts = calls.filter((call) => call.method === "PUT");
-    assert.equal(puts.length, 3);
-    assert.equal(puts[0].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_learning/records/learn_a");
-    assert.equal(puts[0].body.fields["Skill同步状态"], "待同步");
-    assert.equal(puts[1].body.fields["学习状态"], "已学习");
-    assert.equal(puts[2].body.fields["内容学习状态"], "已学习");
-  } finally {
-    process.env = originalEnv;
-    global.fetch = originalFetch;
-  }
 });
 
 test("Tencent SCF entry rejects non-POST requests", async () => {
@@ -126,48 +97,63 @@ test("Tencent SCF entry handles invalid JSON body", async () => {
   assert.deepEqual(bodyJson(response), { ok: false, error: "Invalid JSON body" });
 });
 
-test("Tencent SCF entry writes script package quality feedback", async () => {
-  const originalEnv = { ...process.env };
-  const originalFetch = global.fetch;
-  const calls = [];
-  process.env.FEISHU_APP_ID = "cli_test_app";
-  process.env.FEISHU_APP_SECRET = "cli_test_secret";
-  process.env.FEISHU_BASE_APP_TOKEN = "base_test";
-  process.env.FEISHU_VERIFICATION_TOKEN = "verify_test";
-  global.fetch = makeScfMockFetch([{ record_id: "pkg_a", fields: { "脚本标题": "A 脚本包" } }], calls);
-  try {
-    const response = await main_handler({
-      httpMethod: "POST",
-      body: JSON.stringify({
-        header: { token: "verify_test" },
-        event: {
-          action: {
-            value: {
-              action: "submit_script_package_quality_feedback",
-              candidate_ids: ["pkg_a"],
-            },
-            form_value: {
-              script_quality__pkg_a: "需要重写",
-              script_issues__pkg_a: ["太泛", "证据不可拍"],
-              script_note__pkg_a: "需要补具体真实场景。",
-              script_note__pkg_a__2: "不能只写成通用方法论。",
-            },
-          },
-        },
-      }),
-    });
-    assert.deepEqual(bodyJson(response), toastBody("success", "已保存 1 条质量反馈"));
-    const put = calls.find((call) => call.method === "PUT");
-    assert.ok(put);
-    assert.equal(put.path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_script_package/records/pkg_a");
-    assert.equal(put.body.fields["人工质量反馈"], "需要重写");
-    assert.equal(put.body.fields["质量问题标签"], "太泛、证据不可拍");
-    assert.equal(put.body.fields["人工修改意见"], "需要补具体真实场景。 不能只写成通用方法论。");
-    assert.equal(put.body.fields["反馈来源"], "06完成卡");
-    assert.equal(put.body.fields["内容学习状态"], "待学习");
-  } finally {
-    process.env = originalEnv;
-    global.fetch = originalFetch;
+test("src and Tencent SCF normal submit update only the selected page row", async () => {
+  const records = Array.from({ length: 5 }, (_, index) => ({ record_id: `rec_${index + 1}`, fields: { "选题标题": `候选 ${index + 1}`, "运行批次": "run_contract", "状态": "待判断" } }));
+  const payload = selectionPayload("submit_topic_decisions", records.map((record) => record.record_id), ["rec_2"]);
+  const src = await runSrcContract(payload, structuredClone(records));
+  const scf = await runScfContract(payload, structuredClone(records));
+  assert.deepEqual(scf.body, src.body);
+  assert.equal(scf.body.toast.content, "已回写 1 条选择");
+  for (const result of [src, scf]) {
+    const puts = result.calls.filter((call) => call.method === "PUT");
+    assert.equal(puts.length, 1);
+    assert.match(puts[0].path, /\/rec_2$/);
+    assert.equal(puts[0].body.fields["状态"], "生成脚本包");
+    assert.equal(puts[0].body.fields["制作方向卡状态"], undefined);
+  }
+});
+
+test("src and Tencent SCF preserve equivalent text and multi-select reason shapes", async () => {
+  const records = [{ record_id: "rec_1", fields: { "选题标题": "候选 1", "运行批次": "run_contract", "状态": "待判断" } }];
+  const payload = selectionPayload("submit_topic_decisions", ["rec_1"], ["rec_1"]);
+  payload.event.action.form_value.positive_reason_tags = ["证据够", "判断够强"];
+  for (const [reasonFieldType, expected] of [[1, "证据够、判断够强"], [4, ["证据够", "判断够强"]]]) {
+    const src = await runSrcContract(payload, structuredClone(records), { reasonFieldType });
+    const scf = await runScfContract(payload, structuredClone(records), { reasonFieldType });
+    assert.deepEqual(scf.body, src.body);
+    assert.deepEqual(src.calls.find((call) => call.method === "PUT").body.fields["选择原因标签"], expected);
+    assert.deepEqual(scf.calls.find((call) => call.method === "PUT").body.fields["选择原因标签"], expected);
+  }
+});
+
+test("src and Tencent SCF page no-selection reject exactly page IDs", async () => {
+  const records = Array.from({ length: 6 }, (_, index) => ({ record_id: `rec_${index + 1}`, fields: { "选题标题": `候选 ${index + 1}`, "运行批次": "run_contract", "状态": "待判断" } }));
+  const pageIds = records.slice(0, 5).map((record) => record.record_id);
+  const payload = selectionPayload("submit_no_selection", pageIds);
+  const src = await runSrcContract(payload, structuredClone(records));
+  const scf = await runScfContract(payload, structuredClone(records));
+  assert.deepEqual(scf.body, src.body);
+  for (const result of [src, scf]) {
+    const puts = result.calls.filter((call) => call.method === "PUT");
+    assert.equal(puts.length, 5);
+    assert.ok(puts.every((call) => call.body.fields["状态"] === "不做"));
+    assert.ok(puts.every((call) => Object.keys(call.body.fields).length === 1));
+    assert.ok(puts.every((call) => !call.path.endsWith("/rec_6")));
+  }
+});
+
+test("src and Tencent SCF reject empty or outside-page normal selections without writes", async () => {
+  const records = [{ record_id: "rec_1", fields: { "选题标题": "候选 1", "运行批次": "run_contract", "状态": "待判断" } }];
+  for (const payload of [
+    selectionPayload("submit_topic_decisions", ["rec_1"], []),
+    selectionPayload("submit_topic_decisions", ["rec_1"], ["rec_outside"]),
+  ]) {
+    const src = await runSrcContract(payload, structuredClone(records));
+    const scf = await runScfContract(payload, structuredClone(records));
+    assert.deepEqual(scf.body, src.body);
+    assert.equal(src.calls.filter((call) => call.method === "PUT").length, 0);
+    assert.equal(scf.calls.filter((call) => call.method === "PUT").length, 0);
+    assert.equal(src.body.toast.type, "warning");
   }
 });
 

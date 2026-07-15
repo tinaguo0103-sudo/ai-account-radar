@@ -82,9 +82,9 @@ python3 scripts/feishu_user_oauth.py --timeout-seconds 240
 
 如果需要由脚本自动创建测试文件夹，飞书开发者后台还必须开通并发布 `drive:drive` 和 `space:folder:create`，否则 OAuth 页面会显示错误码 `20027`。
 
-授权成功后脚本会把用户 access token 和 refresh token 写入 `.env.local`。这份文件只保存在本机，不提交 Git。首次授权前，开发者后台必须开通 `offline_access`（持续访问已授权的数据）；如果没有开通，飞书授权页会提示错误码 `20027`，脚本也不会保存只有 2 小时有效期的短期 token。
+授权成功后脚本会把用户 access token 和 refresh token 写入本机 `.env.local`，不提交 Git。首次授权前，开发者后台必须开通 `offline_access`（持续访问已授权的数据）；如果没有开通，飞书授权页会提示错误码 `20027`，脚本也不会保存只有 2 小时有效期的短期 token。
 
-生产运行有两份本地环境文件：生产仓库 `.env.local` 和 `~/.codex/ai-account-radar-runtime/.env.local`。二者通过 runtime 里的 `RUNTIME_SOURCE.txt` 绑定，`feishu_user_oauth.py` 和 `codex_script_package_runner.py` 刷新用户 token 时会同步写回两边；`install_script_package_watcher_launch_agent.py --sync-runtime-only` 同步 runtime 前会先比较两边 token 的过期时间，保留更新的一份，避免旧 refresh token 覆盖新 token。若飞书返回 `invalid_grant`、refresh token revoked 或类似授权错误，runner 会继续保留本地 Markdown 和 06 记录，并尝试发送“飞书文档同步授权失效”通知。
+生产自动化的正式授权策略是“长期用户授权 + runtime 单一写入点”：`~/.codex/ai-account-radar-runtime/.env.local` 是本机 watcher 刷新用户 token 的唯一生产写入位置。LaunchAgent 运行在 runtime copy 中，刷新 token 时不会再写 Desktop 仓库的 `.env.local`，避免 macOS 桌面权限导致 refresh token 只用了一次却没保存。生产仓库 `.env.local` 可作为手工运行配置副本；从仓库手工运行 runner 时，会先比较仓库和 runtime 两边 token 的过期时间，优先使用更新的一份。`install_script_package_watcher_launch_agent.py --sync-runtime-only` 同步 runtime 前也会保留更新 token，避免旧 refresh token 覆盖新 token。若飞书返回 `invalid_grant`、refresh token revoked 或类似授权错误，说明长期授权已不可恢复，需要重新运行 `python3 scripts/feishu_user_oauth.py --timeout-seconds 240` 授权；runner 会继续保留本地 Markdown 和 06 记录。任何飞书文档同步失败，包括授权、权限、文件夹、接口或本机权限问题，都会尝试发送“飞书文档同步失败”通知。
 
 ## 自动化边界
 

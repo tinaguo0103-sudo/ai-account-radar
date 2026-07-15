@@ -14,7 +14,7 @@ function toastBody(type, content) {
   return { code: 0, toast: { type, content } };
 }
 
-function makeMockFetch(records, calls) {
+function makeMockFetch(records, calls, { fieldPages } = {}) {
   return async (url, init = {}) => {
     const parsed = new URL(url);
     const path = parsed.pathname + parsed.search;
@@ -23,16 +23,7 @@ function makeMockFetch(records, calls) {
       return Response.json({ code: 0, tenant_access_token: "tenant_test" });
     }
     if (path.includes("/bitable/v1/apps/base_test/tables") && !path.includes("/records") && !path.includes("/fields")) {
-      return Response.json({
-        code: 0,
-        data: {
-          items: [
-            { name: "04 分析与选题", table_id: "tbl_topic" },
-            { name: "06 完整脚本与制作包", table_id: "tbl_script_package" },
-            { name: "08 学习记录", table_id: "tbl_learning" },
-          ],
-        },
-      });
+      return Response.json({ code: 0, data: { items: [{ name: "04 分析与选题", table_id: "tbl_topic" }] } });
     }
     if (path.includes("/records?")) {
       return Response.json({ code: 0, data: { has_more: false, items: records } });
@@ -43,8 +34,11 @@ function makeMockFetch(records, calls) {
       if (!record) return Response.json({ code: 1254045, msg: "record not found" }, { status: 404 });
       return Response.json({ code: 0, data: { record } });
     }
-    if (path.endsWith("/fields")) {
-      return Response.json({ code: 0, data: { items: [] } });
+    if (path.includes("/fields") && (init.method || "GET") === "GET") {
+      const pageToken = parsed.searchParams.get("page_token") || "";
+      const pages = fieldPages || { "": { items: [{ field_name: "选择原因标签", type: 1 }], has_more: false } };
+      const page = pages[pageToken] || { items: [], has_more: false };
+      return Response.json({ code: 0, data: page });
     }
     if (path.includes("/fields")) {
       return Response.json({ code: 0, data: {} });
@@ -55,6 +49,38 @@ function makeMockFetch(records, calls) {
     if (path.includes("/im/v1/messages")) {
       return Response.json({ code: 0, data: { message_id: "om_test" } });
     }
+    return Response.json({ code: 999, msg: `unexpected path ${path}` }, { status: 500 });
+  };
+}
+
+function makeStatefulMockFetch(records, calls, { failPutOnceFor = "" } = {}) {
+  let failed = false;
+  return async (url, init = {}) => {
+    const parsed = new URL(url);
+    const path = parsed.pathname + parsed.search;
+    const body = init.body ? JSON.parse(init.body) : undefined;
+    calls.push({ method: init.method || "GET", path, body });
+    if (path.endsWith("/auth/v3/tenant_access_token/internal")) return Response.json({ code: 0, tenant_access_token: "tenant_test" });
+    if (path.includes("/bitable/v1/apps/base_test/tables") && !path.includes("/records") && !path.includes("/fields")) {
+      return Response.json({ code: 0, data: { items: [{ name: "04 分析与选题", table_id: "tbl_topic" }] } });
+    }
+    const recordMatch = path.match(/\/records\/([^/?]+)$/);
+    if (recordMatch && (init.method || "GET") === "GET") {
+      const record = records.find((item) => item.record_id === decodeURIComponent(recordMatch[1]));
+      if (!record) return Response.json({ code: 1254045, msg: "record not found" }, { status: 404 });
+      return Response.json({ code: 0, data: { record } });
+    }
+    if (recordMatch && (init.method || "GET") === "PUT") {
+      const recordId = decodeURIComponent(recordMatch[1]);
+      if (!failed && recordId === failPutOnceFor) {
+        failed = true;
+        return Response.json({ code: 999, msg: "synthetic sequential failure" }, { status: 500 });
+      }
+      const record = records.find((item) => item.record_id === recordId);
+      Object.assign(record.fields, body.fields);
+      return Response.json({ code: 0, data: { record } });
+    }
+    if (path.includes("/fields") && (init.method || "GET") === "GET") return Response.json({ code: 0, data: { items: [{ field_name: "选择原因标签", type: 1 }], has_more: false } });
     return Response.json({ code: 999, msg: `unexpected path ${path}` }, { status: 500 });
   };
 }
@@ -117,7 +143,7 @@ test("rejects invalid callback token", async () => {
   assert.deepEqual(await response.json(), toastBody("error", "回调 token 校验失败"));
 });
 
-test("updates selected and unselected candidate records", async () => {
+test("normal submit updates only explicitly selected candidate records", async () => {
   const records = [
     { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } },
     { record_id: "rec_b", fields: { "选题标题": "B", "运行批次": "run_1", "状态": "待判断" } },
@@ -140,74 +166,70 @@ test("updates selected and unselected candidate records", async () => {
     env,
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择"));
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 1 条选择"));
   const puts = calls.filter((call) => call.method === "PUT");
-  assert.equal(puts.length, 2);
+  assert.equal(puts.length, 1);
   assert.deepEqual(puts[0].body.fields, {
     "状态": "生成脚本包",
     "学习状态": "待学习",
     "选择原因标签": "证据够",
     "人工一句话判断": "测试原因",
   });
-  assert.deepEqual(puts[1].body.fields, {
-    "状态": "不做",
-    "学习状态": "待学习",
-    "选择原因标签": "",
-    "人工一句话判断": "",
-  });
+  assert.equal(records[1].fields["状态"], "待判断");
 });
 
-test("preserves reason tags as array when field is multi-select", async () => {
-  const records = [
-    { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } },
+test("serializes reason tags according to strict Feishu field metadata", async () => {
+  const cases = [
+    { name: "text empty", type: 1, tags: [], expected: "" },
+    { name: "text joined", type: 1, tags: ["证据够", "判断够强"], expected: "证据够、判断够强" },
+    { name: "multi empty", type: 4, tags: [], expected: [] },
+    { name: "multi array", type: 4, tags: ["证据够", "判断够强"], expected: ["证据够", "判断够强"] },
   ];
+  for (const item of cases) {
+    const records = [{ record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } }];
+    const calls = [];
+    const response = await handlePayload(
+      { header: { token: "verify_test" }, event: { action: { value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a"] }, form_value: { script_package_records: ["rec_a"], positive_reason_tags: item.tags } } } },
+      env,
+      { fetchImpl: makeMockFetch(records, calls, { fieldPages: { "": { items: [{ field_name: "选择原因标签", type: item.type }], has_more: false } } }) },
+    );
+    assert.deepEqual(await response.json(), toastBody("success", "已回写 1 条选择"), item.name);
+    const put = calls.find((call) => call.method === "PUT");
+    assert.deepEqual(put.body.fields["选择原因标签"], item.expected, item.name);
+  }
+});
+
+test("fails before writes when reason field metadata is missing or unsupported", async () => {
+  for (const [name, items, message] of [
+    ["missing", [], "Missing required field metadata: 选择原因标签"],
+    ["unsupported", [{ field_name: "选择原因标签", type: 3 }], "Unsupported 选择原因标签 field type: 3"],
+  ]) {
+    const records = [{ record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } }];
+    const calls = [];
+    const response = await handlePayload(
+      { header: { token: "verify_test" }, event: { action: { value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a"] }, form_value: { script_package_records: ["rec_a"] } } } },
+      env,
+      { fetchImpl: makeMockFetch(records, calls, { fieldPages: { "": { items, has_more: false } } }) },
+    );
+    assert.deepEqual(await response.json(), toastBody("error", `回写失败：${message}`), name);
+    assert.equal(calls.filter((call) => call.method === "PUT").length, 0, name);
+  }
+});
+
+test("finds reason metadata on a later field page", async () => {
+  const records = [{ record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } }];
   const calls = [];
-  const fetchImpl = async (url, init = {}) => {
-    const parsed = new URL(url);
-    const path = parsed.pathname + parsed.search;
-    calls.push({ method: init.method || "GET", path, body: init.body ? JSON.parse(init.body) : undefined });
-    if (path.endsWith("/auth/v3/tenant_access_token/internal")) {
-      return Response.json({ code: 0, tenant_access_token: "tenant_test" });
-    }
-    if (path.includes("/bitable/v1/apps/base_test/tables") && !path.includes("/records") && !path.includes("/fields")) {
-      return Response.json({ code: 0, data: { items: [{ name: "04 分析与选题", table_id: "tbl_topic" }] } });
-    }
-    if (path.endsWith("/fields")) {
-      return Response.json({ code: 0, data: { items: [{ field_name: "选择原因标签", type: 4 }] } });
-    }
-    if (path.includes("/records?")) {
-      return Response.json({ code: 0, data: { has_more: false, items: records } });
-    }
-    const recordMatch = path.match(/\/records\/([^/?]+)$/);
-    if (recordMatch && (init.method || "GET") === "GET") {
-      const record = records.find((item) => item.record_id === decodeURIComponent(recordMatch[1]));
-      if (!record) return Response.json({ code: 1254045, msg: "record not found" }, { status: 404 });
-      return Response.json({ code: 0, data: { record } });
-    }
-    if (path.includes("/records/")) {
-      return Response.json({ code: 0, data: {} });
-    }
-    return Response.json({ code: 999, msg: `unexpected path ${path}` }, { status: 500 });
-  };
+  const firstPage = Array.from({ length: 58 }, (_, index) => ({ field_name: `字段${index + 1}`, type: 1 }));
   const response = await handlePayload(
-    {
-      header: { token: "verify_test" },
-      event: {
-        action: {
-          value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a"] },
-          form_value: {
-            script_package_records: ["rec_a"],
-            positive_reason_tags: ["证据够"],
-          },
-        },
-      },
-    },
+    { header: { token: "verify_test" }, event: { action: { value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a"] }, form_value: { script_package_records: ["rec_a"], positive_reason_tags: ["后页标签"] } } } },
     env,
-    { fetchImpl },
+    { fetchImpl: makeMockFetch(records, calls, { fieldPages: { "": { items: firstPage, has_more: true, page_token: "page2" }, page2: { items: [{ field_name: "选择原因标签", type: 1 }], has_more: false } } }) },
   );
   assert.deepEqual(await response.json(), toastBody("success", "已回写 1 条选择"));
-  const put = calls.find((call) => call.method === "PUT");
-  assert.deepEqual(put.body.fields["选择原因标签"], ["证据够"]);
+  const fieldReads = calls.filter((call) => call.method === "GET" && call.path.includes("/fields?"));
+  assert.equal(fieldReads.length, 2);
+  assert.match(fieldReads[1].path, /page_token=page2/);
+  assert.equal(calls.find((call) => call.method === "PUT").body.fields["选择原因标签"], "后页标签");
 });
 
 test("queues production direction card after selected topics are written", async () => {
@@ -237,15 +259,14 @@ test("queues production direction card after selected topics are written", async
     },
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择，制作方向卡稍后发送"));
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 1 条选择，制作方向卡稍后发送"));
   const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
   assert.equal(sends.length, 0);
   const puts = calls.filter((call) => call.method === "PUT");
-  assert.equal(puts.length, 2);
+  assert.equal(puts.length, 1);
   assert.equal(puts[0].body.fields["制作方向卡状态"], "待发送");
   assert.match(puts[0].body.fields["选择提交批次"], /^run_1:/);
   assert.ok(puts[0].body.fields["选择提交时间"]);
-  assert.equal(puts[1].body.fields["制作方向卡状态"], undefined);
 });
 
 test("uses candidate snapshots to skip full-table reads on selection submit", async () => {
@@ -283,9 +304,9 @@ test("uses candidate snapshots to skip full-table reads on selection submit", as
     },
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择，制作方向卡稍后发送"));
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 1 条选择，制作方向卡稍后发送"));
   assert.equal(calls.filter((call) => call.path.includes("/records?")).length, 0);
-  assert.equal(calls.filter((call) => call.method === "PUT").length, 2);
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 1);
   const sends = calls.filter((call) => call.path.includes("/im/v1/messages"));
   assert.equal(sends.length, 0);
 });
@@ -321,13 +342,11 @@ test("allows historical compensation candidates when card snapshots preserve the
     { ...env, SEND_PRODUCTION_DIRECTION_CARD: "false" },
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), toastBody("success", "已回写 2 条选择"));
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 1 条选择"));
   const puts = calls.filter((call) => call.method === "PUT");
-  assert.equal(puts.length, 2);
+  assert.equal(puts.length, 1);
   assert.equal(puts[0].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_topic/records/rec_old");
   assert.equal(puts[0].body.fields["状态"], "生成脚本包");
-  assert.equal(puts[1].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_topic/records/rec_today");
-  assert.equal(puts[1].body.fields["状态"], "不做");
 });
 
 test("rejects historical compensation candidates when card snapshots are missing", async () => {
@@ -615,213 +634,6 @@ test("submits production direction cards and marks empty directions as reviewed"
   });
 });
 
-test("submits script package quality feedback to 06 table", async () => {
-  const records = [
-    { record_id: "pkg_a", fields: { "脚本标题": "A 脚本包" } },
-    { record_id: "pkg_b", fields: { "脚本标题": "B 脚本包" } },
-  ];
-  const calls = [];
-  const response = await handlePayload(
-    {
-      header: { token: "verify_test" },
-      event: {
-        action: {
-          value: {
-            action: "submit_script_package_quality_feedback",
-            candidate_ids: ["pkg_a", "pkg_b"],
-          },
-          form_value: {
-            script_quality__pkg_a: "小修可拍",
-            script_issues__pkg_a: ["不像我", "旧流程痛点不准"],
-            script_note__pkg_a: "第二段还不够像我的现场判断。",
-            script_note__pkg_a__2: "要补具体项目里的旧流程卡点。",
-            script_note__pkg_a__3: "标题也可以更直接一点。",
-            script_quality__pkg_b: "",
-            script_issues__pkg_b: [],
-            script_note__pkg_b: "",
-          },
-        },
-      },
-    },
-    env,
-    { fetchImpl: makeMockFetch(records, calls), nowMs: Date.parse("2026-07-02T12:00:00.000Z") },
-  );
-  assert.deepEqual(await response.json(), toastBody("success", "已保存 1 条质量反馈"));
-  const puts = calls.filter((call) => call.method === "PUT");
-  assert.equal(puts.length, 1);
-  assert.equal(puts[0].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_script_package/records/pkg_a");
-  assert.deepEqual(puts[0].body.fields, {
-    "人工质量反馈": "小修可拍",
-    "质量问题标签": "不像我、旧流程痛点不准",
-    "人工修改意见": "第二段还不够像我的现场判断。 要补具体项目里的旧流程卡点。 标题也可以更直接一点。",
-    "反馈时间": "2026-07-02T12:00:00.000Z",
-    "反馈来源": "06完成卡",
-    "内容学习状态": "待学习",
-  });
-});
-
-test("confirms learning feedback and marks source records learned", async () => {
-  const records = [
-    { record_id: "learn_a", fields: { "学习批次": "learn_1", "确认状态": "待确认" } },
-    { record_id: "topic_a", fields: { "选题标题": "A", "学习状态": "待确认学习" } },
-    { record_id: "pkg_a", fields: { "脚本标题": "A 脚本包", "内容学习状态": "待确认学习" } },
-  ];
-  const calls = [];
-  const response = await handlePayload(
-    {
-      header: { token: "verify_test" },
-      event: {
-        action: {
-          value: {
-            action: "submit_learning_feedback_confirmation",
-            decision: "部分采纳",
-            learning_record_id: "learn_a",
-            learning_batch_id: "learn_1",
-            topic_record_ids: ["topic_a"],
-            script_record_ids: ["pkg_a"],
-            learning_summary: "选题偏好需要保留，06 问题先人工复核。",
-          },
-          form_value: {
-            learning_confirmation_note: "采纳选题规则。",
-            learning_confirmation_note__2: "06 规则先别自动同步。",
-          },
-        },
-      },
-    },
-    {
-      ...env,
-      FEISHU_TOPIC_DECISION_TABLE_ID: "tbl_topic",
-      FEISHU_SCRIPT_PACKAGE_TABLE_ID: "tbl_script_package",
-      FEISHU_LEARNING_TABLE_ID: "tbl_learning",
-    },
-    { fetchImpl: makeMockFetch(records, calls), nowMs: Date.parse("2026-07-02T13:00:00.000Z") },
-  );
-  assert.deepEqual(await response.json(), toastBody("success", "已确认学习日结：部分采纳"));
-  const puts = calls.filter((call) => call.method === "PUT");
-  assert.equal(puts.length, 3);
-  assert.equal(puts[0].path, "/open-apis/bitable/v1/apps/base_test/tables/tbl_learning/records/learn_a");
-  assert.deepEqual(puts[0].body.fields, {
-    "确认状态": "部分采纳",
-    "确认时间": "2026-07-02T13:00:00.000Z",
-    "确认备注": "采纳选题规则。 06 规则先别自动同步。",
-    "Skill同步状态": "待同步",
-  });
-  assert.deepEqual(puts[1].body.fields, {
-    "学习状态": "已学习",
-    "选择学习批次": "learn_1",
-    "选择学习摘要": "选题偏好需要保留，06 问题先人工复核。",
-  });
-  assert.deepEqual(puts[2].body.fields, {
-    "内容学习状态": "已学习",
-    "内容学习批次": "learn_1",
-    "内容学习摘要": "选题偏好需要保留，06 问题先人工复核。",
-  });
-});
-
-test("rejected learning feedback is ignored without marking sources learned", async () => {
-  const records = [
-    { record_id: "learn_a", fields: { "学习批次": "learn_1", "确认状态": "待确认" } },
-    { record_id: "topic_a", fields: { "选题标题": "A", "学习状态": "待确认学习" } },
-    { record_id: "pkg_a", fields: { "脚本标题": "A 脚本包", "内容学习状态": "待确认学习" } },
-  ];
-  const calls = [];
-  const response = await handlePayload(
-    {
-      header: { token: "verify_test" },
-      event: {
-        action: {
-          value: {
-            action: "submit_learning_feedback_confirmation",
-            decision: "暂不采纳",
-            learning_record_id: "learn_a",
-            learning_batch_id: "learn_1",
-            topic_record_ids: ["topic_a"],
-            script_record_ids: ["pkg_a"],
-            learning_summary: "样本不足。",
-          },
-          form_value: {},
-        },
-      },
-    },
-    {
-      ...env,
-      FEISHU_TOPIC_DECISION_TABLE_ID: "tbl_topic",
-      FEISHU_SCRIPT_PACKAGE_TABLE_ID: "tbl_script_package",
-      FEISHU_LEARNING_TABLE_ID: "tbl_learning",
-    },
-    { fetchImpl: makeMockFetch(records, calls), nowMs: Date.parse("2026-07-02T13:00:00.000Z") },
-  );
-  assert.deepEqual(await response.json(), toastBody("success", "已确认学习日结：暂不采纳"));
-  const puts = calls.filter((call) => call.method === "PUT");
-  assert.equal(puts.length, 3);
-  assert.equal(puts[0].body.fields["Skill同步状态"], "不同步");
-  assert.equal(puts[1].body.fields["学习状态"], "忽略");
-  assert.equal(puts[2].body.fields["内容学习状态"], "忽略");
-});
-
-test("blocks learning feedback after it has already been confirmed", async () => {
-  const records = [
-    { record_id: "learn_a", fields: { "学习批次": "learn_1", "确认状态": "已采纳" } },
-    { record_id: "topic_a", fields: { "选题标题": "A", "学习状态": "待确认学习" } },
-  ];
-  const calls = [];
-  const response = await handlePayload(
-    {
-      header: { token: "verify_test" },
-      event: {
-        action: {
-          value: {
-            action: "submit_learning_feedback_confirmation",
-            decision: "已采纳",
-            learning_record_id: "learn_a",
-            learning_batch_id: "learn_1",
-            topic_record_ids: ["topic_a"],
-          },
-          form_value: {},
-        },
-      },
-    },
-    {
-      ...env,
-      FEISHU_TOPIC_DECISION_TABLE_ID: "tbl_topic",
-      FEISHU_LEARNING_TABLE_ID: "tbl_learning",
-    },
-    { fetchImpl: makeMockFetch(records, calls) },
-  );
-  assert.deepEqual(await response.json(), toastBody("warning", "这条学习日结已经确认过，不再重复处理"));
-  assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
-});
-
-test("blocks staging learning feedback without explicit test table ids", async () => {
-  const records = [
-    { record_id: "learn_a", fields: { "学习批次": "learn_1", "确认状态": "待确认" } },
-    { record_id: "topic_a", fields: { "选题标题": "A", "学习状态": "待确认学习" } },
-  ];
-  const calls = [];
-  const response = await handlePayload(
-    {
-      header: { token: "verify_test" },
-      event: {
-        action: {
-          value: {
-            action: "submit_learning_feedback_confirmation",
-            decision: "已采纳",
-            environment: "staging",
-            learning_record_id: "learn_a",
-            learning_batch_id: "learn_1",
-            topic_record_ids: ["topic_a"],
-          },
-          form_value: {},
-        },
-      },
-    },
-    env,
-    { fetchImpl: makeMockFetch(records, calls) },
-  );
-  assert.deepEqual(await response.json(), toastBody("warning", "测试学习卡缺少显式测试表配置，已拒绝回写"));
-  assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
-});
-
 test("blocks expired cards before writing records", async () => {
   const records = [
     { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } },
@@ -918,6 +730,91 @@ test("blocks a selection card after it has already changed record status", async
     env,
     { fetchImpl: makeMockFetch(records, calls) },
   );
-  assert.deepEqual(await response.json(), toastBody("warning", "这张选题卡已经提交过，不再重复处理"));
+  assert.deepEqual(await response.json(), toastBody("warning", "这次提交已经处理过"));
   assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
+});
+
+test("page no-selection updates exactly the explicit page candidates", async () => {
+  const records = [
+    ...Array.from({ length: 5 }, (_, index) => ({ record_id: `page1_${index + 1}`, fields: { "选题标题": `P1-${index + 1}`, "运行批次": "run_page1", "状态": "待判断" } })),
+    { record_id: "supplement", fields: { "选题标题": "补证据", "运行批次": "run_page1", "状态": "待判断" } },
+    { record_id: "page2_1", fields: { "选题标题": "P2-1", "运行批次": "run_page2", "状态": "待判断" } },
+  ];
+  const calls = [];
+  const candidateIds = records.slice(0, 5).map((record) => record.record_id);
+  const response = await handlePayload(
+    { header: { token: "verify_test" }, event: { action: { value: { action: "submit_no_selection", run_id: "run_page1", candidate_ids: candidateIds }, form_value: {} } } },
+    env,
+    { fetchImpl: makeMockFetch(records, calls) },
+  );
+  assert.deepEqual(await response.json(), toastBody("success", "已回写 5 条选择"));
+  const puts = calls.filter((call) => call.method === "PUT");
+  assert.equal(puts.length, 5);
+  assert.deepEqual(puts.map((call) => Object.keys(call.body.fields)), Array(5).fill(["状态"]));
+  assert.ok(puts.every((call) => call.body.fields["状态"] === "不做"));
+  assert.equal(records[5].fields["状态"], "待判断");
+  assert.equal(records[6].fields["状态"], "待判断");
+  assert.equal(calls.filter((call) => call.path.includes("/fields")).length, 0);
+});
+
+test("normal submit with no checked candidates is a visible no-op", async () => {
+  const records = [{ record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } }];
+  const calls = [];
+  const response = await handlePayload(
+    { header: { token: "verify_test" }, event: { action: { value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a"] }, form_value: { script_package_records: [] } } } },
+    env,
+    { fetchImpl: makeMockFetch(records, calls) },
+  );
+  assert.deepEqual(await response.json(), toastBody("warning", "请至少勾选一条；如需拒绝本页，请使用“本页都不选”"));
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
+});
+
+test("normal submit rejects selected IDs outside the page before writes", async () => {
+  const records = [{ record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } }];
+  const calls = [];
+  const response = await handlePayload(
+    { header: { token: "verify_test" }, event: { action: { value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a"] }, form_value: { script_package_records: ["rec_outside"] } } } },
+    env,
+    { fetchImpl: makeMockFetch(records, calls) },
+  );
+  assert.deepEqual(await response.json(), toastBody("warning", "勾选项不属于当前页面，请刷新后重试"));
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
+});
+
+test("selection preflight failure writes nothing and remains retryable", async () => {
+  const records = [{ record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_old", "状态": "待判断" } }];
+  const calls = [];
+  const payload = { header: { token: "verify_test" }, event: { action: { value: { action: "submit_topic_decisions", run_id: "run_new", candidate_ids: ["rec_a"] }, form_value: { script_package_records: ["rec_a"] } } } };
+  const first = await handlePayload(payload, env, { fetchImpl: makeMockFetch(records, calls) });
+  assert.deepEqual(await first.json(), toastBody("warning", "这张卡对应的记录批次已变化，请使用最新卡片"));
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 0);
+  records[0].fields["运行批次"] = "run_new";
+  const second = await handlePayload(payload, env, { fetchImpl: makeMockFetch(records, calls) });
+  assert.deepEqual(await second.json(), toastBody("success", "已回写 1 条选择"));
+  assert.equal(calls.filter((call) => call.method === "PUT").length, 1);
+});
+
+test("sequential write failure is receipt-free and retry converges without duplicate writes", async () => {
+  const records = [
+    { record_id: "rec_a", fields: { "选题标题": "A", "运行批次": "run_1", "状态": "待判断" } },
+    { record_id: "rec_b", fields: { "选题标题": "B", "运行批次": "run_1", "状态": "待判断" } },
+  ];
+  const payload = { header: { token: "verify_test" }, event: { action: { value: { action: "submit_topic_decisions", run_id: "run_1", candidate_ids: ["rec_a", "rec_b"] }, form_value: { script_package_records: ["rec_a", "rec_b"] } } } };
+  const calls = [];
+  const statefulFetch = makeStatefulMockFetch(records, calls, { failPutOnceFor: "rec_b" });
+  const first = await handlePayload(payload, { ...env, SEND_PRODUCTION_DIRECTION_CARD: "true" }, { fetchImpl: statefulFetch, nowMs: Date.parse("2026-07-14T01:00:00Z") });
+  assert.equal((await first.json()).toast.type, "error");
+  assert.equal(records[0].fields["状态"], "生成脚本包");
+  assert.equal(records[1].fields["状态"], "待判断");
+
+  const second = await handlePayload(payload, { ...env, SEND_PRODUCTION_DIRECTION_CARD: "true" }, { fetchImpl: statefulFetch, nowMs: Date.parse("2026-07-14T01:01:00Z") });
+  assert.deepEqual(await second.json(), toastBody("success", "已回写 1 条选择，制作方向卡稍后发送"));
+  assert.equal(records[1].fields["状态"], "生成脚本包");
+  const successfulPutsAfterRetry = calls.filter((call) => call.method === "PUT" && call.path.endsWith("/rec_a"));
+  assert.equal(successfulPutsAfterRetry.length, 1);
+
+  const putCountBeforeDuplicate = calls.filter((call) => call.method === "PUT").length;
+  const duplicate = await handlePayload(payload, { ...env, SEND_PRODUCTION_DIRECTION_CARD: "true" }, { fetchImpl: statefulFetch, nowMs: Date.parse("2026-07-14T01:02:00Z") });
+  assert.deepEqual(await duplicate.json(), toastBody("warning", "这次提交已经处理过"));
+  assert.equal(calls.filter((call) => call.method === "PUT").length, putCountBeforeDuplicate);
 });

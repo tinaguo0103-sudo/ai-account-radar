@@ -2684,6 +2684,8 @@ def write_content_ledger_to_feishu(
             same_run_new = str(record_fields.get("运行批次", "")) == run_id or str(record_fields.get("最近参与运行批次", "")) == run_id
             fields = item_to_content_inbox_fields(item, run_id, is_new=same_run_new, duplicate=not same_run_new)
             update_fields = {
+                "运行日期": fields["运行日期"],
+                "运行批次": fields["运行批次"],
                 "最近参与运行批次": fields["最近参与运行批次"],
                 "最近采样日期": fields["最近采样日期"],
                 "是否本次新增": "是" if same_run_new else "否",

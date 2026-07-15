@@ -7,6 +7,8 @@ import json
 import os
 import subprocess
 import sys
+import hashlib
+import re
 from pathlib import Path
 from typing import Any
 
@@ -24,18 +26,16 @@ PY_COMPILE_TARGETS = (
     "scripts/watch_script_package_queue.py",
     "scripts/local_env.py",
     "scripts/check_feishu_card_cloud_receiver.py",
-    "scripts/source_pool_governance.py",
     "scripts/topic_flow_rework.py",
     "scripts/topic_field_contract.py",
     "scripts/topic_replay_evaluation.py",
     "scripts/topic_skill_replay_evaluation.py",
     "scripts/editorial_expression_policy.py",
     "scripts/ar020e_expression_calibration.py",
+    "scripts/ar020e_daily_editorial_entrypoint.py",
+    "scripts/ar020e_schema_readiness.py",
     "scripts/semantic_owner_dataflow.py",
     "scripts/ar020d_semantic_owner_gate.py",
-    "scripts/feishu_schema_cleanup_audit.py",
-    "scripts/learn_from_daily_feedback.py",
-    "scripts/draft_learning_skill_sync.py",
     "scripts/install_production_keepawake.py",
 )
 DEFAULT_FEISHU_READ_TABLE_KEYS = ("topic_decision", "script_package")
@@ -55,7 +55,11 @@ def run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = No
 
 def check_git_dev() -> dict[str, Any]:
     status = run(["git", "status", "--short", "--branch"])
-    ok = status["returncode"] == 0 and "feature/next-production-flow" in status["stdout"]
+    first_line = status["stdout"].splitlines()[0] if status["stdout"].splitlines() else ""
+    ok = status["returncode"] == 0 and (
+        "feature/next-production-flow" in first_line
+        or "release/ar020e-rc" in first_line
+    )
     return {"ok": ok, "name": "dev worktree branch/status", **status}
 
 
@@ -69,6 +73,64 @@ def check_git_production() -> dict[str, Any]:
         and len(lines) == 1
     )
     return {"ok": ok, "name": "production worktree clean main", **status}
+
+
+def configured_production_root() -> Path:
+    raw = str(os.getenv("AI_ACCOUNT_RADAR_PRODUCTION_DIR") or "").strip()
+    return Path(raw).expanduser().resolve() if raw else PRODUCTION_ROOT.resolve()
+
+
+def git_text(args: list[str], *, cwd: Path | None = None) -> tuple[int, str, str]:
+    result = run(["git", *args], cwd=cwd or ROOT)
+    return result["returncode"], result["stdout"].strip(), result["stderr"].strip()
+
+
+def check_git_production_release(expected_head: str) -> dict[str, Any]:
+    expected_root = configured_production_root()
+    expected = expected_head.strip()
+    branch_rc, branch, branch_err = git_text(["rev-parse", "--abbrev-ref", "HEAD"])
+    local_rc, local_head, local_err = git_text(["rev-parse", "HEAD"])
+    remote_rc, remote_head, remote_err = git_text(["rev-parse", "origin/main"])
+    status_rc, status, status_err = git_text(["status", "--porcelain"])
+    reasons = []
+    if not expected:
+        reasons.append("missing_expected_head")
+    elif not re.fullmatch(r"[0-9a-f]{40}", expected):
+        reasons.append("invalid_expected_head")
+    if ROOT.resolve() != expected_root:
+        reasons.append("not_configured_production_root")
+    if branch_rc != 0 or branch != "main":
+        reasons.append("not_main_branch")
+    if status_rc != 0 or status:
+        reasons.append("dirty_worktree")
+    if local_rc != 0 or remote_rc != 0:
+        reasons.append("head_read_failed")
+    elif expected and (local_head != expected or remote_head != expected or local_head != remote_head):
+        reasons.append("head_mismatch")
+    stderr = "\n".join(part for part in [branch_err, local_err, remote_err, status_err] if part)
+    return {
+        "ok": not reasons,
+        "name": "production release worktree/head contract",
+        "returncode": 0 if not reasons else 2,
+        "stdout": json.dumps({
+            "mode": "production_release_check",
+            "root": str(ROOT.resolve()),
+            "configured_production_root": str(expected_root),
+            "branch": branch,
+            "expected_head": expected,
+            "local_head": local_head,
+            "remote_head": remote_head,
+            "clean": not bool(status),
+            "reasons": reasons,
+        }, ensure_ascii=False),
+        "stderr": stderr,
+        "command": ["git", "status/rev-parse"],
+        "cwd": str(ROOT),
+        "expected_head": expected,
+        "local_head": local_head,
+        "remote_head": remote_head,
+        "reasons": reasons,
+    }
 
 
 def check_py_compile() -> dict[str, Any]:
@@ -139,6 +201,68 @@ def check_topic_card_guard() -> dict[str, Any]:
         or "running_from_non_production_branch" in result["stdout"]
     )
     return {"ok": ok, "name": "topic card production guard in dev", **result}
+
+
+def topic_card_artifact_snapshot() -> dict[str, str]:
+    paths: list[Path] = []
+    decision_dir = ROOT / "output" / "decision_cards"
+    if decision_dir.exists():
+        paths.extend(path for path in decision_dir.rglob("*") if path.is_file())
+    for path in (ROOT / "output").glob("*topic*decision*card*.json"):
+        if path.is_file():
+            paths.append(path)
+    snapshot = {}
+    for path in sorted(set(paths)):
+        digest = hashlib.sha256(path.read_bytes()).hexdigest()
+        snapshot[str(path.relative_to(ROOT))] = f"{path.stat().st_size}:{path.stat().st_mtime_ns}:{digest}"
+    return snapshot
+
+
+def parse_single_json_output(stdout: str) -> dict[str, Any]:
+    value = json.loads(stdout)
+    if not isinstance(value, dict):
+        raise ValueError("Topic Card check-only output must be a JSON object")
+    return value
+
+
+def check_topic_card_production_release() -> dict[str, Any]:
+    command = [sys.executable, "scripts/run_topic_card_if_fresh.py", "--check-only", "--no-notify"]
+    before = topic_card_artifact_snapshot()
+    result = run(command)
+    after = topic_card_artifact_snapshot()
+    payload: dict[str, Any] = {}
+    parse_error = ""
+    try:
+        payload = parse_single_json_output(result["stdout"])
+    except (json.JSONDecodeError, ValueError) as exc:
+        parse_error = f"{type(exc).__name__}: {exc}"
+    artifacts_unchanged = before == after
+    ok = (
+        result["returncode"] == 0
+        and not parse_error
+        and payload.get("check_only") is True
+        and payload.get("sent") is False
+        and payload.get("wrote_feishu") is not True
+        and payload.get("writes_feishu") is not True
+        and payload.get("notified") is not True
+        and payload.get("notification_sent") is not True
+        and artifacts_unchanged
+    )
+    return {
+        "ok": ok,
+        "name": "production Topic Card check-only/no-notify guard",
+        **result,
+        "stdout": json.dumps({
+            "payload": payload,
+            "parse_error": parse_error,
+            "artifacts_unchanged": artifacts_unchanged,
+            "writes_feishu": False,
+            "sent": payload.get("sent") if payload else None,
+        }, ensure_ascii=False),
+        "payload": payload,
+        "parse_error": parse_error,
+        "artifacts_unchanged": artifacts_unchanged,
+    }
 
 
 def check_feishu_read(env_file: str, table_keys: list[str]) -> dict[str, Any]:
@@ -231,12 +355,54 @@ def summarize(checks: list[dict[str, Any]]) -> dict[str, Any]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description="Run safe pre-merge checks from the dev worktree.")
+    parser.add_argument("--production-release-check", action="store_true", help="Run the explicit production release gate from the configured clean production main worktree.")
+    parser.add_argument("--expected-head", default="", help="Required exact local/origin main SHA for --production-release-check.")
     parser.add_argument("--env-file", default="", help="Optional staging/test env file for read-only Feishu check.")
     parser.add_argument("--feishu-read", action="store_true", help="Run a read-only Feishu check using --env-file or AI_ACCOUNT_RADAR_ENV_FILE.")
     parser.add_argument("--table-key", action="append", default=[], help="Feishu table key to read during --feishu-read. Defaults to 04 and 06.")
     parser.add_argument("--full-smoke", action="store_true", help="Run a full local dry-run pipeline smoke. This can take a few minutes.")
     parser.add_argument("--notify-smoke", action="store_true", help="Send a clearly labeled test QA notification using --env-file.")
     args = parser.parse_args()
+
+    if args.production_release_check:
+        incompatible = args.feishu_read or args.full_smoke or args.notify_smoke or bool(args.table_key) or bool(args.env_file)
+        checks = [check_git_production_release(args.expected_head)]
+        if incompatible:
+            checks.append({
+                "ok": False,
+                "name": "production release mode arguments",
+                "returncode": 2,
+                "stdout": "",
+                "stderr": "Production release mode does not accept smoke, notification, or external read options.",
+            })
+        checks.extend([
+            check_py_compile(),
+            check_ar020d_semantic_owner_gate(),
+            check_failure_qa_rules(),
+            check_feishu_receiver_node_tests(),
+        ])
+        if checks[0]["ok"] and not incompatible:
+            checks.append(check_topic_card_production_release())
+        else:
+            checks.append({
+                "ok": False,
+                "name": "production Topic Card check-only/no-notify guard",
+                "returncode": 2,
+                "stdout": "",
+                "stderr": "Skipped because the production worktree/head contract failed.",
+            })
+        summary = summarize(checks)
+        summary.update({
+            "mode": "production_release_check",
+            "expected_head": args.expected_head,
+            "local_head": checks[0].get("local_head", ""),
+            "remote_head": checks[0].get("remote_head", ""),
+            "check_only": True,
+            "writes_feishu": False,
+            "sent": False,
+        })
+        print(json.dumps(summary, ensure_ascii=False, indent=2))
+        return 0 if summary["ok"] else 1
 
     checks = [
         check_git_dev(),
