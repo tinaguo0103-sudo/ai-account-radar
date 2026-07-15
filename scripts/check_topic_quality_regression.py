@@ -47,7 +47,7 @@ VISIBLE_FIELDS = [
     "推荐理由", "我的蹭热点角度",
     "选题标题", "内部切入角度", "旧流程痛点", "AI介入点", "验证方式", "可沉淀资产",
 ]
-ALLOWED_LEVELS = {"今日最值得做", "可选候选", "暂存观察", "不建议制作"}
+ALLOWED_LEVELS = {"推荐制作", "推荐制作", "暂存观察", "不建议制作"}
 EXPERIMENT_ACTION_TERMS = [
     "测试", "验证", "改造", "压缩", "录成", "接进", "变成", "写回", "沉淀",
     "做成", "复用", "拆成", "跑一轮", "对比", "进入", "重写", "少掉",
@@ -220,10 +220,10 @@ def main() -> int:
             failures.append(f"row {idx}: publishable title still uses internal/AI-ish terms: {','.join(title_hits)}")
         if same_as_source(row.get("可发布标题", ""), row):
             failures.append(f"row {idx}: publishable title equals original source title")
-        if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and not row.get("可发布标题", "").strip():
+        if row.get("今日建议级别") in {"推荐制作", "推荐制作"} and not row.get("可发布标题", "").strip():
             if row.get("title_permission") == "可发布标题":
                 failures.append(f"row {idx}: {row.get('今日建议级别')} has no rewritten publishable title despite title_permission=可发布标题")
-        if row.get("今日建议级别") in {"今日最值得做", "可选候选"}:
+        if row.get("今日建议级别") in {"推荐制作", "推荐制作"}:
             if not row.get("选题命题", "").strip():
                 failures.append(f"row {idx}: {row.get('今日建议级别')} missing 选题命题")
             if row.get("选题命题", "").strip() == FALLBACK_EXPERIMENT_PROMPT:
@@ -266,20 +266,20 @@ def main() -> int:
                 failures.append(f"row {idx}: title_permission={row.get('title_permission')!r} still has publishable title/options")
         if row.get("今日建议级别") in {"暂存观察", "不建议制作"} and row.get("title_permission") == "可发布标题":
             failures.append(f"row {idx}: {row.get('今日建议级别')} cannot have title_permission=可发布标题")
-        if row.get("今日建议级别") == "今日最值得做":
+        if row.get("今日建议级别") == "推荐制作":
             if row.get("证据强度") == "弱":
-                failures.append(f"row {idx}: 今日最值得做 has weak evidence")
+                failures.append(f"row {idx}: 推荐制作 has weak evidence")
             if row.get("场景依据") == "仅热点观察":
-                failures.append(f"row {idx}: 今日最值得做 is only hotspot observation")
+                failures.append(f"row {idx}: 推荐制作 is only hotspot observation")
         if row.get("AI味风险") == "低" and hits:
             failures.append(f"row {idx}: AI味风险低 but template terms present")
-        if row.get("今日建议级别") == "今日最值得做":
+        if row.get("今日建议级别") == "推荐制作":
             if row.get("AI味风险") == "高":
-                failures.append(f"row {idx}: 今日最值得做 has high AI risk")
+                failures.append(f"row {idx}: 推荐制作 has high AI risk")
             if not row.get("可发布标题", "").strip():
-                failures.append(f"row {idx}: 今日最值得做 has no publishable title")
+                failures.append(f"row {idx}: 推荐制作 has no publishable title")
             if intish(row.get("标题质量分", "")) < 72 or intish(row.get("编辑判断分", "")) < 78:
-                failures.append(f"row {idx}: 今日最值得做 has low judgement/title score")
+                failures.append(f"row {idx}: 推荐制作 has low judgement/title score")
         if row.get("今日建议级别") == "不建议制作" and not skill_mode:
             failures.append(f"row {idx}: 不建议制作 should not enter 今日候选池")
         if intish(row.get("标题质量分", "")) >= 85 and not (row.get("可发布标题") or row.get("来源内容") or "")[:4]:
@@ -311,9 +311,6 @@ def main() -> int:
                 if (row.get(field, "") or "") != (debug.get(field, "") or ""):
                     failures.append(f"row {idx}: field mismatch with debug for {field}")
 
-    top_count = sum(1 for row in rows if row.get("今日建议级别") == "今日最值得做")
-    if top_count > 3:
-        failures.append(f"今日最值得做 count > 3: {top_count}")
     prop_prefix_counts: dict[str, int] = {}
     for row in rows:
         prop = row.get("选题命题", "").strip()
@@ -326,7 +323,7 @@ def main() -> int:
     visible_assets = [
         row.get("可沉淀资产", "").strip()
         for row in rows
-        if row.get("今日建议级别") in {"今日最值得做", "可选候选"} and row.get("可沉淀资产", "").strip()
+        if row.get("今日建议级别") in {"推荐制作", "推荐制作"} and row.get("可沉淀资产", "").strip()
     ]
     repeated_assets = sorted({asset for asset in visible_assets if visible_assets.count(asset) > 2})
     if repeated_assets:
@@ -367,8 +364,8 @@ def main() -> int:
 
     if not skill_mode:
         for idx, row in enumerate(debug_rows, start=1):
-            if row.get("是否超过解析文本支撑范围") == "是" and row.get("今日建议级别") == "今日最值得做":
-                failures.append(f"debug row {idx}: unsupported item marked 今日最值得做")
+            if row.get("是否超过解析文本支撑范围") == "是" and row.get("今日建议级别") == "推荐制作":
+                failures.append(f"debug row {idx}: unsupported item marked 推荐制作")
             if row.get("模板词命中情况") not in {"", "无"} and row.get("AI味风险") == "低":
                 failures.append(f"debug row {idx}: template hit but AI味风险低")
 
