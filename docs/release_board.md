@@ -45,9 +45,10 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | AR-023 | 2026-07-06 抖音对标采集 Chrome CDP 启动失败 | P1 | Recovered / Hotfix Done / Synced to Dev / QA Passed / PM Accepted | hotfix main -> recover today -> synced dev -> QA read-only -> PM accepted | 生产 `6a4efed` 已恢复同日 run `run_20260706_085249`；dev `4f49826` 已同步；测试只读复核通过；Topic Card 未发送，06/Codex 未触发 |
 | AR-024 | 2026-07-06 抖音补采只恢复 3 条的根因与完整恢复 | P1 | Recovered / QA Passed / PM Accepted | production diagnosis -> full same-day recovery -> QA read-only -> PM accepted | 根因是 AR-023 人为 3 账号限流；已按生产默认 12 账号补采到 `run_20260706_092517`，抖音 33 条；未发卡、未触发 06 |
 | AR-025 | 生产恢复口径与验收规范 | P1 | Backlog / Needs Spec | PM spec -> user confirmation -> rules/checklist | 治理类事项；从 AR-023/024 复盘抽象恢复口径、partial recovery 标识、QA/PM 验收标准 |
-| AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | Post-Release Regression Failed / Automation Safety Hold | incident lineage -> safety decision -> scheduled smoke | 22:11出现非check-only 31-account probe；无下游写入但来源未归因，已派status-only暂停和双向审计 |
+| AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | Released / 01 Migration Passed / Automations Paused / Blocked by AR-032 | AR-032 -> resume decision -> scheduled smoke | 22:11 probe 无法归因，Git/01保留正确状态；三任务已PAUSED，待入口catch-up硬门 |
 | AR-027 | 飞书 01/03/04 标签和表格列业务清理 | P1 | Schema Audit QA Passed / Waiting PM Cleanup Decision | schema audit -> dry-run -> QA -> release cleanup | Round 2 QA 通过；cleanup matrix 可用于第一轮字段/选项清理决策，view 仍需人工确认 |
-| AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | Hotfix Done / Automations Active / Scheduled Smoke Pending | released -> 07:45 preflight -> scheduled smoke | production 178f047、canonical 9333 与 logged_in read-back 已通过；三任务已恢复，仅待次日真实链路 |
+| AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | Hotfix Done / Canonical Logged In / Automations Paused by AR-032 | released -> AR-032 -> 07:45 preflight | canonical 9333健康；任务暂停原因是未归因catch-up，不是profile/login回退 |
+| AR-032 | Automation 激活补跑防护与执行 Lineage | P1 | Development In Progress / Automations Paused | feature -> narrow RC -> QA -> production | 三入口时窗硬门、一次性lease与activation/run/thread/PID telemetry；无force/run-now fallback |
 
 ## Released / Resolved
 
@@ -83,9 +84,10 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | ID | 标题 | 优先级 | 状态 | 发布路径 | 验证 |
 |---|---|---:|---|---|---|
 | AR-006 | 学习闭环生产启用（含 AR-003/018 发布依赖） | P2 | Staging Tested / Needs Product Reconfirmation | feature/next-production-flow -> main + production receiver smoke | staging 04/06/08 + test receiver + production no-write/read-back |
-| AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | Incident Review / Scheduled Smoke Blocked | production 5e733cd | Git/01/03/session通过，但22:11非check-only probe需归因；不得用该probe宣称真实业务完成 |
+| AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | Released / Scheduled Smoke Blocked by AR-032 | production 5e733cd | Git/01/03/session通过；未归因probe不算smoke，任务保持PAUSED |
 | AR-027 | 飞书 01/03/04 标签和表格列业务清理 | P1 | Schema Audit QA Passed / Scheduled After AR-026 | feature/next-production-flow | AR-026 上线与首次全量采集稳定后，再基于 production read-only cleanup matrix 单独授权字段/选项/view 清理 |
-| AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | Released / Awaiting Scheduled Smoke | production 178f047 | canonical identity、logged_in、automation ACTIVE 已验证；07:45 与 08:00/09:15/10:00 真实 smoke 待验 |
+| AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | Released / Automations Paused by AR-032 | production 178f047 | canonical identity/logged_in保持；等待AR-032后再做07:45与scheduled smoke |
+| AR-032 | Automation 激活补跑防护与执行 Lineage | P1 | Development In Progress | feature/next-production-flow | 恢复任务前必须证明错过时刻后的activation无法触发业务副作用且lineage完整 |
 | AR-029 | 生产可观测性（含 AR-016 residual） | P1 | Reliability Pack / Needs Plan | AR-029 + AR-030 shared RC | 先完成日志/告警/请求链路证据，再作为 AR-030 恢复判断输入 |
 | AR-030 | 制作方向卡安全重试与状态未知恢复 | P1 | Reliability Pack / Needs Architecture Review | AR-029 + AR-030 shared RC | 与 AR-029 共用发布计划；重试、unknown、幂等和 no-duplicate 独立验收 |
 | AR-021 | 腾讯云 SCF receiver 标准 CLI 部署通道 | P2 | Backlog / Needs Plan | feature/next-production-flow；不纳入当前发布窗口 | 目标是减少每次控制台登录上传；需支持测试/生产分环境、包 hash 校验、部署记录、health/smoke 和失败回滚说明 |

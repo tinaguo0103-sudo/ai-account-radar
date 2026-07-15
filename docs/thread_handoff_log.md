@@ -3176,3 +3176,11 @@
 - 影响边界：无 scheduled outer log/new `output/runs`、latest_write、card/callback、06、script package；Feishu telemetry仅auth/GET、无PUT/PATCH/DELETE；当前无残留采集进程。该probe不是33-account scheduled chain，不能宣称业务通过。
 - 安全动作：依据已授权stop discipline，PM已派生产线程仅做三任务ACTIVE->PAUSED并保持Git/01不回滚，再只读审计automation execution、process/system/thread/terminal/file chronology；同时要求QA从真实tool trace自审22:11窗口精确命令。两边均禁止重跑、清理或修改业务状态。
 - 决策门：只有明确归因且证明resume不会catch-up补跑，才可规划07:45前恢复；否则保持PAUSED并先修复。PM不轮询，等待主动回传。
+
+### 2026-07-15 AR-026 Probe 无法归因，三任务暂停并启动 AR-032
+
+- Safety result：`Unattributed / Keep Automations Paused / Needs Fix`。`ai-rebuild/ai-04-rebuild/ai-rebuild-2` 已仅做 `ACTIVE -> PAUSED`，official/read-back均PAUSED，配置未变；Git `5e733cd`、生产01八条隔离、03、Skill/SCF/schema和canonical Chrome保持不动。
+- Lineage：22:10:04恢复ACTIVE，22:11:32首个raw JSON，22:12:12 final。release线程无致因命令；QA/dev任务在首个文件后才派发且QA self-audit排除自身；automation_runs为0、无last_run_at/thread/memory/launcher。88秒相关性不能证明catch-up，标准execution record缺失本身构成阻断。
+- 影响：incident已原样备份/hash；无scheduled outer log、output/runs、latest_write、card/callback、06/script package；Feishu无业务PUT/PATCH/DELETE；无残留采集进程。canonical PID33282仍identity/session/logged_in。
+- AR-032：PM已派固定开发线程一次实现三入口 activation freshness hard gate、append-only decision/next_run telemetry、collection一次性PID/head/run-bound lease与端到端child completion lineage。22:10 catch-up必须在业务副作用前拒绝；不提供force/run-now/env bypass。
+- 边界：开发使用fake clock与隔离runtime，不做live catch-up实验，不修改automation/production/Feishu/Chrome。完成后需production-base窄RC、独立QA和新生产授权；PM不轮询。
