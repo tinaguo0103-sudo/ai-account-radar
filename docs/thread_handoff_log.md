@@ -3088,3 +3088,9 @@
 - 真实 9333：未修改 PID 33282；feature/RC 均返回 identity verified、session verified、logged_in，visible self=2、login=0、verification=0，隐藏 iframe 0x0/visible=false，secrets_read=false。
 - 自验：feature 329 Python、RC 293、24 AR-031、124 AR-020D/E adjacent、7 Douyin Node/Unicode、32 receiver/SCF及静态门全过。RC patch SHA=`b36f84e9e150859599d9285cd84e17146816bd950d0803007e86227da0da3c0c`。
 - PM 动作：已派 release QA。后续生产动作只需 Git follow-up gate + session logged_in + status-only resume；不得再迁移/复制 profile或停止正确 canonical Chrome。
+
+### 2026-07-15 AR-031 可见性 Follow-up RC 发布 QA 通过
+
+- 结论：`Ready for PM Production Authorization`。RC=`178f04780ddc74b61befab04b02c87c951980ea6`，base=`9893c6c`，4-file manifest/hash/apply 与 feature patch byte parity 全通过。
+- QA：14/14 visibility、7/7 diagnostics schema、293 Python、24 AR-031、129 AR-020D/E adjacent、7 Douyin/Unicode/visibility Node、32 receiver/SCF 与静态门全过。fresh exact RC 在当前 PID 33282 返回 identity verified、session verified、logged_in；visible self=2、login=0、verification=0，secrets_read=false。
+- 最小生产动作：read-back production/tasks/PID -> fast-forward/push `178f047` -> dynamic production gate -> exact session read-back -> 三任务 status-only resume。任一 mismatch 保持 PAUSED，仅 revert follow-up code；不停止 Chrome、不迁移/复制 profile、不运行业务流程。
