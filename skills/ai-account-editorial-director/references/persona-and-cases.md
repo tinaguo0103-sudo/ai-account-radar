@@ -1,15 +1,187 @@
-# Judgment And Style Reference Contract
+# 公开版案例结构说明
 
-This file is a public synchronization contract, not a case library and not candidate evidence.
+这是 `ai-account-editorial-director` 的公开脱敏案例说明文件。它只保留案例类型、判断方式和表达边界，不包含用户个人客户、真实项目细节、内部数据、账号资料或商业敏感信息。
 
-At runtime, the current task receives only retrieved private examples that help with the needed judgment operation, such as:
+## 可公开描述的案例类型
 
-- noticing a public contradiction;
-- rejecting a familiar but shallow take;
-- comparing evidence strength;
-- explaining why an unfamiliar audience would care;
-- writing a natural public judgment without copying the source.
+### 内容选题台 / 执行台
 
-Examples must remain reference-only. They cannot supply facts, claims, entities, outcomes, eligibility, source hooks, or proof for a candidate. Candidate-facing outputs must not contain case names, customer names, case IDs, citations, anchors, or claims of prior experience unless independently supported by the opened source and research dossier.
+用于说明如何把热点、公众号文章、短视频对标内容变成候选池，再通过字段化判断进入 `04` 选题台和后续 `06` 脚本包输入。
 
-The Git-managed Skill and this contract are the release source. Private material stays outside Git. A production release must explicitly sync the Skill contract, then read back and compare its SHA256; it must never copy the private Word or generated private bundle into the repository.
+可展示的抽象资产：
+
+- 来源类型；
+- 内容指纹；
+- 候选状态；
+- 主编判断；
+- 证据强度；
+- title_permission；
+- 从来源到 `04` 候选再到 `06` 脚本包输入的状态流。
+
+不能声称：
+
+- 系统已经替代人工主编；
+- 系统可以自动决定观点；
+- 所有平台内容都能无风险自动抓取。
+
+### 商业视频 / AI导演工作流
+
+用于说明 AI 视频从工具演示进入商业交付时，需要经过 Brief、分镜、资产一致性、镜头、节奏、返修和成片验收。
+
+可展示的抽象资产：
+
+- Brief结构；
+- 分镜表；
+- 角色/品牌资产；
+- 镜头验收项；
+- 返修记录；
+- 成片前后对比。
+
+不能声称：
+
+- 只凭单条短视频标题就理解了完整视频；
+- 没有转写时看过口播全文；
+- 没有素材时看过镜头结构。
+
+### 内容生产自动化 Skill
+
+用于说明封面、首图、长文转图文、PPT、网页卡片等内容生产如何从“设计小活”变成可复用工作流。
+
+可展示的抽象资产：
+
+- 输入材料；
+- 标题提炼；
+- 页面结构；
+- 视觉规则；
+- QA检查；
+- 导出结果。
+
+不能声称：
+
+- 单个生图工具解决完整内容策略；
+- 自动生成等于可交付。
+
+### Agent / AI业务系统
+
+用于说明 Agent 不应只是角色名，而要有输入、输出、状态、异常、权限和验收。
+
+可展示的抽象资产：
+
+- 任务边界；
+- 输入输出字段；
+- 状态流转；
+- 异常记录；
+- 验收标准；
+- 文件/目录/规则资产化。
+
+不能声称：
+
+- 非技术人可以无成本完成复杂工程系统；
+- 多Agent聊天就等于业务系统。
+
+### 汽车与内容营销
+
+用于说明品牌、车企、发布会、车主运营、CEO/IP、内容资产流如何被 AI 改造。
+
+可展示的抽象资产：
+
+- 发布前内容准备；
+- 发布中素材切片；
+- 发布后复盘；
+- 用户问题响应；
+- 品牌一致性审核；
+- 二次传播资产沉淀。
+
+不能声称：
+
+- 做普通车评或行情判断；
+- AI可以替代所有营销判断；
+- 没有证据时断言某品牌成败。
+
+## 判断示例：从来源到自己的选题
+
+### 示例一：AI项目原则
+
+来源：某 AI 工具团队发布工作原则。
+
+不要这样写：
+
+```text
+某团队原则最值得学的是项目交付习惯。
+```
+
+更适合的方向：
+
+```text
+我会把这套团队原则改成自己的AI项目验收清单。
+```
+
+场景拆解：做 AI 系统时，最容易出现的问题不是功能不能跑，而是没有明确验收标准。能跑不等于能用，能生成不等于能稳定进入日常流程。
+
+重点体现：不是讲团队新闻，而是讲如何把优秀团队方法改造成自己的生产环境规则。
+
+### 示例二：AI视频模型升级
+
+来源：某 AI 视频模型升级，时长更长、画面更稳。
+
+不要这样写：
+
+```text
+AI视频不该只看参数，最该重排的是导演工作流。
+```
+
+更适合的方向：
+
+```text
+AI视频真正卡住的不是能不能生成，而是有没有导演式交付流程。
+```
+
+场景拆解：真实项目里，难点不是生成一个漂亮镜头，而是角色能不能一致、分镜能不能连续、客户返修能不能控制、成片能不能验收。
+
+重点体现：不是做AI视频教程，而是把导演、创意和商业交付经验放进AI视频流程。
+
+### 示例三：AI设计或图文工具
+
+来源：某工具可以生成首图、封面、PPT 或社媒卡片。
+
+不要这样写：
+
+```text
+这个工具让设计效率翻倍。
+```
+
+更适合的方向：
+
+```text
+我不想要一个会生成图片的工具，我想要一个能减少返工的内容生产系统。
+```
+
+场景拆解：真正耗时的不是点一下生成，而是理解内容、拆页面、统一风格、控制信息密度、反复改版和跨平台适配。
+
+重点体现：AI进入内容团队后，哪些中间环节可以被压缩成可复用流程，哪些判断仍然要由人负责。
+
+### 示例四：汽车品牌传播
+
+来源：某汽车品牌发布会或高管IP出圈。
+
+不要这样写：
+
+```text
+车企高管IP最值得学的三个传播动作。
+```
+
+更适合的方向：
+
+```text
+车企内容营销真正要被AI改造的，不是发布会当天，而是前后的内容资产流。
+```
+
+场景拆解：汽车行业内容营销不是发几条视频，里面有品牌叙事、产品卖点、用户情绪、内部协同、媒体传播和舆论反馈。
+
+重点体现：不是复盘某个传播案例，而是讲传统人力密集型流程如何变成AI Native的内容资产系统。
+
+## 使用边界
+
+- 公开版只提供判断结构，不提供个人私有案例。
+- 如果需要更像某个具体账号，需要在本地私有 Skill 中补充真实案例和表达样本。
+- 不要把这里的示例句式当模板批量套用；它们只展示“从来源转到业务现场”的思考方式。

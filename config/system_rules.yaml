@@ -2,7 +2,7 @@
   "version": "0.1",
   "last_updated": "2026-06-02",
   "positioning": "不是 AI 新闻号、工具搬运号或提示词教程号，而是懂营销、懂内容、懂导演、正在做 AI 业务系统的人；更短地说，是 AI业务系统导演：把 AI 工具、模型、热点和对标内容翻译成自己的内容生产、品牌增长、AI视频交付、Agent任务和项目复盘方法。",
-  "core_persona_gate": "候选必须回答：这件事和我有什么关系、我会拿它改造哪个真实流程、我能展示什么结果、重点体现什么判断。只讲行业影响、工具能力或通用方法，不足以进入推荐制作。",
+  "core_persona_gate": "候选必须回答：这件事和我有什么关系、我会拿它改造哪个真实流程、我能展示什么结果、重点体现什么判断。只讲行业影响、工具能力或通用方法，不足以进入今日最值得做。",
   "main_content_directions": {
     "AI业务定调": "判断趋势和热点，但必须落到我怎么看业务影响，不复述新闻。",
     "真实工作流改造": "把 AI 放进真实工作/生活流程，例如资料整理、选题、Brief、表格、PPT、复盘。",
@@ -25,7 +25,7 @@
   "content_source_rules": [
     {
       "name": "来源角色定义",
-      "rule": "来源池分为 current_main_competitor 当前主对标、current_aux_competitor 当前辅助对标、quarantined_source 已隔离污染源、system_hotspot_source 系统热点源、official_source 官方/技术/工具源、manual_entry 正式手动入口、legacy_manual_entry 旧手动入口。来源角色只回答是否跟进和如何采样，不预设内容栏目；历史参考如重新启用，应改为 current_aux_competitor；用户确认的污染来源必须进入 quarantined_source，历史03不物理删除。"
+      "rule": "来源池分为 current_main_competitor 当前主对标、current_aux_competitor 当前辅助对标、system_hotspot_source 系统热点源、official_source 官方/技术/工具源、manual_entry 正式手动入口、legacy_manual_entry 旧手动入口。来源角色只回答是否跟进和如何采样，不预设内容栏目；历史参考如重新启用，应改为 current_aux_competitor。"
     },
     {
       "name": "新主对标池",
@@ -45,7 +45,7 @@
     },
     {
       "name": "热点与对标统一转译",
-      "rule": "今日候选池以有效对标账号内容为核心来源；AIHOT 只作为低权重热点观察源，15% 是重要性影响力而不是最终数量硬卡。普通 AI 资讯不得压过高适配对标内容；重大模型、产品或行业变化可以凭重大性进入候选，但仍必须转成我的账号视角，不能原样搬运。"
+      "rule": "今日候选池既可以来自AIHOT，也可以来自卡兹克公众号文章、卡兹克抖音教程视频或其他抖音对标账号内容拆解，但必须先转成我的账号视角，不能原样搬运。"
     },
     {
       "name": "系统源不属于对标权重池",
@@ -57,7 +57,7 @@
     },
     {
       "name": "来源表视图",
-      "rule": "01 来源与采样至少包含 当前主对标池、历史参考池、系统/官方源、隔离来源、手动入口 五个视图。默认看 当前主对标池；历史参考池目前作为兼容视图，重新启用的历史账号应进入 current_aux_competitor；隔离来源只用于审计已确认污染源，不参与采样；系统/官方源不属于对标账号池；02 URL投喂入口 是唯一启用的正式手动入口。"
+      "rule": "01 来源与采样至少包含 当前主对标池、历史参考池、系统/官方源、手动入口 四个视图。默认看 当前主对标池；历史参考池目前作为兼容视图，重新启用的历史账号应进入 current_aux_competitor；系统/官方源不属于对标账号池；02 URL投喂入口 是唯一启用的正式手动入口。"
     },
     {
       "name": "URL采样P0支持",
@@ -101,15 +101,15 @@
     },
     {
       "name": "今日候选池编辑判断层",
-      "rule": "候选池只由 deterministic code 做采集、标准化、去重和明显噪音过滤。随后当前 Codex 任务按 scripts/topic_editorial_state_machine.py 执行 exact source open -> web research dossier -> evidence-backed hook -> persona-native editorial decision -> dynamic lossless ranking -> operational mapping。来源打不开或研究失败必须 fail closed，CSV 摘要和搜索 snippet 不得替代精确来源。ranking 严格覆盖全部 Stage 1 decisions，只排序不设上限、不截断、不改变 eligibility。Stage 2 只写 operational fields，owner-field 改写均 fail + guard_blocked。禁止 nested Codex CLI、API、子代理和 deterministic editorial fallback。repo mirror 是 Git 合约源；生产 global Skill 仅在发布阶段做 hash sync/read-back。"
+      "rule": "候选池输出前必须先做 content_sampler.py 的采集、标准化、基础拆解、去重、同主题合并和明显噪音过滤，再把更宽的审阅池交给 scripts/editorial_skill_runner.py；runner 默认只读取本机全局私有版 ai-account-editorial-director Skill 文本和 persona-brief，本机私有版不存在时直接失败，不自动回退仓库脱敏版，并调用本机 Codex CLI 做批量主编判断；必要时可用 EDITORIAL_SKILL_DIR 显式指定目录做测试。代码不得先固定挑出10条，也不得按分数自动补满3条今日最值得做。当前采用 Gate -> Workflow Experiment Card -> Title Packaging：先做主编门控，判断这条能不能接到我的真实或相邻业务现场、证据是否足够；再生成工作流实验命题卡，写清短选题命题、我要做的实验、热点触发点、我的工作流痛点、旧流程痛点、AI介入点、验证方式、可沉淀资产、我的思考点、重点体现、可展示证据、需要补的证据；最后只有 title_permission=可发布标题 时才生成并写入可发布标题和标题备选。选题命题要短、自然、像工作台条目，不能批量写成“我想用 X 测试 Y 能不能 Z”；验证方式必须是1-2步最小实验动作，写清输入、动作、输出或验收标准；可沉淀资产必须具体到该选题，不能写通用 Workflow SOP / 字段规则 / Brief 模板 / QA 清单。选题标题是飞书兼容主字段，内容必须镜像短选题命题，不再写发布标题。标题工作坊和标题自审降级为调试字段，不再作为主流程必填。代码不得用固定标题模板或资产包兜底；暂存观察、不建议制作、内部测试标题和证据不足项必须清空可发布标题和标题备选，但可保留内部选题命题和我要做的实验。抖音浅层内容与其他来源一样参与评分和候选判断，但命题、标题与推荐理由只能基于已采到的标题、文案、封面和公开元数据，不得声称口播全文、评论区、镜头结构或完整视频理解。"
     },
     {
       "name": "AI味检测规则",
-      "rule": "标题 lint 需要检查抽象词、泛化主体、缺少热点名、像策略说明、标题结构同构、超过原始文本支撑范围等问题。用户可见字段不得出现“自查表、少做一小时、这类更新、可执行动作、业务动作、业务验收清单、别只看发布信息、先看任务怎么验收、该先判断、最该重排、这条视频、这条内容、博主、老师、带着它的”等模板或仿写话术；命中后 AI味风险至少为中，多次命中为高，并且不能进入 推荐制作。"
+      "rule": "标题 lint 需要检查抽象词、泛化主体、缺少热点名、像策略说明、标题结构同构、超过原始文本支撑范围等问题。用户可见字段不得出现“自查表、少做一小时、这类更新、可执行动作、业务动作、业务验收清单、别只看发布信息、先看任务怎么验收、该先判断、最该重排、这条视频、这条内容、博主、老师、带着它的”等模板或仿写话术；命中后 AI味风险至少为中，多次命中为高，并且不能进入 今日最值得做。"
     },
     {
       "name": "今日建议级别",
-      "rule": "今日候选池不强制数量。所有精确来源已打开、研究证据完整、主编质量门通过的候选都保留为推荐制作，数量为0..N；全局 ranking 只排序，不得用 Top3、配额、分页或卡片 limit 截断。研究失败和补证据候选显式留在审计层，不进入 eligible card set。"
+      "rule": "今日候选池不再强制保留10条；符合主编判断和内容支撑的候选多就多、少就少。今日最值得做由 Skill 明确判断，最多3条，可以为0条；代码不得因为分数高自动补强推。其他分为 可选候选、暂存观察、不建议制作。推荐动作被降级时必须写入推荐动作原因或降级原因。抖音浅层内容不做特殊降级，只受同一套编辑分、标题质量、人设匹配和内容支撑规则约束。"
     },
     {
       "name": "已解析URL复用测试",
@@ -341,7 +341,7 @@
     {
       "table": "01 来源与采样",
       "field": "来源角色",
-      "purpose": "区分 current_main_competitor、current_aux_competitor、quarantined_source、system_hotspot_source、official_source、manual_entry、legacy_manual_entry；不承载内容栏目判断。",
+      "purpose": "区分 current_main_competitor、current_aux_competitor、system_hotspot_source、official_source、manual_entry、legacy_manual_entry；不承载内容栏目判断。",
       "required": "是",
       "producer": "config/content_sources.yaml",
       "consumer": "用户、content_sampler.py",
@@ -528,7 +528,7 @@
     {
       "table": "04 分析与选题",
       "field": "今日建议级别",
-      "purpose": "标出推荐制作、推荐制作、暂存观察或不建议制作。",
+      "purpose": "标出今日最值得做、可选候选、暂存观察或不建议制作。",
       "required": "否",
       "producer": "editorial_skill_runner.py",
       "consumer": "用户、主控台",
@@ -1123,7 +1123,7 @@
     },
     {
       "name": "实验动作优先",
-      "rule": "实验动作是 Stage 2 的后置 operational field，不得反向驱动 Stage 1 标题、角度或选择。生成脚本包候选必须有可执行实验和验证方式；缺失时由 guard 显式阻断，不得静默改写主编 decision。"
+      "rule": "候选不能只是一句正确判断，必须有用户会真实去做的实验动作。每条候选必须先通过 Gate，再整理 Workflow Experiment Card；如果写不出我要做的实验，不能成为今日最值得做。"
     },
     {
       "name": "内容类型配比",
