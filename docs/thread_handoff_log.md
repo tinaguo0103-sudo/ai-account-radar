@@ -3168,3 +3168,11 @@
 - Parity：16个 release files中13个blob与production完全一致；3个 intentional differences仅为既有feature current-task/editorial、worktree guard/failure QA和更严格测试，AR-026生产合同无回退。最终代码树与merge前最新feature byte-identical，本次只补齐main ancestry。
 - 验证：343 Python、Douyin Node 39+6、Unicode四态、receiver/SCF 32、semantic 7/7、py_compile/node/diff/pre_merge全过。
 - 边界：无Feishu、卡片/callback、采集、06、Skill/SCF、automation、Chrome/profile或production main动作。发布后只读QA仍独立待回传。
+
+### 2026-07-15 AR-026 发布后发现非 check-only Probe，进入 Automation Safety Hold
+
+- 结论：`Post-Release Regression Failed / Automations Safety Review Required`。production main、released files、dynamic/cap gates、01八条隔离、43条hash、03 no-touch、canonical logged_in与automation配置均通过，但不能覆盖真实异常。
+- 异常：production `output/spikes/douyin_cdp_source_watch_probe` 在 22:11:59-22:12:12 被刷新；`cdp_probe_results.json` 为 `check_only=false`、31 planned/attempted、29 succeeded、2 failed，并写入 raw resolver。该时间与任务恢复/发布后检查窗口重叠，launcher lineage尚未归因。
+- 影响边界：无 scheduled outer log/new `output/runs`、latest_write、card/callback、06、script package；Feishu telemetry仅auth/GET、无PUT/PATCH/DELETE；当前无残留采集进程。该probe不是33-account scheduled chain，不能宣称业务通过。
+- 安全动作：依据已授权stop discipline，PM已派生产线程仅做三任务ACTIVE->PAUSED并保持Git/01不回滚，再只读审计automation execution、process/system/thread/terminal/file chronology；同时要求QA从真实tool trace自审22:11窗口精确命令。两边均禁止重跑、清理或修改业务状态。
+- 决策门：只有明确归因且证明resume不会catch-up补跑，才可规划07:45前恢复；否则保持PAUSED并先修复。PM不轮询，等待主动回传。
