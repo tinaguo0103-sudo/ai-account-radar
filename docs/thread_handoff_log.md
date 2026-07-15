@@ -3192,3 +3192,11 @@
 - 生产授权：已通知固定生产线程仅将 `ai-rebuild/ai-04-rebuild/ai-rebuild-2` 从PAUSED恢复ACTIVE，official/read-back；schedule/prompt/target/cwd/model必须不变，不手动run、不补跑旧schedule。
 - 保留边界：production `5e733cd`、01八条隔离、03、canonical9333保持；不写Feishu、不发卡/callback、不触发06，不改Git/Skill/SCF/Chrome。22:11 probe不算scheduled smoke，明日按正常08:00/09:15/10:00验收。
 - PM不轮询，等待开发停止确认和生产ACTIVE read-back主动回传。
+
+### 2026-07-15 三条 Replacement Automations 已最小恢复 ACTIVE
+
+- 结论：`Resumed / All Three ACTIVE / Awaiting Scheduled-Day Smoke`。`ai-rebuild`、`ai-04-rebuild`、`ai-rebuild-2` 仅 `PAUSED -> ACTIVE`，official view/read-back全部成功。
+- 配置：当前TOML与暂停前ACTIVE备份逐字节一致；hash分别为 `a9a77025...`、`19c82d02...`、`576af1ff...`。08:00/09:15/10:00、gpt-5.5/medium、parent target、production cwd和prompts均未变。
+- 即时状态：automation_runs无新记录；恢复后无new logs/runs/latest_write/decision_cards/script packages。未运行、未补跑、未修改其他字段。
+- 生产边界：production clean local=remote=`5e733cd`；01八条隔离、03、canonical9333/profile/login未变；无Feishu、card/callback、06、Git/Skill/SCF/Chrome动作。
+- 后续：不轮询、不手动运行、不再自动暂停；明日按正常08:00/09:15/10:00做scheduled-day smoke。AR-032保持Cancelled/No Release。

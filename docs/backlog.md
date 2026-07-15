@@ -516,7 +516,7 @@
 
 - 类型：采集覆盖 / AR-020 上游依赖
 - 优先级：P1
-- 状态：Released / 01 Migration Passed / Automation Resume Authorized / Scheduled Smoke Pending
+- 状态：Released / 01 Migration Passed / Automations Active / Awaiting Scheduled-Day Smoke
 - 来源：AR-020 需求确认。用户指出飞书 01 里即使清掉截图污染账号，仍不止 12 个对标账号；用户需要的是全量账号采集，而不是生产默认 12 个账号抽样。
 - 影响：如果上游只采 12 个账号，03 内容库天然缺失大量对标内容，AR-020 的选题转译和反向测试会建立在不完整内容库上，继续漏掉适合 Austin 账号的题。
 - 目标：从飞书 01 获取有效对标账号白名单，清掉截图污染账号后，对剩余有效账号做全量采集覆盖；当前账号量只有几十个，暂不需要分批。若未来量级明显增大或触发平台风险，再升级为分批/频控策略。每次采集必须输出账号级覆盖报告。
@@ -533,12 +533,13 @@
 - 发布后异常：即时只读 QA 发现 production `output/spikes/douyin_cdp_source_watch_probe` 在 22:11:59-22:12:12 被真实刷新，artifact 明确 `check_only=false`、31 attempted、29 succeeded、2 failed，并写入 raw resolver 文件。未产生 scheduled outer log、new run、Feishu PUT、latest_write、card、06或script package，但触发来源尚未归因，因此发布后回归判失败，不能视为 scheduled smoke。PM 已按 stop discipline 派生产线程 status-only 暂停三任务并查 scheduler/process lineage，同时要求 QA 自审精确命令；Git、01迁移、03和Chrome保持不动，完成归因前不得恢复任务。
 - Safety review：三任务已 status-only `ACTIVE -> PAUSED`，prompt/schedule/target/cwd/model 不变。release、QA、dev 的真实命令轨迹均排除自身触发；automation_runs 对三个 replacement IDs 为 0，且无 last_run_at、执行线程、memory 或 launcher command。22:10:04 恢复至 22:11:32 首个 incident file 的 88 秒只支持 catch-up 假设，不能证明。现状定为 `Unattributed / Keep Automations Paused / Needs Fix`；Git `5e733cd` 与已验证生产 01 迁移不回滚，真实 scheduled smoke 由 AR-032 阻断。
 - PM 产品决策：用户明确认为本次误触不值得继续加重防护，接受其作为已知非阻断事件，并要求明天正常开始跑。AR-032 已取消，不再开发/RC/发布；PM 已授权三任务仅做 status-only 恢复 ACTIVE，不手动采集或补跑旧 schedule。明日仍按正常 08:00/09:15/10:00 链路验收，22:11 artifact 不计入 scheduled smoke。
+- 最终恢复：`ai-rebuild`、`ai-04-rebuild`、`ai-rebuild-2` 已仅做 `PAUSED -> ACTIVE`；official view/read-back均ACTIVE，当前TOML与暂停前ACTIVE备份逐字节一致。08:00/09:15/10:00、model、reasoning、parent target、production cwd和prompt均不变；恢复后无automation run、logs/runs/latest_write/card/06/script package。后续不手动运行、不再自动暂停，等待明日正常scheduled chain。
 
 ### AR-031 固定抖音 Chrome Profile 与登录态硬门
 
 - 类型：采集稳定 / 生产前置门禁
 - 优先级：P1
-- 状态：Hotfix Done / Canonical Logged In / Automation Resume Authorized / Scheduled Smoke Pending
+- 状态：Hotfix Done / Canonical Logged In / Automations Active / Scheduled Smoke Pending
 - 来源：2026-07-15 明日采集前只读审计。用户要求抖音保持已登录，并固定使用同一个浏览器登录态，不得每次运行随机寻找浏览器。
 - 已确认根因：生产调用链固定请求 `127.0.0.1:9333`，但当前监听 PID 17170 实际绑定旧 RC worktree 的 `.local_services/douyin-chrome-profile`，不是 production profile；当前 Douyin DOM 有明确登录按钮，判定 `logged_out`。`start_douyin_cdp_chrome.py` 只检查 CDP 端口是否可用，不校验监听进程的真实 `--user-data-dir`，还会把请求 profile 误报为实际 profile；`daily_pipeline.py` 又把 Chrome start 和 Douyin probe 作为 optional step。
 - 目标：建立唯一、worktree-independent 的持久化 Douyin Chrome profile；9333 已占用时必须验证 PID/binary/port/user-data-dir 精确匹配；增加不读取认证秘密的登录态预检；profile mismatch、logged_out、verification_required 或 indeterminate 均 fail closed 并写入 scheduled/daily 日志。
