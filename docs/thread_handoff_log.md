@@ -3080,3 +3080,11 @@
 - Stop condition：登录探针返回 `verification_required`，三 automation 按计划保持 PAUSED。进一步 sanitized DOM 可见性诊断证明 verify iframe 为 `display:none`、0x0、viewport=false；页面同时有两个可见 `/user/self` 账号入口且无可见登录按钮/弹窗，确认是隐藏 iframe 假阳性，不是 profile 身份或迁移失败。
 - 边界：无 Feishu、卡片/callback、采集、06、Skill/SCF；发布窗口业务 artifact 为空。备份根：`/private/tmp/ar031_production_release_20260715_202121`。
 - PM 动作：已派开发一次完成可见性判定修复、真实当前 9333 logged_in 只读验证和 production-base follow-up RC。只对 visible/effective verification/login markers判定；不重做 profile 迁移、不停止当前正确 canonical Chrome、不恢复任务，待 RC QA与新生产授权。
+
+### 2026-07-15 AR-031 可见性 Follow-up RC 就绪并派发布 QA
+
+- Feature=`068aab5cd1f28f31407c0add48e7886adcaf5800`；RC branch=`release/ar020e-rc-ar031-visible-20260715`，RC=`178f04780ddc74b61befab04b02c87c951980ea6`，base=production `9893c6c`。范围仅 probe/parser 与两份 tests，共 4 files。
+- 行为：verification/login 仅在 connected、祖先可见、display/visibility/opacity有效、非零尺寸且与viewport相交时参与；logged_in 需要两个 distinct visible exact `/user/self` 或两个独立 header/global markers；feed author 保持负控，不扫 global bodyText/hidden script/template。
+- 真实 9333：未修改 PID 33282；feature/RC 均返回 identity verified、session verified、logged_in，visible self=2、login=0、verification=0，隐藏 iframe 0x0/visible=false，secrets_read=false。
+- 自验：feature 329 Python、RC 293、24 AR-031、124 AR-020D/E adjacent、7 Douyin Node/Unicode、32 receiver/SCF及静态门全过。RC patch SHA=`b36f84e9e150859599d9285cd84e17146816bd950d0803007e86227da0da3c0c`。
+- PM 动作：已派 release QA。后续生产动作只需 Git follow-up gate + session logged_in + status-only resume；不得再迁移/复制 profile或停止正确 canonical Chrome。
