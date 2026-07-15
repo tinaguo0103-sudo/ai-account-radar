@@ -31,7 +31,8 @@ TABLE_KEY = "source_sampling"
 ACTIVE_ROLES = {"current_main_competitor", "current_aux_competitor"}
 PLACEHOLDER_ROLE = "current_main_competitor_placeholder"
 HISTORICAL_ROLE = "historical_reference"
-SKIP_ROLES = {"system_hotspot_source", "official_source", "manual_entry", "legacy_manual_entry"}
+QUARANTINED_ROLE = "quarantined_source"
+SKIP_ROLES = {"system_hotspot_source", "official_source", "manual_entry", "legacy_manual_entry", QUARANTINED_ROLE}
 
 
 def text(value: Any) -> str:
@@ -285,6 +286,8 @@ def reconcile(config: dict[str, Any], records: list[dict[str, Any]]) -> dict[str
                 summary["existing_active_low"].append(name)
         elif source and source_role == PLACEHOLDER_ROLE:
             keep_active(source, fields, config)
+            summary["skipped"].append(name)
+        elif source and source_role == QUARANTINED_ROLE:
             summary["skipped"].append(name)
         elif source and (source_role == HISTORICAL_ROLE or role == HISTORICAL_ROLE):
             promote_to_aux(source, fields, config)

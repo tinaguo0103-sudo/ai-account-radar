@@ -9,7 +9,7 @@
 
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -18,48 +18,100 @@ const DEFAULT_OUT = path.join(ROOT, "output/spikes/douyin_cdp_source_watch_probe
 const DEFAULT_CDP = "http://127.0.0.1:9333";
 const RESOLVER = path.join(ROOT, "scripts/url_content_resolver.py");
 
-function parseArgs() {
-  const args = process.argv.slice(2);
+export function parseArgs(args = process.argv.slice(2)) {
   const options = {
     config: DEFAULT_CONFIG,
     outDir: DEFAULT_OUT,
     cdp: DEFAULT_CDP,
-    accountLimit: 3,
+    accountLimit: "0",
     videoLimit: 3,
     waitMs: 7000,
     retries: 2,
-    onlyAccountNames: "",
+    checkOnly: false,
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
     if (arg === "--config") options.config = args[++i];
     else if (arg === "--out-dir") options.outDir = args[++i];
     else if (arg === "--cdp") options.cdp = args[++i];
-    else if (arg === "--account-limit") options.accountLimit = Number(args[++i]);
+    else if (arg === "--account-limit") options.accountLimit = args[++i];
     else if (arg === "--video-limit") options.videoLimit = Number(args[++i]);
     else if (arg === "--wait-ms") options.waitMs = Number(args[++i]);
     else if (arg === "--retries") options.retries = Number(args[++i]);
-    else if (arg === "--only-account-names") options.onlyAccountNames = args[++i] || "";
+    else if (arg === "--check-only") options.checkOnly = true;
   }
   return options;
 }
 
-function loadSources(configPath) {
+export function validateFullAccountLimitArgs(args = process.argv.slice(2)) {
+  const matches = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--account-limit") {
+      const requested = args[index + 1];
+      if (requested === undefined || String(requested).startsWith("--")) {
+        return { ok: false, requested: "", reason: "missing_account_limit_value" };
+      }
+      matches.push(String(requested));
+    } else if (String(token).startsWith("--account-limit=")) {
+      return {
+        ok: false,
+        requested: String(token).split("=", 2)[1] || "",
+        reason: "account_limit_alias_rejected",
+      };
+    }
+  }
+  if (matches.length > 1) {
+    return { ok: false, requested: matches.join(","), reason: "duplicate_account_limit" };
+  }
+  const requested = matches.length ? matches[0] : "0";
+  if (requested !== "0") {
+    return { ok: false, requested, reason: "full_account_collection_requires_exact_zero" };
+  }
+  return { ok: true, requested, value: 0, reason: "" };
+}
+
+export function limitedPlanRejection(gate) {
+  return {
+    ok: false,
+    status: "limited_plan_rejected",
+    reason: gate.reason,
+    layer: "douyin_cdp_source_watch_probe",
+    requested_account_limit: gate.requested,
+    side_effects_started: false,
+    env_loaded: false,
+    writes_feishu: false,
+    cache_accessed: false,
+    chrome_contacted: false,
+    collection_started: false,
+    notification_sent: false,
+  };
+}
+
+export function loadSources(configPath) {
   const text = fs.readFileSync(configPath, "utf8");
   return JSON.parse(text).sources || [];
 }
 
-function selectedSources(sources, limit) {
+export function selectedSources(sources) {
   const roles = new Set(["current_main_competitor", "current_aux_competitor"]);
-  const only = new Set(String(limit.onlyAccountNames || "")
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean));
-  const max = Number(limit.accountLimit || 0);
   return sources
     .filter((source) => source.platform === "抖音" && roles.has(source.source_role))
-    .filter((source) => !only.size || only.has(source.account_name || source.name || ""))
-    .slice(0, max);
+}
+
+export function validateSourcePlan(sources) {
+  const names = sources.map((source) => String(source.account_name || source.name || "").trim());
+  const missing = names.map((name, index) => ({ name, index })).filter((item) => !item.name);
+  const counts = new Map();
+  for (const name of names) counts.set(name, (counts.get(name) || 0) + 1);
+  const duplicates = [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name);
+  return {
+    ok: missing.length === 0 && duplicates.length === 0,
+    planned_accounts: names.length,
+    account_names: names,
+    missing_account_name_indexes: missing.map((item) => item.index),
+    duplicate_account_names: duplicates,
+  };
 }
 
 async function getJson(url) {
@@ -195,7 +247,7 @@ function normalizeCardText(text) {
     .trim();
 }
 
-function buildFallbackContentItem(row, link, index) {
+export function buildHomepageCardContentItem(row, link, index) {
   const cards = row.video_cards || [];
   const card = cards.find((item) => item.href === link || item.url === link || link.endsWith(String(item.video_id || ""))) || {};
   const title = normalizeCardText(card.text || "");
@@ -220,6 +272,90 @@ function buildFallbackContentItem(row, link, index) {
     "正文是否截断": "否",
     "是否来自已解析URL复用": "否",
     "解析说明": "从登录态主页作品区提取标题/文案卡片；未做口播转写、评论抓取或视频理解。适合标题先筛选，人工确认后再转写。",
+  };
+}
+
+export function buildHomepageCardItems(rows) {
+  const items = [];
+  for (const row of rows) {
+    if (row.status !== "success") continue;
+    for (const [index, link] of (row.video_links || []).entries()) {
+      items.push(buildHomepageCardContentItem(row, link, index));
+    }
+  }
+  return items;
+}
+
+export function validateContentItemLineage(rows, items) {
+  const allowedByAccount = new Map(
+    rows
+      .filter((row) => row.status === "success")
+      .map((row) => [String(row.account_name || ""), new Set(row.video_links || [])]),
+  );
+  const violations = [];
+  for (const [index, item] of items.entries()) {
+    const account = String(item["账号名/公众号名"] || "");
+    const link = String(item["内容链接"] || "");
+    if (!allowedByAccount.has(account) || !allowedByAccount.get(account).has(link)) {
+      violations.push({ index, account_name: account, content_url: link });
+    }
+  }
+  return { ok: violations.length === 0, violation_count: violations.length, violations };
+}
+
+export function buildCoverage(sources, rows) {
+  const plan = validateSourcePlan(sources);
+  const plannedNames = plan.account_names;
+  const plannedSet = new Set(plannedNames);
+  const rowNames = rows.map((row) => String(row.account_name || "").trim());
+  const rowCounts = new Map();
+  for (const name of rowNames) rowCounts.set(name, (rowCounts.get(name) || 0) + 1);
+  const duplicateRows = [...rowCounts.entries()].filter(([, count]) => count > 1).map(([name]) => name);
+  const unknownRows = rowNames.filter((name) => !plannedSet.has(name));
+  const missingRows = plannedNames.filter((name) => !rowCounts.has(name));
+  const perAccount = {};
+  const failedAccounts = [];
+  let successfulAccounts = 0;
+  for (const row of rows) {
+    const name = String(row.account_name || "").trim();
+    const artifactCount = Array.isArray(row.video_links) ? row.video_links.length : 0;
+    perAccount[name] = artifactCount;
+    if (row.status === "success" && artifactCount > 0) {
+      successfulAccounts += 1;
+    } else {
+      failedAccounts.push({
+        account_name: name,
+        status: row.status === "success" ? "zero_artifact" : (row.status || "failed"),
+        failure_reason: row.status === "success" && artifactCount === 0
+          ? "Account probe returned success without a source artifact."
+          : (row.failure_reason || "Account probe failed without a reason."),
+        artifact_count: artifactCount,
+      });
+    }
+  }
+  const attempted = rows.length;
+  const structuralOk = plan.ok && !duplicateRows.length && !unknownRows.length && !missingRows.length;
+  const invariantOk = attempted === plannedNames.length
+    && successfulAccounts + failedAccounts.length === attempted;
+  return {
+    ok: structuralOk && invariantOk && failedAccounts.length === 0,
+    account_limit: 0,
+    planned_accounts: plannedNames.length,
+    planned_account_names: plannedNames,
+    attempted_accounts: attempted,
+    successful_accounts: successfulAccounts,
+    failed_account_count: failedAccounts.length,
+    failed_accounts: failedAccounts,
+    per_account_artifact_counts: perAccount,
+    missing_account_rows: missingRows,
+    duplicate_account_rows: duplicateRows,
+    unknown_account_rows: unknownRows,
+    plan_validation: plan,
+    invariants: {
+      attempted_equals_planned: attempted === plannedNames.length,
+      success_plus_failed_equals_attempted: successfulAccounts + failedAccounts.length === attempted,
+      account_lineage_unique_and_complete: structuralOk,
+    },
   };
 }
 
@@ -358,8 +494,48 @@ async function probeAccountWithRetry(cdp, browserClient, source, options) {
 }
 
 async function main() {
+  const accountGate = validateFullAccountLimitArgs(process.argv.slice(2));
+  if (!accountGate.ok) {
+    console.log(JSON.stringify(limitedPlanRejection(accountGate)));
+    return 2;
+  }
   const options = parseArgs();
+  options.accountLimit = accountGate.value;
   fs.mkdirSync(options.outDir, { recursive: true });
+
+  const sources = selectedSources(loadSources(options.config));
+  const plan = validateSourcePlan(sources);
+  if (!plan.ok) {
+    const failure = {
+      ok: false,
+      status: "invalid_account_plan",
+      check_only: options.checkOnly,
+      writes_feishu: false,
+      collection_started: false,
+      coverage: plan,
+    };
+    fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(failure, null, 2), "utf8");
+    console.log(JSON.stringify(failure, null, 2));
+    return 2;
+  }
+  if (options.checkOnly) {
+    const preview = {
+      ok: true,
+      status: "planned",
+      check_only: true,
+      writes_feishu: false,
+      collection_started: false,
+      cdp_contacted: false,
+      coverage: {
+        account_limit: options.accountLimit,
+        planned_accounts: plan.planned_accounts,
+        planned_account_names: plan.account_names,
+      },
+    };
+    fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(preview, null, 2), "utf8");
+    console.log(JSON.stringify(preview, null, 2));
+    return 0;
+  }
 
   let version;
   try {
@@ -374,10 +550,9 @@ async function main() {
     };
     fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(failure, null, 2), "utf8");
     console.log(JSON.stringify(failure, null, 2));
-    process.exit(2);
+    return 2;
   }
 
-  const sources = selectedSources(loadSources(options.config), options);
   const rows = [];
   const browserClient = new CdpClient(version.webSocketDebuggerUrl);
   await browserClient.open();
@@ -388,7 +563,16 @@ async function main() {
   } finally {
     browserClient.close();
   }
-  const videoLinks = Array.from(new Set(rows.flatMap((row) => row.video_links || [])));
+  for (const row of rows) {
+    row.artifact_count = Array.isArray(row.video_links) ? row.video_links.length : 0;
+    if (row.status === "success" && row.artifact_count === 0) {
+      row.status = "zero_artifact";
+      row.failure_reason = "Account probe returned success without a source artifact.";
+    }
+  }
+  const videoLinks = Array.from(new Set(
+    rows.filter((row) => row.status === "success").flatMap((row) => row.video_links || []),
+  ));
   let resolverResult = {
     attempted: false,
     ok: false,
@@ -429,23 +613,28 @@ async function main() {
   }
 
   const manualJsonl = path.join(options.outDir, "content_items_manual.jsonl");
-  const fallbackItems = [];
-  for (const row of rows) {
-    for (const [index, link] of (row.video_links || []).entries()) {
-      fallbackItems.push(buildFallbackContentItem(row, link, index));
-    }
-  }
+  const homepageCardItems = buildHomepageCardItems(rows);
   fs.writeFileSync(
     manualJsonl,
-    fallbackItems.map((item) => JSON.stringify(item)).join("\n") + (fallbackItems.length ? "\n" : ""),
+    homepageCardItems.map((item) => JSON.stringify(item)).join("\n") + (homepageCardItems.length ? "\n" : ""),
     "utf8",
   );
   resolverResult.manual_jsonl = manualJsonl;
-  resolverResult.homepage_card_items = fallbackItems.length;
+  resolverResult.homepage_card_items = homepageCardItems.length;
+
+  const coverage = buildCoverage(sources, rows);
+  coverage.account_limit = options.accountLimit;
+  const itemLineage = validateContentItemLineage(rows, homepageCardItems);
+  if (!itemLineage.ok) coverage.ok = false;
 
   const output = {
-    ok: true,
+    ok: coverage.ok,
+    status: coverage.ok ? "completed" : "completed_with_failures",
+    check_only: false,
+    writes_feishu: false,
     cdp_browser: version.Browser || "",
+    coverage,
+    item_lineage: itemLineage,
     accounts: rows.length,
     discovered_video_links: videoLinks.length,
     resolver: resolverResult,
@@ -465,9 +654,14 @@ async function main() {
   ].join("\n");
   fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.csv"), csv, "utf8");
   console.log(JSON.stringify(output, null, 2));
+  return output.ok ? 0 : 3;
 }
 
-main().catch((error) => {
-  console.error(error);
-  process.exit(1);
-});
+if (process.argv[1] && pathToFileURL(path.resolve(process.argv[1])).href === import.meta.url) {
+  main()
+    .then((code) => { process.exitCode = code; })
+    .catch((error) => {
+      console.error(error);
+      process.exitCode = 1;
+    });
+}

@@ -22,6 +22,7 @@ PY_COMPILE_TARGETS = (
     "scripts/automation_failure_qa.py",
     "scripts/automation_worktree_guard.py",
     "scripts/run_daily_collection_job.py",
+    "scripts/full_account_collection_contract.py",
     "scripts/douyin_chrome_runtime.py",
     "scripts/start_douyin_cdp_chrome.py",
     "scripts/check_douyin_session.py",
@@ -191,16 +192,22 @@ def check_douyin_runtime_gate() -> dict[str, Any]:
         "scripts/test_start_douyin_cdp_chrome.py",
         "scripts/test_douyin_chrome_runtime.py",
         "scripts/test_ar031_douyin_preflight_gate.py",
+        "scripts/test_ar026_account_limit_gate.py",
     ], env=env)
     if python_result["returncode"] != 0:
-        return {"ok": False, "name": "Douyin canonical profile/session gate", **python_result}
+        return {"ok": False, "name": "Douyin canonical profile/session/full-account gate", **python_result}
     node_result = run(["node", "scripts/test_douyin_login_dom_probe.mjs"])
+    source_probe_result = run(["node", "scripts/test_douyin_cdp_source_watch_probe.mjs"])
     combined = {
-        **node_result,
-        "stdout": (python_result["stdout"] + "\n" + node_result["stdout"])[-4000:],
-        "stderr": (python_result["stderr"] + "\n" + node_result["stderr"])[-4000:],
+        **source_probe_result,
+        "stdout": (python_result["stdout"] + "\n" + node_result["stdout"] + "\n" + source_probe_result["stdout"])[-4000:],
+        "stderr": (python_result["stderr"] + "\n" + node_result["stderr"] + "\n" + source_probe_result["stderr"])[-4000:],
     }
-    return {"ok": node_result["returncode"] == 0, "name": "Douyin canonical profile/session gate", **combined}
+    return {
+        "ok": node_result["returncode"] == 0 and source_probe_result["returncode"] == 0,
+        "name": "Douyin canonical profile/session/full-account gate",
+        **combined,
+    }
 
 
 def check_feishu_receiver_node_tests() -> dict[str, Any]:
