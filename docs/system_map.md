@@ -58,7 +58,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 对标视频进入候选池后，只借鉴话题、结构、专业证明和商业入口。用户可见标题要转成自己的 AI导演/业务流程语言，不出现其他博主名字，也不写“这条视频/这条内容”。
 
-选题编辑判断已抽成 Skill：`ai-account-editorial-director`。生产只读取全局私有版；仓库公开脱敏版路径是 `skills/ai-account-editorial-director`，只用于 Git、迁移、同步和显式测试。代码负责采集、标准化、基础拆解、去重、同主题合并和明显噪音过滤；`scripts/editorial_skill_runner.py` 默认读取本机私有 Skill 文本并调用本机 Codex CLI 做判断，全局私有版不存在时直接失败，不自动回退仓库脱敏版。判断流程是 `Gate -> Workflow Experiment Card -> Title Packaging`：先判断是否能接到我的真实/相邻业务现场和证据是否足够，再生成短 `选题命题`、`我要做的实验`、工作流痛点、旧流程痛点、AI介入点、验证方式和可沉淀资产，最后只有 `title_permission=可发布标题` 时才写入可发布标题和标题备选。系统不再让代码先固定挑出 10 条，也不再自动补强推；候选数量自然浮动。详细说明见 `docs/ai_account_editorial_director_skill.md`。
+选题编辑判断已抽成 Skill：`ai-account-editorial-director`。真实执行面是当前 Codex 任务，不再从 Python 内启动第二个 Codex CLI/API/子代理。`scripts/topic_editorial_state_machine.py` 只负责最小输入、状态、hash、严格校验和 artifact；当前任务依次完成 `Editorial Decision -> Global Daily Ranking -> Operational Field Mapping`。Stage 1 负责选择、角度、标题和公开主编摘要；全日排序在 1:1 hash/bijection 门禁下锁定全日级别和操作；Stage 2 只映射实验、验证、资产等 operational fields，改写 owner fields 会 fail + guard_blocked。仓库 Skill mirror 用于 Git 同步，生产全局 Skill 需在发布阶段单独 hash sync/read-back。详细协议见 `docs/spikes/ar020d_current_task_state_machine.md`。
 
 当前 `04` 的可读性要求是：`选题命题` 像工作台短条目，不把完整拆解塞进第一列；`验证方式` 是 1-2 步最小实验动作，不是原则描述；`可沉淀资产` 是具体资产名，不是通用资产包。详见 `docs/spikes/editorial_workflow_experiment_polish.md`。
 
@@ -69,7 +69,7 @@ AIHOT / 公众号全文 / 抖音主页标题文案 / URL投喂
 → ContentItem
 → 03 内容收件箱
 → content_sampler.py 初筛和去重
-→ editorial_skill_runner.py 调用 ai-account-editorial-director 做主编筛选
+→ topic_editorial_state_machine.py 准备输入并由当前 Codex 任务执行三阶段主编判断
 → 04 分析与选题 / 今日挑选卡片
 ```
 
