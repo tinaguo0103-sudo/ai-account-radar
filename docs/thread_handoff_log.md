@@ -3149,3 +3149,13 @@
 - Stop/rollback：任一 Git、patch、01 identity/value/hash、03 count/hash、session 或 automation 配置/read-back mismatch 均保持 PAUSED；normal revert RC2并仅恢复精确8条备份。禁止 reset/force、历史03改写、Chrome/profile、Skill/SCF及其他 automation 字段变更。
 - 明确边界：发布窗口不采集、不回放旧 run、不发卡/callback、不触发 06、不清理历史或测试记录。真实 33-account 完成只在下一正常 scheduled-day chain 验收。
 - PM 动作：已派固定生产线程执行；PM 不轮询，等待主动回传。
+
+### 2026-07-15 AR-026 RC2 已发布并完成生产 01 精确迁移
+
+- 结论：`Released / 01 Migration Passed / Automations Active / Awaiting Scheduled-Day Smoke`。备份根=`/private/tmp/ar026_rc2_production_release_20260715_220519`。
+- Git：production `178f047 -> 5e733cd1a8120185b6c2d35b3f277a2599155fea` fast-forward/push，local=remote、clean；dynamic release gate与outer/daily/Node正cap probes全过，side_effects_started=false。
+- 01：fresh before=51、target=8、untouched=43；仅 exact 8 IDs 写为 `quarantined_source/停用/否/low`，8/8 read-back通过，untouched-43 hash保持 `c69642b61ee02133d8601ac1215fce7cd6d2baff83ed93acea7486d9ed955625`。
+- 03/登录：03前后均670 records、25 fields、hash=`73a9bc1f8ea4426d703f870d38f43470a8496460aee6fcd5f8f6f870ff72c933`；canonical PID 33282、9333、identity/session/logged_in verified，Chrome/profile未修改。
+- Automation：三任务先status-only PAUSED，全部gate通过后仅恢复ACTIVE；schedule/prompt/target/cwd与发布前一致，无即时run/memory。
+- 边界：无采集、卡片/callback、06、schema、Skill、SCF、Chrome/profile或无关改动；授权副作用仅8条生产01更新。
+- PM后续：已并行派发布后即时只读QA和隔离main->feature正常回灌；均不运行采集。真实33-account成功仅由下一正常08:00/09:15/10:00 scheduled-day chain验收；PM不轮询。
