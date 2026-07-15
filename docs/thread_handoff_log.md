@@ -3073,3 +3073,10 @@
 - 执行硬门：fresh backup；重读 PID/profile；禁止 broad kill；dynamic production gate；不从已知 logged_out 的旧 RC profile 迁移凭证；仅复制已停止且无 lock 的旧 production profile或 fresh login；只接受 `ok=true/status=session_verified/login_state=logged_in`；失败保持任务 PAUSED并按组件回滚。
 - 禁止：本次不运行 automation/采集，不写 Feishu，不发卡/callback，不触发 06，不改 Skill/SCF，不部署 AR-026 或生产 01/03。
 - PM 动作：已派固定生产线程 `019f2bc4-079e-7530-903e-484707590482` 执行。PM 不轮询，等待主动回传；明日 scheduled-day smoke 仍为独立验收。
+
+### 2026-07-15 AR-031 代码与 canonical profile 已发布，隐藏 iframe 假阳性阻断恢复
+
+- 成功部分：production main local/remote 已 fast-forward 到 `9893c6c`，dynamic production gate 通过；旧错误 PID 17170 已正常停止。canonical profile 已从停止且无 open-file lock 的旧 production profile 完整迁移，新 PID 33282 固定 9333，marker/profile hash/lsof 双证据均 `profile_identity_verified`。
+- Stop condition：登录探针返回 `verification_required`，三 automation 按计划保持 PAUSED。进一步 sanitized DOM 可见性诊断证明 verify iframe 为 `display:none`、0x0、viewport=false；页面同时有两个可见 `/user/self` 账号入口且无可见登录按钮/弹窗，确认是隐藏 iframe 假阳性，不是 profile 身份或迁移失败。
+- 边界：无 Feishu、卡片/callback、采集、06、Skill/SCF；发布窗口业务 artifact 为空。备份根：`/private/tmp/ar031_production_release_20260715_202121`。
+- PM 动作：已派开发一次完成可见性判定修复、真实当前 9333 logged_in 只读验证和 production-base follow-up RC。只对 visible/effective verification/login markers判定；不重做 profile 迁移、不停止当前正确 canonical Chrome、不恢复任务，待 RC QA与新生产授权。
