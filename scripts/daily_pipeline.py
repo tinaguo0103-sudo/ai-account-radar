@@ -73,6 +73,18 @@ def run_optional_step(name: str, command: list[str], env: dict[str, str] | None 
     return result
 
 
+def douyin_probe_allowed(chrome_step: dict[str, Any], preflight_step: dict[str, Any] | None) -> bool:
+    return chrome_step.get("returncode") == 0 and preflight_step is not None and preflight_step.get("returncode") == 0
+
+
+def collection_failure_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [step for step in steps if step.get("returncode") != 0 and not step.get("deferred")]
+
+
+def deferred_exit_code(steps: list[dict[str, Any]]) -> int:
+    return 1 if collection_failure_steps(steps) else 0
+
+
 def require_feishu_env() -> None:
     missing = [name for name in ["FEISHU_APP_ID", "FEISHU_APP_SECRET", "FEISHU_BASE_APP_TOKEN"] if not os.getenv(name)]
     if missing:
@@ -203,6 +215,11 @@ def write_douyin_cache_manifest(status: str, run_id: str, steps: list[dict[str, 
 def cdp_port(cdp_url: str) -> int:
     parsed = urlparse(cdp_url)
     return parsed.port or 9333
+
+
+def canonical_douyin_cdp(cdp_url: str) -> bool:
+    parsed = urlparse(cdp_url)
+    return parsed.scheme == "http" and parsed.hostname == "127.0.0.1" and cdp_port(cdp_url) == 9333
 
 
 def douyin_verification_rows(result_path: Path) -> list[dict[str, Any]]:
@@ -355,8 +372,47 @@ def main() -> int:
 
     fetch_douyin = not args.no_fetch_douyin_cdp_source_watch or args.fetch_douyin_cdp_source_watch
     if fetch_douyin:
-        reuse_douyin_cache = not args.no_reuse_source_cache and not args.force_fetch_douyin and douyin_cache_ready()
-        if reuse_douyin_cache:
+        if not canonical_douyin_cdp(args.douyin_cdp):
+            steps.append({
+                "name": "verify canonical Douyin CDP endpoint",
+                "command": ["canonical-cdp-check", args.douyin_cdp],
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+                "returncode": 3,
+                "stdout": "",
+                "stderr": "non_canonical_douyin_cdp: expected http://127.0.0.1:9333",
+            })
+            write_douyin_cache_manifest("preflight_failed", run_id, steps, note="Non-canonical Douyin CDP endpoint was rejected.")
+            chrome_step = steps[-1]
+            preflight_step = None
+        else:
+            chrome_cmd = [
+                py,
+                str(ROOT / "scripts" / "start_douyin_cdp_chrome.py"),
+                "--port",
+                str(cdp_port(args.douyin_cdp)),
+            ]
+            chrome_step = run_step("start/verify canonical Douyin Chrome CDP", chrome_cmd, env=step_env)
+            steps.append(chrome_step)
+            preflight_step: dict[str, Any] | None = None
+            if chrome_step["returncode"] == 0:
+                preflight_step = run_step("verify canonical Douyin profile login session", [
+                    py,
+                    str(ROOT / "scripts" / "check_douyin_session.py"),
+                    "--port",
+                    str(cdp_port(args.douyin_cdp)),
+                ], env=step_env)
+                steps.append(preflight_step)
+
+        douyin_gate_ok = douyin_probe_allowed(chrome_step, preflight_step)
+        reuse_douyin_cache = douyin_gate_ok and not args.no_reuse_source_cache and not args.force_fetch_douyin and douyin_cache_ready()
+        if not douyin_gate_ok:
+            write_douyin_cache_manifest(
+                "preflight_failed",
+                run_id,
+                steps,
+                note="Canonical Douyin profile identity/login preflight failed; Douyin probe and cache reuse were blocked.",
+            )
+        elif reuse_douyin_cache:
             cached_paths = cached_douyin_manual_paths()
             manual_inputs.extend(cached_paths)
             cache_step = {
@@ -371,14 +427,6 @@ def main() -> int:
             print(cache_step["stdout"])
             steps.append(cache_step)
         else:
-            chrome_cmd = [
-                py,
-                str(ROOT / "scripts" / "start_douyin_cdp_chrome.py"),
-                "--port",
-                str(cdp_port(args.douyin_cdp)),
-            ]
-            chrome_step = run_optional_step("start/reuse background Douyin Chrome CDP", chrome_cmd, env=step_env)
-            steps.append(chrome_step)
             douyin_cmd = [
                 "node",
                 str(ROOT / "scripts" / "douyin_cdp_source_watch_probe.mjs"),
@@ -458,9 +506,11 @@ def main() -> int:
     today10_path = output_dir / "today_10_topics.csv"
     generated_count = today10_count(today10_path)
     if generated_count == 0:
+        failures = collection_failure_steps(steps)
         log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
         print(json.dumps({
-            "ok": True,
+            "ok": not failures,
+            "status": "failed_or_partial" if failures else "completed_empty",
             "mode": "write-feishu" if args.write_feishu else "dry-run",
             "today_10_topics": 0,
             "wrote_feishu": False,
@@ -468,7 +518,7 @@ def main() -> int:
             "run_output_dir": str(output_dir),
             "note": f"No daily topic candidates generated. Check URL parsing failures in {output_dir / 'content_items.csv'} and {output_dir / 'content_breakdowns.csv'}.",
         }, ensure_ascii=False, indent=2))
-        return 0
+        return 1 if failures else 0
 
     if args.defer_editorial:
         defer_step = {
@@ -484,10 +534,15 @@ def main() -> int:
             "deferred": True,
         }
         steps.append(defer_step)
+        source_failures = collection_failure_steps(steps)
+        collection_ok = not source_failures
         log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
         print(json.dumps({
             "ok": False,
             "deferred_editorial": True,
+            "collection_ok": collection_ok,
+            "collection_status": "deferred_editorial" if collection_ok else "failed_or_partial",
+            "source_failure_steps": [str(step.get("name") or "") for step in source_failures],
             "mode": "write-feishu" if args.write_feishu else "dry-run",
             "run_id": run_id,
             "run_output_dir": str(output_dir),
@@ -495,7 +550,7 @@ def main() -> int:
             "log": str(log_path),
             "note": "Outer Codex automation must apply ai-account-editorial-director and finalize the run before 10:00 card sending.",
         }, ensure_ascii=False, indent=2))
-        return 0
+        return deferred_exit_code(steps)
 
     editorial_report_path = output_dir / "editorial_skill_report.json"
     editorial_cmd = [

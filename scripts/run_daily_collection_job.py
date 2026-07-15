@@ -62,8 +62,10 @@ def run_step(name: str, command: list[str]) -> dict[str, Any]:
 def write_job_log(steps: list[dict[str, Any]]) -> Path:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     path = LOG_DIR / f"scheduled_daily_collection_{datetime.now().strftime('%Y-%m-%d')}.json"
+    ok = all(step["returncode"] == 0 for step in steps)
     payload = {
-        "ok": all(step["returncode"] == 0 for step in steps),
+        "ok": ok,
+        "status": "completed" if ok else "failed_or_partial",
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "steps": steps,
     }

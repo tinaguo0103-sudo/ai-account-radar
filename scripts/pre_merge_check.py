@@ -22,6 +22,9 @@ PY_COMPILE_TARGETS = (
     "scripts/automation_failure_qa.py",
     "scripts/automation_worktree_guard.py",
     "scripts/run_daily_collection_job.py",
+    "scripts/douyin_chrome_runtime.py",
+    "scripts/start_douyin_cdp_chrome.py",
+    "scripts/check_douyin_session.py",
     "scripts/run_topic_card_if_fresh.py",
     "scripts/watch_script_package_queue.py",
     "scripts/local_env.py",
@@ -176,6 +179,28 @@ def check_ar020d_semantic_owner_gate() -> dict[str, Any]:
         "name": "AR-020D semantic owner dataflow and sentinel gate",
         **result,
     }
+
+
+def check_douyin_runtime_gate() -> dict[str, Any]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "scripts")
+    python_result = run([
+        sys.executable,
+        "-m",
+        "unittest",
+        "scripts/test_start_douyin_cdp_chrome.py",
+        "scripts/test_douyin_chrome_runtime.py",
+        "scripts/test_ar031_douyin_preflight_gate.py",
+    ], env=env)
+    if python_result["returncode"] != 0:
+        return {"ok": False, "name": "Douyin canonical profile/session gate", **python_result}
+    node_result = run(["node", "scripts/test_douyin_login_dom_probe.mjs"])
+    combined = {
+        **node_result,
+        "stdout": (python_result["stdout"] + "\n" + node_result["stdout"])[-4000:],
+        "stderr": (python_result["stderr"] + "\n" + node_result["stderr"])[-4000:],
+    }
+    return {"ok": node_result["returncode"] == 0, "name": "Douyin canonical profile/session gate", **combined}
 
 
 def check_feishu_receiver_node_tests() -> dict[str, Any]:
@@ -379,6 +404,7 @@ def main() -> int:
             check_py_compile(),
             check_ar020d_semantic_owner_gate(),
             check_failure_qa_rules(),
+            check_douyin_runtime_gate(),
             check_feishu_receiver_node_tests(),
         ])
         if checks[0]["ok"] and not incompatible:
@@ -410,6 +436,7 @@ def main() -> int:
         check_py_compile(),
         check_ar020d_semantic_owner_gate(),
         check_failure_qa_rules(),
+        check_douyin_runtime_gate(),
         check_feishu_receiver_node_tests(),
         check_topic_card_guard(),
     ]
