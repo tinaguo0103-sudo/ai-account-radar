@@ -45,7 +45,7 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | AR-023 | 2026-07-06 抖音对标采集 Chrome CDP 启动失败 | P1 | Recovered / Hotfix Done / Synced to Dev / QA Passed / PM Accepted | hotfix main -> recover today -> synced dev -> QA read-only -> PM accepted | 生产 `6a4efed` 已恢复同日 run `run_20260706_085249`；dev `4f49826` 已同步；测试只读复核通过；Topic Card 未发送，06/Codex 未触发 |
 | AR-024 | 2026-07-06 抖音补采只恢复 3 条的根因与完整恢复 | P1 | Recovered / QA Passed / PM Accepted | production diagnosis -> full same-day recovery -> QA read-only -> PM accepted | 根因是 AR-023 人为 3 账号限流；已按生产默认 12 账号补采到 `run_20260706_092517`，抖音 33 条；未发卡、未触发 06 |
 | AR-025 | 生产恢复口径与验收规范 | P1 | Backlog / Needs Spec | PM spec -> user confirmation -> rules/checklist | 治理类事项；从 AR-023/024 复盘抽象恢复口径、partial recovery 标识、QA/PM 验收标准 |
-| AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | Released / 01 Migration Passed / Automations Active / Post-Release QA In Progress | dev/test -> RC -> production release | production 5e733cd 与01八条迁移已完成；即时只读回归和main->feature回灌已派发，真实采集待scheduled smoke |
+| AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | Released / 01 Migration Passed / Main Synced to Feature / Post-Release QA In Progress | dev/test -> RC -> production release | production 5e733cd 已回灌 feature e27fbed；即时只读回归仍在进行，真实采集待 scheduled smoke |
 | AR-027 | 飞书 01/03/04 标签和表格列业务清理 | P1 | Schema Audit QA Passed / Waiting PM Cleanup Decision | schema audit -> dry-run -> QA -> release cleanup | Round 2 QA 通过；cleanup matrix 可用于第一轮字段/选项清理决策，view 仍需人工确认 |
 | AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | Hotfix Done / Automations Active / Scheduled Smoke Pending | released -> 07:45 preflight -> scheduled smoke | production 178f047、canonical 9333 与 logged_in read-back 已通过；三任务已恢复，仅待次日真实链路 |
 

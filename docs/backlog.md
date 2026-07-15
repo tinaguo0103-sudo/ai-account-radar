@@ -516,7 +516,7 @@
 
 - 类型：采集覆盖 / AR-020 上游依赖
 - 优先级：P1
-- 状态：Released / 01 Migration Passed / Automations Active / Post-Release QA In Progress
+- 状态：Released / 01 Migration Passed / Main Synced to Feature / Post-Release QA In Progress
 - 来源：AR-020 需求确认。用户指出飞书 01 里即使清掉截图污染账号，仍不止 12 个对标账号；用户需要的是全量账号采集，而不是生产默认 12 个账号抽样。
 - 影响：如果上游只采 12 个账号，03 内容库天然缺失大量对标内容，AR-020 的选题转译和反向测试会建立在不完整内容库上，继续漏掉适合 Austin 账号的题。
 - 目标：从飞书 01 获取有效对标账号白名单，清掉截图污染账号后，对剩余有效账号做全量采集覆盖；当前账号量只有几十个，暂不需要分批。若未来量级明显增大或触发平台风险，再升级为分批/频控策略。每次采集必须输出账号级覆盖报告。
@@ -529,6 +529,7 @@
 - RC2 Release QA：exact target `5e733cd1a8120185b6c2d35b3f277a2599155fea` 的 16-file scope/hash/apply、三层 cap 30/30、parser/defer/quarantine 9/9、lineage 10/10、310 Python、41 AR-026/031、129 AR-020D/E、32 receiver/SCF 与全静态门均通过。生产 01 fresh GET=51（8 target+43 untouched）、03=670/no-touch、canonical 9333 logged_in 均只读成立。结论 `Ready for PM Production Authorization`；真实 31 个 Douyin 账号采集仍只在下一个 scheduled day 验收。
 - 生产授权：用户已明确回复“确认”。PM 已派固定生产线程按 audited plan 执行：三任务 status-only pause + fresh backup；production main exact `5e733cd` 发布与 dynamic/cap gate；仅迁移生产 01 精确 8 条为 quarantine 并 8/8 read-back、43 条 hash 不变；03 GET-only no-touch；canonical session read-back；三任务 status-only resume且不即时运行。任一 mismatch 保持 PAUSED 并按组件回滚；真实 33-account 业务验收仍留给下一 scheduled day。
 - 生产结果：production main 已 fast-forward/push 到 `5e733cd1a8120185b6c2d35b3f277a2599155fea`，dynamic gate 与三层 positive-cap probe 通过。生产 01 仅精确 8 IDs 写为 `quarantined_source/停用/不参与主采样/low`，8/8 read-back 通过且 untouched-43 hash 仍为 `c69642b6...625`；03 迁移前后均 670 records、25 fields、hash=`73a9bc1f...933`。canonical PID 33282 仍 identity/session/logged_in verified；三任务仅 PAUSED->ACTIVE，未即时运行。状态为已发布、等待即时只读回归与下一 scheduled-day smoke，不能宣称真实33账号业务完成。
+- Main 回灌：固定开发线程在隔离 worktree 正常 `--no-ff` merge `origin/main@5e733cd`，并合并并发 PM docs lineage，最终 feature local=remote=`e27fbedcf32b92f072e55b249780fc53ba76172f`；`origin/main` 与 PM docs 均为其祖先。16 个发布文件中 13 个 production-exact，3 个差异仅保留既有 feature current-task/editorial、automation worktree guard/failure QA 和更严格 no-side-effect tests，AR-026 已发布合同不变。343 Python、39+6 Douyin Node、32 receiver/SCF、semantic/pre-merge 均通过；production main 未改。
 
 ### AR-031 固定抖音 Chrome Profile 与登录态硬门
 

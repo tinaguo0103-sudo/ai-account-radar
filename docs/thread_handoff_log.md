@@ -3159,3 +3159,12 @@
 - Automation：三任务先status-only PAUSED，全部gate通过后仅恢复ACTIVE；schedule/prompt/target/cwd与发布前一致，无即时run/memory。
 - 边界：无采集、卡片/callback、06、schema、Skill、SCF、Chrome/profile或无关改动；授权副作用仅8条生产01更新。
 - PM后续：已并行派发布后即时只读QA和隔离main->feature正常回灌；均不运行采集。真实33-account成功仅由下一正常08:00/09:15/10:00 scheduled-day chain验收；PM不轮询。
+
+### 2026-07-15 AR-026 发布后 main 已回灌 feature
+
+- 结论：`Main Synced to Feature`。production main 仍 clean local=remote=`5e733cd1a8120185b6c2d35b3f277a2599155fea`；feature 最终 local=remote=`e27fbedcf32b92f072e55b249780fc53ba76172f`，`origin/main` 与并发 PM docs commit 均为其祖先。
+- 方法：fresh isolated worktree 中正常 `git merge --no-ff origin/main`，再正常合并并发 PM docs lineage；无 reset/rebase/force/tree replacement/整文件 ours-theirs。
+- 冲突：`run_daily_collection_job.py` 保留 production exact-zero cap、全量/force-fresh/partial，并保留 feature worktree guard/failure QA；删除 merge 重复 plan。cap tests 保留 production mutation coverage和feature更严格 no-side-effect sentinel。
+- Parity：16个 release files中13个blob与production完全一致；3个 intentional differences仅为既有feature current-task/editorial、worktree guard/failure QA和更严格测试，AR-026生产合同无回退。最终代码树与merge前最新feature byte-identical，本次只补齐main ancestry。
+- 验证：343 Python、Douyin Node 39+6、Unicode四态、receiver/SCF 32、semantic 7/7、py_compile/node/diff/pre_merge全过。
+- 边界：无Feishu、卡片/callback、采集、06、Skill/SCF、automation、Chrome/profile或production main动作。发布后只读QA仍独立待回传。
