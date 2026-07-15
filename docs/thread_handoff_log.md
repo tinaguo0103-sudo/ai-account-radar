@@ -3052,3 +3052,10 @@
 - QA 结果：56 个 malformed cases 均 exit 4、`login_preflight_failed`、无异常、无 `session_verified`；Unicode CLI、真实 L2、三段 production patch、328 Python、23 targeted、6 Douyin Node、32 receiver 均通过。唯一差异是 empty stdout 返回 `empty_dom_probe_output`，其余 malformed 返回 `malformed_dom_probe_output`。
 - PM 产品判断：用户要求的是固定 profile、明确登录态和 fail-closed，非内部错误标签完全同名。`empty_dom_probe_output` 是更具体的 typed safety failure，不降低门禁、可见性或恢复性，因此不再返修；QA 的 `Rework Required` 保留为审计事实，但 `aadfd99` 获准进入 Hotfix RC。
 - PM 动作：已派开发从 production `7c469ba` 创建隔离 RC，按三段 code-only patch 顺序应用并生成 manifest/full regression/release+rollback plan。禁止整 feature merge、生产发布、profile migration/login 或外部写入；AR-026 继续 Release Blocked。
+
+### 2026-07-15 AR-031 production-base Hotfix RC 就绪并派发布 QA
+
+- RC：branch=`release/ar020e-rc-ar031-hotfix-20260715`，commit=`9893c6c9568ff0440ea7b79b6a2c493ab9bcc1ef`，base=`7c469ba`，local/remote clean。严格 pre-merge 分支白名单沿用既有 `release/ar020e-rc*` 命名，不修改 gate。
+- 范围：三段来源 patch hash 现场一致，顺序 hunk-level apply；最终 16 files（8 runtime、4 tests、4 runtime docs），明确排除 PM docs、AR-026/full-account、旧 Top3、feature-only automation QA refactor。source probe=3、inner=12、outer=50 保持 production surrounding defaults。
+- 自验：292 Python、23 AR-031、124 AR-020D/E adjacent、7 Douyin Node、32 receiver/SCF；Unicode CLI、schema、当前 9333 mismatch、临时 Chrome verification_required、静态门和 premerge 全过。生产未修改。
+- PM 审阅修正：`RELEASE_AND_ROLLBACK_PLAN.md` 首行的建议分支名已改为 exact RC branch/commit，避免发布歧义。已派 release-level QA；全过后才申请 production Git/profile/automation 的单独授权。
