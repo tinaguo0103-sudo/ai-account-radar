@@ -3025,3 +3025,10 @@
 - QA 结论：`Rework Required`。固定 9333/canonical profile、marker+lsof 信任链、cache 前置门禁和 partial 语义大体成立；当前真实 9333 能明确返回 `profile_identity_mismatch` 并定位旧 RC profile，`/private/tmp` 非 9333 临时 Chrome 的 profile identity 也能真实通过。
 - 阻断：`douyin_login_dom_probe.mjs` 用 `import.meta.url === file://${process.argv[1]}` 判断 CLI 入口；项目路径包含中文时左侧 percent-encoded、右侧未编码，导致进程 exit 0 但 stdout 为空。Python 只能得到 `malformed_dom_probe_output / indeterminate`，真实已登录账号也无法通过采集门。
 - PM 动作：已派固定开发线程做一次集中返修，要求使用 Node 标准 URL/path API，增加含中文和空格路径的真实 spawn CLI/exit/单 JSON 回归，重跑隔离 Chrome 与当前 9333 只读反例，再提交 push。返修与独立 QA 通过前不组 production Hotfix RC，不迁移/复制/登录 canonical profile，AR-026 继续阻断。
+
+### 2026-07-15 AR-031 Unicode CLI 集中返修完成并派 QA recheck
+
+- 开发提交：`ffe93e4ff35fe4e7b95935f407ce1ba8de07c8be` 已 push。改动仅 `douyin_login_dom_probe.mjs`、`check_douyin_session.py` 及两份对应测试。
+- 修复与证据：CLI main-module 判断改为 `fileURLToPath + realpathSync + path.resolve`；中文、空格和 macOS `/var -> /private/var` symlink 的真实 spawn 均输出单一 JSON，`logged_in=0`，其余三态=4。Python 对 empty/malformed/non-object/state-exit mismatch 均 typed fail。`/private/tmp` 19434 临时 Chrome 的 identity 通过并真实返回 `verification_required`；PID 已停止。当前 9333 PID 17170 未修改，仍明确为旧 RC profile mismatch。
+- 自验：326 Python、21 AR-031 targeted、6 Douyin Node、4 状态 Unicode CLI、32 receiver adjacent 及 pycompile/node/diff/premerge 全过。production main `7c469ba` 的 hunk-level transplant check 通过，未带入 feature-only AR-026/full-account coverage 或 automation guard/QA refactor。
+- PM 动作：已派独立 QA recheck。QA 通过前状态为 `Ready for QA Recheck`，不组 Hotfix RC、不迁移/登录真实 canonical profile；AR-026 继续 Release Blocked。
