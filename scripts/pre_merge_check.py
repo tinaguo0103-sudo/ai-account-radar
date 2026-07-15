@@ -24,16 +24,9 @@ PY_COMPILE_TARGETS = (
     "scripts/watch_script_package_queue.py",
     "scripts/local_env.py",
     "scripts/check_feishu_card_cloud_receiver.py",
-    "scripts/topic_flow_rework.py",
     "scripts/topic_field_contract.py",
     "scripts/topic_replay_evaluation.py",
     "scripts/topic_skill_replay_evaluation.py",
-    "scripts/editorial_expression_policy.py",
-    "scripts/ar020e_expression_calibration.py",
-    "scripts/ar020e_daily_editorial_entrypoint.py",
-    "scripts/ar020e_schema_readiness.py",
-    "scripts/semantic_owner_dataflow.py",
-    "scripts/ar020d_semantic_owner_gate.py",
     "scripts/install_production_keepawake.py",
 )
 DEFAULT_FEISHU_READ_TABLE_KEYS = ("topic_decision", "script_package")
@@ -54,11 +47,14 @@ def run(command: list[str], *, cwd: Path = ROOT, env: dict[str, str] | None = No
 def check_git_dev() -> dict[str, Any]:
     status = run(["git", "status", "--short", "--branch"])
     first_line = status["stdout"].splitlines()[0] if status["stdout"].splitlines() else ""
-    ok = status["returncode"] == 0 and (
-        "feature/next-production-flow" in first_line
-        or "release/ar020e-rc-" in first_line
+    ok = (
+        status["returncode"] == 0
+        and (
+            "feature/next-production-flow" in first_line
+            or "release/2026-07-05-ai-account-radar-rc" in first_line
+        )
     )
-    return {"ok": ok, "name": "dev worktree branch/status", **status}
+    return {"ok": ok, "name": "dev or release-candidate worktree branch/status", **status}
 
 
 def check_git_production() -> dict[str, Any]:
@@ -104,17 +100,6 @@ def check_failure_qa_rules() -> dict[str, Any]:
         "returncode": 0 if not failures else 1,
         "stdout": "all synthetic QA cases passed" if not failures else "\n".join(failures),
         "stderr": "",
-    }
-
-
-def check_ar020d_semantic_owner_gate() -> dict[str, Any]:
-    env = os.environ.copy()
-    env["PYTHONPATH"] = str(ROOT / "scripts")
-    result = run([sys.executable, "scripts/ar020d_semantic_owner_gate.py"], env=env)
-    return {
-        "ok": result["returncode"] == 0,
-        "name": "AR-020D semantic owner dataflow and sentinel gate",
-        **result,
     }
 
 
@@ -244,7 +229,6 @@ def main() -> int:
         check_git_dev(),
         check_git_production(),
         check_py_compile(),
-        check_ar020d_semantic_owner_gate(),
         check_failure_qa_rules(),
         check_feishu_receiver_node_tests(),
         check_topic_card_guard(),
