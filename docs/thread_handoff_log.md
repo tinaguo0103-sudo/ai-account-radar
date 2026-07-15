@@ -3039,3 +3039,10 @@
 - 剩余代码 blocker：Python parser 只校验顶层 dict，合法 JSON 中 `markers` 为字符串时会在 `.items()` 抛 `AttributeError`。这违反 malformed payload 必须 typed fail 的合同；需对 state/markers/url/title/error 做最小 schema validation，并覆盖 wrong-type/unknown-state/state-exit mismatch。
 - 范围判断：QA 指出 `d9aab42..ffe93e4` 因中间 PM docs commit 实际为 7 files。PM 不要求 rewrite/rebase/force-push；后续用 code-only patch、production hunk apply 和 RC manifest 排除 PM docs，避免把历史美化当产品修复。
 - PM 动作：已派开发做最后一次集中返修与完整自验。通过前不组 Hotfix RC，不迁移/登录 profile，AR-026 继续 Release Blocked。
+
+### 2026-07-15 AR-031 DOM payload 最终返修并派最终 QA
+
+- 开发提交：`aadfd99ad47c2e94d5e9f1414f0e0691ea84e79f`，仅修改 `check_douyin_session.py` 与对应 Python tests；未改写历史。
+- 合同：state 必须为允许枚举字符串，markers 必须 object 且值为 strict boolean，url/title/error 仅允许 string/null；所有 wrong-type、unknown-state、empty/invalid/non-object 均返回 `malformed_dom_probe_output + login_preflight_failed`，state/exit mismatch 继续 fail closed，无 AttributeError。
+- 开发证据：328 Python、23 AR-031 targeted、6 Douyin Node、4 状态 Unicode CLI、32 receiver adjacent 及静态门全过；临时 19435 Chrome 返回真实 `verification_required` 后精确停止，当前 9333 仍只读定位旧 RC profile mismatch。`/private/tmp/ar031_dom_schema_rework_20260715/ar031_release_manifest.json` 记录三段 code-only patches，可从 production `7c469ba` 顺序应用并排除 PM docs/AR-026/旧 Top3/automation QA refactor。
+- PM 动作：已派最终独立 QA recheck；不轮询。全过才进入 `Ready for Hotfix RC`，真实 canonical profile migration/login 仍需后续生产授权。
