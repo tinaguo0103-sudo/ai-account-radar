@@ -653,117 +653,7 @@ class CardPaginationTests(unittest.TestCase):
         decisions = card.decisions_from_form({card.ENTER_SCRIPT_PACKAGE_FORM_KEY: ["rec-1"]}, ["rec-1", "rec-2"])
         self.assertEqual(set(decisions), {"rec-1"})
         self.assertEqual(decisions["rec-1"]["status"], card.SCRIPT_PACKAGE_READY_STATUS)
-        no_selection = card.decisions_from_form({}, ["rec-1", "rec-2"], force_no_selection=True)
-        self.assertEqual(set(no_selection), {"rec-1", "rec-2"})
-        self.assertTrue(all(item["status"] == card.PAGE_NO_SELECTION_STATUS for item in no_selection.values()))
-
-    def callback_records(self) -> list[dict]:
-        records = self.records(8)
-        for record in records:
-            record["fields"]["运行批次"] = "run-page"
-        records[7]["fields"].update({"推荐动作": "补证据", "title_permission": "内部测试标题", "是否建议进入制作": "否"})
-        return records
-
-    @staticmethod
-    def callback_value(action: str, ids: list[str]) -> dict:
-        return {
-            "action": action,
-            "run_id": "run-page",
-            "candidate_ids": ids,
-            "candidate_snapshots": {record_id: {"run_id": "run-page"} for record_id in ids},
-        }
-
-    def test_page_no_selection_updates_only_explicit_page_ids(self) -> None:
-        records = self.callback_records()
-        writes: list[str] = []
-
-        def fake_request(method: str, path: str, **kwargs):
-            record_id = path.rsplit("/", 1)[-1]
-            writes.append(record_id)
-            next(record for record in records if record["record_id"] == record_id)["fields"].update(kwargs["body"]["fields"])
-            return {"ok": True}
-
-        receipts: set[str] = set()
-        page1 = [f"rec-{index}" for index in range(5)]
-        with mock.patch.object(card, "all_records", return_value=records), \
-             mock.patch.object(card.feishu, "request_json", side_effect=fake_request), \
-             mock.patch.object(card, "remember_receipt") as remember:
-            result = card.process_card_submission(
-                "token", "app", "table", self.callback_value(card.SUBMIT_NO_SELECTION_ACTION, page1), {},
-                write=True, receipts=receipts,
-            )
-        self.assertTrue(result["ok"])
-        self.assertEqual(result["intended_count"], 5)
-        self.assertEqual(result["updated_count"], 5)
-        self.assertEqual(writes, page1)
-        self.assertTrue(all(records[index]["fields"]["状态"] == "不做" for index in range(5)))
-        self.assertTrue(all(records[index]["fields"]["状态"] == "待判断" for index in (5, 6, 7)))
-        remember.assert_called_once()
-
-    def test_normal_submit_updates_only_checked_id(self) -> None:
-        records = self.callback_records()
-        writes: list[str] = []
-        with mock.patch.object(card, "all_records", return_value=records), \
-             mock.patch.object(card.feishu, "request_json", side_effect=lambda method, path, **kwargs: writes.append(path.rsplit("/", 1)[-1]) or {}):
-            result = card.process_card_submission(
-                "token", "app", "table", self.callback_value(card.SUBMIT_SELECTION_ACTION, ["rec-0", "rec-1"]),
-                {card.ENTER_SCRIPT_PACKAGE_FORM_KEY: ["rec-1"]}, write=True,
-            )
-        self.assertTrue(result["ok"])
-        self.assertEqual(writes, ["rec-1"])
-        self.assertEqual(result["candidate_update_count"], 1)
-
-    def test_page_no_selection_empty_or_partial_preflight_writes_nothing_and_can_retry(self) -> None:
-        records = self.callback_records()
-        receipts: set[str] = set()
-        writes: list[str] = []
-        empty = card.process_card_submission(
-            "token", "app", "table", self.callback_value(card.SUBMIT_NO_SELECTION_ACTION, []), {},
-            write=True, receipts=receipts,
-        )
-        self.assertFalse(empty["ok"])
-        self.assertEqual(empty["updated_count"], 0)
-        self.assertFalse(receipts)
-
-        ids = ["rec-0", "rec-1"]
-        value = self.callback_value(card.SUBMIT_NO_SELECTION_ACTION, ids)
-        with mock.patch.object(card, "all_records", return_value=records[:1]), \
-             mock.patch.object(card.feishu, "request_json", side_effect=lambda *args, **kwargs: writes.append("unexpected")), \
-             mock.patch.object(card, "remember_receipt") as remember:
-            failed = card.process_card_submission("token", "app", "table", value, {}, write=True, receipts=receipts)
-            self.assertFalse(failed["ok"])
-            self.assertEqual(failed["reason"], "page_no_selection_preflight_failed")
-            self.assertEqual(writes, [])
-            self.assertFalse(receipts)
-            remember.assert_not_called()
-
-        with mock.patch.object(card, "all_records", return_value=records), \
-             mock.patch.object(card.feishu, "request_json", side_effect=lambda method, path, **kwargs: writes.append(path.rsplit("/", 1)[-1]) or {}), \
-             mock.patch.object(card, "remember_receipt") as remember:
-            retried = card.process_card_submission("token", "app", "table", value, {}, write=True, receipts=receipts)
-            duplicate = card.process_card_submission("token", "app", "table", value, {}, write=True, receipts=receipts)
-        self.assertTrue(retried["ok"])
-        self.assertEqual(writes, ids)
-        self.assertTrue(duplicate["duplicate"])
-        self.assertEqual(duplicate["updated_count"], 0)
-        remember.assert_called_once()
-
-    def test_page_no_selection_run_mismatch_has_zero_writes_and_no_receipt(self) -> None:
-        records = self.callback_records()
-        records[1]["fields"]["运行批次"] = "other-run"
-        writes: list[str] = []
-        receipts: set[str] = set()
-        with mock.patch.object(card, "all_records", return_value=records), \
-             mock.patch.object(card.feishu, "request_json", side_effect=lambda *args, **kwargs: writes.append("unexpected")), \
-             mock.patch.object(card, "remember_receipt") as remember:
-            result = card.process_card_submission(
-                "token", "app", "table", self.callback_value(card.SUBMIT_NO_SELECTION_ACTION, ["rec-0", "rec-1"]), {},
-                write=True, receipts=receipts,
-            )
-        self.assertFalse(result["ok"])
-        self.assertEqual(writes, [])
-        self.assertFalse(receipts)
-        remember.assert_not_called()
+        self.assertEqual(card.decisions_from_form({}, ["rec-1"], force_no_selection=True), {})
 
     def test_normal_submit_callback_has_no_implicit_unselected_status(self) -> None:
         payload = card.build_card(self.records(2), "run")
@@ -789,7 +679,6 @@ class CardPaginationTests(unittest.TestCase):
         self.assertIn("Austin 角度：自然公开判断", serialized)
         self.assertIn("方向分类：内部分类", serialized)
         self.assertIn("本页都不选", serialized)
-        self.assertIn("只把本页可直接生成的候选标记为不做", serialized)
         self.assertNotIn("本批都不选", serialized)
         self.assertNotIn("未识别日期", serialized)
 

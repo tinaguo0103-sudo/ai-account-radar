@@ -57,7 +57,6 @@ CARD_EXPIRE_DAYS = 5
 DEFAULT_STATUS_FILTER = {"待判断", ""}
 ENTER_SCRIPT_PACKAGE_FORM_KEY = "script_package_records"
 SCRIPT_PACKAGE_READY_STATUS = "生成脚本包"
-PAGE_NO_SELECTION_STATUS = "不做"
 SUPPLEMENT_ACTIONS = {"补证据", "存素材", "观察", "暂存观察", "不做"}
 SUBMIT_SELECTION_ACTION = "submit_topic_decisions"
 SUBMIT_NO_SELECTION_ACTION = "submit_no_selection"
@@ -581,10 +580,6 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
         select_component("positive_reason_tags", "推进原因标签", tag_options(POSITIVE_REASON_OPTIONS)),
         text_input_component("manual_reason", "手工原因：标签不够用时，写一句真实判断"),
         {
-            "tag": "markdown",
-            "content": "“本页都不选”只把本页可直接生成的候选标记为不做；补证据/观察项和其他页面保持原状态。",
-        },
-        {
             "tag": "column_set",
             "columns": [
                 {
@@ -629,6 +624,7 @@ def build_card(records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
                                         "action": SUBMIT_NO_SELECTION_ACTION,
                                         **card_meta,
                                         "candidate_snapshots": candidate_snapshots,
+                                        "unselected_status": "不做",
                                     },
                                 }
                             ],
@@ -914,32 +910,12 @@ def decisions_from_form(
     force_no_selection: bool = False,
 ) -> dict[str, dict[str, Any]]:
     decisions: dict[str, dict[str, Any]] = {}
-    explicit_candidate_ids = coerce_list(candidate_ids)
-    if len(explicit_candidate_ids) != len(set(explicit_candidate_ids)):
-        raise ValueError("candidate_ids must be unique")
     positive_tags = coerce_list(form_value.get("positive_reason_tags"))
     manual_reason = compact(form_value.get("manual_reason"), 240)
     if force_no_selection:
-        if not explicit_candidate_ids:
-            raise ValueError("page no-selection requires explicit candidate_ids")
-        return {
-            record_id: {
-                "status": PAGE_NO_SELECTION_STATUS,
-                "tags": [],
-                "manual_reason": "",
-                "page_no_selection": True,
-            }
-            for record_id in explicit_candidate_ids
-        }
+        return {}
 
-    selected_values = coerce_list(form_value.get(ENTER_SCRIPT_PACKAGE_FORM_KEY))
-    if len(selected_values) != len(set(selected_values)):
-        raise ValueError("selected candidate IDs must be unique")
-    selected_record_ids = set(selected_values)
-    if candidate_ids is not None:
-        unknown = sorted(selected_record_ids - set(explicit_candidate_ids))
-        if unknown:
-            raise ValueError(f"selected candidate IDs are outside this page: {unknown}")
+    selected_record_ids = set(coerce_list(form_value.get(ENTER_SCRIPT_PACKAGE_FORM_KEY)))
     for record_id in selected_record_ids:
         decisions[record_id] = {"status": SCRIPT_PACKAGE_READY_STATUS, "tags": positive_tags, "manual_reason": manual_reason}
 
@@ -958,22 +934,7 @@ def apply_form_value(
     write: bool = False,
     force_no_selection: bool = False,
 ) -> dict[str, Any]:
-    intended_ids = coerce_list(candidate_ids)
-    try:
-        decisions = decisions_from_form(form_value, candidate_ids, force_no_selection=force_no_selection)
-    except ValueError as exc:
-        return {
-            "ok": False,
-            "mode": "write" if write else "dry-run",
-            "run_id": run_id,
-            "reason": "invalid_candidate_ids",
-            "error": str(exc),
-            "intended_count": len(intended_ids),
-            "updated_count": 0,
-            "candidate_update_count": 0,
-            "updates": [],
-            "skipped": [],
-        }
+    decisions = decisions_from_form(form_value, candidate_ids, force_no_selection=force_no_selection)
     records = {record.get("record_id"): record for record in all_records(token, app_token, table_id)}
     updates: list[dict[str, Any]] = []
     skipped: list[dict[str, Any]] = []
@@ -983,44 +944,24 @@ def apply_form_value(
             skipped.append({"record_id": record_id, "reason": "record_not_found"})
             continue
         fields = record.get("fields", {})
-        actual_run_id = normalize(fields.get("运行批次"))
-        snapshot = (candidate_snapshots or {}).get(record_id, {})
-        snapshot_run_id = str(snapshot.get("run_id") or "") if isinstance(snapshot, dict) else ""
-        if force_no_selection and (not run_id or actual_run_id != run_id or snapshot_run_id != run_id):
-            skipped.append({"record_id": record_id, "title": normalize(fields.get("选题标题")), "reason": "run_id_mismatch"})
-            continue
-        if run_id and actual_run_id != run_id:
-            if snapshot_run_id != actual_run_id:
+        if run_id and normalize(fields.get("运行批次")) != run_id:
+            snapshot = (candidate_snapshots or {}).get(record_id, {})
+            snapshot_run_id = str(snapshot.get("run_id") or "") if isinstance(snapshot, dict) else ""
+            if snapshot_run_id != normalize(fields.get("运行批次")):
                 skipped.append({"record_id": record_id, "title": normalize(fields.get("选题标题")), "reason": "run_id_mismatch"})
                 continue
-        if decision.get("page_no_selection"):
-            update_fields = {"状态": PAGE_NO_SELECTION_STATUS}
-        else:
-            update_fields = {
-                "状态": decision["status"],
-                "学习状态": "待学习",
-                "选择原因标签": selection_reason_value(decision["tags"], fields.get("选择原因标签")),
-                "人工一句话判断": decision.get("manual_reason") or "",
-            }
+        update_fields: dict[str, Any] = {
+            "状态": decision["status"],
+            "学习状态": "待学习",
+            "选择原因标签": selection_reason_value(decision["tags"], fields.get("选择原因标签")),
+            "人工一句话判断": decision.get("manual_reason") or "",
+        }
         updates.append({
             "record_id": record_id,
             "title": normalize(fields.get("选题标题")),
             "fields": update_fields,
         })
 
-    intended_count = len(decisions)
-    if force_no_selection and (skipped or intended_count != len(intended_ids) or len(updates) != intended_count):
-        return {
-            "ok": False,
-            "mode": "write" if write else "dry-run",
-            "run_id": run_id,
-            "reason": "page_no_selection_preflight_failed",
-            "intended_count": len(intended_ids),
-            "updated_count": 0,
-            "candidate_update_count": 0,
-            "updates": [],
-            "skipped": skipped,
-        }
     if write:
         for update in updates:
             feishu.request_json(
@@ -1034,7 +975,6 @@ def apply_form_value(
         "ok": True,
         "mode": "write" if write else "dry-run",
         "run_id": run_id,
-        "intended_count": intended_count,
         "updated_count": len(updates) if write else 0,
         "candidate_update_count": len(updates),
         "updates": updates,
@@ -1080,12 +1020,10 @@ def process_card_submission(
                     "duplicate": True,
                     "mode": "write" if write else "dry-run",
                     "run_id": run_id,
-                    "intended_count": len(candidate_ids),
                     "updated_count": 0,
                     "candidate_update_count": 0,
                     "updates": [],
                     "skipped": [],
-                    "receipt_recorded": False,
                 }
 
     summary = apply_form_value(
@@ -1102,17 +1040,7 @@ def process_card_submission(
     summary["action"] = action_name
     summary["duplicate"] = False
 
-    intended_count = len(candidate_ids) if action_name == SUBMIT_NO_SELECTION_ACTION else int(summary.get("candidate_update_count", 0))
-    receipt_success = (
-        write
-        and summary.get("ok") is True
-        and int(summary.get("updated_count", 0)) == intended_count
-        and int(summary.get("candidate_update_count", 0)) == intended_count
-        and intended_count > 0
-        and not summary.get("skipped")
-    )
-    summary["receipt_recorded"] = receipt_success
-    if receipts is not None and receipt_success:
+    if receipts is not None:
         lock = receipt_lock or threading.Lock()
         with lock:
             receipts.add(receipt_key)
