@@ -3046,3 +3046,9 @@
 - 合同：state 必须为允许枚举字符串，markers 必须 object 且值为 strict boolean，url/title/error 仅允许 string/null；所有 wrong-type、unknown-state、empty/invalid/non-object 均返回 `malformed_dom_probe_output + login_preflight_failed`，state/exit mismatch 继续 fail closed，无 AttributeError。
 - 开发证据：328 Python、23 AR-031 targeted、6 Douyin Node、4 状态 Unicode CLI、32 receiver adjacent 及静态门全过；临时 19435 Chrome 返回真实 `verification_required` 后精确停止，当前 9333 仍只读定位旧 RC profile mismatch。`/private/tmp/ar031_dom_schema_rework_20260715/ar031_release_manifest.json` 记录三段 code-only patches，可从 production `7c469ba` 顺序应用并排除 PM docs/AR-026/旧 Top3/automation QA refactor。
 - PM 动作：已派最终独立 QA recheck；不轮询。全过才进入 `Ready for Hotfix RC`，真实 canonical profile migration/login 仍需后续生产授权。
+
+### 2026-07-15 AR-031 最终 QA 分类差异由 PM 判定为非阻断
+
+- QA 结果：56 个 malformed cases 均 exit 4、`login_preflight_failed`、无异常、无 `session_verified`；Unicode CLI、真实 L2、三段 production patch、328 Python、23 targeted、6 Douyin Node、32 receiver 均通过。唯一差异是 empty stdout 返回 `empty_dom_probe_output`，其余 malformed 返回 `malformed_dom_probe_output`。
+- PM 产品判断：用户要求的是固定 profile、明确登录态和 fail-closed，非内部错误标签完全同名。`empty_dom_probe_output` 是更具体的 typed safety failure，不降低门禁、可见性或恢复性，因此不再返修；QA 的 `Rework Required` 保留为审计事实，但 `aadfd99` 获准进入 Hotfix RC。
+- PM 动作：已派开发从 production `7c469ba` 创建隔离 RC，按三段 code-only patch 顺序应用并生成 manifest/full regression/release+rollback plan。禁止整 feature merge、生产发布、profile migration/login 或外部写入；AR-026 继续 Release Blocked。

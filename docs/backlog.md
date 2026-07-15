@@ -529,7 +529,7 @@
 
 - 类型：采集稳定 / 生产前置门禁
 - 优先级：P1
-- 状态：Final Dev Rework Passed / Final QA Recheck / Blocks Scheduled Collection and AR-026 Release
+- 状态：PM Accepted for Hotfix RC / RC Building / Blocks Scheduled Collection and AR-026 Release
 - 来源：2026-07-15 明日采集前只读审计。用户要求抖音保持已登录，并固定使用同一个浏览器登录态，不得每次运行随机寻找浏览器。
 - 已确认根因：生产调用链固定请求 `127.0.0.1:9333`，但当前监听 PID 17170 实际绑定旧 RC worktree 的 `.local_services/douyin-chrome-profile`，不是 production profile；当前 Douyin DOM 有明确登录按钮，判定 `logged_out`。`start_douyin_cdp_chrome.py` 只检查 CDP 端口是否可用，不校验监听进程的真实 `--user-data-dir`，还会把请求 profile 误报为实际 profile；`daily_pipeline.py` 又把 Chrome start 和 Douyin probe 作为 optional step。
 - 目标：建立唯一、worktree-independent 的持久化 Douyin Chrome profile；9333 已占用时必须验证 PID/binary/port/user-data-dir 精确匹配；增加不读取认证秘密的登录态预检；profile mismatch、logged_out、verification_required 或 indeterminate 均 fail closed 并写入 scheduled/daily 日志。
@@ -542,6 +542,7 @@
 - 集中返修：开发提交 `ffe93e4ff35fe4e7b95935f407ce1ba8de07c8be`，改用 `fileURLToPath + realpathSync + path.resolve`，增加严格单 JSON/exit parser 与中文、空格、macOS symlink 真实 spawn 回归。隔离 Chrome 已返回实际 `verification_required` 而非 malformed；当前 9333 仍只读返回旧 RC profile mismatch。开发自验通过，已派独立 QA recheck；QA 通过前不组 production Hotfix RC。
 - QA recheck：Unicode CLI 与隔离 Chrome 真实执行已通过，但发现 Python 仅校验顶层 object；`markers` 为字符串等结构畸形时会在 `.items()` 抛 `AttributeError`，没有返回 typed failure。开发需补完整 payload schema 校验与对抗矩阵。QA 同时指出 `d9aab42..ffe93e4` 夹有 PM docs；PM 决定不重写历史，该项通过 code-only patch 和 RC manifest 显式排除 PM 文档，不视为产品代码 blocker。
 - 最终返修：`aadfd99ad47c2e94d5e9f1414f0e0691ea84e79f` 对 state/markers/marker value/url/title/error 做严格 schema validation，所有 malformed case 均 typed fail，不再抛异常。开发重跑真实 Unicode CLI、临时 Chrome、当前 9333 反例和完整回归，并产出三段 code-only production patch manifest；已派最终独立 QA recheck，通过后可进入窄 Hotfix RC。
+- PM 最终判断：QA 的唯一剩余异议是 empty stdout 返回更具体的 `empty_dom_probe_output`，而非统一命名为 `malformed_dom_probe_output`。该路径已 nonzero、`login_preflight_failed`、无异常且不可能 `session_verified`，满足用户目标与 fail-closed 安全边界；PM 将其列为非阻断内部分类差异，不再启动返修循环。`aadfd99` 接受进入基于 production `7c469ba` 的 code-only Hotfix RC。
 
 ### AR-027 飞书 01/03/04 标签和表格列业务清理
 
