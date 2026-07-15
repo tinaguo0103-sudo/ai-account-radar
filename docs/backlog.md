@@ -249,7 +249,7 @@
 
 - 类型：核心流程重构 / 主编 Skill 契约 / 内容质量验收
 - 优先级：P1
-- 状态：Architecture Follow-up Needed / AR-020C Review Dispatching
+- 状态：Superseded by AR-020C / AR-020D / AR-020E / Historical Evidence Retained
 - 来源：AR-020 三轮 QA 触顶后，用户指出当前开发方向偏离真实需求：用户没有要求 PM report，目标是优化选题逻辑；项目已有 `ai-account-editorial-director` 主编 Skill，选题适配度应由 Skill 及其输入/输出契约负责，而不是继续在 deterministic/replay 脚本里补一套“像主编”的规则。2026-07-06 用户确认按 `docs/spikes/ar020_editorial_architecture_review.md` 的评审方案继续。
 - 目标：让 03 原始内容进入候选池后，由真实 `ai-account-editorial-director` 主编判断 Austin-fit、来源转译、推荐动作和 04/Topic Card/06 会消费的主字段；确定性代码只负责来源治理、候选池、事实字段、fallback-only 兜底和一致性校验。
 - 范围内：
@@ -293,7 +293,7 @@
 
 - 类型：架构/产品评审 / 主编 Skill 思考链 / 标题表达质量
 - 优先级：P1
-- 状态：Final Dev Self-Validation Dispatching
+- 状态：Architecture Review Done / Superseded by AR-020D / AR-020E
 - 来源：AR-020B L3 通过后，用户指出当前选题逻辑仍是黑盒，标题仍偏模板化；用户期望不是继续修几条样例，而是让 `ai-account-editorial-director` 根据账号人设和案例，像用户本人一样判断“我会选哪些选题、从什么角度切入、起什么标题”。
 - 目标：评审并给出最终方案，使选题链路从“代码 hint + Skill 填字段 + validator 防错”转向“Skill 先做主编自由判断和取舍，代码只提供事实证据与安全守卫”。评审必须解释当前运行链路、模板化来源、Skill/runner/validator/Topic Card 各自职责，并提出可验收的改造方案。
 - 评审范围：
@@ -436,7 +436,7 @@
 
 - 类型：主编内容策略 / 标题吸引力 / Skill 与运行契约校准
 - 优先级：P1
-- 状态：Automation Rebuild Authorized / Running
+- 状态：Released / Post-release Static QA Passed / Main Synced to Feature / Scheduled-Day Smoke Pending
 - 来源：AR-020D Round 3 的证据语义门将自媒体标题按论文式 claim entailment 审查，用户明确认为结果过于保守，并确认采用 `Hook First / Aggressive by Default / Allow Hyperbole / No Fabricated Verifiable Facts` 新口径。该事项单独编号，不篡改 AR-020D Round 3 失败历史，也不是 Round 4。
 - 用户可见目标：标题和自然 Austin 角度应优先保留原始传播入口、冲突、结果承诺、社会证明和好奇心，并明显提升点击欲；允许有观点、夸张、趋势判断、最高级语气、比喻和反问，不再要求每一句编辑表达都能从研究摘录逐字推出。
 - 事实边界：精确数字、日期、直接引语、官方功能/声明、法律/医疗/金融/名誉类事实仍必须有对应来源，不得编造；普通编辑判断和修辞性夸张无需 claim-level entailment。不得继续实现 AR-020D 失败后提议的重型原子 claim verifier。

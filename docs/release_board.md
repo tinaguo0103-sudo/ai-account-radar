@@ -62,6 +62,16 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | AR-022 | `run_topic_card_if_fresh.py --no-notify` 语义修正 | P1 | Released / Post-release Retest Passed | hotfix main -> synced dev | production `3631bf2`、dev `c58dc57`、RC local `b63146b` 已同步；runtime blocker 已复核解除，`--check-only` 为后续 smoke 标准 |
 | AR-020E | 传播钩子与大胆主编表达校准 | P1 | Released / Post-release Static QA Passed / Main Synced to Feature / Scheduled-Day Smoke Pending | RC R3 + RC2 gate -> production main/Skill/SCF/automations -> feature sync | production `7c469ba`、feature `fbef226`、global Skill `9d364bb0...`、receiver `34f929...` 已生效；即时 QA 274 Python + 32 Node、回灌 310 Python + 32 Node、dynamic gate、schema/Skill/SCF/automation/no-write 全过；明日验证同一 run_id 的 08:00/09:15/10:00 连续链路 |
 
+## Historical / Superseded
+
+以下事项保留为架构演进和 QA 反例证据，不再占用当前开发或发布队列。
+
+| ID | 标题 | 最终状态 | 后继事项 |
+|---|---|---|---|
+| AR-020B | 选题主编 Skill 与字段契约重构 | Superseded / Historical | AR-020C -> AR-020D -> AR-020E |
+| AR-020C | 选题主编思考链与标题表达机制评审 | Architecture Review Done / Superseded | AR-020D -> AR-020E |
+| AR-020D | 人格化选题主编架构重构 | QA Round 3/3 Failed / Stop / Historical Evidence Retained | AR-020E 采用 Hook First 产品决策并独立 QA/发布 |
+
 ## Next Feature Release
 
 当前未发布 / 后续候选。已在 2026-07-05 发布收口的事项已移入 `Released / Resolved`，不再作为下一轮发布候选。
@@ -71,9 +81,6 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | AR-003 | 学习确认卡上线前部署腾讯云 SCF receiver | P1 | Next | feature/next-production-flow -> main + SCF 部署 | Node + receiver health + smoke |
 | AR-006 | 学习闭环生产启用 | P2 | Staging Tested | feature/next-production-flow -> main | staging 04/06/08 |
 | AR-018 | 飞书测试卡 receiver / test app 隔离 | P1 | Test Receiver Verified / Ready for AR-013 Flow QA | feature/next-production-flow + test SCF/test app config | Round 5 真实测试卡点击 `本批都不选` 后专用测试 04 read-back 为 `不做`，生产反查 0 |
-| AR-020B | 选题主编 Skill 与字段契约重构 | P1 | Architecture Follow-up Needed / AR-020C Review Dispatching | feature/next-production-flow | L3 机制通过，但 PM 原始需求复核发现链路仍黑盒、标题仍有模板化；不进入 PM Accepted，先拆 AR-020C 评审 Skill 思考链和标题表达 |
-| AR-020C | 选题主编思考链与标题表达机制评审 | P1 | Architecture Review Done / Superseded by AR-020D | feature/next-production-flow | 审查结论保留为 AR-020D 架构输入；不再继续标题补丁或沿用旧 QA 循环 |
-| AR-020D | 人格化选题主编架构重构 | P1 | QA Round 3/3 Failed / Stop / Needs Product Decision | feature/next-production-flow | L0/L1 与 exact-source/raw research/Persona/0..N 架构通过，但 L2 发现 literal substring 存在不等于证据支持 claim：Claude Cowork、AI use-case、FDE 等行用导航/目录/标题碎片支撑更强结论。L3 按门禁未运行，无 Round 4。继续只能另立 claim-level evidence verification 架构并由用户重新确认，不能继续标题补丁 |
 | AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | QA Passed / Waiting Release Authorization Plan | feature/next-production-flow | Round 2 QA 通过；发布时需生产 01 写入授权，将 8 个污染源隔离并 read-back；真实全量采集仍需在发布/恢复中按正常覆盖验证 |
 | AR-027 | 飞书 01/03/04 标签和表格列业务清理 | P1 | Schema Audit QA Passed / Waiting PM Cleanup Decision | feature/next-production-flow | Round 2 QA 通过；先基于 production read-only cleanup matrix 做人工删除决策，再单独授权执行字段/选项/view 清理 |
 | AR-021 | 腾讯云 SCF receiver 标准 CLI 部署通道 | P2 | Backlog / Needs Plan | feature/next-production-flow；不纳入当前发布窗口 | 目标是减少每次控制台登录上传；需支持测试/生产分环境、包 hash 校验、部署记录、health/smoke 和失败回滚说明 |

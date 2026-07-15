@@ -266,7 +266,7 @@ Required handoff:
 - Created：2026-07-14
 - Target lane：固定开发线程 `019f1de3-f3f2-71d2-ae63-a74cd38f8474`
 - Priority：P1
-- Status：Automation Rebuild Authorized / Running
+- Status：Completed / Released / Scheduled-Day Smoke Pending
 - Production baseline：`75801a86f4ef70cc0e882e801d44178b4701c536`
 - Accepted target：`d075447a2026a4c84a2d32489a98869ef7cb6275`
 - Scope：从 production baseline 新建隔离 RC worktree/branch，审计并移植 AR-020D/E 最小完整依赖，接通真实 outer automation/current-task state machine，输出 schema/runtime/global Skill sync/rollback 计划并完成开发自验。
@@ -322,3 +322,5 @@ Required handoff:
 - User decision：用户确认三个旧任务都无法打开，明确要求删除重建。固定生产线程将按 `/private/tmp/ar020e_automation_rebuild_plan_20260715/AR020E_AUTOMATION_REBUILD_PLAN.md` 执行：先创建/打开/更新三条 paused replacements，全部通过后才删除 exact old IDs；最终三条新任务仍 paused。该任务不是 production release，不改 code/Skill/SCF/Feishu，也不运行 automation。
 - Rebuild retry：第一次 create 因复用旧 TOML UUID project binding 失败，old tasks 未变。PM 当前 `list_projects` 只返回 path-form project ID `/Users/congcong/Desktop/AI/AI项目/AI账号工作流`，已确认旧 UUID stale。固定生产线程将在同一授权下用 live project list + path ID 重试；create/view/update 未全过前仍禁止删除 old IDs。
 - Project registration retry：父目录 path ID 已证明能 create，但 automation CWD 被固定到父目录，live update 又拒绝 `cwds`；临时 `ai-rebuild` 已立即 pause 后删除，0 run，old tasks 未变。下一次只允许先把 production folder `/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar` 注册成独立 Codex project，并要求 `list_projects` 精确回读；未出现 exact project ID 就停止。出现后逐条 create -> immediate pause -> no-run/read-back/view/update，三条全过才删除 old IDs。
+- Final correction：对比旧任务配置后确认正确结构应为父项目 target + production 子目录 CWD，注册 production 子项目属于错误 workaround。三条 replacement 已恢复父项目 target，用户已移除误建子项目；未重新创建任务。
+- Final release：production main=`7c469babb6e69431b5aca0a26c2d1ef058210929`，global Skill `SKILL.md=9d364bb0...`，production receiver approved package=`34f929...`，三条 automation ACTIVE。发布后即时 QA 通过，main 已回灌 feature=`fbef226cb87bdb8b4c2dc56048d3e2d4862f35a7`；本 dispatch 项关闭，仅保留下一 scheduled day smoke。
