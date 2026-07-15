@@ -21,6 +21,7 @@ from typing import Any
 from urllib.parse import urlparse
 
 from local_env import load_local_env
+from full_account_collection_contract import rejection_payload, validate_account_limit_argv
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
@@ -39,9 +40,6 @@ DOUYIN_TRANSCRIPTS_MANUAL = OUT / "spikes" / "douyin_transcripts" / "transcribed
 COMBINED_MANUAL = OUT / "daily_pipeline_manual_combined.jsonl"
 DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG = ROOT / "config" / "wechat_fulltext_provider.example.yaml"
 SOURCE_CACHE_DIR = OUT / "source_collection_cache"
-
-load_local_env()
-
 
 def run_step(name: str, command: list[str], env: dict[str, str] | None = None) -> dict[str, Any]:
     print(f"\n== {name} ==")
@@ -240,15 +238,6 @@ def douyin_verification_rows(result_path: Path) -> list[dict[str, Any]]:
     ]
 
 
-def csv_names(rows: list[dict[str, Any]]) -> str:
-    names = []
-    for row in rows:
-        name = str(row.get("account_name") or "").strip()
-        if name and name not in names:
-            names.append(name)
-    return ",".join(names)
-
-
 def row_key(row: dict[str, Any]) -> str:
     return str(row.get("内容指纹") or row.get("内容链接") or row.get("内容标题") or "")
 
@@ -278,6 +267,11 @@ def combine_manual_jsonl(paths: list[Path], output: Path) -> Path:
 
 
 def main() -> int:
+    account_gate = validate_account_limit_argv(sys.argv[1:])
+    if not account_gate.ok:
+        print(json.dumps(rejection_payload("daily_pipeline", account_gate), ensure_ascii=False, indent=2))
+        return 2
+
     parser = argparse.ArgumentParser(description="Run the daily AI account radar pipeline.")
     parser.add_argument("--write-feishu", action="store_true", help="Write Feishu changes for selected steps: URL resolver writes 03/updates 02; 今日候选池 writes 04 and refreshes 00.")
     parser.add_argument("--no-fetch-aihot", action="store_true", help="Skip AIHOT network fetch and use manual samples only.")
@@ -307,6 +301,9 @@ def main() -> int:
         help="Stop after raw candidate generation so the outer Codex automation can apply ai-account-editorial-director without nested codex exec.",
     )
     args = parser.parse_args()
+    args.douyin_account_limit = account_gate.value
+
+    load_local_env()
 
     if args.write_feishu or args.resolve_url_intake or args.include_resolved_url_intake:
         require_feishu_env()
@@ -459,7 +456,6 @@ def main() -> int:
                     str(args.douyin_verification_wait_seconds),
                 ]
                 steps.append(run_optional_step("foreground Douyin Chrome for login/verification", foreground_cmd, env=step_env))
-                retry_names = csv_names(verification_rows)
                 retry_cmd = [
                     "node",
                     str(ROOT / "scripts" / "douyin_cdp_source_watch_probe.mjs"),
@@ -468,15 +464,13 @@ def main() -> int:
                     "--out-dir",
                     str(DOUYIN_CDP_RETRY_DIR),
                     "--account-limit",
-                    str(max(len(verification_rows), 1)),
+                    "0",
                     "--video-limit",
                     str(args.douyin_video_limit),
                     "--retries",
                     str(args.douyin_retries),
-                    "--only-account-names",
-                    retry_names,
                 ]
-                steps.append(run_optional_step("retry Douyin accounts after user verification", retry_cmd, env=step_env))
+                steps.append(run_optional_step("retry full Douyin account plan after user verification", retry_cmd, env=step_env))
             if not douyin_step.get("optional_failed") and DOUYIN_CDP_RESOLVED_MANUAL.exists():
                 manual_inputs.append(DOUYIN_CDP_RESOLVED_MANUAL)
             if DOUYIN_CDP_RETRY_MANUAL.exists() and file_modified_today(DOUYIN_CDP_RETRY_MANUAL):

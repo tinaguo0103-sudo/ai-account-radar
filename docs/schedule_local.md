@@ -195,7 +195,7 @@ python3 scripts/daily_pipeline.py \
   --fetch-wechat-fulltext-provider \
   --wechat-fulltext-provider wewe_rss_local \
   --wechat-feed-limit 5 \
-  --douyin-account-limit 50 \
+  --douyin-account-limit 0 \
   --douyin-video-limit 3 \
   --douyin-verification-action log-only \
   --write-feishu \

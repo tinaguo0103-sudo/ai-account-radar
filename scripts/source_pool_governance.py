@@ -215,8 +215,12 @@ def zero_fallback_audit(root: Path = ROOT) -> dict[str, Any]:
     outer = (root / "scripts" / "run_daily_collection_job.py").read_text(encoding="utf-8")
     checks = {
         "scheduled_forces_fresh_douyin": '"--force-fetch-douyin"' in outer,
-        "outer_default_is_unlimited": '"--douyin-account-limit", type=int, default=0' in outer,
-        "daily_default_is_unlimited": '"--douyin-account-limit", type=int, default=0' in daily,
+        "outer_rejects_limited_plan_before_env": "validate_account_limit_argv(sys.argv" in outer and outer.index("validate_account_limit_argv(sys.argv") < outer.index("load_local_env()"),
+        "daily_rejects_limited_plan_before_env": "validate_account_limit_argv(sys.argv" in daily and daily.index("validate_account_limit_argv(sys.argv") < daily.index("load_local_env()"),
+        "node_rejects_limited_plan_before_output": "validateFullAccountLimitArgs(process.argv.slice(2))" in node and node.index("validateFullAccountLimitArgs(process.argv.slice(2))") < node.index("fs.mkdirSync(options.outDir"),
+        "no_subset_account_alias": "--only-account-names" not in node + daily + outer and "onlyAccountNames" not in node,
+        "no_account_limit_environment_override": "DOUYIN_ACCOUNT_LIMIT" not in node + daily + outer,
+        "no_account_plan_truncation": "rows.slice(0" not in node,
         "canonical_cdp_only": "127.0.0.1:9333" in node and "127.0.0.1:9222" not in node,
         "no_legacy_http_probe_in_scheduled_path": "douyin_source_watch_probe.py" not in outer + daily,
         "no_editorial_fallback_item_builder": "buildFallbackContentItem" not in node and "fallbackItems" not in node,

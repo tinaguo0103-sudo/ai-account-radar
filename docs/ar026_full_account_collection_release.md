@@ -2,7 +2,10 @@
 
 AR-026 changes the scheduled collection contract from a bounded sample to all
 eligible competitor accounts. `0` is the only scheduled default and means no
-account cap. A positive cap is rejected by the release check-only path.
+account cap. Any positive, negative, malformed, duplicate, or alias-form cap is
+rejected as `limited_plan_rejected` by the outer job, daily pipeline, and Node
+probe before environment loading, cache access, Chrome/CDP contact, output
+creation, Feishu access, collection, or notification.
 
 ## Read-only release check
 

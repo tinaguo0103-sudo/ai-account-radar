@@ -8,7 +8,9 @@ import { spawnSync } from "node:child_process";
 import {
   buildCoverage,
   buildHomepageCardItems,
+  limitedPlanRejection,
   selectedSources,
+  validateFullAccountLimitArgs,
   validateContentItemLineage,
   validateSourcePlan,
 } from "./douyin_cdp_source_watch_probe.mjs";
@@ -23,8 +25,10 @@ function source(name) {
 }
 
 const sources = Array.from({ length: 33 }, (_, index) => source(`account-${index + 1}`));
-assert.equal(selectedSources(sources, { accountLimit: 0, onlyAccountNames: "" }).length, 33);
-assert.equal(selectedSources(sources, { accountLimit: 12, onlyAccountNames: "" }).length, 12);
+assert.equal(selectedSources(sources).length, 33);
+assert.equal(validateFullAccountLimitArgs([]).ok, true);
+assert.equal(validateFullAccountLimitArgs(["--account-limit", "0"]).ok, true);
+assert.equal(limitedPlanRejection(validateFullAccountLimitArgs(["--account-limit", "12"])).status, "limited_plan_rejected");
 assert.equal(validateSourcePlan([...sources, source("account-1")]).ok, false);
 assert.equal(validateSourcePlan([{ ...source(""), account_name: "" }]).ok, false);
 
@@ -89,12 +93,46 @@ assert.equal(preview.collection_started, false);
 assert.equal(preview.cdp_contacted, false);
 assert.equal(preview.writes_feishu, false);
 
+const rejectedLimits = [
+  ["--account-limit", "1"],
+  ["--account-limit", "3"],
+  ["--account-limit", "12"],
+  ["--account-limit", "31"],
+  ["--account-limit", "-1"],
+  ["--account-limit", "invalid"],
+  ["--account-limit", ""],
+  ["--account-limit"],
+  ["--account-limit=12"],
+  ["--account-limit", "0", "--account-limit", "0"],
+];
+for (const [index, mutation] of rejectedLimits.entries()) {
+  const rejectedOut = path.join(tmp, `rejected-${index}`);
+  const rejected = spawnSync(process.execPath, [
+    path.resolve("scripts/douyin_cdp_source_watch_probe.mjs"),
+    "--config", path.join(tmp, "must-not-be-read.json"),
+    "--out-dir", rejectedOut,
+    "--cdp", "http://127.0.0.1:1",
+    ...mutation,
+  ], { cwd: path.resolve("."), encoding: "utf8" });
+  assert.equal(rejected.status, 2, `${mutation.join(" ")}\n${rejected.stderr}`);
+  const payload = JSON.parse(rejected.stdout);
+  assert.equal(payload.status, "limited_plan_rejected");
+  assert.equal(payload.side_effects_started, false);
+  assert.equal(payload.cache_accessed, false);
+  assert.equal(payload.chrome_contacted, false);
+  assert.equal(payload.collection_started, false);
+  assert.equal(fs.existsSync(rejectedOut), false, `output was created for ${mutation.join(" ")}`);
+}
+
 const sourceText = fs.readFileSync(path.resolve("scripts/douyin_cdp_source_watch_probe.mjs"), "utf8");
 assert.equal(sourceText.includes("fallbackItems"), false);
 assert.equal(sourceText.includes("buildFallbackContentItem"), false);
 assert.equal(sourceText.includes("127.0.0.1:9222"), false);
+assert.equal(sourceText.includes("--only-account-names"), false);
+assert.equal(sourceText.includes("onlyAccountNames"), false);
+assert.equal(sourceText.includes("rows.slice(0"), false);
 
 const outerSource = fs.readFileSync(path.resolve("scripts/run_daily_collection_job.py"), "utf8");
 assert.equal(outerSource.includes('"--force-fetch-douyin"'), true);
 
-console.log(JSON.stringify({ ok: true, tests: 25, planned_accounts: 33 }));
+console.log(JSON.stringify({ ok: true, tests: 39, planned_accounts: 33, rejected_limit_mutations: rejectedLimits.length }));

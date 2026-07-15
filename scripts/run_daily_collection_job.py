@@ -12,6 +12,7 @@ from typing import Any
 
 from automation_failure_qa import qa_for_steps
 from automation_worktree_guard import check_automation_worktree, guard_failure_summary
+from full_account_collection_contract import rejection_payload, validate_account_limit_argv
 from local_env import load_local_env
 from feishu_automation_notify import notify
 import topic_flow_rework as flow
@@ -102,6 +103,11 @@ def scheduled_collection_plan(config_path: Path, douyin_account_limit: int) -> d
 
 
 def main() -> int:
+    account_gate = validate_account_limit_argv(sys.argv[1:])
+    if not account_gate.ok:
+        print(json.dumps(rejection_payload("run_daily_collection_job", account_gate), ensure_ascii=False, indent=2))
+        return 2
+
     parser = argparse.ArgumentParser(description="Run daily full-source collection then write Feishu 04.")
     parser.add_argument("--douyin-account-limit", type=int, default=0, help="0 means every eligible Douyin competitor account.")
     parser.add_argument("--douyin-video-limit", type=int, default=3)
@@ -121,6 +127,7 @@ def main() -> int:
         help="Allow this scheduled-production entrypoint to run outside the configured production worktree.",
     )
     args = parser.parse_args()
+    args.douyin_account_limit = account_gate.value
 
     if args.check_only:
         plan = scheduled_collection_plan(Path(args.source_config), args.douyin_account_limit)

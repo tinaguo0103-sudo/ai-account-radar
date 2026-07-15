@@ -23,11 +23,10 @@ export function parseArgs(args = process.argv.slice(2)) {
     config: DEFAULT_CONFIG,
     outDir: DEFAULT_OUT,
     cdp: DEFAULT_CDP,
-    accountLimit: 0,
+    accountLimit: "0",
     videoLimit: 3,
     waitMs: 7000,
     retries: 2,
-    onlyAccountNames: "",
     checkOnly: false,
   };
   for (let i = 0; i < args.length; i += 1) {
@@ -35,14 +34,58 @@ export function parseArgs(args = process.argv.slice(2)) {
     if (arg === "--config") options.config = args[++i];
     else if (arg === "--out-dir") options.outDir = args[++i];
     else if (arg === "--cdp") options.cdp = args[++i];
-    else if (arg === "--account-limit") options.accountLimit = Number(args[++i]);
+    else if (arg === "--account-limit") options.accountLimit = args[++i];
     else if (arg === "--video-limit") options.videoLimit = Number(args[++i]);
     else if (arg === "--wait-ms") options.waitMs = Number(args[++i]);
     else if (arg === "--retries") options.retries = Number(args[++i]);
-    else if (arg === "--only-account-names") options.onlyAccountNames = args[++i] || "";
     else if (arg === "--check-only") options.checkOnly = true;
   }
   return options;
+}
+
+export function validateFullAccountLimitArgs(args = process.argv.slice(2)) {
+  const matches = [];
+  for (let index = 0; index < args.length; index += 1) {
+    const token = args[index];
+    if (token === "--account-limit") {
+      const requested = args[index + 1];
+      if (requested === undefined || String(requested).startsWith("--")) {
+        return { ok: false, requested: "", reason: "missing_account_limit_value" };
+      }
+      matches.push(String(requested));
+    } else if (String(token).startsWith("--account-limit=")) {
+      return {
+        ok: false,
+        requested: String(token).split("=", 2)[1] || "",
+        reason: "account_limit_alias_rejected",
+      };
+    }
+  }
+  if (matches.length > 1) {
+    return { ok: false, requested: matches.join(","), reason: "duplicate_account_limit" };
+  }
+  const requested = matches.length ? matches[0] : "0";
+  if (requested !== "0") {
+    return { ok: false, requested, reason: "full_account_collection_requires_exact_zero" };
+  }
+  return { ok: true, requested, value: 0, reason: "" };
+}
+
+export function limitedPlanRejection(gate) {
+  return {
+    ok: false,
+    status: "limited_plan_rejected",
+    reason: gate.reason,
+    layer: "douyin_cdp_source_watch_probe",
+    requested_account_limit: gate.requested,
+    side_effects_started: false,
+    env_loaded: false,
+    writes_feishu: false,
+    cache_accessed: false,
+    chrome_contacted: false,
+    collection_started: false,
+    notification_sent: false,
+  };
 }
 
 export function loadSources(configPath) {
@@ -50,17 +93,10 @@ export function loadSources(configPath) {
   return JSON.parse(text).sources || [];
 }
 
-export function selectedSources(sources, limit) {
+export function selectedSources(sources) {
   const roles = new Set(["current_main_competitor", "current_aux_competitor"]);
-  const only = new Set(String(limit.onlyAccountNames || "")
-    .split(",")
-    .map((name) => name.trim())
-    .filter(Boolean));
-  const max = Number(limit.accountLimit || 0);
-  const rows = sources
+  return sources
     .filter((source) => source.platform === "抖音" && roles.has(source.source_role))
-    .filter((source) => !only.size || only.has(source.account_name || source.name || ""))
-  return max > 0 ? rows.slice(0, max) : rows;
 }
 
 export function validateSourcePlan(sources) {
@@ -458,10 +494,16 @@ async function probeAccountWithRetry(cdp, browserClient, source, options) {
 }
 
 async function main() {
+  const accountGate = validateFullAccountLimitArgs(process.argv.slice(2));
+  if (!accountGate.ok) {
+    console.log(JSON.stringify(limitedPlanRejection(accountGate)));
+    return 2;
+  }
   const options = parseArgs();
+  options.accountLimit = accountGate.value;
   fs.mkdirSync(options.outDir, { recursive: true });
 
-  const sources = selectedSources(loadSources(options.config), options);
+  const sources = selectedSources(loadSources(options.config));
   const plan = validateSourcePlan(sources);
   if (!plan.ok) {
     const failure = {
