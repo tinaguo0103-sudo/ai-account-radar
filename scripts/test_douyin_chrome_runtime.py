@@ -157,6 +157,30 @@ class DouyinChromeRuntimeTests(unittest.TestCase):
             self.assertNotEqual(code, 0)
             self.assertEqual(payload["login_state"], state)
 
+    @mock.patch.object(session, "verify_listener_identity")
+    def test_empty_and_malformed_dom_probe_output_fail_typed(self, identity_mock) -> None:
+        identity_mock.return_value = runtime.ProcessIdentity(
+            True, "profile_identity_verified", 9333, 42, "/tmp/p", "/tmp/p", 9333, "hash"
+        )
+        for stdout, expected in (("", "empty_dom_probe_output"), ("not-json", "malformed_dom_probe_output"), ("[]", "malformed_dom_probe_output")):
+            completed = subprocess.CompletedProcess([], 0, stdout, "")
+            code, payload = session.preflight(9333, Path("/tmp/p"), runner=lambda *a, **k: completed)
+            self.assertEqual(code, 4)
+            self.assertFalse(payload["ok"])
+            self.assertEqual(payload["status"], "login_preflight_failed")
+            self.assertEqual(payload["error"], expected)
+
+    @mock.patch.object(session, "verify_listener_identity")
+    def test_logged_in_payload_with_wrong_exit_fails_closed(self, identity_mock) -> None:
+        identity_mock.return_value = runtime.ProcessIdentity(
+            True, "profile_identity_verified", 9333, 42, "/tmp/p", "/tmp/p", 9333, "hash"
+        )
+        completed = subprocess.CompletedProcess([], 4, json.dumps({"state": "logged_in", "markers": {}}), "")
+        code, payload = session.preflight(9333, Path("/tmp/p"), runner=lambda *a, **k: completed)
+        self.assertEqual(code, 4)
+        self.assertFalse(payload["ok"])
+        self.assertIn("unexpected_dom_probe_exit", payload["error"])
+
 
 if __name__ == "__main__":
     unittest.main()

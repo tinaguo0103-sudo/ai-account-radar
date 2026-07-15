@@ -22,6 +22,19 @@ def cdp_version(port: int) -> dict | None:
         return None
 
 
+def parse_dom_probe_output(stdout: str) -> tuple[dict, str]:
+    raw = (stdout or "").strip()
+    if not raw:
+        return {"state": "indeterminate", "markers": {}}, "empty_dom_probe_output"
+    try:
+        payload = json.loads(raw)
+    except json.JSONDecodeError:
+        return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+    if not isinstance(payload, dict):
+        return {"state": "indeterminate", "markers": {}}, "malformed_dom_probe_output"
+    return payload, ""
+
+
 def preflight(port: int, profile: Path, runner=subprocess.run) -> tuple[int, dict]:
     identity = verify_listener_identity(port, profile, cdp_version(port))
     payload = {
@@ -43,18 +56,19 @@ def preflight(port: int, profile: Path, runner=subprocess.run) -> tuple[int, dic
         capture_output=True,
         check=False,
     )
-    try:
-        login = json.loads((result.stdout or "").strip())
-    except json.JSONDecodeError:
-        login = {"state": "indeterminate", "markers": {}, "error": "malformed_dom_probe_output"}
+    login, parse_error = parse_dom_probe_output(result.stdout or "")
     state = str(login.get("state") or "indeterminate")
+    expected_exit = 0 if state == "logged_in" else 4
+    exit_error = "" if result.returncode == expected_exit else f"unexpected_dom_probe_exit:{result.returncode}:expected:{expected_exit}"
+    probe_error = parse_error or exit_error or str(login.get("error") or "")
+    probe_ok = not parse_error and not exit_error and state == "logged_in"
     payload.update({
-        "ok": result.returncode == 0 and state == "logged_in",
-        "status": "session_verified" if state == "logged_in" else "login_preflight_failed",
+        "ok": probe_ok,
+        "status": "session_verified" if probe_ok else "login_preflight_failed",
         "login_state": state,
         "page": {"url": str(login.get("url") or ""), "title": str(login.get("title") or "")},
         "dom_markers": {str(key): bool(value) for key, value in (login.get("markers") or {}).items()},
-        "error": str(login.get("error") or ""),
+        "error": probe_error,
     })
     return (0 if payload["ok"] else 4), payload
 

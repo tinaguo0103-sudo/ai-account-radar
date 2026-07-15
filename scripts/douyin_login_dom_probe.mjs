@@ -1,5 +1,8 @@
 #!/usr/bin/env node
 import process from "node:process";
+import path from "node:path";
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 
 export function classifyLoginMarkers(markers) {
   if (markers.verificationIframe || markers.verificationText) return "verification_required";
@@ -60,7 +63,16 @@ export async function inspectDouyinLogin(cdp) {
   return { state: classifyLoginMarkers(markers), url: page.url || "", title: page.title || "", markers };
 }
 
-if (import.meta.url === `file://${process.argv[1]}`) {
+export function isMainModule(metaUrl, argvPath) {
+  if (!argvPath) return false;
+  try {
+    return realpathSync(path.resolve(fileURLToPath(metaUrl))) === realpathSync(path.resolve(argvPath));
+  } catch {
+    return false;
+  }
+}
+
+if (isMainModule(import.meta.url, process.argv[1])) {
   const cdpIndex = process.argv.indexOf("--cdp");
   const cdp = cdpIndex >= 0 ? process.argv[cdpIndex + 1] : "http://127.0.0.1:9333";
   try {
