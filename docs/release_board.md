@@ -47,7 +47,7 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | AR-025 | 生产恢复口径与验收规范 | P1 | Backlog / Needs Spec | PM spec -> user confirmation -> rules/checklist | 治理类事项；从 AR-023/024 复盘抽象恢复口径、partial recovery 标识、QA/PM 验收标准 |
 | AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | QA Passed / Release Blocked by AR-031 + RC | dev/test -> RC -> production release | Round 2 QA 通过；生产 01 仍需隔离 8 个污染源；固定 profile/login 硬门与当前 production baseline RC 未完成前不得上线 |
 | AR-027 | 飞书 01/03/04 标签和表格列业务清理 | P1 | Schema Audit QA Passed / Waiting PM Cleanup Decision | schema audit -> dry-run -> QA -> release cleanup | Round 2 QA 通过；cleanup matrix 可用于第一轮字段/选项清理决策，view 仍需人工确认 |
-| AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | Hotfix RC Ready / Release QA | release QA -> production authorization -> profile migration | RC `9893c6c` 基于 production `7c469ba`，16-file code-only scope；等待发布级 QA，不是 Production Ready |
+| AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | Release QA Passed / Ready for PM Production Authorization | production authorization -> hotfix main -> canonical login | RC `9893c6c` 全量发布 QA 通过；需授权 Git、automation pause/resume、9333 stop 与 canonical profile migration/login |
 
 ## Released / Resolved
 
@@ -85,7 +85,7 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | AR-006 | 学习闭环生产启用（含 AR-003/018 发布依赖） | P2 | Staging Tested / Needs Product Reconfirmation | feature/next-production-flow -> main + production receiver smoke | staging 04/06/08 + test receiver + production no-write/read-back |
 | AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | QA Passed / Release Blocked by AR-031 + RC | feature/next-production-flow | 先通过 AR-031 固定 profile/login 门，再基于当前 production main 建最小 RC；发布时需生产 01 写入授权，将 8 个污染源隔离并 read-back |
 | AR-027 | 飞书 01/03/04 标签和表格列业务清理 | P1 | Schema Audit QA Passed / Scheduled After AR-026 | feature/next-production-flow | AR-026 上线与首次全量采集稳定后，再基于 production read-only cleanup matrix 单独授权字段/选项/view 清理 |
-| AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | Release QA / Pre-08:00 Blocker | RC QA -> hotfix main -> canonical login | 当前 9333 仍为旧 RC profile；RC 已就绪，QA 和单独生产授权前不得迁移或恢复采集 |
+| AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | Ready for Production Authorization / Pre-08:00 Blocker | authorized release -> canonical login -> scheduled smoke | 当前 9333 仍为旧 RC profile；授权前不改 production，登录验证只接受 ok/session_verified/logged_in |
 | AR-029 | 生产可观测性（含 AR-016 residual） | P1 | Reliability Pack / Needs Plan | AR-029 + AR-030 shared RC | 先完成日志/告警/请求链路证据，再作为 AR-030 恢复判断输入 |
 | AR-030 | 制作方向卡安全重试与状态未知恢复 | P1 | Reliability Pack / Needs Architecture Review | AR-029 + AR-030 shared RC | 与 AR-029 共用发布计划；重试、unknown、幂等和 no-duplicate 独立验收 |
 | AR-021 | 腾讯云 SCF receiver 标准 CLI 部署通道 | P2 | Backlog / Needs Plan | feature/next-production-flow；不纳入当前发布窗口 | 目标是减少每次控制台登录上传；需支持测试/生产分环境、包 hash 校验、部署记录、health/smoke 和失败回滚说明 |

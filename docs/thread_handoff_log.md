@@ -3059,3 +3059,10 @@
 - 范围：三段来源 patch hash 现场一致，顺序 hunk-level apply；最终 16 files（8 runtime、4 tests、4 runtime docs），明确排除 PM docs、AR-026/full-account、旧 Top3、feature-only automation QA refactor。source probe=3、inner=12、outer=50 保持 production surrounding defaults。
 - 自验：292 Python、23 AR-031、124 AR-020D/E adjacent、7 Douyin Node、32 receiver/SCF；Unicode CLI、schema、当前 9333 mismatch、临时 Chrome verification_required、静态门和 premerge 全过。生产未修改。
 - PM 审阅修正：`RELEASE_AND_ROLLBACK_PLAN.md` 首行的建议分支名已改为 exact RC branch/commit，避免发布歧义。已派 release-level QA；全过后才申请 production Git/profile/automation 的单独授权。
+
+### 2026-07-15 AR-031 Hotfix RC 发布级 QA 通过
+
+- 结论：`Ready for PM Production Authorization`，不是 Production Ready。目标 RC=`9893c6c9568ff0440ea7b79b6a2c493ab9bcc1ef`，base=`7c469ba`，16-file manifest/hash/apply 全匹配且无禁入范围。
+- QA：292 Python、23 AR-031、129 AR-020D/E adjacent、7 Douyin Node/Unicode、32 receiver/SCF、semantic owner、DOM mutation、静态门均通过。当前 9333 PID 17170 仍只读返回旧 RC profile mismatch；临时 Chrome identity 通过并返回真实 logged_out，已只停止自有 PID。
+- 生产授权顺序：pause/read-back 三任务 -> 备份 Git/profile/marker -> 重读并 normal-stop exact PID -> 确认 9333 free -> Git release + production gate -> canonical ASCII foreground -> 仅迁移已停止 profile或 fresh login -> 只接受 ok/session_verified/logged_in -> resume。任一步失败保持 paused 并组件回滚。
+- 边界：QA 未改 production Git/automation/profile，未写 Feishu、未采集、未发卡、未触发 06/Skill/SCF。下一步由用户明确授权后交 production thread 执行。
