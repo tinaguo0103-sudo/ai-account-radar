@@ -53,13 +53,13 @@
 
 - 类型：生产发布
 - 优先级：P1
-- 状态：Next
+- 状态：Historical Dependency / Absorbed into AR-006
 - 来源：学习闭环功能
 - 影响：代码合并但 SCF 未部署时，飞书学习卡按钮仍可能走旧 receiver，导致确认失败。
 - 发布策略：跟随 `feature/next-production-flow`；合并后部署 SCF，再启用生产学习卡。
 - 验证方式：`node --test cloud_functions/feishu-card-receiver/test/receiver.test.mjs cloud_functions/feishu-card-receiver/test/tencent-scf-entry.test.mjs`，部署后 `check_feishu_card_cloud_receiver.py`，再做最小 production smoke。
 - 关联分支/提交：`a656159`, `eb7f9a5`
-- 备注：健康检查只证明 URL 和读权限；不能替代卡片 action 写回测试。
+- 备注：健康检查只证明 URL 和读权限；不能替代卡片 action 写回测试。该发布依赖不再作为独立需求排队，由 AR-006 的生产启用计划统一负责 receiver 部署、action smoke 和回滚。
 
 ### AR-005 生产唤醒/保活机制上线
 
@@ -77,13 +77,13 @@
 
 - 类型：新功能
 - 优先级：P2
-- 状态：Staging Tested
+- 状态：Staging Tested / Needs Product Reconfirmation
 - 来源：学习闭环计划
 - 影响：把 04/06 反馈沉淀为学习日结、确认卡和 Skill 草稿。
 - 发布策略：跟随 `feature/next-production-flow`，不抢在生产稳定修复前发布。
 - 验证方式：staging/test 04/06/08 全流程；空样本跳过；Skill 草稿 `草稿已生成 -> 已同步`。
 - 关联分支/提交：`57fd01e`, `a656159`, `2645827`, `eb7f9a5`
-- 备注：默认不自动修改全局私有 Skill。
+- 备注：默认不自动修改全局私有 Skill。AR-003 的 production receiver 发布和 AR-018 的测试 App / 测试 SCF / 测试 Base 已并入本需求：AR-018 作为已完成测试基础设施保留，AR-003 作为上线依赖由本需求统一验收，不再单独排队。
 
 ### AR-008 06 watcher 飞书文档同步读取 `.env.local` 权限失败
 
@@ -197,7 +197,7 @@
 
 - 类型：测试基础设施 / 发布门禁
 - 优先级：P1
-- 状态：Test Receiver Verified / Ready for AR-013 Flow QA
+- 状态：Test Infrastructure Complete / Absorbed into AR-006
 - 来源：AR-013 Flow + Regression QA 被阻塞：测试卡虽已默认授权，但当前 staging env 缺可证明隔离的 Tencent SCF receiver URL、测试接收目标和制作方向测试目标；健康检查还会把 topic table 解析到生产同名表。
 - 影响：所有飞书卡片类需求的 Flow QA 都可能被迫停在 mock/fixture，或者在真实点击时冒误写生产 04 / 触发真实后续链路风险。若不补这个测试基础设施，AR-013、AR-015 Topic Card、后续卡片/SCF 回写类需求都无法稳定做 L2/L3/Flow QA。
 - 发布策略：先在 `feature/next-production-flow` 做方案和最小测试路径配置；如需创建/部署测试 SCF receiver 或修改测试飞书应用配置，需要用户确认。不得复用生产 receiver 作为测试点击目标，除非能证明云端环境显式写入 staging/test 表且不触发生产后续动作。
@@ -206,7 +206,7 @@
 - 备注：本需求不是产品功能，不改变 AR-013 的补偿池规则；它是卡片类需求的测试门禁基础设施。2026-07-04 PM 已向用户给出方向 + 详细方案，用户确认同意按 AR-018 先补“测试 receiver / test app 隔离”。开发提交 `9f7b1b0` 已完成最小实现：`check_feishu_card_cloud_receiver.py` 优先使用 explicit staging table id，输出 `table_id_source`，并新增 `--require-test-card-config` 隔离门禁；新增 `test_feishu_card_receiver_healthcheck.py` 和 `docs/spikes/ar018_test_card_receiver_isolation.md`。验证：staging 只读 health 显示 `table_id=tblWAH8Ba3wh5jdo`、`table_id_source=FEISHU_TOPIC_TABLE_ID`，不再解析到生产 04；缺 `FEISHU_TENCENT_SCF_URL`、`FEISHU_CARD_RECEIVE_TARGETS`、`FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS` 时会明确失败并列缺项。当前仍不能证明云端 test receiver 环境变量已配置，因为尚缺测试 SCF URL / 测试接收目标。2026-07-04 用户已授权配置测试 receiver / 测试目标，但开发线程确认本机缺独立测试 SCF URL、缺两个测试接收目标，`serverless` / `tencentcloud` CLI 不可用，仓库也没有可直接执行的测试 SCF 自动部署脚本；README 只有手工创建/上传 zip/配置函数 URL 路径。用户进一步澄清：可以继续使用此前登录过的腾讯云后台去配置；测试卡接收目标可以使用用户个人 ID。开发线程已在腾讯云广州/default 创建独立测试函数 `feishu-topic-card-receiver-ar018-test`，函数 URL 已写入本地 `.env.staging.local`，测试函数 env 已配置 `FEISHU_TOPIC_TABLE_ID=tblWAH8Ba3wh5jdo`，并配置用户个人测试目标用于 `FEISHU_CARD_RECEIVE_TARGETS` / `FEISHU_PRODUCTION_DIRECTION_RECEIVE_TARGETS`。`AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/check_feishu_card_cloud_receiver.py --require-test-card-config --table-key topic_decision` 输出 `ok=true`，receiver challenge、test_card_config、staging 04 read check 均通过。2026-07-04 测试线程执行 Test Card Smoke 前置探针，发现真实发卡入口 `scripts/feishu_topic_decision_card.py` 的 `get_topic_table()` 仍按表名解析到生产同名 04 表 `tblz2CFc9eIa8bMG`，而不是 `.env.staging.local` 显式配置的 staging/test 04 表 `tblWAH8Ba3wh5jdo`；`build --run-id ar018-test --limit 1` 未发卡但生成 preview，证明发送路径会沿错误表解析继续。测试线程正确停止，未发送/点击测试卡。开发提交 `f0c0027` 已完成窄返修：真实 Topic Card sender 的 build/send/apply/候选读取路径现在优先使用 `FEISHU_TOPIC_TABLE_ID` / `FEISHU_TOPIC_DECISION_TABLE_ID`，与 receiver health check 语义一致；返修后 staging 探针输出 `health_table_id=tblWAH8Ba3wh5jdo`、`sender_table_id=tblWAH8Ba3wh5jdo`、`same=true`，`build --run-id ar018-test --limit 1` 仅生成本地 preview、未发卡。2026-07-04 测试线程 Round 2 真实测试卡已成功发送到个人测试目标并在 Feishu Web 可见，测试候选 `recvopUtMtOaLO` / run_id `ar018_test_smoke_20260704_230238` 位于 staging/test 04，安全按钮 `本批都不选` 可点击；但点击后 read-back 仍为 `状态=待判断`、`学习状态=待学习`，未回写为 `不做`。生产 04、生产 06、测试 06 和 production output 只读反查均未发现 AR-018 写入或 watcher 触发。开发提交 `bed3b42` 已定位真实代码失败点并修复：receiver 事件能打到测试函数并尝试写 staging/test 04，但 `选择原因标签` 在测试表中是 `type=1 / Text`，旧代码按数组写入导致 Feishu `TextFieldConvFail`；现已改为按字段类型/形态写入，多选保留数组、文本写 `、` 分隔文本、空标签写空字符串。开发线程已将 `bed3b42` 新 receiver 包部署到测试函数 `feishu-topic-card-receiver-ar018-test`，未部署生产函数；部署后 health check 通过，函数配置仍显示 `FEISHU_TOPIC_TABLE_ID=tblWAH8Ba3wh5jdo`。2026-07-05 测试线程 Round 3 复测失败：新测试卡发送、Feishu Web 可见、真实按钮点击均完成，但 read-back `recvoq9wbE4FO0` 仍为 `状态=待判断`；随后用同一张卡的 `submit_no_selection` value 构造 synthetic event 直接 POST 测试 receiver，返回 success，并将同一记录写为 `状态=不做`。这证明新测试 SCF 代码能写 staging/test 04。开发线程进一步诊断：当前飞书后台 app 已订阅 `card.action.trigger`，但回调 URL hash 与生产 `.env.local` receiver 一致，和 `.env.staging.local` 测试 receiver 不一致；staging 发卡使用的 app hash 与该后台 app 一致，因此直接把该 app 回调改成测试 receiver 会影响生产回调。当前必须创建或指定独立飞书测试应用/机器人，把 `.env.staging.local` 切到测试 app id/secret，并让测试 app 的 `card.action.trigger` 指向 `feishu-topic-card-receiver-ar018-test`；生产 app 保持生产 receiver。2026-07-05 用户确认授权继续 AR-018：允许创建或配置独立飞书测试应用/机器人，并将 staging/test 发卡与回调链路切到该测试 App；生产 App、生产 receiver、生产 SCF 和生产表不得改动。
 - 最新进展：2026-07-05 开发线程已完成独立测试 App/机器人配置。飞书测试 App `AI账号信息雷达 AR-018 TEST` 已启用，版本 `1.0.0` 已发布通过；回调方式为开发者服务器，订阅新版 `card.action.trigger`；测试 SCF env 已切到测试 App 凭证并保持 `FEISHU_TOPIC_TABLE_ID=tblWAH8Ba3wh5jdo`；本地 `.env.staging.local` 已切到测试 App 凭证但不提交。health check 和 sender table-id probe 均指向 staging/test 04 `tblWAH8Ba3wh5jdo`。测试线程 Round 4 真实 smoke 失败：使用 `.env.staging.local` 发测试卡返回 Feishu `99992361 open_id cross app`，说明当前 `FEISHU_CARD_RECEIVE_TARGETS` 的 `open_id` 不是独立测试 App 体系下的接收 ID；新建 staging/test 04 候选时 `POST /bitable/.../records` 返回 `91403 Forbidden`，提示独立测试 App 对 staging/test Base 的写权限/协作者配置也需复核。开发线程配置返修后，独立测试 App 接收目标已修复：`.env.staging.local` 和测试 SCF 的测试目标已切到测试 App 体系个人 open_id，测试消息发送成功，不再 `open_id cross app`。剩余阻塞是 staging/test 04 写权限：测试 App 对 `tblWAH8Ba3wh5jdo` 的 create/update 仍返回 `91403 Forbidden`；Base UI 中现有生产 App `AI账号信息雷达` 是该 Base 的应用协作者且可管理，但独立测试 App `AI账号信息雷达 AR-018 TEST` 在添加协作者中按全名、短名、App ID 均搜不到。2026-07-05 用户确认改走 A 方案：新建一套专用测试 Base / 测试 04 表用于卡片回调 Flow QA，并要求该测试 Base 放到现有 AI账号信息雷达相关“大文件夹”下，方便用户查找；不继续死磕当前 `tblWAH8Ba3wh5jdo` 的应用协作者入口。
 - PM 最新验收：2026-07-05 开发线程已完成专用测试 Base 方案。独立测试 App 创建专用测试 Base `AI账号信息雷达_AR018_TEST` 和测试 04 表 `04 分析与选题_AR018_TEST`；因飞书拒绝直接在共享文件夹下创建 Base，采用“测试 App 创建 Base 保持可写权限 + 添加快捷方式到 AI账号信息雷达共享文件夹”。`.env.staging.local` 与测试 SCF `feishu-topic-card-receiver-ar018-test` 均已切到新测试 04；新表 34 个字段校验通过，关键字段齐备；测试 App create/update/read 成功；synthetic receiver 写回成功；真实 sender 发卡到个人测试目标成功。当前下一步是测试线程 Round 5：真实测试卡发送、后台/隔离 Chrome 点击 `本批都不选`，read-back 新测试 04 为 `状态=不做`，并确认生产 04/06/watcher 无匹配。
-- 测试收口：2026-07-05 Round 5 通过。测试线程使用 `.env.staging.local`、独立测试 App、测试 receiver 和专用测试 04 `tblR730iHAaz9NQ7` 完成真实测试卡发送与 Feishu Web 点击；点击安全按钮 `本批都不选` 后，测试记录 `recvot8EjWXDNk` read-back 为 `状态=不做`、`学习状态=待学习`，且未设置制作方向卡状态。生产 04、生产 06、production output/watcher 相关本地 output 对本轮 run_id / 标题 / record_id 匹配 0。AR-018 收口为 `Test Receiver Verified / Ready for AR-013 Flow QA`。
+- 测试收口：2026-07-05 Round 5 通过。测试线程使用 `.env.staging.local`、独立测试 App、测试 receiver 和专用测试 04 `tblR730iHAaz9NQ7` 完成真实测试卡发送与 Feishu Web 点击；点击安全按钮 `本批都不选` 后，测试记录 `recvot8EjWXDNk` read-back 为 `状态=不做`、`学习状态=待学习`，且未设置制作方向卡状态。生产 04、生产 06、production output/watcher 相关本地 output 对本轮 run_id / 标题 / record_id 匹配 0。该基础设施继续用于 AR-006 和其他卡片类需求的 staging 验收，但不再作为独立产品需求占用发布队列。
 
 ### AR-019 2026-07-05 定时任务网络异常后补跑
 
@@ -634,12 +634,13 @@
 - 类型：生产可观测性 / 云端日志 / 告警治理
 - 优先级：P1
 - 状态：Backlog / Needs Plan
-- 来源：AR-028 RCA。腾讯云控制台 `feishu-topic-card-receiver` 的“日志查询”显示函数尚未进行日志配置，导致 2026-07-08 方向卡发送中断无法回溯 stack/timeout，只能从 04 状态和代码结构推断。
+- 来源：AR-028 RCA，以及 AR-016 飞书 03 update 读超时的剩余观测缺口。腾讯云控制台 `feishu-topic-card-receiver` 的“日志查询”显示函数尚未进行日志配置，导致 2026-07-08 方向卡发送中断无法回溯 stack/timeout；本机链路也需要能把请求 telemetry 与 sleep/network 恢复窗口关联，而不是只靠 04 状态和代码结构推断。
 - 影响：如果未来 production SCF 再次因超时、Feishu API、环境变量、权限、调度或平台中断失败，PM/生产线程仍缺少云端调用日志、函数堆栈、执行时长、请求 ID 和告警字段，无法快速区分代码缺陷、Feishu 下游异常或云平台中断。
-- 目标：为 production `feishu-topic-card-receiver` 配置可审计的日志投递/保留策略和告警字段化，让 card callback、`send-production-direction-cards`、stuck detector、Feishu send timeout 等关键路径至少能按时间窗、action、record_id/message_id 摘要、错误类型和 request id 查询。
+- 目标：为 production `feishu-topic-card-receiver` 配置可审计的日志投递/保留策略和告警字段化，让 card callback、`send-production-direction-cards`、stuck detector、Feishu send timeout 等关键路径至少能按时间窗、action、record_id/message_id 摘要、错误类型和 request id 查询；同时把现有 Feishu 请求 telemetry 与本机 sleep/network 恢复窗口形成可关联证据。
 - 范围：腾讯云 SCF 日志投递配置、日志保留/脱敏策略、告警指标/阈值梳理、最小只读查询验证、失败报告模板。不得记录 token、secret、完整 payload、用户隐私或飞书敏感 ID 明文。
 - 不在范围：不改变 receiver 业务逻辑；不补发 2026-07-08 两张制作方向卡；不触发真实 06/Codex；不替代 AR-021 CLI 部署通道。
-- 验证方式：配置后用无业务副作用的 receiver challenge 或等价安全请求验证日志可查询；确认日志中不含 token/secret；输出可复用的“报警 -> 日志 -> record 状态”排查步骤。
+- 验证方式：配置后用无业务副作用的 receiver challenge 或等价安全请求验证日志可查询；确认日志中不含 token/secret；输出可复用的“报警 -> 云端日志 -> 本机请求 telemetry -> record 状态”排查步骤。
+- 发布编排：AR-029 与 AR-030 组成一个 `Production Reliability Pack`，共用 RC、全量回归和发布窗口；AR-029 保持独立验收，必须先提供可用于重试决策的日志与请求证据。
 
 ### AR-030 制作方向卡发送安全重试与状态未知恢复
 
@@ -654,6 +655,7 @@
 - 不在范围：不补发 2026-07-08 两张已失败制作方向卡；不改变 Topic Card 第一张发卡策略；不触发真实 06/Codex；不替代 AR-029 SCF 日志投递；不把所有 Feishu POST 都盲目改成自动 retry。
 - 验证方式：先做架构评审，明确飞书消息是否支持可靠 uuid/idempotency 查询；再用 mock 单测覆盖 `明确失败 -> retry`、`timeout but message exists -> no duplicate`、`timeout unknown -> 状态未知`、`max retry -> 失败可恢复`；staging/test 用个人测试目标验证不会重复发送；发布后 production smoke 只做空队列/只读健康，不对 2026-07-08 失败记录 requeue。
 - 与 AR-029 区别：AR-029 是云端可观测性，回答“SCF 里到底发生了什么”；AR-030 是业务恢复能力，回答“失败后能不能安全自动恢复”。两者互补，但不能混成一个任务。
+- 发布编排：与 AR-029 共用一个 `Production Reliability Pack` 发布计划，但状态机、重试安全、unknown、幂等和 no-duplicate 必须独立验收；不得因共用 RC 而互相代替通过。
 
 ### AR-014 飞书写入链路 RCA 与系统性防复发
 
@@ -683,13 +685,13 @@
 
 - 类型：生产问题 / 深层 RCA
 - 优先级：P1
-- 状态：Needs Telemetry
+- 状态：RCA Complete / Residual Scope Merged into AR-029
 - 来源：用户追问 AR-012/AR-014 事故根因仍不完整：当前只证明了 `socket.timeout: The read operation timed out`，尚未判断为什么超时，是本机网络波动、飞书 API 服务端慢、请求/记录特征、代理/VPN、系统睡眠/网络切换，还是链路缺少请求级观测。
 - 影响：如果只把“飞书超时”当根因，会漏掉真正可优化点；后续即使已有 retry，也可能重复出现长尾慢请求、API 抖动或本机网络异常，只是被 retry 掩盖。
 - 发布策略：生产只读诊断优先；不写生产业务表、不发卡、不触发采集。若只读 RCA 发现代码观测缺口，可作为 dev 任务补请求级 latency/operation log；若发现生产环境配置或网络问题，再走生产运维修复。
 - 验证方式：已完成生产只读 RCA：直接故障定位到 03 单条 `PUT /bitable/v1/apps/{app}/tables/{table}/records/{record_id}` 已发出后，在读取 HTTPS 响应状态行阶段超过 30 秒；没有 429/5xx/固定坏记录证据；事故窗口与 macOS Maintenance Sleep / DarkWake / 网络恢复高度重合。后续需补 Feishu 请求级 telemetry，记录 method/path/table/record_id/payload_size/duration/attempt/error_kind/status_unknown/local network snapshot。
 - 关联分支/提交：
-- 备注：AR-014 已解决“同类 transient timeout 不应轻易打断链路”的稳定性问题；AR-016 RCA 结论是：已证实卡在 HTTPS 响应状态行读取；高概率是本机 Maintenance Sleep / DarkWake 后网络栈恢复窗口导致单点长尾读超时；无法证实飞书服务端是否内部处理慢、失败记录是哪一条、当时实际路由是否经过 VPN/分流。下一步拆为两条：AR-005 keepawake 优先复核/上线；新增或扩展 dev 任务补 Feishu 请求级 telemetry。
+- 备注：AR-014 已解决“同类 transient timeout 不应轻易打断链路”的稳定性问题；AR-016 RCA 结论是：已证实卡在 HTTPS 响应状态行读取；高概率是本机 Maintenance Sleep / DarkWake 后网络栈恢复窗口导致单点长尾读超时；无法证实飞书服务端是否内部处理慢、失败记录是哪一条、当时实际路由是否经过 VPN/分流。AR-005 keepawake 和 AR-017 请求级 telemetry 已覆盖直接防复发动作；剩余跨端日志关联与告警证据统一并入 AR-029，不再以 AR-016 独立排队。
 
 ### AR-017 Feishu 请求级 telemetry
 

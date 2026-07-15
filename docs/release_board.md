@@ -8,8 +8,8 @@
 - 生产分支：`main`
 - 开发目录：`/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_dev`
 - 开发分支：`feature/next-production-flow`
-- 当前判断：2026-07-15 `AR-020E` 已完成生产部署、即时发布后静态/运行时 QA和 main->feature 回灌，当前状态为 `Released / Post-release Static QA Passed / Main Synced to Feature / Awaiting First Scheduled-Day Smoke`，尚未标记 `Release Closed / PM Accepted`。生产 `main` clean，local/remote HEAD=`7c469babb6e69431b5aca0a26c2d1ef058210929`；feature local/remote=`fbef226cb87bdb8b4c2dc56048d3e2d4862f35a7`；global Skill `SKILL.md` SHA256=`9d364bb0...`；production receiver 已部署 approved `34f929...` 包；08:00/09:15/10:00 三条 automation 已 ACTIVE，保持父项目归属和 production 子目录 CWD。即时 QA 274 Python + 32 Node、dynamic production gate、Skill/SCF/schema/automation/no-write 证据全过；回灌 310 Python + 32 Node 通过，真实连续链路等待下一 scheduled day。
-- 当前生产事件：`AR-028 2026-07-08 制作方向卡发送失败与腾讯云报警关联` 已定位、hotfix、dev sync 并部署 production SCF；状态为 `Hotfix Deployed / Observe / Needs Logging Follow-up / No Card Re-send`。production `main` hotfix `75801a8` 与 dev `418b32b` 均完成；腾讯云 production `feishu-topic-card-receiver` 已部署包含 `DEFAULT_FEISHU_API_TIMEOUT_MS = 8000` 的新包，health/read-only 04 检查通过。今天两条制作方向卡未补发/requeue/触发队列，仍保持 `发送失败`。后续观察下一次真实第二张制作方向卡；另排 `AR-029` 配置 SCF 日志投递/告警可观测性，另排 `AR-030` 设计制作方向卡安全重试与状态未知恢复，避免“只记录失败但不恢复”或“盲目重试导致重复卡”。
+- 当前判断：2026-07-15 `AR-020E` 已完成生产部署、即时发布后静态/运行时 QA和 main->feature 回灌，当前状态为 `Released / Post-release Static QA Passed / Main Synced to Feature / Awaiting First Scheduled-Day Smoke`，尚未标记 `Release Closed / PM Accepted`。生产 `main` clean，local/remote HEAD=`7c469babb6e69431b5aca0a26c2d1ef058210929`；feature 已包含 released main 回灌和需求池清理；global Skill `SKILL.md` SHA256=`9d364bb0...`；production receiver 已部署 approved `34f929...` 包；08:00/09:15/10:00 三条 automation 已 ACTIVE，保持父项目归属和 production 子目录 CWD。即时 QA 274 Python + 32 Node、dynamic production gate、Skill/SCF/schema/automation/no-write 证据全过；回灌 310 Python + 32 Node 通过，真实连续链路等待下一 scheduled day。
+- 当前生产事件：`AR-028 2026-07-08 制作方向卡发送失败与腾讯云报警关联` 已定位、hotfix、dev sync 并部署 production SCF；状态为 `Hotfix Deployed / Observe / Needs Logging Follow-up / No Card Re-send`。production `main` hotfix `75801a8` 与 dev `418b32b` 均完成；腾讯云 production `feishu-topic-card-receiver` 已部署包含 `DEFAULT_FEISHU_API_TIMEOUT_MS = 8000` 的新包，health/read-only 04 检查通过。今天两条制作方向卡未补发/requeue/触发队列，仍保持 `发送失败`。后续以一个 `Production Reliability Pack` 推进：`AR-029` 负责云端与请求链路可观测性（吸收 AR-016 剩余观测缺口），`AR-030` 负责安全重试与状态未知恢复；二者共用一份发布计划，但各自保持独立验收和回滚边界。
 - 当前主门控：用户已确认 `AR-020D 人格化选题主编架构重构`。它以完整人格/风格参考真实加载、自由主编判断先行、受约束字段映射后置为核心；案例库只作人格和表达参考，不作选题证据或逐条案例锚点。AR-020C 的 7 次 QA 不延续为标题补丁循环；AR-020D 作为确认后的新架构方案从 `0/3` 开始，但开发必须先交结构自验包，PM 审核后才可派 QA。测试和发布前必须校验真实 global/private Skill provenance 与 Git mirror/hash；不可进入 PM Accepted、RC 或发布。`AR-026 飞书 01 全量对标账号采集覆盖` 已通过 QA，等待生产 01 隔离污染源的发布授权计划；`AR-027 飞书 01/03/04 标签和表格列业务清理` 已通过 schema audit QA，等待 PM/用户基于 cleanup matrix 做清理决策。`AR-025` 生产恢复口径与验收规范作为 PM 治理事项单独梳理；`AR-021` SCF CLI 部署通道作为发布工程 backlog。`AR-023` Chrome 启动根因与 `AR-024` 抖音补采覆盖恢复均已通过 QA/PM 验收。
 
 ## PM Coordination
@@ -40,7 +40,7 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | AR-005 | 生产唤醒/保活机制上线 | P1 | Installed / Synced to Dev | hotfix main -> synced dev | 生产 `cf88643` 已安装 `-ims`，dev `03d6de3` 已同步；明天 07:55-10:50 观察 |
 | AR-012 | 08:00 daily pipeline 飞书写入超时导致今日任务失败 | P1 | Recovered / Synced to Dev | hotfix main -> synced dev | 生产已恢复且未发卡；`b46070b` 已同步回 `feature/next-production-flow` |
 | AR-014 | 飞书写入链路 RCA 与系统性防复发 | P1 | Hotfix Done / Synced to Dev | hotfix main -> synced dev | 生产 `00036d9` 已完成，dev `a0e62b3` 已同步；非幂等 batch_create 不盲目 retry |
-| AR-016 | 2026-07-04 飞书 03 update 读超时深层根因定位 | P1 | Needs Telemetry | production read-only -> dev telemetry / AR-005 | RCA 完成：高概率 DarkWake 网络恢复窗口；需补请求级 telemetry，并优先复核 keepawake |
+| AR-016 | 2026-07-04 飞书 03 update 读超时深层根因定位 | P1 | RCA Complete / Residual Merged into AR-029 | historical RCA -> AR-029 observability | DarkWake / 网络恢复窗口结论保留；剩余跨端观测缺口不再单独排队 |
 | AR-017 | Feishu 请求级 telemetry | P1 | Hotfix Done / Dev Equivalent | hotfix main -> observed tomorrow | 生产 `70e16c8` + `9e2faf3` 已 push；dev `08685fb` + `6eaf223` patch-equivalent；明天查 telemetry JSONL |
 | AR-023 | 2026-07-06 抖音对标采集 Chrome CDP 启动失败 | P1 | Recovered / Hotfix Done / Synced to Dev / QA Passed / PM Accepted | hotfix main -> recover today -> synced dev -> QA read-only -> PM accepted | 生产 `6a4efed` 已恢复同日 run `run_20260706_085249`；dev `4f49826` 已同步；测试只读复核通过；Topic Card 未发送，06/Codex 未触发 |
 | AR-024 | 2026-07-06 抖音补采只恢复 3 条的根因与完整恢复 | P1 | Recovered / QA Passed / PM Accepted | production diagnosis -> full same-day recovery -> QA read-only -> PM accepted | 根因是 AR-023 人为 3 账号限流；已按生产默认 12 账号补采到 `run_20260706_092517`，抖音 33 条；未发卡、未触发 06 |
@@ -71,6 +71,9 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | AR-020B | 选题主编 Skill 与字段契约重构 | Superseded / Historical | AR-020C -> AR-020D -> AR-020E |
 | AR-020C | 选题主编思考链与标题表达机制评审 | Architecture Review Done / Superseded | AR-020D -> AR-020E |
 | AR-020D | 人格化选题主编架构重构 | QA Round 3/3 Failed / Stop / Historical Evidence Retained | AR-020E 采用 Hook First 产品决策并独立 QA/发布 |
+| AR-003 | 学习确认卡上线前部署腾讯云 SCF receiver | Absorbed into AR-006 / Historical Dependency | AR-006 学习闭环生产启用统一负责发布与 smoke |
+| AR-018 | 飞书测试卡 receiver / test app 隔离 | Test Infrastructure Complete / Absorbed into AR-006 | 测试 App、测试 SCF、测试 Base 作为 AR-006 验收基础设施保留 |
+| AR-016 | 飞书 03 update 读超时深层根因定位 | RCA Complete / Residual Scope Absorbed | AR-029 统一承接剩余可观测性 |
 
 ## Next Feature Release
 
@@ -78,11 +81,11 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 
 | ID | 标题 | 优先级 | 状态 | 发布路径 | 验证 |
 |---|---|---:|---|---|---|
-| AR-003 | 学习确认卡上线前部署腾讯云 SCF receiver | P1 | Next | feature/next-production-flow -> main + SCF 部署 | Node + receiver health + smoke |
-| AR-006 | 学习闭环生产启用 | P2 | Staging Tested | feature/next-production-flow -> main | staging 04/06/08 |
-| AR-018 | 飞书测试卡 receiver / test app 隔离 | P1 | Test Receiver Verified / Ready for AR-013 Flow QA | feature/next-production-flow + test SCF/test app config | Round 5 真实测试卡点击 `本批都不选` 后专用测试 04 read-back 为 `不做`，生产反查 0 |
+| AR-006 | 学习闭环生产启用（含 AR-003/018 发布依赖） | P2 | Staging Tested / Needs Product Reconfirmation | feature/next-production-flow -> main + production receiver smoke | staging 04/06/08 + test receiver + production no-write/read-back |
 | AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | QA Passed / Waiting Release Authorization Plan | feature/next-production-flow | Round 2 QA 通过；发布时需生产 01 写入授权，将 8 个污染源隔离并 read-back；真实全量采集仍需在发布/恢复中按正常覆盖验证 |
-| AR-027 | 飞书 01/03/04 标签和表格列业务清理 | P1 | Schema Audit QA Passed / Waiting PM Cleanup Decision | feature/next-production-flow | Round 2 QA 通过；先基于 production read-only cleanup matrix 做人工删除决策，再单独授权执行字段/选项/view 清理 |
+| AR-027 | 飞书 01/03/04 标签和表格列业务清理 | P1 | Schema Audit QA Passed / Scheduled After AR-026 | feature/next-production-flow | AR-026 上线与首次全量采集稳定后，再基于 production read-only cleanup matrix 单独授权字段/选项/view 清理 |
+| AR-029 | 生产可观测性（含 AR-016 residual） | P1 | Reliability Pack / Needs Plan | AR-029 + AR-030 shared RC | 先完成日志/告警/请求链路证据，再作为 AR-030 恢复判断输入 |
+| AR-030 | 制作方向卡安全重试与状态未知恢复 | P1 | Reliability Pack / Needs Architecture Review | AR-029 + AR-030 shared RC | 与 AR-029 共用发布计划；重试、unknown、幂等和 no-duplicate 独立验收 |
 | AR-021 | 腾讯云 SCF receiver 标准 CLI 部署通道 | P2 | Backlog / Needs Plan | feature/next-production-flow；不纳入当前发布窗口 | 目标是减少每次控制台登录上传；需支持测试/生产分环境、包 hash 校验、部署记录、health/smoke 和失败回滚说明 |
 
 ## Authorization / Watch
