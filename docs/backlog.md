@@ -525,6 +525,20 @@
 - 验证方式：staging/test 或只读/低风险生产 dry-run 先输出计划账号数；正式启用前必须验证计划账号数、实际尝试账号数、成功账号数、失败账号与原因、内容条数和 03 read-back。不得只用 `ok=true` 或默认 12 账号作为通过证据。
 - 备注：AR-026 可以和 AR-020 同一开发计划里并行设计，但验收口径必须分开：AR-026 验证“内容库是否全量覆盖”，AR-020 验证“选题是否更适合 Austin”。2026-07-06 开发线程已提交并 push `8adce16`，新增 `topic_flow_rework.py` / `source_pool_governance.py`；`sync_source_sampling.py --dry-run` 显示当前有效对标账号 33 个、隔离账号 8 个。测试线程 Round 1 判定控制逻辑大体成立，但发现 CSV probe 会把 `video_links` JSON 字符串长度误算成视频数，且生产 01 当前仍显示 8 个污染来源为 enabled/current_aux_competitor。Round 2 开发提交 `07be5a5` 已修复 CSV probe 计数：`video_links` 为 stringified JSON/list 时先解析后计数；`/private/tmp/ar026_round2_csv_probe/source_governance_report.json` 中临时 CSV probe `video_links=[a,b]` 计数为 `2`。同时新增 `polluted_source_release_sync_plan.md`，说明 8 个污染源发布时如何从 current/enabled 切到 `quarantined_source` / inactive，历史 03 不动。`/private/tmp/ar026_round2_source_governance/source_governance_report.json` 显示 `planned_account_count=33`、`polluted_source_count=8`、`writes_feishu=false`、`touches_historical_03=false`。Round 2 独立 QA 通过：CSV/JSON 计数稳定；production read-only 01 report 显示有效对标账号 planned=33、污染源=8，release sync plan 明确只改 8 个污染源并不触碰历史 03。PM 注意：当前真实 artifact 仍来自 12 个尝试账号，不等于生产全量采集已经跑过；发布/恢复时必须按正常覆盖验证 planned/attempted/succeeded/failed 账号数和 03 read-back。
 
+### AR-031 固定抖音 Chrome Profile 与登录态硬门
+
+- 类型：采集稳定 / 生产前置门禁
+- 优先级：P1
+- 状态：In Development / Blocks Scheduled Collection and AR-026 Release
+- 来源：2026-07-15 明日采集前只读审计。用户要求抖音保持已登录，并固定使用同一个浏览器登录态，不得每次运行随机寻找浏览器。
+- 已确认根因：生产调用链固定请求 `127.0.0.1:9333`，但当前监听 PID 17170 实际绑定旧 RC worktree 的 `.local_services/douyin-chrome-profile`，不是 production profile；当前 Douyin DOM 有明确登录按钮，判定 `logged_out`。`start_douyin_cdp_chrome.py` 只检查 CDP 端口是否可用，不校验监听进程的真实 `--user-data-dir`，还会把请求 profile 误报为实际 profile；`daily_pipeline.py` 又把 Chrome start 和 Douyin probe 作为 optional step。
+- 目标：建立唯一、worktree-independent 的持久化 Douyin Chrome profile；9333 已占用时必须验证 PID/binary/port/user-data-dir 精确匹配；增加不读取认证秘密的登录态预检；profile mismatch、logged_out、verification_required 或 indeterminate 均 fail closed 并写入 scheduled/daily 日志。
+- 范围：canonical profile 配置、Chrome process/profile identity、CDP health、sanitized DOM login health、08:00 preflight、结构化失败证据、迁移/回滚 runbook 和回归测试。
+- 不在范围：不导出 cookie/token/localStorage；不随机切换其他浏览器/端口/profile；不以 headless 或旧 profile 作为 fallback；不直接修改 AR-026 的来源治理和生产 01 数据；不运行生产采集作为开发验证。
+- 验证方式：wrong-profile/unknown-process/logged-out/verification/ambiguous DOM 全部非零；正确 canonical profile + logged-in 才通过；daily pipeline 在 preflight 失败后不得启动 Douyin probe或把全量覆盖报告为成功；生产迁移后需 read-back actual user-data-dir、profile marker、CDP、login status，并在次日 07:45 执行单一 check-only 命令。
+- 发布顺序：AR-031 dev self-validation -> 独立 QA -> hotfix production -> 备份并迁移/重新登录 canonical profile -> 07:45 check-only -> AR-026 RC/生产 01 migration -> 08:00 首次全量采集验收。
+- 生产只读证据：`/private/tmp/ar020e_douyin_login_readonly_audit_20260715/DOUYIN_LOGIN_AUDIT.md`；审计未运行采集、未写 Feishu、未修改 browser/profile/automation。
+
 ### AR-027 飞书 01/03/04 标签和表格列业务清理
 
 - 类型：数据模型治理 / 飞书表结构清理

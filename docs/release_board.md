@@ -45,8 +45,9 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | AR-023 | 2026-07-06 抖音对标采集 Chrome CDP 启动失败 | P1 | Recovered / Hotfix Done / Synced to Dev / QA Passed / PM Accepted | hotfix main -> recover today -> synced dev -> QA read-only -> PM accepted | 生产 `6a4efed` 已恢复同日 run `run_20260706_085249`；dev `4f49826` 已同步；测试只读复核通过；Topic Card 未发送，06/Codex 未触发 |
 | AR-024 | 2026-07-06 抖音补采只恢复 3 条的根因与完整恢复 | P1 | Recovered / QA Passed / PM Accepted | production diagnosis -> full same-day recovery -> QA read-only -> PM accepted | 根因是 AR-023 人为 3 账号限流；已按生产默认 12 账号补采到 `run_20260706_092517`，抖音 33 条；未发卡、未触发 06 |
 | AR-025 | 生产恢复口径与验收规范 | P1 | Backlog / Needs Spec | PM spec -> user confirmation -> rules/checklist | 治理类事项；从 AR-023/024 复盘抽象恢复口径、partial recovery 标识、QA/PM 验收标准 |
-| AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | QA Passed / Waiting Release Authorization Plan | dev/test -> RC -> production release | Round 2 QA 通过；生产 01 当前仍未写入隔离，发布时需按 release sync plan 将 8 个污染源切到 `quarantined_source` 并 read-back |
+| AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | QA Passed / Release Blocked by AR-031 + RC | dev/test -> RC -> production release | Round 2 QA 通过；生产 01 仍需隔离 8 个污染源；固定 profile/login 硬门与当前 production baseline RC 未完成前不得上线 |
 | AR-027 | 飞书 01/03/04 标签和表格列业务清理 | P1 | Schema Audit QA Passed / Waiting PM Cleanup Decision | schema audit -> dry-run -> QA -> release cleanup | Round 2 QA 通过；cleanup matrix 可用于第一轮字段/选项清理决策，view 仍需人工确认 |
+| AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | In Development / Blocks Scheduled Collection | dev -> QA -> hotfix release -> production profile migration | 当前 9333 绑定旧 RC profile 且 logged_out；必须固定 worktree-independent profile、身份校验、登录预检和 fail-closed 日志 |
 
 ## Released / Resolved
 
@@ -82,8 +83,9 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 | ID | 标题 | 优先级 | 状态 | 发布路径 | 验证 |
 |---|---|---:|---|---|---|
 | AR-006 | 学习闭环生产启用（含 AR-003/018 发布依赖） | P2 | Staging Tested / Needs Product Reconfirmation | feature/next-production-flow -> main + production receiver smoke | staging 04/06/08 + test receiver + production no-write/read-back |
-| AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | QA Passed / Waiting Release Authorization Plan | feature/next-production-flow | Round 2 QA 通过；发布时需生产 01 写入授权，将 8 个污染源隔离并 read-back；真实全量采集仍需在发布/恢复中按正常覆盖验证 |
+| AR-026 | 飞书 01 全量对标账号采集覆盖 | P1 | QA Passed / Release Blocked by AR-031 + RC | feature/next-production-flow | 先通过 AR-031 固定 profile/login 门，再基于当前 production main 建最小 RC；发布时需生产 01 写入授权，将 8 个污染源隔离并 read-back |
 | AR-027 | 飞书 01/03/04 标签和表格列业务清理 | P1 | Schema Audit QA Passed / Scheduled After AR-026 | feature/next-production-flow | AR-026 上线与首次全量采集稳定后，再基于 production read-only cleanup matrix 单独授权字段/选项/view 清理 |
+| AR-031 | 固定抖音 Chrome Profile 与登录态硬门 | P1 | In Development / Pre-08:00 Blocker | isolated dev -> QA -> hotfix main | 9333 actual profile mismatch + logged_out 已只读确认；不得复用错误 profile 或将登录失败 optional 化 |
 | AR-029 | 生产可观测性（含 AR-016 residual） | P1 | Reliability Pack / Needs Plan | AR-029 + AR-030 shared RC | 先完成日志/告警/请求链路证据，再作为 AR-030 恢复判断输入 |
 | AR-030 | 制作方向卡安全重试与状态未知恢复 | P1 | Reliability Pack / Needs Architecture Review | AR-029 + AR-030 shared RC | 与 AR-029 共用发布计划；重试、unknown、幂等和 no-duplicate 独立验收 |
 | AR-021 | 腾讯云 SCF receiver 标准 CLI 部署通道 | P2 | Backlog / Needs Plan | feature/next-production-flow；不纳入当前发布窗口 | 目标是减少每次控制台登录上传；需支持测试/生产分环境、包 hash 校验、部署记录、health/smoke 和失败回滚说明 |
