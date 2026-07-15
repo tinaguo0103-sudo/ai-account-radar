@@ -3013,3 +3013,15 @@
 - 隔离：原 `ai_account_radar_dev` 的 PM docs 和 AR-020 脏改未 checkout/pull/stash/reset/restore/修改；回灌在 `/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_sync_main_20260715` 完成。
 - Parity：production release 69 文件中 68 个 blob exact；唯一整合文件 `scripts/content_sampler.py` 保留 feature 的来源治理/AI Hot/反向评估/union CSV，同时吸收 production duplicate-record 的运行日期/运行批次刷新。receiver、SCF、release gate、Topic Card guard、OAuth、AR-020E 发布文件均 production exact。
 - 测试与边界：310 Python、32 receiver/SCF Node、semantic owner static=0/behavioral=7/7、py_compile、node check、diff check、pre-merge 全过。无 Feishu、卡片、callback、采集、06、Skill、SCF、automation 或 production main 动作。证据：`/private/tmp/ar020e_main_to_feature_sync_20260715/MAIN_TO_FEATURE_SYNC.md`。
+
+### 2026-07-15 需求池收敛、AR-026 上线评估与 AR-031 建档
+
+- 需求池收敛：AR-003 历史依赖并入 AR-006；AR-018 已完成测试基础设施并入 AR-006；AR-016 residual 并入 AR-029；AR-029/030 组成一个 Production Reliability Pack 但独立验收；AR-027 排在 AR-026 首次全量采集稳定之后。docs commits=`52aa482`、`3e907ab`。
+- AR-026 独立结论：`Ready for RC / Not Ready for Production Authorization`。生产 01 仍有 8 条污染源为 active，生产 03 的 51 条历史命中只读保留；当前 feature 含旧 Top3/排序等无关差异，必须从 production main 组窄 RC、只移植来源隔离和全量覆盖 hunks，并以 planned=attempted=33、逐账号结果和 03 read-back 做首次运行验收。报告：`/private/tmp/ar026_release_readiness_qa_20260715/AR026_RELEASE_READINESS_ASSESSMENT.md`。
+- AR-031 来源：当前 9333 PID 17170 实际使用旧 RC worktree profile，且 Douyin DOM 为 logged_out。开发提交 `d9aab42` 建立 worktree-independent canonical profile、marker+lsof identity、登录态硬门和 scheduled partial 可见性；未修改生产浏览器、profile 或 automation。
+
+### 2026-07-15 AR-031 独立 QA 失败并集中返修
+
+- QA 结论：`Rework Required`。固定 9333/canonical profile、marker+lsof 信任链、cache 前置门禁和 partial 语义大体成立；当前真实 9333 能明确返回 `profile_identity_mismatch` 并定位旧 RC profile，`/private/tmp` 非 9333 临时 Chrome 的 profile identity 也能真实通过。
+- 阻断：`douyin_login_dom_probe.mjs` 用 `import.meta.url === file://${process.argv[1]}` 判断 CLI 入口；项目路径包含中文时左侧 percent-encoded、右侧未编码，导致进程 exit 0 但 stdout 为空。Python 只能得到 `malformed_dom_probe_output / indeterminate`，真实已登录账号也无法通过采集门。
+- PM 动作：已派固定开发线程做一次集中返修，要求使用 Node 标准 URL/path API，增加含中文和空格路径的真实 spawn CLI/exit/单 JSON 回归，重跑隔离 Chrome 与当前 9333 只读反例，再提交 push。返修与独立 QA 通过前不组 production Hotfix RC，不迁移/复制/登录 canonical profile，AR-026 继续阻断。

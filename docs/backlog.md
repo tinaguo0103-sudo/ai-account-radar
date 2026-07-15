@@ -516,7 +516,7 @@
 
 - 类型：采集覆盖 / AR-020 上游依赖
 - 优先级：P1
-- 状态：QA Passed / Waiting Release Authorization Plan
+- 状态：QA Passed / Release Blocked by AR-031 + Narrow RC
 - 来源：AR-020 需求确认。用户指出飞书 01 里即使清掉截图污染账号，仍不止 12 个对标账号；用户需要的是全量账号采集，而不是生产默认 12 个账号抽样。
 - 影响：如果上游只采 12 个账号，03 内容库天然缺失大量对标内容，AR-020 的选题转译和反向测试会建立在不完整内容库上，继续漏掉适合 Austin 账号的题。
 - 目标：从飞书 01 获取有效对标账号白名单，清掉截图污染账号后，对剩余有效账号做全量采集覆盖；当前账号量只有几十个，暂不需要分批。若未来量级明显增大或触发平台风险，再升级为分批/频控策略。每次采集必须输出账号级覆盖报告。
@@ -529,7 +529,7 @@
 
 - 类型：采集稳定 / 生产前置门禁
 - 优先级：P1
-- 状态：In Development / Blocks Scheduled Collection and AR-026 Release
+- 状态：QA Failed / Consolidated Rework in Development / Blocks Scheduled Collection and AR-026 Release
 - 来源：2026-07-15 明日采集前只读审计。用户要求抖音保持已登录，并固定使用同一个浏览器登录态，不得每次运行随机寻找浏览器。
 - 已确认根因：生产调用链固定请求 `127.0.0.1:9333`，但当前监听 PID 17170 实际绑定旧 RC worktree 的 `.local_services/douyin-chrome-profile`，不是 production profile；当前 Douyin DOM 有明确登录按钮，判定 `logged_out`。`start_douyin_cdp_chrome.py` 只检查 CDP 端口是否可用，不校验监听进程的真实 `--user-data-dir`，还会把请求 profile 误报为实际 profile；`daily_pipeline.py` 又把 Chrome start 和 Douyin probe 作为 optional step。
 - 目标：建立唯一、worktree-independent 的持久化 Douyin Chrome profile；9333 已占用时必须验证 PID/binary/port/user-data-dir 精确匹配；增加不读取认证秘密的登录态预检；profile mismatch、logged_out、verification_required 或 indeterminate 均 fail closed 并写入 scheduled/daily 日志。
@@ -538,6 +538,7 @@
 - 验证方式：wrong-profile/unknown-process/logged-out/verification/ambiguous DOM 全部非零；正确 canonical profile + logged-in 才通过；daily pipeline 在 preflight 失败后不得启动 Douyin probe或把全量覆盖报告为成功；生产迁移后需 read-back actual user-data-dir、profile marker、CDP、login status，并在次日 07:45 执行单一 check-only 命令。
 - 发布顺序：AR-031 dev self-validation -> 独立 QA -> hotfix production -> 备份并迁移/重新登录 canonical profile -> 07:45 check-only -> AR-026 RC/生产 01 migration -> 08:00 首次全量采集验收。
 - 生产只读证据：`/private/tmp/ar020e_douyin_login_readonly_audit_20260715/DOUYIN_LOGIN_AUDIT.md`；审计未运行采集、未写 Feishu、未修改 browser/profile/automation。
+- 开发与 QA：开发提交 `d9aab425d123f89115a4de28a48d1c93a1242873` 已建立 fixed 9333、canonical profile、marker+lsof identity、登录预检和 fail-closed partial 语义。独立 QA 的身份链、当前 9333 wrong-profile 反例及 `/private/tmp` 隔离 Chrome 正例均成立，但发现 `douyin_login_dom_probe.mjs` 用裸 `file://${process.argv[1]}` 判断 CLI 入口；中文路径下 URL 编码不一致导致 exit 0 且 stdout 为空，真实登录也只能得到 `indeterminate`。结论为 `Rework Required`；开发必须改用 Node 标准 URL/path API，并增加含中文和空格的真实 spawn CLI 回归后再进入 Hotfix RC。
 
 ### AR-027 飞书 01/03/04 标签和表格列业务清理
 
