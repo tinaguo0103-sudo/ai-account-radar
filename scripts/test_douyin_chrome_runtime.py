@@ -198,6 +198,28 @@ class DouyinChromeRuntimeTests(unittest.TestCase):
             "url_wrong_type": {"state": "logged_in", "markers": {}, "url": []},
             "title_wrong_type": {"state": "logged_in", "markers": {}, "title": 42},
             "error_wrong_type": {"state": "indeterminate", "markers": {}, "error": {}},
+            "visibility_wrong_type": {"state": "logged_in", "markers": {}, "visibility": []},
+            "visibility_extra_field": {
+                "state": "logged_in", "markers": {},
+                "visibility": {
+                    "viewport": {"width": 1280, "height": 720},
+                    "visibleHeaderSelfMarkerCount": 2,
+                    "visibleLoginMarkerCount": 0,
+                    "visibleVerificationMarkerCount": 0,
+                    "verificationIframeRects": [],
+                    "accountIdentity": "must-not-pass",
+                },
+            },
+            "visibility_count_bool": {
+                "state": "logged_in", "markers": {},
+                "visibility": {
+                    "viewport": {"width": 1280, "height": 720},
+                    "visibleHeaderSelfMarkerCount": True,
+                    "visibleLoginMarkerCount": 0,
+                    "visibleVerificationMarkerCount": 0,
+                    "verificationIframeRects": [],
+                },
+            },
         }
         for name, mutation in mutations.items():
             with self.subTest(name=name):
@@ -219,6 +241,22 @@ class DouyinChromeRuntimeTests(unittest.TestCase):
         }))
         self.assertEqual(error, "")
         self.assertEqual(payload["state"], "indeterminate")
+
+    def test_dom_probe_schema_accepts_sanitized_visibility_diagnostics(self) -> None:
+        visibility = {
+            "viewport": {"width": 1280, "height": 720},
+            "visibleHeaderSelfMarkerCount": 2,
+            "visibleLoginMarkerCount": 0,
+            "visibleVerificationMarkerCount": 0,
+            "verificationIframeRects": [{"width": 0, "height": 0, "visible": False}],
+        }
+        payload, error = session.parse_dom_probe_output(json.dumps({
+            "state": "logged_in",
+            "markers": {"multipleHeaderSelfMarkers": True},
+            "visibility": visibility,
+        }))
+        self.assertEqual(error, "")
+        self.assertEqual(payload["visibility"], visibility)
 
 
 if __name__ == "__main__":

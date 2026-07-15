@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { classifyLoginMarkers, isMainModule } from "./douyin_login_dom_probe.mjs";
+import { classifyLoginMarkers, isMainModule, probeDocument } from "./douyin_login_dom_probe.mjs";
 
 assert.equal(classifyLoginMarkers({ headerAccountControl: true, headerSelfLink: true }), "logged_in");
 assert.equal(classifyLoginMarkers({
@@ -26,6 +26,109 @@ assert.equal(classifyLoginMarkers({
   verificationIframe: true,
 }), "verification_required");
 assert.equal(classifyLoginMarkers({}), "indeterminate");
+
+function fixtureNode({
+  text = "",
+  rect = { left: 10, top: 10, right: 62, bottom: 62, width: 52, height: 52 },
+  style = {},
+  parentElement = null,
+  src = "",
+  title = "",
+  hidden = false,
+  ariaHidden = "false",
+} = {}) {
+  return {
+    isConnected: true,
+    hidden,
+    parentElement,
+    src,
+    title,
+    style: { display: "block", visibility: "visible", opacity: "1", ...style },
+    childNodes: text ? [{ nodeType: 3, nodeValue: text }] : [],
+    getAttribute(name) { return name === "aria-hidden" ? ariaHidden : null; },
+    getClientRects() { return rect.width > 0 && rect.height > 0 ? [rect] : []; },
+    getBoundingClientRect() { return rect; },
+  };
+}
+
+function inspectFixture({
+  accountControls = [],
+  selfLinks = [],
+  accountMenus = [],
+  authorAvatars = [],
+  authorLinks = [],
+  textNodes = [],
+  loginDialogs = [],
+  verificationDialogs = [],
+  iframes = [],
+} = {}) {
+  const documentRef = {
+    documentElement: { clientWidth: 1280, clientHeight: 720 },
+    querySelectorAll(selector) {
+      if (selector === "iframe") return iframes;
+      if (selector.includes('data-e2e="user-avatar"')) return accountControls;
+      if (selector.includes('/user/self')) return selfLinks;
+      if (selector.includes('aria-label*="账号"')) return accountMenus;
+      if (selector.includes('main img[class*="avatar"]')) return authorAvatars;
+      if (selector.includes('main a[href*="/user/"]')) return authorLinks;
+      if (selector.includes('login-dialog')) return loginDialogs;
+      if (selector.includes('[class*="verify"]')) return verificationDialogs;
+      if (selector.startsWith("button, a, span")) return textNodes;
+      return [];
+    },
+  };
+  const windowRef = {
+    innerWidth: 1280,
+    innerHeight: 720,
+    getComputedStyle(node) { return node.style; },
+  };
+  return probeDocument(documentRef, windowRef);
+}
+
+const visibleSelfA = fixtureNode();
+const visibleSelfB = fixtureNode({ rect: { left: 70, top: 10, right: 104, bottom: 44, width: 34, height: 34 } });
+const hiddenVerification = fixtureNode({ src: "https://verify.example", style: { display: "none" } });
+const zeroSizeVerification = fixtureNode({
+  src: "https://verify.example",
+  rect: { left: 0, top: 0, right: 0, bottom: 0, width: 0, height: 0 },
+});
+const offViewportVerification = fixtureNode({
+  src: "https://verify.example",
+  rect: { left: 1500, top: 10, right: 1600, bottom: 110, width: 100, height: 100 },
+});
+const hiddenAncestor = fixtureNode({ style: { visibility: "hidden" } });
+const ancestorHiddenVerification = fixtureNode({ src: "https://verify.example", parentElement: hiddenAncestor });
+for (const iframe of [hiddenVerification, zeroSizeVerification, offViewportVerification, ancestorHiddenVerification]) {
+  const inspected = inspectFixture({ selfLinks: [visibleSelfA, visibleSelfB], iframes: [iframe] });
+  assert.equal(inspected.markers.verificationIframe, false);
+  assert.equal(classifyLoginMarkers(inspected.markers), "logged_in");
+}
+
+const visibleVerification = fixtureNode({ src: "https://verify.example" });
+let inspected = inspectFixture({ selfLinks: [visibleSelfA, visibleSelfB], iframes: [visibleVerification] });
+assert.equal(inspected.visibility.visibleVerificationMarkerCount, 1);
+assert.equal(classifyLoginMarkers(inspected.markers), "verification_required");
+
+const visibleVerificationText = fixtureNode({ text: "安全验证" });
+inspected = inspectFixture({ selfLinks: [visibleSelfA, visibleSelfB], textNodes: [visibleVerificationText] });
+assert.equal(classifyLoginMarkers(inspected.markers), "verification_required");
+
+const visibleVerificationDialog = fixtureNode();
+inspected = inspectFixture({ selfLinks: [visibleSelfA, visibleSelfB], verificationDialogs: [visibleVerificationDialog] });
+assert.equal(classifyLoginMarkers(inspected.markers), "verification_required");
+
+const hiddenLogin = fixtureNode({ text: "登录", style: { opacity: "0" } });
+inspected = inspectFixture({ selfLinks: [visibleSelfA, visibleSelfB], textNodes: [hiddenLogin] });
+assert.equal(classifyLoginMarkers(inspected.markers), "logged_in");
+
+const visibleLogin = fixtureNode({ text: "登录" });
+inspected = inspectFixture({ selfLinks: [visibleSelfA, visibleSelfB], textNodes: [visibleLogin] });
+assert.equal(classifyLoginMarkers(inspected.markers), "logged_out");
+
+inspected = inspectFixture({ authorAvatars: [fixtureNode()], authorLinks: [fixtureNode()] });
+assert.equal(classifyLoginMarkers(inspected.markers), "indeterminate");
+inspected = inspectFixture({ selfLinks: [visibleSelfA] });
+assert.equal(classifyLoginMarkers(inspected.markers), "indeterminate");
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const sourcePath = path.join(here, "douyin_login_dom_probe.mjs");
@@ -65,7 +168,7 @@ function decodeClientFrame(buffer) {
   return JSON.parse(payload.toString("utf8"));
 }
 
-let activeMarkers = {};
+let activeInspection = { markers: {}, visibility: {} };
 const server = http.createServer((request, response) => {
   if (request.url === "/json/list") {
     const port = server.address().port;
@@ -94,7 +197,7 @@ server.on("upgrade", (request, socket) => {
     if (!requestPayload) return;
     socket.write(websocketTextFrame(JSON.stringify({
       id: requestPayload.id,
-      result: { result: { type: "object", value: activeMarkers } },
+      result: { result: { type: "object", value: activeInspection } },
     })), () => socket.destroy());
     pending = Buffer.alloc(0);
   });
@@ -106,7 +209,16 @@ const unicodeScript = path.join(tempRoot, "登录 探针.mjs");
 fs.copyFileSync(path.join(here, "douyin_login_dom_probe.mjs"), unicodeScript);
 
 async function runFixture(markers) {
-  activeMarkers = markers;
+  activeInspection = {
+    markers,
+    visibility: {
+      viewport: { width: 1280, height: 720 },
+      visibleHeaderSelfMarkerCount: markers.multipleHeaderSelfMarkers ? 2 : 0,
+      visibleLoginMarkerCount: markers.loginButton || markers.loginDialog ? 1 : 0,
+      visibleVerificationMarkerCount: markers.verificationIframe || markers.verificationText ? 1 : 0,
+      verificationIframeRects: [],
+    },
+  };
   const port = server.address().port;
   const child = spawn(process.execPath, [unicodeScript, "--cdp", `http://127.0.0.1:${port}`], {
     stdio: ["ignore", "pipe", "pipe"],
