@@ -3094,3 +3094,9 @@
 - 结论：`Ready for PM Production Authorization`。RC=`178f04780ddc74b61befab04b02c87c951980ea6`，base=`9893c6c`，4-file manifest/hash/apply 与 feature patch byte parity 全通过。
 - QA：14/14 visibility、7/7 diagnostics schema、293 Python、24 AR-031、129 AR-020D/E adjacent、7 Douyin/Unicode/visibility Node、32 receiver/SCF 与静态门全过。fresh exact RC 在当前 PID 33282 返回 identity verified、session verified、logged_in；visible self=2、login=0、verification=0，secrets_read=false。
 - 最小生产动作：read-back production/tasks/PID -> fast-forward/push `178f047` -> dynamic production gate -> exact session read-back -> 三任务 status-only resume。任一 mismatch 保持 PAUSED，仅 revert follow-up code；不停止 Chrome、不迁移/复制 profile、不运行业务流程。
+
+### 2026-07-15 AR-031 可见性 Follow-up 获得最小生产授权
+
+- 用户授权：用户明确回复“确认”，授权 production main `9893c6c -> 178f047` Git-only fast-forward/push、dynamic gate、当前 canonical 9333 session read-back，以及通过后 exact 三任务 status-only resume。
+- 严格边界：不停止/重启 PID 33282，不复制/迁移 profile，不运行 automation，不写 Feishu、不发卡/callback、不采集、不触发 06/Skill/SCF。任何 branch/hash/PID/profile/gate/session/read-back mismatch 均回滚 follow-up code并保持任务 PAUSED。
+- PM 动作：已派固定生产线程执行；PM 不轮询。成功后仍只表示 AR-031 release closed，明日 07:45 与 08:00/09:15/10:00 scheduled-day smoke 单独验收。

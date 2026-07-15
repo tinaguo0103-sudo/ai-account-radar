@@ -529,7 +529,7 @@
 
 - 类型：采集稳定 / 生产前置门禁
 - 优先级：P1
-- 状态：Visibility RC QA Passed / Ready for PM Production Authorization / Automations Paused / Blocks AR-026
+- 状态：Follow-up Release Authorized / In Progress / Automations Paused / Blocks AR-026
 - 来源：2026-07-15 明日采集前只读审计。用户要求抖音保持已登录，并固定使用同一个浏览器登录态，不得每次运行随机寻找浏览器。
 - 已确认根因：生产调用链固定请求 `127.0.0.1:9333`，但当前监听 PID 17170 实际绑定旧 RC worktree 的 `.local_services/douyin-chrome-profile`，不是 production profile；当前 Douyin DOM 有明确登录按钮，判定 `logged_out`。`start_douyin_cdp_chrome.py` 只检查 CDP 端口是否可用，不校验监听进程的真实 `--user-data-dir`，还会把请求 profile 误报为实际 profile；`daily_pipeline.py` 又把 Chrome start 和 Douyin probe 作为 optional step。
 - 目标：建立唯一、worktree-independent 的持久化 Douyin Chrome profile；9333 已占用时必须验证 PID/binary/port/user-data-dir 精确匹配；增加不读取认证秘密的登录态预检；profile mismatch、logged_out、verification_required 或 indeterminate 均 fail closed 并写入 scheduled/daily 日志。
@@ -549,6 +549,7 @@
 - 生产结果：代码已发布到 production `9893c6c`，dynamic gate 全过；旧 PID 17170 已正常停止，canonical profile 已从停止且无 lock 的旧 production profile 迁移，现 PID 33282、9333、marker+lsof identity verified。登录探针返回 `verification_required`，但无秘密 DOM 诊断证明命中的 iframe 为 `display:none/0x0/viewport=false`，同时存在两个可见 `/user/self` 账号入口且无可见登录 UI；这是隐藏 iframe 假阳性。三 automation 保持 PAUSED，无业务写入。已派可见性窄热修，前述 Git/profile 迁移不重做。
 - Follow-up RC：feature `068aab5` 与 production-base RC `178f047` 仅改 4 个 DOM probe/parser/tests 文件。visible/effective marker 合同覆盖 display/visibility/opacity、尺寸、viewport 和隐藏祖先；当前真实 PID 33282 在 feature/RC 下均返回 `profile_identity_verified + session_verified + logged_in`，visible self=2、login=0、verification=0。RC 已 push，已派发布 QA；三任务仍 PAUSED，production 仍为 `9893c6c`。
 - Follow-up Release QA：RC `178f04780ddc74b61befab04b02c87c951980ea6` 的 4-file scope/hash/apply、14 visibility mutations、7 diagnostics schema、293 Python、24 AR-031、129 AR-020D/E adjacent、7 Node、32 receiver/SCF 与 fresh real 9333 closure 全过。结论 `Ready for PM Production Authorization`；授权动作仅 Git-only release + gate + session read-back + status-only resume，不停止 PID 33282、不再迁移 profile。
+- Follow-up 授权：用户已明确回复“确认”。PM 已派生产线程只执行 production `9893c6c -> 178f047` fast-forward/push、dynamic gate、当前 canonical 9333 session read-back 和三任务 status-only resume。禁止停止/重启 Chrome、复制/迁移 profile、运行 automation 或触发任何业务写入；失败仅回滚 follow-up code并保持 PAUSED。
 
 ### AR-027 飞书 01/03/04 标签和表格列业务清理
 
