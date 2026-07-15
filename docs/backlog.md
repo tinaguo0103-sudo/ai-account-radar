@@ -516,7 +516,7 @@
 
 - 类型：采集覆盖 / AR-020 上游依赖
 - 优先级：P1
-- 状态：QA Passed / Production-base Narrow RC Building
+- 状态：RC Self-Validation Passed / Release QA In Progress
 - 来源：AR-020 需求确认。用户指出飞书 01 里即使清掉截图污染账号，仍不止 12 个对标账号；用户需要的是全量账号采集，而不是生产默认 12 个账号抽样。
 - 影响：如果上游只采 12 个账号，03 内容库天然缺失大量对标内容，AR-020 的选题转译和反向测试会建立在不完整内容库上，继续漏掉适合 Austin 账号的题。
 - 目标：从飞书 01 获取有效对标账号白名单，清掉截图污染账号后，对剩余有效账号做全量采集覆盖；当前账号量只有几十个，暂不需要分批。若未来量级明显增大或触发平台风险，再升级为分批/频控策略。每次采集必须输出账号级覆盖报告。
@@ -524,7 +524,7 @@
 - 不在范围：不直接改 AR-020 选题打分；不清理历史 03；不把截图之外的来源一并删除。
 - 验证方式：staging/test 或只读/低风险生产 dry-run 先输出计划账号数；正式启用前必须验证计划账号数、实际尝试账号数、成功账号数、失败账号与原因、内容条数和 03 read-back。不得只用 `ok=true` 或默认 12 账号作为通过证据。
 - 备注：AR-026 可以和 AR-020 同一开发计划里并行设计，但验收口径必须分开：AR-026 验证“内容库是否全量覆盖”，AR-020 验证“选题是否更适合 Austin”。2026-07-06 开发线程已提交并 push `8adce16`，新增 `topic_flow_rework.py` / `source_pool_governance.py`；`sync_source_sampling.py --dry-run` 显示当前有效对标账号 33 个、隔离账号 8 个。测试线程 Round 1 判定控制逻辑大体成立，但发现 CSV probe 会把 `video_links` JSON 字符串长度误算成视频数，且生产 01 当前仍显示 8 个污染来源为 enabled/current_aux_competitor。Round 2 开发提交 `07be5a5` 已修复 CSV probe 计数：`video_links` 为 stringified JSON/list 时先解析后计数；`/private/tmp/ar026_round2_csv_probe/source_governance_report.json` 中临时 CSV probe `video_links=[a,b]` 计数为 `2`。同时新增 `polluted_source_release_sync_plan.md`，说明 8 个污染源发布时如何从 current/enabled 切到 `quarantined_source` / inactive，历史 03 不动。`/private/tmp/ar026_round2_source_governance/source_governance_report.json` 显示 `planned_account_count=33`、`polluted_source_count=8`、`writes_feishu=false`、`touches_historical_03=false`。Round 2 独立 QA 通过：CSV/JSON 计数稳定；production read-only 01 report 显示有效对标账号 planned=33、污染源=8，release sync plan 明确只改 8 个污染源并不触碰历史 03。PM 注意：当前真实 artifact 仍来自 12 个尝试账号，不等于生产全量采集已经跑过；发布/恢复时必须按正常覆盖验证 planned/attempted/succeeded/failed 账号数和 03 read-back。
-- 上线推进：AR-031 已发布并恢复 automation，现从 production `178f047` 组装 AR-026 独立窄 RC。必须沿真实 08:00 scheduled path 消除 12/3 缩限、保留 canonical logged-in 硬门和 AR-020E 链路；生产 01 八条隔离仅做 GET-only 计划，待 RC QA 后另行授权。
+- 上线推进：production-base RC `release/ar020e-rc-ar026-20260715@0b5a98e` 已从 production `178f047` 以 hunk-level 组装并通过开发自验；真实 scheduled check-only 为 total=33、Douyin=31、other=2，正 account cap、旧 cache、legacy HTTP 和跨账号补齐均被阻断。生产 01 八条隔离仍仅有 GET-only 计划，历史 03 保持只读。PM 已派一次完整独立 RC Release QA；通过后才申请 Git、01 八条写入/read-back 和 automation pause/resume 的生产授权。
 
 ### AR-031 固定抖音 Chrome Profile 与登录态硬门
 

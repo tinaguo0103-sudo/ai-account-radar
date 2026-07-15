@@ -3108,3 +3108,11 @@
 - Automation：`ai-rebuild`、`ai-04-rebuild`、`ai-rebuild-2` 仅 `PAUSED -> ACTIVE`，08:00/09:15/10:00、prompt、parent target、production cwd 不变，无新增 memory/run。
 - 边界：无 Feishu、卡片/callback、采集、06、Skill/SCF 或 Chrome/profile 副作用。备份根=`/private/tmp/ar031_visible_production_release_20260715_205924`。
 - 下一步：AR-031 只待明日 07:45 与 scheduled-day smoke。AR-026 前置解除，PM 已派开发从 production `178f047` 组独立窄 RC；不把 RC 自验冒充真实 33 账号采集完成。
+
+### 2026-07-15 AR-026 Production-base 窄 RC 自验通过并派发布 QA
+
+- RC：base=`178f04780ddc74b61befab04b02c87c951980ea6`，branch=`release/ar020e-rc-ar026-20260715`，commit=`0b5a98e59fea4a4a3d42693ed980477fa26221a6`，local=remote、clean。未 merge feature、未 cherry-pick 混合提交 `8adce16/07be5a5`。
+- 行为：真实 scheduled outer/daily 的 `0` 表示全量，正 account cap 直接 `limited_plan_rejected`；check-only 计划 total=33、Douyin=31、other=2。canonical 9333 登录硬门、force fresh、逐账号 lineage、partial nonzero 和污染源 quarantine 均保留，无 cache/HTTP/random-browser fallback。
+- 生产只读：01 为 51 条，迁移 target=8、untouched=43；03 为 670 条，历史污染匹配 51 条且明确 no-touch；canonical PID 33282 返回 identity/session/logged_in。上述均未写入或采集。
+- 自验：RC Python 306、targeted 17、AR-026 Node 25、receiver/SCF 32、semantic/pre-merge 7/7 及 compile/node/diff 均通过。combined patch SHA=`c4c72e69ee5f2fde3380dc6a33a97693680faf0f7eef9ae8564830f4a61a98b6`。
+- PM 动作：已派固定 QA 线程执行一次完整 RC Release QA，覆盖 scope、scheduled path、mutation、01/03 fresh GET、canonical session 和生产回滚计划；不做局部 micro-recheck，不写 Feishu、不运行真实 31 账号采集。PM 不轮询，等待主动回传。
