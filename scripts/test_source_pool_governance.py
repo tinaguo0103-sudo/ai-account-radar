@@ -2,8 +2,12 @@
 from __future__ import annotations
 
 import unittest
+import json
+import tempfile
+from pathlib import Path
 from unittest import mock
 
+import content_sampler
 import topic_flow_rework as flow
 import source_pool_governance as governance
 import run_daily_collection_job
@@ -164,6 +168,29 @@ class SourcePoolGovernanceTests(unittest.TestCase):
         audit = governance.zero_fallback_audit()
         self.assertTrue(audit["ok"], audit)
         self.assertEqual(audit["prohibited_path_count"], 0)
+
+    def test_quarantined_manual_item_cannot_enter_content_pool(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "sources.json"
+            manual = root / "manual.jsonl"
+            config.write_text(json.dumps({"sources": [{
+                "account_name": "琼玩车",
+                "source_type": "competitor_video",
+                "source_role": "quarantined_source",
+                "default_enabled": False,
+            }]}, ensure_ascii=False), encoding="utf-8")
+            manual.write_text(json.dumps({
+                "来源类型": "对标视频",
+                "平台": "抖音",
+                "账号名/公众号名": "琼玩车",
+                "内容标题": "must not enter",
+                "内容链接": "https://www.douyin.com/video/123",
+            }, ensure_ascii=False) + "\n", encoding="utf-8")
+            with mock.patch.object(content_sampler, "CONTENT_SOURCES", config):
+                items, logs = content_sampler.collect_items(False, manual)
+        self.assertEqual(items, [])
+        self.assertIn("琼玩车: skipped_quarantined_source", logs)
 
 
 if __name__ == "__main__":
