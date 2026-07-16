@@ -202,7 +202,7 @@ python3 scripts/daily_pipeline.py \
   --defer-editorial
 ```
 
-日常使用以飞书为准，不需要先 dry-run。第一条命令先把飞书 `01 来源与采样` 的手工修改同步回本地 `config/content_sources.yaml`，避免新增对标账号没有进入采集。第二条命令会把 `02 URL投喂入口`、公众号全文 provider、全部抖音跟踪账号和 AIHOT 一起纳入今日候选池，写入 `03 内容收件箱` 并生成 raw `today_10_topics.csv`；`04 分析与选题` 必须等外层 Codex 完成主编字段后，再由 finalizer 写入。AIHOT 是默认参与源，日常命令不要加 `--no-fetch-aihot`。公众号全文采集前会自动运行 `scripts/start_wewe_rss.py`：如果本地 `wewe-rss` 没开，会先启动 Docker Desktop 和 `ai-radar-wewe-rss` 容器，再继续拉取全文。
+日常使用以飞书为准，不需要先 dry-run。第一条命令先把飞书 `01 来源与采样` 的手工修改同步回本地 `config/content_sources.yaml`。第二条命令会把 `02 URL投喂入口`、经 canonical 健康/刷新/水位校验的公众号全文、全部抖音跟踪账号和 AIHOT 纳入 comparison universe，写入 `03 内容收件箱` 并生成 raw `today_10_topics.csv`。定时路径不会启动 Docker 或登录浏览器；`login_required`、`stale_cache` 或 `provider_failed` 必须走单独授权的 reauth/migration runbook。
 
 抖音主页采集默认同一天只跑一次；当天再次运行会复用 `output/source_collection_cache/YYYY-MM-DD/` 里的采集结果，避免反复触发平台风控。只有改采集逻辑、主页链接、登录态或明确复验采集时，才加：
 

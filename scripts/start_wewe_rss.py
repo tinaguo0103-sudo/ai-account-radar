@@ -20,7 +20,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEFAULT_DATA_DIR = ROOT / ".local_services" / "wewe-rss" / "data"
+DEFAULT_DATA_DIR = Path.home() / ".codex" / "ai-account-radar-runtime" / "providers" / "wewe-rss" / "data"
 DEFAULT_CONTAINER_NAME = "ai-radar-wewe-rss"
 DEFAULT_IMAGE = "cooderl/wewe-rss-sqlite:latest"
 DEFAULT_BASE_URL = "http://127.0.0.1:4000"
