@@ -3436,3 +3436,12 @@
 - Stop/rollback：scope/head/tree、mount/DB/auth、provider/account/feed、receipt/live DB、legacy lineage、03/04/card/cwd/automation read-back 任一不一致立即停止，保持 PAUSED，只回滚失败组件；迁移失败恢复原 repo-local mount/container/data 并核对原 DB hash/health。
 - Combined authorization supplement：`/private/tmp/ar034b_provider_runtime_migration_20260716/MIGRATION_AND_RC8_CONTINUATION_AUTHORIZATION.md`，SHA256=`248f5725612087c13c4e28a71aec9c2691620afe9b1fd2c29df99a236aa7a772`。
 - 执行线程：固定 production `019f2bc4-079e-7530-903e-484707590482`；派发省略 `model` 与 `thinking`，PM不轮询。
+
+### 2026-07-16 WeWe provider canonical migration通过，因固定账号需登录而停止
+
+- 生产结论：`Provider Canonicalization Passed / Login Required / RC8 Not Released / Automations Paused`。证据根=`/private/tmp/ar034b_provider_migration_20260716_2105`。
+- Migration read-back：旧 repo-local provider normal-stop后保留为stopped rollback anchor；同名同镜像新容器唯一bind为 `~/.codex/ai-account-radar-runtime/providers/wewe-rss/data -> /app/data`。before/after DB SHA、SQLite integrity、accounts=1、feeds=1、active_feeds=1、articles=48完全一致，4000 reachable。
+- Auth/boundary：existing private auth已安全接入host `WEWE_RSS_AUTH_CODE`；host/container env files均current UID + 0600，只记录masked presence。production local=origin/main仍clean `8af0846`；RC8/gate/key/refresh/lease/receipt/watermark/03/04/card均未发生，Douyin 9333未动，三任务PAUSED且hash/cwd未变。
+- Stop condition：RC8 adapter check-only返回 `ok=false/status=login_required`，`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false`。按用户授权正确停线，不将migration成功冒充账号健康。
+- 下一授权建议：只运行 exact RC8 worktree 的 `python3 scripts/start_wewe_rss_admin_chrome.py --foreground`，固定port=9334、profile=`~/.codex/ai-account-radar-runtime/browser_profiles/wewe-rss-admin-chrome-profile`、URL=`http://127.0.0.1:4000/dash`。read-back要求单listener PID、marker/WebSocket/open-file/profile identity一致；QR/SMS/MFA仅由账号所有者在该窗口完成，不捕获认证秘密。登录完成后provider check-only必须变为 `ok=true/status=refresh_required` 且不refresh，才自动继续RC8 Phase 0。
+- 授权计划：`/private/tmp/ar034b_provider_runtime_migration_20260716/WEWE_9334_LOGIN_AUTHORIZATION_PLAN.md`，SHA256=`64f82417d8ff2cfb15c59ba343e870740ec808c5addb53ad50955cfa08398d13`。用户确认前不派生产线程。
