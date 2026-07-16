@@ -3277,3 +3277,12 @@
 - 处置：状态改为 `PM Evidence Review Failed / Development Rework Required`，不派 QA。固定开发线程须集中修复 mandatory ingestion closure、current-refresh proof 和 exact 40-char manifest identity，再产 fresh production-base RC；不是 micro-recheck。
 - 证据：`/private/tmp/ar034_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_FAILED.md`。探针只运行本地 RC 函数和临时文件，无生产写入、采集、认证、浏览器、automation 或 Git 副作用。
 - 派发规则：返修任务继续省略 `model` 与 `thinking`，保留开发线程用户设置。
+
+### 2026-07-16 AR-034 fresh RC 通过 PM evidence gate，已派完整独立 QA
+
+- 开发返修：feature=`a10f7b1f53fce6ca3d0419ae9ff59a0b6527dcda`；fresh RC=`release/ar034-rc2-20260716@41cb9904b3cf4b36c4b94d85c91e54abb733779c`，parent 为 production `8af084621d01e639c54b5dc847a6439ce96fd8bd`，local=remote clean。失败 RC `11fab145...` 保留。
+- 审计：25-file patch SHA=`8f308719e68d8e2eb9822da54da81b76b73a0cdb5850fd4e6e759a464b98b5f5`；manifest SHA=`76c226611ca00c121522200aa5a47a913d541c06584f617077b58e344f868b13`；exact RC head/tree/apply tree 与远端一致。
+- PM 原型重放：unrelated 9 candidates + no ingestion closure 现为 `downstream_usable=false`，七项 mandatory closure reason 全部可见；unchanged revision/timestamp 现为 `stale_cache`；post-commit exact 40-char manifest verifier 通过。
+- provider 边界：当前安装版只有异步 update endpoint，无 caller-bound completion receipt；fresh RC 的固定 adapter 因此返回 `refresh_surface_unverifiable/provider_failed`。这是安全失败，不是 production recovery completion。
+- QA 派发：固定 QA 线程须做 fresh full RC QA，独立重放 lineage/current-refresh/manifest mutations、full regression 和 production read-only boundary；不得只复用开发结论。必须分开给出 architecture verdict 与 production recoverability verdict，并判断是否仍需 receipt-capable adapter 开发。
+- 派发模型规则：省略 `model` 与 `thinking`，保留 QA 线程用户设置。
