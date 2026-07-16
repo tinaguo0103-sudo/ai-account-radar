@@ -20,6 +20,10 @@ The installed provider cannot persist a caller nonce in its refresh transaction 
 
 The adapter signs the immutable lease record before reading/requesting, signs the request-bound attempt lineage before provider calls, and signs the final receipt after all-feed completion. The verifier independently reads the runtime key and validates all three signatures plus their canonical path, hash, identity and relational contracts. Hand-constructed canonical JSON without the key fails. Arbitrary code executing as the same Unix runtime identity and able to read the key remains the explicit final trust boundary; OS account and key-file permissions are therefore part of production provisioning and rollback.
 
+Provisioning must create the canonical secrets parent as mode `0700` and the key as mode `0600`, then read back that both are owned by the runtime UID without printing key bytes or a key hash. The non-secret key ID is only a version identifier. The loader opens the parent with no-follow directory semantics, validates owner/mode on that fd, opens the key relative to the directory fd with `O_NOFOLLOW`, then performs `fstat` and every read on that same key fd.
+
+Machine evidence uses `secret_material_read` to state whether protected material was actually loaded and `secrets_exposed=false` to state that no value was emitted. Normal refresh and receipt verification report material read; check-only planning reports no material read. The ambiguous `secrets_read` field is not emitted by this adapter or verifier.
+
 ## Authorized migration
 
 1. Keep automations paused and stop the provider normally.

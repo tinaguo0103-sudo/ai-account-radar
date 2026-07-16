@@ -213,17 +213,54 @@ class ReceiptAdapterTests(unittest.TestCase):
 
     def test_runtime_attestation_key_permissions_and_secret_output(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
-            path = Path(tmp) / "attestation.key"
+            path = Path(tmp).resolve() / "attestation.key"
             with self.assertRaisesRegex(refresh.RefreshError, "unavailable"):
                 self.real_load_attestation_key(path)
             path.write_bytes(b"k" * 32); path.chmod(0o644)
             with self.assertRaisesRegex(refresh.RefreshError, "unsafe"):
                 self.real_load_attestation_key(path)
             path.chmod(0o600)
-            self.assertEqual(self.real_load_attestation_key(path), b"k" * 32)
+            with mock.patch.object(Path, "read_bytes", side_effect=AssertionError("path reopen forbidden")):
+                self.assertEqual(self.real_load_attestation_key(path), b"k" * 32)
+            linked = Path(tmp) / "linked.key"; os.link(path, linked)
+            with self.assertRaisesRegex(refresh.RefreshError, "unsafe"):
+                self.real_load_attestation_key(path)
         source = Path(refresh.__file__).read_text(encoding="utf-8")
         self.assertNotIn("print(key", source)
         self.assertNotIn("json.dumps(key", source)
+
+    def test_attestation_parent_and_owner_gates(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve(); safe = root / "safe"; safe.mkdir(mode=0o700); key = safe / "key"; key.write_bytes(b"k" * 32); key.chmod(0o600)
+            safe.chmod(0o777)
+            with self.assertRaisesRegex(refresh.RefreshError, "parent_unsafe"):
+                self.real_load_attestation_key(key)
+            safe.chmod(0o700)
+            real_fstat = os.fstat; calls = {"count": 0}
+            def wrong_file_owner(fd: int):
+                info = real_fstat(fd); calls["count"] += 1
+                if calls["count"] == 2:
+                    values = list(info); values[4] = os.getuid() + 1; return os.stat_result(values)
+                return info
+            with mock.patch.object(refresh.os, "fstat", side_effect=wrong_file_owner), self.assertRaisesRegex(refresh.RefreshError, "key_unsafe"):
+                self.real_load_attestation_key(key)
+            parent_link = root / "parent-link"; parent_link.symlink_to(safe, target_is_directory=True)
+            with self.assertRaisesRegex(refresh.RefreshError, "parent_unsafe"):
+                self.real_load_attestation_key(parent_link / "key")
+            key_link = safe / "key-link"; key_link.symlink_to(key)
+            with self.assertRaisesRegex(refresh.RefreshError, "unavailable"):
+                self.real_load_attestation_key(key_link)
+
+    def test_secret_audit_fields_match_execution(self) -> None:
+        temporary, data, health_dir = self.fixture(); self.addCleanup(temporary.cleanup); clock = Clock()
+        plan = refresh.check_only_plan(data)
+        self.assertFalse(plan["secret_material_read"]); self.assertFalse(plan["secrets_exposed"])
+        result = refresh.run_refresh("run_20260716_080311", 1_900_000, data_dir=data, health_dir=health_dir, request_fn=self.completing_request(data / "wewe-rss.db", clock), clock_ms=clock.now, sleep_fn=clock.sleep, signing_key=self.test_key)
+        self.assertTrue(result["secret_material_read"]); self.assertFalse(result["secrets_exposed"])
+        self.assertNotIn("secrets_read", result); self.assertNotIn("secrets_read", plan)
+        health_source = Path(health.__file__).read_text(encoding="utf-8")
+        self.assertIn('"secret_material_read": secret_material_read', health_source)
+        self.assertNotIn('"secrets_read": False', health_source)
 
     def test_check_only_has_no_request_or_browser_side_effect(self) -> None:
         temporary, data, _ = self.fixture(); self.addCleanup(temporary.cleanup)

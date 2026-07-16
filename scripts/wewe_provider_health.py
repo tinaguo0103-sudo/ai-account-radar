@@ -264,10 +264,13 @@ def main() -> int:
     article_watermark = args.article_publish_watermark if args.article_publish_watermark is not None else watermark["article_publish_watermark"]
     now_ms = args.now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
     receipt_error = ""
+    secret_material_read = False
     try:
+        key = load_attestation_key()
+        secret_material_read = True
         adapter_result = json.loads(Path(args.refresh_result).read_text(encoding="utf-8"))
-        receipt = validate_refresh_receipt(Path(adapter_result["receipt_path"]), str(adapter_result["receipt_sha256"]), run_id=args.run_id, attempt_id=str(adapter_result["attempt_id"]), now_ms=now_ms, run_started_at_ms=args.run_started_at_ms, previous_attempt_id=str(watermark.get("refresh_attempt_id") or ""))
-    except (OSError, KeyError, ValueError, json.JSONDecodeError, TypeError) as exc:
+        receipt = validate_refresh_receipt(Path(adapter_result["receipt_path"]), str(adapter_result["receipt_sha256"]), run_id=args.run_id, attempt_id=str(adapter_result["attempt_id"]), now_ms=now_ms, run_started_at_ms=args.run_started_at_ms, previous_attempt_id=str(watermark.get("refresh_attempt_id") or ""), signing_key=key)
+    except (OSError, KeyError, ValueError, RefreshError, json.JSONDecodeError, TypeError) as exc:
         receipt_error = str(exc) or type(exc).__name__
         receipt = {}
     refresh_attempt = {
@@ -297,7 +300,8 @@ def main() -> int:
         "check_only": True,
         "starts_browser": False,
         "starts_provider": False,
-        "secrets_read": False,
+        "secret_material_read": secret_material_read,
+        "secrets_exposed": False,
     })
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 4
