@@ -3249,3 +3249,12 @@
 - 审计：patch SHA=`4c196641b0c25bab1888574ab11bfaf05bb19dfa6dd5a81ab260da7ab87f3b01`。开发目录缺独立 parity JSON，PM 已对 base-apply 与 RC 七文件逐一重算 SHA，7/7 一致，并把证据包装缺口交给 QA 独立复算。
 - 测试：feature Python 369、RC 336、exact gate 10、Node aggregate 40、receiver 32、semantic static 0/behavioral 7/7、compile/node/diff/pre-merge 均通过。真实 9 行 check/prepare/downstream reload 只读通过。
 - QA 派发：已向固定 QA 线程 `019f4714-3f76-7bb1-b71f-08a41d9f8860` 派 fresh RC 完整 QA；要求原失败 probe 原样重放、四 public stage sentinel、扩展 source/state mutation、真实 9 行 L2 和全回归。派发省略 `model` 与 `thinking`。
+
+### 2026-07-16 AR-033B fresh RC QA 通过，已派生产发布与 exact recovery
+
+- QA 结论：`AR-033B Fresh RC QA Passed / Ready for PM Production Authorization`。目标=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，base=`e6f04c547d70745c65b88d08aa2c4a9694b732fa`；fresh clone/lineage/scope/patch/apply/parity 全通过。
+- 原阻断：prepare 后 CSV mutation=`exact_input_sha256_mismatch`，candidate mutation=`exact_input_identity_drift`，manifest mutation=`exact_input_manifest_hash_mismatch`；state/local source 漂移均阻断。完整 official prepared-state 上 validate-stage1/prepare-stage2/validate-stage2/finalize 的 legacy builder calls 全为 0。
+- L2：真实 CSV SHA=`63450c79afa389d6ee7435681bfb55994f4424fb9302535b8e99587d898e64f5`，rows=9，manifest=`679d9b558ced66c1c276687f9f8fb3b83bb0ad0fb9936775d5c56007f5471695`；check/prepare/public status revalidation 通过，source outputs=0、writes=false、legacy calls=0，生产 telemetry 未增加。
+- PM 验收：测试覆盖用户真实目标，结论未过度扩张；production 仍 clean、04=0、卡片未发。用户此前确认的合并方案已覆盖发布、今日恢复、个人卡和 automation cwd repair，因此不重复请求授权。
+- 生产派发：已向固定生产线程 `019f2bc4-079e-7530-903e-484707590482` 派有序执行。发布后 current-task 为唯一 editorial surface；不 nested model/API/subagent。完成 04/read-back/card 后，才用 official automation control 在保留 projectless、当前模型/prompt/schedule 的前提下把 cwd 从 `~` 修回 production repo；不支持则保持 PAUSED，不手改 TOML。
+- 派发模型规则：生产线程任务省略 `model` 与 `thinking`，保留线程用户设置。

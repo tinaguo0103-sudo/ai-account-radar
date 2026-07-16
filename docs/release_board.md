@@ -199,7 +199,7 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 
 ## 2026-07-16 AR-033 Release Board Entry
 
-- 结论：`AR-033 Released / AR-033B Fresh Independent QA In Progress / Today Recovery Blocked`。
+- 结论：`AR-033 Released / AR-033B Fresh RC QA Passed - Production Execution In Progress`。
 - 生产事实：`run_20260716_080311` 为 account-level partial，31 planned/attempted、29 succeeded、2 failed、03 已写入、9 条 today candidates 已生成；不得重跑采集或改历史 03。
 - 发布目标：新增 downstream usability machine field 与 persistent editorial Skill release manifest，恢复 09:15/10:00 对 partial-but-usable collection 的正确判定。
 - 发布边界：feature 开发与生产基线 RC 分离；PM docs 只留 feature 追踪，不进入 product RC patch。生产 04 写入、个人 Topic Card 发送和任何恢复动作必须在修复发布与独立 QA 通过后由生产线程执行。
@@ -214,3 +214,6 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - 返修门：集中 exact-mode state revalidation；每阶段重新读取 canonical CSV 并核对 bytes SHA/run/date/order/URL/fingerprint/manifest；exact pool 全程只来自 locked candidates，legacy builder 调用数必须为 0。原 QA 两个 probe 必须原样通过，再产出 new production-base RC 做完整 QA。
 - Fresh RC：`release/ar033b-exact-input-rework-20260716@8af084621d01e639c54b5dc847a6439ce96fd8bd`，parent 为 production `e6f04c547d70745c65b88d08aa2c4a9694b732fa`；7-file patch SHA=`4c196641b0c25bab1888574ab11bfaf05bb19dfa6dd5a81ab260da7ab87f3b01`。开发包缺独立 `apply_byte_parity.json`，PM 已直接重算 base-apply 与 RC 七文件 SHA，结果 7/7 一致；QA 仍须独立生成 machine evidence。
 - Rework evidence：CSV append/content/reorder/URL/title/publication/truncate/replace/symlink、candidate/manifest/state/local source drift 均阻断；validate-stage1/prepare-stage2/validate-stage2/finalize 的 legacy pool sentinel 全部 0 calls。真实 9 行 check/prepare/downstream reload read-only 通过，未启动 source fetch 或外部副作用。
+- Fresh QA：exact targeted 10、full Python 336、receiver 32、Douyin 39+6、Unicode 4/4、semantic 7/7、compile/node/diff/pre-merge 全通过；独立 patch/apply/parity 7/7，forbidden scope=0，production telemetry 和业务状态未变化。结论 `Ready for PM Production Authorization`。
+- PM 验收/授权：用户此前已确认合并方案，授权 Git-only release、exact same-day current-task recovery、一次 04 write/read-back、一次个人 Topic Card，以及三条 projectless automation 的 official cwd repair/status-only resume。PM 已派固定生产线程执行。
+- 生产 stop order：release gate -> exact SHA/manifest -> source-open/research/Stage1/ranking/Stage2/finalize -> 04 read-back -> card check-only -> one personal send -> official cwd repair -> status-only ACTIVE。任一阶段失败停在当前组件，不绕过、不重采集、不改 03/06。
