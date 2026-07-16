@@ -3222,3 +3222,12 @@
 - Automation 修复：三条任务当前 PAUSED。用户改成 projectless 后 cwd 同时变为 `~`；后续 production 线程须通过 official automation control 保留 projectless、当前模型、prompt、schedule，仅修复 cwd 为 production repo。若 official contract 不支持则停止，不手改 TOML或重建项目。
 - 派发：已向固定开发线程 `019f1de3-f3f2-71d2-ae63-a74cd38f8474` 发送 AR-033B consolidated hotfix 任务卡。派发参数已按新规则省略 `model` 和 `thinking`；开发不得碰旧 dirty worktree，不得执行任何生产写入或恢复动作。
 - 下一门：开发回传 fresh production-base RC 后，PM 再派固定 QA 线程做完整独立验证；不是 callback-only 或 micro-recheck。
+
+### 2026-07-16 AR-033B 开发自验通过，已派完整独立 QA
+
+- 开发结论：`Dev Self-Validation Passed / Ready for Independent QA`。feature commits=`d7fe8e1ddd3141f440aacf5849091163db9c17a0` + `3d843d98012458e093472b785bc336415c16f6a9`；fresh RC=`release/ar033b-exact-input-20260716@f99db53ca428a6c2f650f9e51176205422d6c1c2`，parent 为 production `e6f04c547d70745c65b88d08aa2c4a9694b732fa`，local=remote clean。
+- 范围：7 files；combined patch SHA=`68b8db2d725f9b1e14680775949417dcf6b9c7ea8b97e65e8e0a9fad954826b2`；clean-base apply/parity 7/7。PM 复核了 manifest、RC parent、patch hash 和真实 check-only 证据。
+- 真实 9 行：CSV SHA=`63450c79afa389d6ee7435681bfb55994f4424fb9302535b8e99587d898e64f5`；ordered manifest hash=`679d9b558ced66c1c276687f9f8fb3b83bb0ad0fb9936775d5c56007f5471695`；official check/prepare 均 9/9，source outputs=0，无 source fetch、collection、Feishu、card、callback、06 或 notification。
+- 测试：feature Python 365、RC Python 332、targeted 108、Douyin Node 8（内含 39 cases）、receiver/SCF 32、semantic 7/7、compile/node/diff/pre-merge 均通过。
+- QA 派发：已向固定 QA 线程 `019f4714-3f76-7bb1-b71f-08a41d9f8860` 发送完整 RC QA 任务卡；要求 fresh scope/apply、exact 9 行、prepare 后 CSV/state mutation、no-resampling/no-replacement、legacy/adjacent regression、production read-only boundary 和 recovery plan。不是 micro-recheck。
+- 派发模型规则：本次 QA 派发省略 `model` 与 `thinking`，保留线程用户设置。
