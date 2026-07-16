@@ -9,6 +9,7 @@ import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
+from wewe_provider_refresh import canonical_json, read_snapshot, sha256_bytes
 
 CANONICAL_DATA_DIR = Path.home() / ".codex" / "ai-account-radar-runtime" / "providers" / "wewe-rss" / "data"
 CANONICAL_STATE_PATH = CANONICAL_DATA_DIR.parent / "health" / "last_success.json"
@@ -66,6 +67,46 @@ def classify_snapshot(
     return {"ok": state in {"updated_with_new_items", "updated_no_new_items"}, "state": state, **snapshot}
 
 
+def validate_refresh_receipt(
+    receipt_path: Path, receipt_sha256: str, *, run_id: str, attempt_id: str,
+    data_dir: Path = CANONICAL_DATA_DIR, now_ms: int, previous_attempt_id: str = "",
+) -> dict[str, Any]:
+    try:
+        raw = receipt_path.read_bytes()
+        receipt = json.loads(raw)
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("refresh_receipt_unreadable") from exc
+    if sha256_bytes(raw) != receipt_sha256:
+        raise ValueError("refresh_receipt_hash_mismatch")
+    required = {"schema_version", "attempt_id", "run_id", "provider_url", "database_identity", "feed_ids", "before_snapshot_sha256", "after_snapshot_sha256", "before", "after", "per_feed", "started_at_ms", "requested_at_ms", "completed_at_ms", "new_item_count", "refresh_revision", "refreshed_at_ms", "status"}
+    if not isinstance(receipt, dict) or not required.issubset(receipt):
+        raise ValueError("refresh_receipt_schema_invalid")
+    if receipt["schema_version"] != 1 or receipt["status"] != "success" or receipt["run_id"] != run_id or receipt["attempt_id"] != attempt_id:
+        raise ValueError("refresh_receipt_identity_mismatch")
+    if previous_attempt_id and receipt["attempt_id"] == previous_attempt_id:
+        raise ValueError("refresh_receipt_replayed")
+    if receipt["provider_url"] != "http://127.0.0.1:4000":
+        raise ValueError("refresh_receipt_provider_mismatch")
+    started, requested, completed = (int(receipt[key]) for key in ("started_at_ms", "requested_at_ms", "completed_at_ms"))
+    if not (0 < started <= requested <= completed <= now_ms):
+        raise ValueError("refresh_receipt_time_invalid")
+    if receipt["before_snapshot_sha256"] != sha256_bytes(canonical_json({key: value for key, value in receipt["before"].items() if key != "snapshot_sha256"})):
+        raise ValueError("refresh_receipt_before_hash_mismatch")
+    if receipt["after_snapshot_sha256"] != sha256_bytes(canonical_json({key: value for key, value in receipt["after"].items() if key != "snapshot_sha256"})):
+        raise ValueError("refresh_receipt_after_hash_mismatch")
+    live = read_snapshot(data_dir.resolve() / "wewe-rss.db")
+    if live["database_identity"] != receipt["database_identity"] or live["snapshot_sha256"] != receipt["after_snapshot_sha256"]:
+        raise ValueError("refresh_receipt_live_state_drift")
+    if [row["feed_id"] for row in live["feeds"]] != list(receipt["feed_ids"]):
+        raise ValueError("refresh_receipt_feed_set_mismatch")
+    if not all(bool(row.get("completion_advanced")) for row in receipt["per_feed"]):
+        raise ValueError("refresh_receipt_completion_missing")
+    calculated_new = sum(int(row.get("new_item_count") or 0) for row in receipt["per_feed"])
+    if calculated_new != int(receipt["new_item_count"]):
+        raise ValueError("refresh_receipt_new_item_mismatch")
+    return receipt
+
+
 def load_success_watermark(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
@@ -88,7 +129,7 @@ def sqlite_snapshot(data_dir: Path, article_publish_watermark: int = 0) -> dict[
         connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
         active_accounts = int(connection.execute("select count(*) from accounts where status=1").fetchone()[0])
         feed_count = int(connection.execute("select count(*) from feeds where status=1").fetchone()[0])
-        row = connection.execute("select coalesce(max(update_time),0), coalesce(max(updated_at),0) from feeds where status=1").fetchone()
+        row = connection.execute("select coalesce(max(sync_time),0), coalesce(max(updated_at),0) from feeds where status=1").fetchone()
         article_count = int(connection.execute("select count(*) from articles").fetchone()[0])
         new_item_count = int(connection.execute(
             "select count(*) from articles where publish_time > ?", (article_publish_watermark,)
@@ -121,7 +162,7 @@ def main() -> int:
     parser.add_argument("--now-ms", type=int, default=0)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--run-started-at-ms", type=int, required=True)
-    parser.add_argument("--refresh-attempt", required=True)
+    parser.add_argument("--refresh-result", required=True)
     args = parser.parse_args()
     data_dir = configured_data_dir()
     state_path = Path(args.state_path).expanduser().resolve()
@@ -130,10 +171,18 @@ def main() -> int:
         watermark["refresh_revision"] = args.previous_success_revision
     article_watermark = args.article_publish_watermark if args.article_publish_watermark is not None else watermark["article_publish_watermark"]
     now_ms = args.now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
+    receipt_error = ""
     try:
-        refresh_attempt = json.loads(Path(args.refresh_attempt).read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError, TypeError):
-        refresh_attempt = {}
+        adapter_result = json.loads(Path(args.refresh_result).read_text(encoding="utf-8"))
+        receipt = validate_refresh_receipt(Path(adapter_result["receipt_path"]), str(adapter_result["receipt_sha256"]), run_id=args.run_id, attempt_id=str(adapter_result["attempt_id"]), now_ms=now_ms, previous_attempt_id=str(watermark.get("refresh_attempt_id") or ""))
+    except (OSError, KeyError, ValueError, json.JSONDecodeError, TypeError) as exc:
+        receipt_error = str(exc) or type(exc).__name__
+        receipt = {}
+    refresh_attempt = {
+        "run_id": receipt.get("run_id"), "status": receipt.get("status"), "attempt_id": receipt.get("attempt_id"),
+        "started_at_ms": receipt.get("started_at_ms"), "completed_at_ms": receipt.get("completed_at_ms"),
+        "refresh_revision": receipt.get("refresh_revision"), "refreshed_at_ms": receipt.get("refreshed_at_ms"),
+    }
     result = classify_snapshot(
         sqlite_snapshot(data_dir, article_watermark),
         now_ms=now_ms,
@@ -145,6 +194,7 @@ def main() -> int:
     result["previous_success_revision"] = watermark["refresh_revision"]
     result["previous_refreshed_at_ms"] = watermark["refreshed_at_ms"]
     result["refresh_attempt_id"] = str(refresh_attempt.get("attempt_id") or "")
+    result["receipt_validation_error"] = receipt_error
     result["run_id"] = args.run_id
     result["article_publish_watermark"] = article_watermark
     result["state_path"] = str(state_path)
