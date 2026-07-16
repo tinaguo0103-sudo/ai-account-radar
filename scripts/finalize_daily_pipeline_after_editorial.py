@@ -144,9 +144,14 @@ def update_pipeline_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool)
     log_path = LOG_DIR / f"daily_pipeline_{datetime.now().strftime('%Y-%m-%d')}.json"
     payload = read_json(log_path)
     existing_steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
+    full_collection_success = bool(payload.get("full_collection_success", payload.get("ok", False)))
+    overall_ok = bool(ok and full_collection_success)
     payload.update({
-        "ok": ok,
+        "ok": overall_ok,
         "recovered_ok": ok,
+        "editorial_finalized": ok,
+        "finalization_ok": ok,
+        "status": "completed" if overall_ok else ("completed_with_failures" if ok else "failed"),
         "recovered_from": "external_editorial_finalizer",
         "run_id": run_id or payload.get("run_id", ""),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
@@ -177,9 +182,14 @@ def update_scheduled_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool
             "steps": [],
         }
     existing_steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
+    full_collection_success = bool(payload.get("full_collection_success", payload.get("ok", False)))
+    overall_ok = bool(ok and full_collection_success)
     payload.update({
-        "ok": ok,
+        "ok": overall_ok,
         "recovered_ok": ok,
+        "editorial_finalized": ok,
+        "finalization_ok": ok,
+        "status": "completed" if overall_ok else ("completed_with_failures" if ok else "failed"),
         "recovered_from": "external_editorial_finalizer",
         "run_id": run_id or payload.get("run_id", ""),
         "generated_at": datetime.now().isoformat(timespec="seconds"),

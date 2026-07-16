@@ -14,6 +14,7 @@ class AR020EDailyEditorialEntrypointTests(unittest.TestCase):
         result = entrypoint.check_readiness("run_20260714_091500", None)
         self.assertTrue(result["ok"])
         self.assertTrue(result["check_only"])
+        self.assertTrue(result["manifest_verified"])
         self.assertEqual(result["execution_surface"], "current_codex_task")
         self.assertFalse(result["nested_model_execution"])
         self.assertFalse(result["writes_feishu"])
@@ -37,6 +38,17 @@ class AR020EDailyEditorialEntrypointTests(unittest.TestCase):
                 result = entrypoint.check_readiness("run_20260714_091500", None)
             self.assertFalse(result["ok"])
             self.assertTrue(any("forbidden_protocol_text" in value for value in result["failures"]))
+
+    def test_manifest_gate_failure_blocks_outer_task(self) -> None:
+        with patch.object(entrypoint, "verify_skill_release_manifest", return_value={
+            "ok": False,
+            "manifest_verified": False,
+            "failures": ["missing_manifest"],
+        }):
+            result = entrypoint.check_readiness("run_20260714_091500", None)
+        self.assertFalse(result["ok"])
+        self.assertFalse(result["manifest_verified"])
+        self.assertIn("skill_release_manifest_unverified", result["failures"])
 
 
 if __name__ == "__main__":
