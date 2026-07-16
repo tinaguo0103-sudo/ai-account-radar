@@ -240,19 +240,10 @@ def is_irrelevant_to_austin(value: Any) -> bool:
     return len(strong_hits) == 0
 
 
-def aihot_significance_reason(value: Any) -> str:
+def is_major_aihot(value: Any) -> bool:
     text = source_text(value)
     hits = [term for term in MAJOR_AI_HOT_TERMS if term.lower() in text.lower() or term in text]
-    if len(hits) >= 2:
-        return f"重大 AI Hot：命中 {', '.join(hits[:4])}，允许凭重大性进入候选判断。"
-    if hits and any(term in text for term in ["工作流", "Agent", "智能体", "视频", "API", "行业变化"]):
-        return f"AI Hot 可观察：命中 {hits[0]}，但需要证明能落到 Austin 工作流。"
-    return "普通 AI Hot：只作为低权重热点观察，不应压过高适配对标内容。"
-
-
-def is_major_aihot(value: Any) -> bool:
-    reason = aihot_significance_reason(value)
-    return reason.startswith("重大 AI Hot")
+    return len(hits) >= 2
 
 
 def source_influence_weight(value: Any) -> float:
@@ -416,7 +407,6 @@ def account_translation_fields(topic: dict[str, Any], item: Any) -> dict[str, st
 
 def aihot_translation_fields(topic: dict[str, Any], item: Any) -> dict[str, str]:
     theme = source_theme(item)
-    reason = aihot_significance_reason(item)
     direction = theme["direction"] if theme["key"] != "needs_evidence" else mapped_direction(item, normalize_space(topic.get("对应方向") or topic.get("对应栏目") or "AI业务定调"))
     if is_major_aihot(item):
         angle = theme["translation"] or "作为重大 AI Hot 观察：先判断它改变了什么工作流、接口、成本或行业默认动作，再决定 Austin 是否有自己的项目案例可以讲。"
@@ -429,7 +419,7 @@ def aihot_translation_fields(topic: dict[str, Any], item: Any) -> dict[str, str]
         "Austin转译角度": angle,
         "对标转译角度": angle,
         "Austin转译质量": quality,
-        "Austin转译质量原因": reason,
+        "Austin转译质量原因": "AIHOT 重大性必须由 Stage1 根据当次研究证据判断，候选阶段不预写。",
         "主题簇": theme["label"] if theme["key"] != "needs_evidence" else "AI Hot 观察",
         "主题簇说明": theme["cluster_note"] if theme["key"] != "needs_evidence" else "只凭热点摘要还不能证明适合 Austin，需要重大性和工作流影响。",
         "需要补的案例/工具/工作流": normalize_space(topic.get("需要补的证据") or "补官方来源、产品事实和 Austin 自己的落地影响判断。"),
@@ -452,7 +442,7 @@ def enrich_topic_record(topic: dict[str, Any], item: Any) -> dict[str, Any]:
     topic["来源影响权重"] = f"{weight:.2f}"
     topic["来源构成"] = f"{topic.get('来源类型', source_type(item))} / {source_name(item) or '未知来源'}"
     if is_aihot(item):
-        topic["AIHOT重大性说明"] = aihot_significance_reason(item)
+        topic["AIHOT重大性说明"] = ""
         topic.update(aihot_translation_fields(topic, item))
         topic["对标转译角度"] = normalize_space(topic.get("对标转译角度", ""))
     elif is_competitor_content(item):

@@ -15,6 +15,7 @@ def write_probe(path: Path, *, failed_artifact_count: int = 0, planned: int = 31
     failed = 2
     success = attempted - failed
     payload = {
+        "run_id": "run_20260716_080311",
         "status": "completed_with_failures",
         "coverage": {
             "planned_accounts": planned,
@@ -52,11 +53,20 @@ def base_steps() -> list[dict[str, object]]:
 
 
 class AR033DownstreamUsabilityTests(unittest.TestCase):
+    @staticmethod
+    def closure() -> dict[str, object]:
+        return {
+            "run_id": "run_20260716_080311", "manual_artifact_identity_verified": True,
+            "combined_sha256": "a" * 64, "content_items_sha256": "b" * 64,
+            "comparison_universe_count": 6,
+            "feishu_03_identity": {"ok": True, "planned_identity": {"identity_sha256": "c" * 64}},
+        }
+
     def test_29_of_31_isolated_partial_is_downstream_usable(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / "probe.json"
             write_probe(probe)
-            result = daily_pipeline.downstream_usability_report(base_steps(), Path(tmp), 9, probe)
+            result = daily_pipeline.downstream_usability_report(base_steps(), Path(tmp), 9, probe, self.closure())
         self.assertFalse(result["full_collection_success"])
         self.assertTrue(result["downstream_usable"])
         self.assertEqual(result["downstream_usable_reason"], "account_failures_isolated")
@@ -69,6 +79,15 @@ class AR033DownstreamUsabilityTests(unittest.TestCase):
             result = daily_pipeline.downstream_usability_report(base_steps(), Path(tmp), 9, probe)
         self.assertFalse(result["downstream_usable"])
         self.assertIn("failed_accounts_have_zero_artifacts", result["downstream_blocked_reasons"])
+
+    def test_unrelated_candidates_cannot_replace_missing_douyin_closure(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            probe = Path(tmp) / "probe.json"
+            write_probe(probe)
+            result = daily_pipeline.downstream_usability_report(base_steps(), Path(tmp), 9, probe)
+        self.assertFalse(result["downstream_usable"])
+        self.assertTrue(result["downstream_usable_checks"]["today_candidates_nonempty"])
+        self.assertIn("manual_artifact_identity_verified", result["downstream_blocked_reasons"])
 
     def test_incomplete_plan_login_fail_and_empty_candidates_block_downstream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
