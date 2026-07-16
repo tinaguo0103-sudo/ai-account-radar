@@ -1,0 +1,26 @@
+{
+  "schema_version": 1,
+  "skill_name": "ai-account-editorial-director",
+  "source_release": "AR-020E production release",
+  "source_release_commit": "5e733cd1a8120185b6c2d35b3f277a2599155fea",
+  "managed_files": [
+    {
+      "path": "SKILL.md",
+      "sha256": "9d364bb0fff909bd9726ebee12bb50bfe1883be15749c48cd7f4b9683a7f9dcb"
+    },
+    {
+      "path": "agents/openai.yaml",
+      "sha256": "853eb309121cbc675ff9300e005d4a7ec298195e73a18d26830b52b1cd417983"
+    },
+    {
+      "path": "references/persona-and-cases.md",
+      "sha256": "e4f6dbe9e54b0af3abd1b1e1622175e1381ddd9e8eafc29b9db4a5df6e382599"
+    },
+    {
+      "path": "references/persona-brief.md",
+      "sha256": "c6ac4b16a961e2d93374e7e8f456afe91682890b5e48c391e4a490f4758d0d43"
+    }
+  ],
+  "private_material_policy": "This manifest records only Git-managed sanitized Skill file hashes. Private persona/customer material, cookies, tokens and runtime secrets are never stored here.",
+  "release_contract": "Future managed Skill changes must update this manifest in the same release, sync the global Skill, and pass read-back verification before daily editorial automation can run."
+}

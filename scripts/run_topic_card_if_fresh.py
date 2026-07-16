@@ -95,9 +95,13 @@ def feishu_topic_records_for_run(run_id: str) -> tuple[int, str]:
 def fresh_collection_status() -> tuple[bool, str, str]:
     today = today_key()
     pipeline_log = read_json(PIPELINE_LOG_DIR / f"daily_pipeline_{today}.json")
-    if not pipeline_log.get("ok"):
-        return False, "today_daily_pipeline_log_not_ok", ""
     pipeline_run_id = str(pipeline_log.get("run_id") or "")
+    if not pipeline_log:
+        return False, "today_daily_pipeline_log_not_ok", ""
+    if not pipeline_log.get("ok") and not pipeline_log.get("downstream_usable"):
+        return False, "today_downstream_not_usable", pipeline_run_id
+    if not pipeline_log.get("editorial_finalized") and not pipeline_log.get("recovered_ok"):
+        return False, "today_editorial_not_finalized", pipeline_run_id
 
     sampler_log = read_json(LATEST_WRITE / "content_sampler_log.json")
     generated_at = parse_datetime(str(sampler_log.get("generated_at") or ""))
@@ -126,6 +130,8 @@ def skip_summary(reason: str, run_id: str) -> str:
     today = today_key()
     reason_text = {
         "today_daily_pipeline_log_not_ok": "今天没有成功的 daily_pipeline 日志，可能是 08:00 采集失败或未运行。",
+        "today_downstream_not_usable": "今天采集结果不可供下游使用：可能是登录/profile/CDP、账号 lineage、候选为空或系统级失败。",
+        "today_editorial_not_finalized": "今天候选已生成且可供下游使用，但 09:15 主编写回 04 尚未完成。",
         "latest_write_not_generated_today": "latest_write 不是今天生成的正式候选，已阻止发送旧卡片。",
         "pipeline_and_latest_write_run_id_mismatch": "daily_pipeline 和 latest_write 的运行批次不一致。",
         "latest_write_is_not_write_feishu_mode": "latest_write 不是正式写飞书模式。",

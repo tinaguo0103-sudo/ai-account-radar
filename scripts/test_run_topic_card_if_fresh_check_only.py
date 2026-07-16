@@ -5,6 +5,7 @@ import io
 import json
 import subprocess
 import sys
+import tempfile
 import unittest
 from contextlib import redirect_stdout
 from pathlib import Path
@@ -96,6 +97,52 @@ class RunTopicCardIfFreshCheckOnlyTests(unittest.TestCase):
         self.assertTrue(payload["sent"])
         self.assertEqual(len(calls), 1)
         self.assertIn("run_topic_decision_card_session.py", calls[0][1])
+
+    def test_fresh_guard_accepts_downstream_usable_after_editorial_finalize(self) -> None:
+        run_topic_card_if_fresh.fresh_collection_status = self.original_fresh
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            logs = root / "logs"
+            latest = root / "latest_write"
+            logs.mkdir()
+            latest.mkdir()
+            (logs / "daily_pipeline_2026-07-16.json").write_text(json.dumps({
+                "ok": False,
+                "run_id": "run_20260716_080311",
+                "downstream_usable": True,
+                "editorial_finalized": True,
+            }), encoding="utf-8")
+            (latest / "content_sampler_log.json").write_text(json.dumps({
+                "generated_at": "2026-07-16T09:40:00+08:00",
+                "run_id": "run_20260716_080311",
+                "mode": "write-feishu",
+                "today_candidates": 9,
+            }), encoding="utf-8")
+            (latest / "today_10_topics.csv").write_text("选题标题\nA\n", encoding="utf-8")
+            with unittest.mock.patch.object(run_topic_card_if_fresh, "PIPELINE_LOG_DIR", logs), \
+                    unittest.mock.patch.object(run_topic_card_if_fresh, "LATEST_WRITE", latest), \
+                    unittest.mock.patch.object(run_topic_card_if_fresh, "today_key", lambda: "2026-07-16"), \
+                    unittest.mock.patch.object(run_topic_card_if_fresh, "feishu_topic_records_for_run", lambda _run_id: (2, "ok")):
+                ok, reason, run_id = run_topic_card_if_fresh.fresh_collection_status()
+        self.assertTrue(ok)
+        self.assertEqual(reason, "fresh")
+        self.assertEqual(run_id, "run_20260716_080311")
+
+    def test_fresh_guard_blocks_before_editorial_finalize_even_if_downstream_usable(self) -> None:
+        run_topic_card_if_fresh.fresh_collection_status = self.original_fresh
+        with tempfile.TemporaryDirectory() as tmp:
+            logs = Path(tmp)
+            (logs / "daily_pipeline_2026-07-16.json").write_text(json.dumps({
+                "ok": False,
+                "run_id": "run_20260716_080311",
+                "downstream_usable": True,
+            }), encoding="utf-8")
+            with unittest.mock.patch.object(run_topic_card_if_fresh, "PIPELINE_LOG_DIR", logs), \
+                    unittest.mock.patch.object(run_topic_card_if_fresh, "today_key", lambda: "2026-07-16"):
+                ok, reason, run_id = run_topic_card_if_fresh.fresh_collection_status()
+        self.assertFalse(ok)
+        self.assertEqual(reason, "today_editorial_not_finalized")
+        self.assertEqual(run_id, "run_20260716_080311")
 
 
 if __name__ == "__main__":

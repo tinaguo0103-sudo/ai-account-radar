@@ -73,8 +73,10 @@ class ProductionReleaseGateTests(unittest.TestCase):
         with patch.object(gate, "run", return_value=blocked), patch.object(gate, "ROOT", Path("/tmp/release-worktree")), patch.object(gate, "PRODUCTION_ROOT", Path("/tmp/production")):
             self.assertTrue(gate.check_topic_card_guard()["ok"])
 
-    def test_default_gate_accepts_rc2_but_not_main(self) -> None:
+    def test_default_gate_accepts_release_rc_but_not_main(self) -> None:
         with patch.object(gate, "run", return_value=command_result("## release/ar020e-rc2-20260715...origin/main\n")):
+            self.assertTrue(gate.check_git_dev()["ok"])
+        with patch.object(gate, "run", return_value=command_result("## release/ar033-source-identity-20260716...origin/release/ar033-source-identity-20260716\n")):
             self.assertTrue(gate.check_git_dev()["ok"])
         with patch.object(gate, "run", return_value=command_result("## main...origin/main\n")):
             self.assertFalse(gate.check_git_dev()["ok"])

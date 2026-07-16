@@ -10,6 +10,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from automation_failure_qa import qa_for_steps
+from automation_worktree_guard import check_automation_worktree, guard_failure_summary
 from full_account_collection_contract import rejection_payload, validate_account_limit_argv
 from local_env import load_local_env
 from feishu_automation_notify import notify
@@ -69,24 +71,41 @@ def write_job_log(steps: list[dict[str, Any]]) -> Path:
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "steps": steps,
     }
+    daily_log = read_daily_pipeline_log()
+    if daily_log:
+        for key in (
+            "run_id",
+            "full_collection_success",
+            "collection_status",
+            "downstream_usable",
+            "downstream_usable_reason",
+            "downstream_usable_checks",
+            "downstream_blocked_reasons",
+            "source_failure_count",
+            "system_failure_count",
+            "isolated_failed_account_count",
+            "isolated_failed_accounts",
+            "today_candidates",
+        ):
+            if key in daily_log:
+                payload[key] = daily_log[key]
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
 
+def read_daily_pipeline_log() -> dict[str, Any]:
+    path = LOG_DIR / f"daily_pipeline_{datetime.now().strftime('%Y-%m-%d')}.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
+
+
 def failure_summary(steps: list[dict[str, Any]], log_path: Path) -> str:
-    failed = next((step for step in steps if step["returncode"] != 0), steps[-1] if steps else {})
-    stderr = str(failed.get("stderr") or "").strip()
-    stdout = str(failed.get("stdout") or "").strip()
-    detail = stderr or stdout or "没有捕获到详细错误。"
-    if len(detail) > 900:
-        detail = detail[-900:]
-    return (
-        f"任务：08:00 每日全源采集\n"
-        f"失败阶段：{failed.get('name', 'unknown')}\n"
-        f"退出码：{failed.get('returncode', 'unknown')}\n"
-        f"日志：{log_path}\n"
-        f"错误摘要：\n{detail}"
-    )
+    return qa_for_steps("08:00 每日全源采集", steps, log_path=str(log_path))
 
 
 def scheduled_collection_plan(config_path: Path, douyin_account_limit: int) -> dict[str, Any]:
@@ -131,6 +150,11 @@ def main() -> int:
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu exception notifications.")
     parser.add_argument("--check-only", action="store_true", help="Print the full scheduled account plan without browser, collection, or Feishu I/O.")
     parser.add_argument("--source-config", default=str(ROOT / "config" / "content_sources.yaml"), help="Source config used by --check-only.")
+    parser.add_argument(
+        "--allow-non-production-worktree",
+        action="store_true",
+        help="Allow this scheduled-production entrypoint to run outside the configured production worktree.",
+    )
     args = parser.parse_args()
     args.douyin_account_limit = account_gate.value
 
@@ -142,6 +166,23 @@ def main() -> int:
     load_local_env()
     py = sys.executable
     steps: list[dict[str, Any]] = []
+
+    guard = check_automation_worktree(ROOT, allow_non_production=args.allow_non_production_worktree)
+    if not guard.ok:
+        summary = guard_failure_summary(guard, "08:00 每日全源采集")
+        steps.append({
+            "name": "automation worktree guard",
+            "command": [py, str(Path(__file__).resolve())],
+            "started_at": datetime.now().isoformat(timespec="seconds"),
+            "returncode": 2,
+            "stdout": "",
+            "stderr": summary,
+        })
+        log_path = write_job_log(steps)
+        if not args.no_notify:
+            notify("AI账号雷达采集失败", failure_summary(steps, log_path))
+        print(json.dumps({"ok": False, "reason": guard.reason, "log": str(log_path)}, ensure_ascii=False, indent=2))
+        return 2
 
     steps.append(run_step("reconcile Feishu 01 source sampling into local config", [
         py,
