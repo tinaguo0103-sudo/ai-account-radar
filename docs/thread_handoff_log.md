@@ -3268,3 +3268,12 @@
 - 用户新增明确要求：公众号登录必须像抖音一样固定管理，线程不得自行寻找浏览器。daily automation 只检查固定 provider；重新认证只使用独立固定端口、canonical Chrome profile、identity marker 和本机管理页。不得读取/导出认证秘密；生产 profile/data migration 与扫码另行授权。
 - 恢复边界：原 run 与 9 行保留为事故证据；87 条抖音成功 artifacts 可复用，5 条陈旧公众号缓存必须排除。只有 fresh WeChat result 与同日 AIHOT/Douyin 共同形成新 comparison universe 后，才可重跑 editorial、03/04/card。
 - PM 动作：登记 AR-034 P0，向固定开发线程派一次 consolidated task；派发省略 `model` 与 `thinking`。开发只产出 feature commit、production-base narrow RC、对抗测试和 read-only evidence，不执行生产认证、采集、写入或恢复。
+
+### 2026-07-16 AR-034 首次开发回传未通过 PM evidence gate，QA 未启动
+
+- 开发回传：feature=`43a7d747b8a30522e27e285ef52a620dd8efe3cc`；RC=`release/ar034-rc-20260716@11fab145b0efccce7ff75a458f700606a9f4e183`，parent 为 production `8af084621d01e639c54b5dc847a6439ce96fd8bd`，remote clean。21-file manifest、patch SHA `03072f758cb28bee3a6c3e680b5ed581e2dff8aedebf13b66ed98a26ed5534de` 和 RC tree 可复核。
+- PM blocker 1：独立函数探针不给任何 manual/combined/content/03/comparison lineage，只给完整 probe coverage 与 9 条其他来源候选，`downstream_usability_report()` 仍返回 `downstream_usable=true`、blocked reasons 空。原因是报告在 lineage 结果附加前计算，missing manual artifact 也不会创建 failure step。
+- PM blocker 2：WeChat snapshot 的 `refresh_revision=20`、previous=20、new_item_count=0 时，分类器返回 `updated_no_new_items + ok=true`。现有 state 不保存上次 refresh timestamp/attempt，不能证明当前 scheduled window 真实刷新。
+- 处置：状态改为 `PM Evidence Review Failed / Development Rework Required`，不派 QA。固定开发线程须集中修复 mandatory ingestion closure、current-refresh proof 和 exact 40-char manifest identity，再产 fresh production-base RC；不是 micro-recheck。
+- 证据：`/private/tmp/ar034_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_FAILED.md`。探针只运行本地 RC 函数和临时文件，无生产写入、采集、认证、浏览器、automation 或 Git 副作用。
+- 派发规则：返修任务继续省略 `model` 与 `thinking`，保留开发线程用户设置。

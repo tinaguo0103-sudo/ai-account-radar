@@ -231,3 +231,6 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - Automation：三条任务保持 PAUSED。AR-034 完成、生产恢复通过后，才通过 official control 保留 projectless/model/prompt/schedule 并只修 production cwd，然后 status-only resume；不得手改 TOML。
 - 发布路径：fixed dev -> production-base narrow RC -> independent full QA -> PM production authorization -> canonical WeChat migration/login/read-back -> fresh refresh + recovery -> 03/04/card closure -> automation resume。
 - 当前禁止：生产采集/Feishu 写入/卡片/06、automation/Chrome/profile/provider data/Skill/SCF/main 变更。
+- Dev RC：`release/ar034-rc-20260716@11fab145b0efccce7ff75a458f700606a9f4e183`，parent=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，tree=`29f7cf0c7fddeb32b48f56286939bc88a4c87f15`，patch SHA=`03072f758cb28bee3a6c3e680b5ed581e2dff8aedebf13b66ed98a26ed5534de`。开发自验不等于 QA。
+- PM evidence gate：Failed。无 ingestion lineage 时 `downstream_usable=true` 的独立反例通过；unchanged WeChat revision 被接受为 `updated_no_new_items` 的独立反例通过。两项均直接违反本 AR 用户结果，故 QA 未启动。
+- Rework gate：把 Douyin source artifact/run/hash/bijection/03 read-back 强制纳入 downstream usable；把 WeChat 状态绑定 current refresh attempt 或独立前进的 revision+timestamp；manifest 使用 exact 40-char RC head。产出 fresh production-base RC 后才派完整 QA。
