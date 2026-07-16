@@ -37,6 +37,7 @@ PY_COMPILE_TARGETS = (
     "scripts/editorial_expression_policy.py",
     "scripts/ar020e_expression_calibration.py",
     "scripts/ar020e_daily_editorial_entrypoint.py",
+    "scripts/exact_candidate_input.py",
     "scripts/ar020e_schema_readiness.py",
     "scripts/semantic_owner_dataflow.py",
     "scripts/ar020d_semantic_owner_gate.py",
@@ -178,6 +179,22 @@ def check_ar020d_semantic_owner_gate() -> dict[str, Any]:
     return {
         "ok": result["returncode"] == 0,
         "name": "AR-020D semantic owner dataflow and sentinel gate",
+        **result,
+    }
+
+
+def check_exact_candidate_input_gate() -> dict[str, Any]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "scripts")
+    result = run([
+        sys.executable,
+        "-m",
+        "unittest",
+        "scripts.test_exact_candidate_input",
+    ], env=env)
+    return {
+        "ok": result["returncode"] == 0,
+        "name": "AR-033B exact same-day candidate input gate",
         **result,
     }
 
@@ -410,6 +427,7 @@ def main() -> int:
         checks.extend([
             check_py_compile(),
             check_ar020d_semantic_owner_gate(),
+            check_exact_candidate_input_gate(),
             check_failure_qa_rules(),
             check_douyin_runtime_gate(),
             check_feishu_receiver_node_tests(),
@@ -442,6 +460,7 @@ def main() -> int:
         check_git_production(),
         check_py_compile(),
         check_ar020d_semantic_owner_gate(),
+        check_exact_candidate_input_gate(),
         check_failure_qa_rules(),
         check_douyin_runtime_gate(),
         check_feishu_receiver_node_tests(),

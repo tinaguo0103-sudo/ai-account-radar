@@ -13,23 +13,29 @@ subagent, deterministic editorial logic, or a second model session.
    against both the repo mirror and the deployed global Skill. The outer task
    must not manually search chats, `/private/tmp` artifacts, or ad-hoc release
    notes as a substitute for `manifest_verified=true`.
-3. Run the current-task state machine in this order:
+3. Validate and lock the exact same-day candidate universe before source-open:
+   `topic_editorial_state_machine.py check-exact-input --run-id <run_id>
+   --exact-input-csv <today_10_topics.csv> --exact-input-sha256 <sha256>`.
+   Then run `prepare-source-open` with the same three exact-input arguments.
+   This mode consumes every CSV row in order and must not invoke the
+   `content_items.csv` shortlist/resampling path or add replacement candidates.
+4. Run the current-task state machine in this order:
    `prepare-source-open -> current task exact-source capture ->
    validate-source-open -> prepare-research -> current task web research ->
    validate-research -> prepare-stage1 -> current task editorial decisions ->
    validate-stage1 -> prepare-ranking -> current task global 0..N ranking ->
    validate-ranking -> prepare-stage2 -> current task operational mapping ->
    validate-stage2 -> finalize`.
-4. Every exact source and opened research result must retain raw evidence,
+5. Every exact source and opened research result must retain raw evidence,
    hashes and literal excerpts. Candidate failures remain excluded and visible;
    partial runs remain non-green.
-5. Use the global `ai-account-editorial-director` only after
+6. Use the global `ai-account-editorial-director` only after
    `ar020e_daily_editorial_entrypoint.py --check-only` reports
    `manifest_verified=true`. Persona material is style and judgment reference
    only, never source evidence.
-6. Ranking orders all eligible rows and never caps or truncates them. Stage 2
+7. Ranking orders all eligible rows and never caps or truncates them. Stage 2
    cannot rewrite decision, title, angle, rationale, recommendation or rank.
-7. Only after finalize succeeds, run
+8. Only after finalize succeeds, run
    `python3 scripts/finalize_daily_pipeline_after_editorial.py --run-id <run_id>
    --write-feishu --update-scheduled-log`. This write command is forbidden in
    check-only, RC preparation and dry-run regression.
