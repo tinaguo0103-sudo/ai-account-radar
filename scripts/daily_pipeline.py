@@ -175,7 +175,15 @@ def stdout_json(step: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def commit_wechat_success_watermark(freshness: dict[str, Any]) -> Path:
+def commit_wechat_success_watermark(
+    freshness: dict[str, Any], *, downstream_report: dict[str, Any],
+    ingestion_closure: dict[str, Any], run_id: str,
+) -> Path:
+    feishu_identity = ingestion_closure.get("feishu_03_identity") if isinstance(ingestion_closure, dict) else {}
+    if not downstream_report.get("downstream_usable") or feishu_identity.get("mode") != "write" or not feishu_identity.get("ok"):
+        raise RuntimeError("wechat_watermark_before_downstream_readback")
+    if str(freshness.get("run_id") or "") != run_id or not str(freshness.get("refresh_attempt_id") or ""):
+        raise RuntimeError("wechat_watermark_owner_identity_mismatch")
     target = Path(str(freshness["state_path"])).expanduser().resolve()
     payload = {
         "schema_version": 2,
@@ -488,12 +496,19 @@ def main() -> int:
     if args.fetch_wechat_fulltext_provider or args.wechat_fulltext_provider:
         refresh_attempt_path = OUT / "provider_health" / run_id / "wewe_refresh_attempt.json"
         refresh_cmd = [py, str(ROOT / "scripts" / "wewe_provider_refresh.py"), "--run-id", run_id, "--run-started-at-ms", str(run_started_at_ms), "--out", str(refresh_attempt_path)]
+        if not args.write_feishu:
+            refresh_cmd.append("--check-only")
         steps.append(run_step("request fixed wewe-rss provider refresh", refresh_cmd, env=step_env))
+        refresh_result = stdout_json(steps[-1])
+        if refresh_result.get("status") == "refresh_required":
+            log_path = write_run_log(steps, "dry-run", run_id)
+            print(json.dumps({"ok": False, "wechat_freshness": {"state": "refresh_required", "check_only": True}, "log": str(log_path)}, ensure_ascii=False, indent=2))
+            return 4
         if steps[-1]["returncode"] != 0:
             log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
             print(json.dumps({"ok": False, "wechat_freshness": {"state": "provider_failed"}, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
-        health_cmd = [py, str(ROOT / "scripts" / "wewe_provider_health.py"), "--check-only", "--run-id", run_id, "--run-started-at-ms", str(run_started_at_ms), "--refresh-attempt", str(refresh_attempt_path)]
+        health_cmd = [py, str(ROOT / "scripts" / "wewe_provider_health.py"), "--check-only", "--run-id", run_id, "--run-started-at-ms", str(run_started_at_ms), "--refresh-result", str(refresh_attempt_path)]
         steps.append(run_step("verify canonical wewe-rss account and refresh freshness", health_cmd, env=step_env))
         wechat_freshness = stdout_json(steps[-1])
         if steps[-1]["returncode"] != 0:
@@ -689,10 +704,13 @@ def main() -> int:
     downstream_report["douyin_partial_ingestion"] = douyin_source_lineage or {}
     downstream_report["ingestion_bijection"] = ingestion_lineage or {}
     downstream_report["wechat_freshness"] = wechat_freshness or {}
-    if args.write_feishu and downstream_report.get("downstream_usable") and wechat_freshness and wechat_freshness.get("state") in {"updated_with_new_items", "updated_no_new_items"}:
-        watermark_path = commit_wechat_success_watermark(wechat_freshness)
-        downstream_report["wechat_freshness"]["watermark_committed"] = True
-        downstream_report["wechat_freshness"]["watermark_path"] = str(watermark_path)
+    watermark_closure = ingestion_lineage or {
+            "feishu_03_identity": {
+                "ok": bool(((sampler_result.get("feishu_content_ledger") or {}).get("read_back_identity") or {}).get("ok")),
+                "mode": "write",
+            }
+        }
+    watermark_pending = bool(args.write_feishu and downstream_report.get("downstream_usable") and wechat_freshness and wechat_freshness.get("state") in {"updated_with_new_items", "updated_no_new_items"})
     if generated_count == 0:
         failures = collection_failure_steps(steps)
         log_path = write_run_log(
@@ -701,6 +719,10 @@ def main() -> int:
             run_id,
             downstream_report=downstream_report,
         )
+        if watermark_pending:
+            watermark_path = commit_wechat_success_watermark(wechat_freshness or {}, downstream_report=downstream_report, ingestion_closure=watermark_closure, run_id=run_id)
+            downstream_report["wechat_freshness"]["watermark_committed"] = True
+            downstream_report["wechat_freshness"]["watermark_path"] = str(watermark_path)
         payload = {
             "ok": not failures,
             "status": "failed_or_partial" if failures else "completed_empty",
@@ -738,6 +760,11 @@ def main() -> int:
             run_id,
             downstream_report=downstream_report,
         )
+        if watermark_pending:
+            watermark_path = commit_wechat_success_watermark(wechat_freshness or {}, downstream_report=downstream_report, ingestion_closure=watermark_closure, run_id=run_id)
+            downstream_report["wechat_freshness"] = dict(wechat_freshness or {})
+            downstream_report["wechat_freshness"]["watermark_committed"] = True
+            downstream_report["wechat_freshness"]["watermark_path"] = str(watermark_path)
         payload = {
             "ok": False,
             "deferred_editorial": True,
@@ -813,6 +840,10 @@ def main() -> int:
         run_id,
         downstream_report=final_report,
     )
+    if watermark_pending and ok:
+        watermark_path = commit_wechat_success_watermark(wechat_freshness or {}, downstream_report=downstream_report, ingestion_closure=watermark_closure, run_id=run_id)
+        final_report["wechat_freshness"]["watermark_committed"] = True
+        final_report["wechat_freshness"]["watermark_path"] = str(watermark_path)
     payload = {
         "ok": ok,
         "mode": "write-feishu" if args.write_feishu else "dry-run",

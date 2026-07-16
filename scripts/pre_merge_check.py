@@ -216,6 +216,7 @@ def check_ar034_source_recovery_gate() -> dict[str, Any]:
         "unittest",
         "scripts.test_ar034_source_recovery",
         "scripts.test_ar034_aihot_owner",
+        "scripts.test_ar034_wewe_receipt_adapter",
     ], env=env)
     return {
         "ok": result["returncode"] == 0,

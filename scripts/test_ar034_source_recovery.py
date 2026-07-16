@@ -153,12 +153,15 @@ class AR034SourceRecoveryTests(unittest.TestCase):
         self.assertEqual(provider_probe.published_epoch("1784160000000"), 1784160000)
         self.assertEqual(provider_probe.published_epoch("bad"), 0)
 
-    def test_wechat_refresh_surface_fails_closed_and_watermark_is_post_closure(self) -> None:
-        result = wewe_provider_refresh.request_refresh("run_20260716_080311", 100, clock_ms=lambda: 110)
-        self.assertFalse(result["ok"])
-        self.assertEqual(result["reason"], "refresh_surface_unverifiable")
+    def test_wechat_watermark_is_post_closure(self) -> None:
         source = Path(daily_pipeline.__file__).read_text(encoding="utf-8")
         self.assertLess(source.index('downstream_report.get("downstream_usable")'), source.index("commit_wechat_success_watermark" , source.index('downstream_report.get("downstream_usable")')))
+        with tempfile.TemporaryDirectory() as tmp:
+            target = Path(tmp) / "watermark.json"; target.write_bytes(b"original")
+            freshness = {"state_path": str(target), "run_id": "run", "refresh_attempt_id": "attempt", "refresh_revision": 2, "refreshed_at_ms": 3, "latest_article_publish_time": 4}
+            for downstream, closure in (({"downstream_usable": False}, {"feishu_03_identity": {"ok": True, "mode": "write"}}), ({"downstream_usable": True}, {"feishu_03_identity": {"ok": False, "mode": "write"}})):
+                with self.assertRaises(RuntimeError): daily_pipeline.commit_wechat_success_watermark(freshness, downstream_report=downstream, ingestion_closure=closure, run_id="run")
+                self.assertEqual(target.read_bytes(), b"original")
 
     def test_sampler_lineage_gate_precedes_feishu_write(self) -> None:
         source = Path(content_sampler.__file__).read_text(encoding="utf-8")
