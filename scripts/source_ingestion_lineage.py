@@ -66,6 +66,43 @@ def safe_legacy_artifact(path: Path, expected: Path, reason: str) -> os.stat_res
     return info
 
 
+def verify_legacy_production_root(path: Path, expected_identity: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw = Path(os.path.abspath(os.fspath(path)))
+    if not path.is_absolute() or path != raw:
+        raise LineageError("legacy_production_root_alias")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        before = os.lstat(raw)
+        if stat.S_ISLNK(before.st_mode):
+            raise LineageError("legacy_production_root_symlink")
+        fd = os.open(raw, flags)
+    except LineageError:
+        raise
+    except OSError as exc:
+        raise LineageError("legacy_production_root_unavailable") from exc
+    try:
+        opened = os.fstat(fd)
+        after = os.lstat(raw)
+        if not stat.S_ISDIR(opened.st_mode) or not stat.S_ISDIR(after.st_mode):
+            raise LineageError("legacy_production_root_not_directory")
+        if opened.st_uid != os.getuid() or after.st_uid != os.getuid():
+            raise LineageError("legacy_production_root_wrong_owner")
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino) or (opened.st_dev, opened.st_ino) != (after.st_dev, after.st_ino):
+            raise LineageError("legacy_production_root_identity_swap")
+        if Path(os.path.realpath(raw)) != raw:
+            raise LineageError("legacy_production_root_alias")
+        identity = {
+            "path": str(raw), "device": opened.st_dev, "inode": opened.st_ino, "uid": opened.st_uid,
+        }
+        if expected_identity is not None and identity != expected_identity:
+            raise LineageError("legacy_production_root_identity_drift")
+        return identity
+    except OSError as exc:
+        raise LineageError("legacy_production_root_identity_read_failed") from exc
+    finally:
+        os.close(fd)
+
+
 def legacy_time(value: Any, reason: str) -> datetime:
     if not isinstance(value, str) or not value:
         raise LineageError(reason)
@@ -98,15 +135,13 @@ def validate_legacy_partial_source_artifact(
     *,
     expected_run_id: str,
     expected_root: Path,
+    expected_root_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if re.fullmatch(r"run_\d{8}_\d{6}", expected_run_id) is None:
         raise LineageError("legacy_expected_run_id_invalid")
     expected_date = f"{expected_run_id[4:8]}-{expected_run_id[8:10]}-{expected_run_id[10:12]}"
-    if not expected_root.is_absolute() or expected_root.is_symlink():
-        raise LineageError("legacy_production_root_invalid")
-    production_root = expected_root.resolve()
-    if production_root != expected_root:
-        raise LineageError("legacy_production_root_alias")
+    root_identity = verify_legacy_production_root(expected_root, expected_root_identity)
+    production_root = Path(root_identity["path"])
     expected_daily = production_root / "output" / "logs" / f"daily_pipeline_{expected_date}.json"
     expected_probe = production_root / "output" / "spikes" / "douyin_cdp_source_watch_probe" / "cdp_probe_results.json"
     expected_manual = production_root / "output" / "spikes" / "douyin_cdp_source_watch_probe" / "content_items_manual.jsonl"
@@ -214,6 +249,7 @@ def validate_legacy_partial_source_artifact(
     if len(expected_counts) != successful or actual_counts != expected_counts or sum(actual_counts.values()) != len(rows):
         raise LineageError("legacy_per_account_count_mismatch")
     command_digest = hashlib.sha256(json.dumps(expected_command, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    verify_legacy_production_root(production_root, root_identity)
     return {
         "ok": True, "source_run_id": expected_run_id, "run_id": expected_run_id,
         "legacy_attestation_verified": True, "evidence_basis": "daily_log_probe_manual_v1", "evidence_version": 1,
@@ -223,6 +259,7 @@ def validate_legacy_partial_source_artifact(
         "probe": {"path": str(expected_probe), "sha256": artifact_sha256(expected_probe), "size": probe_stat.st_size, "mtime_ns": probe_stat.st_mtime_ns},
         "manual": {"path": str(expected_manual), "sha256": artifact_sha256(expected_manual), "size": manual_stat.st_size, "mtime_ns": manual_stat.st_mtime_ns, "row_count": len(rows)},
         "command_identity_sha256": command_digest, "started_at": started.isoformat(), "generated_at": generated.isoformat(),
+        "production_root_identity": root_identity,
         "ordered_fingerprints": fingerprints, "fingerprint_accounts": mapping, "failed_account_names": sorted(failed_names),
         "stdout_corroboration": {
             "is_identity_anchor": False,
@@ -240,16 +277,18 @@ def revalidate_legacy_before_external_write(
     expected_run_id: str,
     expected_root: Path,
     attested_report: dict[str, Any],
+    expected_root_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(attested_report, dict) or attested_report.get("legacy_attestation_verified") is not True:
         raise LineageError("legacy_attestation_report_invalid")
     current = validate_legacy_partial_source_artifact(
         daily_log_path, probe_path, manual_path, expected_run_id=expected_run_id, expected_root=expected_root,
+        expected_root_identity=expected_root_identity,
     )
     locked_fields = (
         "source_run_id", "evidence_basis", "evidence_version", "planned_accounts", "attempted_accounts",
         "successful_accounts", "failed_accounts", "successful_item_count", "daily_log", "probe", "manual",
-        "command_identity_sha256", "started_at", "generated_at", "ordered_fingerprints",
+        "command_identity_sha256", "started_at", "generated_at", "production_root_identity", "ordered_fingerprints",
         "fingerprint_accounts", "failed_account_names",
     )
     if any(current.get(field) != attested_report.get(field) for field in locked_fields):

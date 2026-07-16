@@ -10,13 +10,14 @@ from pathlib import Path
 from source_ingestion_lineage import (
     LineageError,
     revalidate_legacy_before_external_write,
+    verify_legacy_production_root,
     validate_legacy_partial_source_artifact,
     validate_partial_source_artifact,
 )
 
 
 ROOT = Path(__file__).resolve().parents[1]
-CONFIGURED_PRODUCTION_ROOT = (ROOT.parent / "ai_account_radar").resolve()
+CONFIGURED_PRODUCTION_ROOT = ROOT.parent / "ai_account_radar"
 
 
 def csv_source_counts(path: Path) -> dict[str, int]:
@@ -46,6 +47,7 @@ def main() -> int:
         if args.locked_legacy_attestation and not args.legacy_daily_log:
             raise LineageError("legacy_locked_report_without_legacy_mode")
         if args.legacy_daily_log:
+            root_identity = verify_legacy_production_root(CONFIGURED_PRODUCTION_ROOT)
             if args.locked_legacy_attestation:
                 locked = json.loads(args.locked_legacy_attestation.read_text(encoding="utf-8"))
                 if isinstance(locked, dict) and isinstance(locked.get("preserved_douyin_success_artifact"), dict):
@@ -53,6 +55,7 @@ def main() -> int:
                 douyin = revalidate_legacy_before_external_write(
                     args.legacy_daily_log, args.probe_result, args.douyin_manual,
                     expected_run_id=str(args.expected_source_run_id), expected_root=CONFIGURED_PRODUCTION_ROOT,
+                    expected_root_identity=root_identity,
                     attested_report=locked,
                 )
                 douyin["prewrite_revalidated"] = True
@@ -60,6 +63,7 @@ def main() -> int:
                 douyin = validate_legacy_partial_source_artifact(
                     args.legacy_daily_log, args.probe_result, args.douyin_manual,
                     expected_run_id=str(args.expected_source_run_id), expected_root=CONFIGURED_PRODUCTION_ROOT,
+                    expected_root_identity=root_identity,
                 )
         else:
             probe = json.loads(args.probe_result.read_text(encoding="utf-8"))
