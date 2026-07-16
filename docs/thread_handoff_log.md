@@ -3378,3 +3378,12 @@
 - 处置：不派独立 QA，不沿用 RC7 或旧生产授权。开发只做 AR-034B 窄返修：configured production root binding + public CLI exact schema/type fail-closed；RC6 native/receipt/WeChat/AIHOT 合同保持。fresh RC8 完整自验后由 PM重新 evidence review。
 - 证据：`/private/tmp/ar034b_rc7_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_FAILED.md`、`/private/tmp/ar034b_pm_public_cli_probe.py`。对抗只写 `/private/tmp`，未改生产 artifact、未采集、未写 Feishu、未改 automation/provider/Chrome/Skill/SCF/production Git。
 - 派发模型规则：固定开发线程任务省略 `model` 与 `thinking`。
+
+### 2026-07-16 AR-034B RC8 仍被 configured-root symlink 绕过，QA 未启动
+
+- 开发回传：feature=`981747eae363dc4d5bd5dc67c9ef996a67f82ff2`；RC8=`release/ar034-rc8-20260716@af0e4e520cefcacb0efa770992a34a2778b9d36f`，parent=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，local=remote clean；28-file patch SHA=`abea1284baf80e0c687373dcc65ac149ee67388719f9e2ba47cdb822c7b556dd`，manifest SHA=`cb4bac8b6bc38e189c7f71217bf4ac04bb90eae400746123e4920d6c567daf0a`，tree=`fc278ad966acc6e1f24e28082f98570986caef33`。
+- 已关闭：公共CLI不再从evidence path反推root；arbitrary evidence root typed fail；returncode string/bool、container/type/time等schema mutation fail closed。PM独立运行真实production initial与locked prewrite均得到31/31、29/2、87 items，副作用flags全false。
+- 剩余 blocker：`CONFIGURED_PRODUCTION_ROOT = (... / "ai_account_radar").resolve()` 在 validator 前消除了raw path的symlink身份。PM临时相邻拓扑中，`ai_account_radar` symlink指向伪造production tree，公共CLI exit 0并返回 `legacy_attestation_verified=true`；同一拓扑的malformed字段则正确typed exit 4。
+- 处置：RC8不进QA。开发只做RC9单点返修：raw configured path先通过`lstat`或directory fd `O_NOFOLLOW/fstat`验证directory/non-symlink/current UID/canonical identity，再交给initial和locked validator；加入public CLI symlink/alias/swap回归。RC8 schema与RC6业务合同不得重做或放宽。
+- 证据：`/private/tmp/ar034b_rc8_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_FAILED.md`、`/private/tmp/ar034b_rc8_pm_topology_probe.py`。仅写临时文件；production originals只读，未触发任何外部动作。
+- 派发模型规则继续省略 `model` 与 `thinking`。
