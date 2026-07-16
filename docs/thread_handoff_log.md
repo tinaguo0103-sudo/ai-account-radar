@@ -3286,3 +3286,13 @@
 - provider 边界：当前安装版只有异步 update endpoint，无 caller-bound completion receipt；fresh RC 的固定 adapter 因此返回 `refresh_surface_unverifiable/provider_failed`。这是安全失败，不是 production recovery completion。
 - QA 派发：固定 QA 线程须做 fresh full RC QA，独立重放 lineage/current-refresh/manifest mutations、full regression 和 production read-only boundary；不得只复用开发结论。必须分开给出 architecture verdict 与 production recoverability verdict，并判断是否仍需 receipt-capable adapter 开发。
 - 派发模型规则：省略 `model` 与 `thinking`，保留 QA 线程用户设置。
+
+### 2026-07-16 AR-034 RC2 架构 QA 通过，生产可恢复性阻断并退回 receipt adapter 开发
+
+- QA 分离结论：A=`RC architecture/control Passed`；B=`Production recoverability Blocked - receipt-capable local adapter/code RC required`。因此 PM 不申请 production recovery authorization。
+- 通过项：exact RC/parent/tree/25-file manifest/patch parity、Douyin mandatory ingestion closure、WeChat current-run freshness与 fixed runtime、AIHOT Stage1/Stage2 owner、355 Python、receiver 32、Douyin 39+6、Unicode 4/4、semantic 7/7 和 pre-merge 均通过。
+- 阻断：当前安装版 `cooderl/wewe-rss-sqlite:latest` 只暴露异步 `GET /feeds/:id?update=true`，无 caller-bound completion receipt。RC adapter 永久 typed `provider_failed/refresh_surface_unverifiable`；migration + reauth 不会自动补齐该代码能力。
+- PM 决策：保留 RC2 为 control-correct evidence，不发布。固定开发线程继续 receipt-capable local adapter：exclusive lease、caller attempt、before/after canonical DB snapshots、有界轮询、per-feed completion、durable atomic receipt、timeout/crash/concurrency fail closed。若 provider 源码没有完成后才变化的可靠信号，必须明确选择新的可验证 surface，禁止时间猜测。
+- 后续：fresh production-base RC + full independent QA 通过后，才申请 production canonical data migration、9334 reauth、一次真实 refresh/read-back 和版本化 recovery run。
+- 证据：`/private/tmp/ar034_rc2_independent_qa_20260716/AR034_RC2_INDEPENDENT_QA_REPORT.md`。
+- 派发模型规则：receipt adapter 开发继续省略 `model` 与 `thinking`。

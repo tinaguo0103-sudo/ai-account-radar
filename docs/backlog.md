@@ -774,7 +774,7 @@
 
 - 类型：生产数据正确性 / 多来源采集闭环 / 固定认证运行时 / editorial owner contract
 - 优先级：P0
-- 状态：Fresh RC PM Evidence Review Passed / Independent QA In Progress
+- 状态：Architecture QA Passed / Production Recoverability Blocked / Receipt Adapter Development In Progress
 - 来源：对 `run_20260716_080311` 的生产只读复核发现，抖音 probe 实际为 31 attempted、29 succeeded、2 failed，并产出 87 条有效成功账号 items；但 `daily_pipeline.py` 把 account-partial 映射为 `optional_failed=true`，随后整份 Douyin manual artifact 未进入 combined input。最终 `content_items.csv` 为 AIHOT 53、公众号 5、抖音 0；`today_10_topics.csv` 为 AIHOT 8、公众号 1、抖音 0。Feishu 03 同 run 关联记录为 AIHOT 36、公众号历史记录 5、抖音 0。因此当前 9 条不是全源比较结果，不得继续作为 04/Topic Card 恢复输入。
 - 公众号根因：唯一 active 公众号源的 provider 缓存仍是 2026-06-11 至 2026-06-16 的 5 篇旧文章；`ai-radar-wewe-rss` 自至少 2026-07-10 起反复报告 `暂无可用读书账号!`。现有 readiness 只证明 HTTP 能返回可解析缓存，没有证明账号可用、feed 刷新成功、内容新鲜或本次新增。因此旧缓存被错误记为今日采集。
 - 抖音闭环：`completed_with_failures` 必须保留所有成功账号的有效 items，只隔离失败账号；成功 artifact fingerprint 必须可审计地进入 combined input、`content_items.csv`、Feishu 03 和 shortlist universe。`downstream_usable` 必须验证逐层来源闭环，任一成功 artifact 丢失即 false；对外状态必须明确为 partial，不能称全量成功。
@@ -790,3 +790,6 @@
 - 审计补充：首次 RC manifest 的 `rc_head` 为短 SHA `11fab14`；fresh RC manifest 必须记录并验证 exact 40-char head。返修完成后再做完整独立 QA，不做 micro-recheck。
 - 集中返修：feature=`a10f7b1f53fce6ca3d0419ae9ff59a0b6527dcda`；fresh RC=`release/ar034-rc2-20260716@41cb9904b3cf4b36c4b94d85c91e54abb733779c`，parent=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，25-file patch SHA=`8f308719e68d8e2eb9822da54da81b76b73a0cdb5850fd4e6e759a464b98b5f5`，tree/apply tree=`eabbf195255e234e2b35109d3b0d5b52be62a114`。PM 原两个反例已独立重放：无 ingestion closure 时七项 mandatory reason 阻断；unchanged refresh 返回 `stale_cache`；exact 40-char manifest verifier 通过。现已派完整独立 QA。
 - 当前 recoverability：固定 provider 源码只暴露异步 `GET /feeds/:id?update=true`，没有 caller-bound completion receipt；fresh RC 正确返回 `refresh_surface_unverifiable/provider_failed`。QA 必须把“fail-closed 架构通过”与“生产可恢复”分开结论，并判断后续是否仍需 receipt-capable local adapter 代码，而不能把迁移/登录本身视为足够。
+- Independent QA：A 类 architecture/control 通过，Douyin ingestion closure、WeChat current-run freshness/fixed runtime、AIHOT semantic owner 和完整回归均通过；B 类 production recoverability 阻断。当前 adapter 永久返回 `provider_failed/refresh_surface_unverifiable`，migration + reauth 本身不足，故不申请生产授权。
+- Receipt adapter 最终开发：固定 provider URL/data dir，不启动 provider/browser；按 active feed 建立原子 exclusive lease，记录 caller run/attempt；请求异步 update 前保存 canonical DB before snapshot，再有界轮询 provider DB/可验证完成字段，只有每个 feed 的 completion predicate 与 after snapshot 证明本 caller 完成时才原子写 durable receipt。timeout、并发、stale lease、DB busy、账号掉线、feed failure、partial feed completion 均 typed fail 且不推进 watermark。若 provider 源码无法证明任何字段在完成后才更新，则不得用时间猜测成功，须选择可验证的新 provider/adapter surface。
+- Fresh RC 门：receipt schema/identity/hash、lease crash recovery、before/after per-feed snapshot、bounded polling、no-new/new-items、N-feed partial、watermark post-03 read-back、scheduled no-browser/no-provider-start 全部对抗；production-base fresh RC 完整 QA 通过后才允许申请 canonical data migration、reauth 和一次真实 refresh smoke。
