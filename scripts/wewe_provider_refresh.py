@@ -4,11 +4,13 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import re
 import socket
 import sqlite3
+import stat
 import time
 import urllib.error
 import urllib.request
@@ -22,6 +24,7 @@ HEALTH_DIR = CANONICAL_DATA_DIR.parent / "health"
 LEASE_PATH = HEALTH_DIR / "refresh.lock"
 RECEIPT_DIR = HEALTH_DIR / "receipts"
 ATTEMPT_DIR = HEALTH_DIR / "attempts"
+ATTESTATION_KEY_PATH = CANONICAL_DATA_DIR.parent / "secrets" / "wewe-refresh-attestation.key"
 LEASE_TTL_MS = 10 * 60 * 1000
 RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
 ATTEMPT_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
@@ -37,6 +40,35 @@ def canonical_json(value: Any) -> bytes:
 
 def sha256_bytes(value: bytes) -> str:
     return hashlib.sha256(value).hexdigest()
+
+
+def load_attestation_key(path: Path = ATTESTATION_KEY_PATH) -> bytes:
+    try:
+        info = path.lstat()
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or path.is_symlink() or info.st_mode & 0o077:
+            raise RefreshError("refresh_attestation_key_unsafe")
+        key = path.read_bytes()
+    except OSError as exc:
+        raise RefreshError("refresh_attestation_key_unavailable") from exc
+    if len(key) < 32:
+        raise RefreshError("refresh_attestation_key_invalid")
+    return key
+
+
+def attestation_key_id(key: bytes) -> str:
+    return sha256_bytes(key)[:16]
+
+
+def sign_payload(payload: dict[str, Any], key: bytes) -> str:
+    unsigned = {name: value for name, value in payload.items() if name != "attestation_signature"}
+    return hmac.new(key, canonical_json(unsigned), hashlib.sha256).hexdigest()
+
+
+def seal_payload(payload: dict[str, Any], key: bytes) -> dict[str, Any]:
+    sealed = dict(payload)
+    sealed["attestation_key_id"] = attestation_key_id(key)
+    sealed["attestation_signature"] = sign_payload(sealed, key)
+    return sealed
 
 
 def database_identity(database: Path) -> dict[str, Any]:
@@ -177,14 +209,18 @@ def run_refresh(
     snapshot_fn: Callable[[Path], dict[str, Any]] = read_snapshot,
     clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
     sleep_fn: Callable[[float], None] = time.sleep, deadline_ms: int = 120000, poll_interval_ms: int = 500,
+    signing_key: bytes | None = None,
 ) -> dict[str, Any]:
     if not RUN_ID_PATTERN.fullmatch(run_id):
         raise RefreshError("refresh_run_id_invalid")
     database = data_dir.resolve() / "wewe-rss.db"
+    key = signing_key if signing_key is not None else load_attestation_key()
+    if len(key) < 32:
+        raise RefreshError("refresh_attestation_key_invalid")
     attempt_id = uuid.uuid4().hex
     started = clock_ms()
     lease_path = health_dir / "refresh.lock"
-    lease = {"schema_version": 1, "attempt_id": attempt_id, "run_id": run_id, "pid": os.getpid(), "host": socket.gethostname(), "started_at_ms": started, "expires_at_ms": started + LEASE_TTL_MS, "provider_url": PROVIDER_URL, "data_identity": database_identity(database)}
+    lease = seal_payload({"schema_version": 1, "attempt_id": attempt_id, "run_id": run_id, "pid": os.getpid(), "host": socket.gethostname(), "started_at_ms": started, "expires_at_ms": started + LEASE_TTL_MS, "provider_url": PROVIDER_URL, "data_identity": database_identity(database)}, key)
     acquire_lease(lease_path, lease, started)
     try:
         lease_record_path = health_dir / "leases" / f"{run_id}_{attempt_id}.json"
@@ -192,14 +228,14 @@ def run_refresh(
         before = snapshot_fn(database)
         requested_at = clock_ms()
         requested_ids = [row["feed_id"] for row in before["feeds"]]
-        lineage = {
+        lineage = seal_payload({
             "schema_version": 1, "attempt_id": attempt_id, "run_id": run_id,
             "provider_url": PROVIDER_URL, "database_identity": before["database_identity"],
             "feed_ids": requested_ids, "before_snapshot_sha256": before["snapshot_sha256"],
             "lease_sha256": lease_hash, "pid": os.getpid(),
             "host": socket.gethostname(), "started_at_ms": started, "requested_at_ms": requested_at,
             "status": "requesting",
-        }
+        }, key)
         lineage_path = health_dir / "attempts" / f"{run_id}_{attempt_id}.json"
         lineage_hash = exclusive_write(lineage_path, lineage)
         accepted = []
@@ -225,7 +261,7 @@ def run_refresh(
                 last_error = str(exc); sleep_fn(poll_interval_ms / 1000); continue
             if complete:
                 completed = clock_ms()
-                receipt = {"schema_version": 1, "attempt_id": attempt_id, "run_id": run_id, "provider_url": PROVIDER_URL, "database_identity": before["database_identity"], "feed_ids": requested_ids, "before_snapshot_sha256": before["snapshot_sha256"], "after_snapshot_sha256": after["snapshot_sha256"], "attempt_lineage_sha256": lineage_hash, "before": before, "after": after, "per_feed": per_feed, "started_at_ms": started, "requested_at_ms": requested_at, "completed_at_ms": completed, "new_item_count": new_count, "refresh_revision": max(row["after_sync_time"] for row in per_feed), "refreshed_at_ms": max(row["updated_at_ms"] for row in after["feeds"]), "status": "success"}
+                receipt = seal_payload({"schema_version": 1, "attempt_id": attempt_id, "run_id": run_id, "provider_url": PROVIDER_URL, "database_identity": before["database_identity"], "feed_ids": requested_ids, "before_snapshot_sha256": before["snapshot_sha256"], "after_snapshot_sha256": after["snapshot_sha256"], "attempt_lineage_sha256": lineage_hash, "before": before, "after": after, "per_feed": per_feed, "started_at_ms": started, "requested_at_ms": requested_at, "completed_at_ms": completed, "new_item_count": new_count, "refresh_revision": max(row["after_sync_time"] for row in per_feed), "refreshed_at_ms": max(row["updated_at_ms"] for row in after["feeds"]), "status": "success"}, key)
                 receipt_path = health_dir / "receipts" / f"{run_id}_{attempt_id}.json"
                 atomic_write(receipt_path, receipt)
                 receipt_hash = sha256_bytes(receipt_path.read_bytes())

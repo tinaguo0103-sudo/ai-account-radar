@@ -31,6 +31,14 @@ def create_database(path: Path, feeds: tuple[str, ...] = ("feed-a",), *, account
 
 
 class ReceiptAdapterTests(unittest.TestCase):
+    def setUp(self) -> None:
+        self.test_key = b"ar034-isolated-test-attestation-key" * 2
+        self.real_load_attestation_key = refresh.load_attestation_key
+        refresh_patch = mock.patch.object(refresh, "load_attestation_key", return_value=self.test_key)
+        health_patch = mock.patch.object(health, "load_attestation_key", return_value=self.test_key)
+        refresh_patch.start(); health_patch.start()
+        self.addCleanup(refresh_patch.stop); self.addCleanup(health_patch.stop)
+
     def fixture(self, feeds: tuple[str, ...] = ("feed-a",)):
         temporary = tempfile.TemporaryDirectory(); root = Path(temporary.name); data = root / "data"; health_dir = root / "health"; data.mkdir(); create_database(data / "wewe-rss.db", feeds)
         return temporary, data, health_dir
@@ -170,7 +178,7 @@ class ReceiptAdapterTests(unittest.TestCase):
         for name, mutate in mutations.items():
             temporary, data, health_dir = self.fixture(("a", "b")); self.addCleanup(temporary.cleanup); clock = Clock()
             result = refresh.run_refresh("run_20260716_080311", 1_900_000, data_dir=data, health_dir=health_dir, request_fn=self.completing_request(data / "wewe-rss.db", clock), clock_ms=clock.now, sleep_fn=clock.sleep)
-            path = Path(result["receipt_path"]); payload = json.loads(path.read_text()); mutate(payload); refresh.atomic_write(path, payload)
+            path = Path(result["receipt_path"]); payload = json.loads(path.read_text()); mutate(payload); payload = refresh.seal_payload(payload, self.test_key); refresh.atomic_write(path, payload)
             with self.subTest(name=name), self.assertRaises(ValueError):
                 health.validate_refresh_receipt(path, refresh.sha256_bytes(path.read_bytes()), run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000)
 
@@ -186,9 +194,36 @@ class ReceiptAdapterTests(unittest.TestCase):
         for field, value in (("before", []), ("after", None), ("per_feed", "bad")):
             temporary, data, health_dir = self.fixture(); self.addCleanup(temporary.cleanup); clock = Clock()
             result = refresh.run_refresh("run_20260716_080311", 1_900_000, data_dir=data, health_dir=health_dir, request_fn=self.completing_request(data / "wewe-rss.db", clock), clock_ms=clock.now, sleep_fn=clock.sleep)
-            path = Path(result["receipt_path"]); payload = json.loads(path.read_text()); payload[field] = value; refresh.atomic_write(path, payload)
+            path = Path(result["receipt_path"]); payload = json.loads(path.read_text()); payload[field] = value; payload = refresh.seal_payload(payload, self.test_key); refresh.atomic_write(path, payload)
             with self.subTest(field=field), self.assertRaisesRegex(ValueError, "refresh_receipt_"):
                 health.validate_refresh_receipt(path, refresh.sha256_bytes(path.read_bytes()), run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000)
+
+    def test_canonical_trio_without_adapter_attestation_and_wrong_key_fail(self) -> None:
+        temporary, data, health_dir = self.fixture(); self.addCleanup(temporary.cleanup); clock = Clock()
+        result = refresh.run_refresh("run_20260716_080311", 1_900_000, data_dir=data, health_dir=health_dir, request_fn=self.completing_request(data / "wewe-rss.db", clock), clock_ms=clock.now, sleep_fn=clock.sleep)
+        receipt_path = Path(result["receipt_path"])
+        payload = json.loads(receipt_path.read_text())
+        payload["attestation_signature"] = "0" * 64
+        refresh.atomic_write(receipt_path, payload)
+        kwargs = dict(run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000)
+        with self.assertRaisesRegex(ValueError, "attestation_invalid"):
+            health.validate_refresh_receipt(receipt_path, refresh.sha256_bytes(receipt_path.read_bytes()), **kwargs)
+        with self.assertRaisesRegex(ValueError, "attestation_invalid"):
+            health.validate_refresh_receipt(receipt_path, refresh.sha256_bytes(receipt_path.read_bytes()), signing_key=b"wrong-key" * 8, **kwargs)
+
+    def test_runtime_attestation_key_permissions_and_secret_output(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "attestation.key"
+            with self.assertRaisesRegex(refresh.RefreshError, "unavailable"):
+                self.real_load_attestation_key(path)
+            path.write_bytes(b"k" * 32); path.chmod(0o644)
+            with self.assertRaisesRegex(refresh.RefreshError, "unsafe"):
+                self.real_load_attestation_key(path)
+            path.chmod(0o600)
+            self.assertEqual(self.real_load_attestation_key(path), b"k" * 32)
+        source = Path(refresh.__file__).read_text(encoding="utf-8")
+        self.assertNotIn("print(key", source)
+        self.assertNotIn("json.dumps(key", source)
 
     def test_check_only_has_no_request_or_browser_side_effect(self) -> None:
         temporary, data, _ = self.fixture(); self.addCleanup(temporary.cleanup)
