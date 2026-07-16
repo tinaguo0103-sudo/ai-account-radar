@@ -199,7 +199,7 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 
 ## 2026-07-16 AR-033 Release Board Entry
 
-- 结论：`AR-033 Released / AR-033B RC QA Failed - Rework In Progress / Today Recovery Blocked`。
+- 结论：`AR-033 Released / AR-033B Fresh Independent QA In Progress / Today Recovery Blocked`。
 - 生产事实：`run_20260716_080311` 为 account-level partial，31 planned/attempted、29 succeeded、2 failed、03 已写入、9 条 today candidates 已生成；不得重跑采集或改历史 03。
 - 发布目标：新增 downstream usability machine field 与 persistent editorial Skill release manifest，恢复 09:15/10:00 对 partial-but-usable collection 的正确判定。
 - 发布边界：feature 开发与生产基线 RC 分离；PM docs 只留 feature 追踪，不进入 product RC patch。生产 04 写入、个人 Topic Card 发送和任何恢复动作必须在修复发布与独立 QA 通过后由生产线程执行。
@@ -212,3 +212,5 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - Dev evidence：真实 `run_20260716_080311` CSV SHA=`63450c79afa389d6ee7435681bfb55994f4424fb9302535b8e99587d898e64f5`；check-exact-input 与 official prepare 均 9/9，source outputs=0，writes/sends/collection=false。QA 必须独立重算并覆盖 prepare 后 CSV/state mutation、no-resampling/no-replacement 和完整 adjacent regressions。
 - QA 阻断：exact prepare 本身通过，但后续四个公共阶段仍调用 legacy pool reconstruction；QA sentinel 命中 `exact_mode_resampling_or_pool_rebuild_called`。此外 prepare 后修改 CSV，`candidate_rows_from_state` 未复核当前文件 SHA，结果为 `NOT_BLOCKED`。绿色 332 Python/Node/semantic/pre-merge 不覆盖这两个独立反例。
 - 返修门：集中 exact-mode state revalidation；每阶段重新读取 canonical CSV 并核对 bytes SHA/run/date/order/URL/fingerprint/manifest；exact pool 全程只来自 locked candidates，legacy builder 调用数必须为 0。原 QA 两个 probe 必须原样通过，再产出 new production-base RC 做完整 QA。
+- Fresh RC：`release/ar033b-exact-input-rework-20260716@8af084621d01e639c54b5dc847a6439ce96fd8bd`，parent 为 production `e6f04c547d70745c65b88d08aa2c4a9694b732fa`；7-file patch SHA=`4c196641b0c25bab1888574ab11bfaf05bb19dfa6dd5a81ab260da7ab87f3b01`。开发包缺独立 `apply_byte_parity.json`，PM 已直接重算 base-apply 与 RC 七文件 SHA，结果 7/7 一致；QA 仍须独立生成 machine evidence。
+- Rework evidence：CSV append/content/reorder/URL/title/publication/truncate/replace/symlink、candidate/manifest/state/local source drift 均阻断；validate-stage1/prepare-stage2/validate-stage2/finalize 的 legacy pool sentinel 全部 0 calls。真实 9 行 check/prepare/downstream reload read-only 通过，未启动 source fetch 或外部副作用。

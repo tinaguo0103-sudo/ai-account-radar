@@ -3240,3 +3240,12 @@
 - 生产边界：Feishu 04 对 run 仍为 0，Topic Card 未发送；无代码/业务写入、采集、06、automation、Chrome、Skill、SCF 或 production Git 改动。GET-only 仅追加本地 telemetry，已披露。
 - PM 动作：失败 RC 保留历史且不得发布；已向固定开发线程派一次集中返修，要求四个后续公共阶段的 legacy pool builder 调用数为 0，并在每次 exact state 读取前复核 canonical CSV 当前 SHA 和 ordered identity。须产出 fresh production-base RC，再做完整独立 QA。
 - 派发模型规则：开发返修任务省略 `model` 与 `thinking`，保留线程用户设置。
+
+### 2026-07-16 AR-033B 集中返修通过开发门，已派 fresh RC 完整 QA
+
+- 开发结论：`Dev Self-Validation Passed / Ready for Independent QA`。feature=`333b499e4f1f4d492a7a9a157d74c81c87efaaba`；fresh RC=`release/ar033b-exact-input-rework-20260716@8af084621d01e639c54b5dc847a6439ce96fd8bd`，parent 为 production `e6f04c547d70745c65b88d08aa2c4a9694b732fa`，local=remote clean。
+- 阻断闭环声明：central revalidation 每次 exact state/stage read 都重开 canonical CSV 并核对当前 bytes SHA、run/date/row count/order/URL/fingerprint/manifest；四个后续 public paths 使用 locked stage pool，`pool_from_state/load_items/build_pre_skill_pool/shortlist` 调用数均为 0。
+- 对抗：原 QA post-prepare CSV/candidate/manifest 三项 probe 均 typed fail；扩展 append/content/reorder/URL/title/publication/truncate/replace/symlink 与 state/local source drift 也阻断；candidate-local failure 无补位/重排。
+- 审计：patch SHA=`4c196641b0c25bab1888574ab11bfaf05bb19dfa6dd5a81ab260da7ab87f3b01`。开发目录缺独立 parity JSON，PM 已对 base-apply 与 RC 七文件逐一重算 SHA，7/7 一致，并把证据包装缺口交给 QA 独立复算。
+- 测试：feature Python 369、RC 336、exact gate 10、Node aggregate 40、receiver 32、semantic static 0/behavioral 7/7、compile/node/diff/pre-merge 均通过。真实 9 行 check/prepare/downstream reload 只读通过。
+- QA 派发：已向固定 QA 线程 `019f4714-3f76-7bb1-b71f-08a41d9f8860` 派 fresh RC 完整 QA；要求原失败 probe 原样重放、四 public stage sentinel、扩展 source/state mutation、真实 9 行 L2 和全回归。派发省略 `model` 与 `thinking`。
