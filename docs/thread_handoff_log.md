@@ -3324,3 +3324,12 @@
 - 返修：输出准确的 `secret_material_read` / `secrets_exposed` 语义；用 fd 级 `O_NOFOLLOW + fstat` 验证 regular、nlink=1、st_uid=current uid、owner-only mode后读取；canonical secrets parent current uid且非 group/world writable。补 owner/mode/symlink swap/TOCTOU模拟和 check-only无 secret read tests，形成 fresh RC 后再派完整 QA。
 - 证据：`/private/tmp/ar034_rc5_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_NEEDS_NARROW_REWORK.md`。仅静态审计与本地 RC证据复核，无生产动作。
 - 派发模型规则：继续省略 `model` 与 `thinking`。
+
+### 2026-07-16 AR-034 RC6 通过 PM evidence gate，已派完整独立 QA
+
+- 开发返修：feature=`726ff23c6d0552140cb167f0b1398c0296fc4790`；fresh RC=`release/ar034-rc6-20260716@0353e723bc3dc719299fd4962d302a291e6ab714`，parent=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，local=remote clean；patch SHA=`97904e1dca8b0ef3917b2feeb6f5210974d7615f695510d9597980016c5dbe1b`，tree/apply tree=`d67398ecafb02358411a93084ecfe490003ba3d7`。
+- 窄阻断关闭：refresh/health输出准确区分 `secret_material_read` 与 `secrets_exposed`；check-only不读 key/auth。Key loader通过 parent directory fd与相对 key fd使用 O_NOFOLLOW/fstat验证current UID、mode、nlink，并从同一fd读取，无 lstat/read_bytes分离。
+- PM 独立证据：focused receipt adapter 21/21；原手工 canonical trio加载RC6模块后 typed `refresh_attestation_key_unavailable`，未进入 classifier；patch SHA与diff check一致。结论 `PM Evidence Review Passed / Ready for Independent QA`。
+- QA派发：固定QA线程须从 fresh clone完整验证25-file scope/apply、HMAC/fd/secret evidence、fake provider receipt矩阵、Douyin ingestion closure、WeChat fixed runtime、AIHOT owner、AR033B/031/card/watermark及全回归。不得只做RC5窄项复测，不得 provision production key或调用真实provider。
+- 证据：`/private/tmp/ar034_rc6_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_PASSED.md`。
+- 派发模型规则：省略 `model` 与 `thinking`，保留QA线程当前设置。
