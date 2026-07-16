@@ -285,3 +285,4 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - Secret injection blocker：自动使用existing host auth被本机安全审查拒绝，未读取或materialize secret。当前需用户明确批准受控通道：只在本机内存读取，使用CDP直接填入fixed 9334 local页面，禁止disk/log/clipboard/回显。未获该授权前RC8不发布、三任务保持PAUSED。
 - Controlled injection authorization：用户已明确同意。production线程只能以本机内存 + CDP操作fixed 9334 local页面；禁止secret落盘、日志、clipboard、截图或回显。login check-only green后自动继续既有RC8 Phase 0；任一身份/账号/feed/DB mismatch保持PAUSED并停止。
 - Controlled injection result：admin auth accepted，fixed 9334进入local `/dash`，secret boundary全满足；但provider account仍status=0，check-only=`login_required`。当前转为只读定位正式account reauth/reactivation路径；不点击refresh试错，不发布RC8，不恢复automation。
+- Reauth supported path：只读RCA确认旧token因 `WeReadError401` 被provider自动失效；正式续期不是改status，而是fixed 9334 `/dash/accounts` 点击一次“添加读书账号”，由owner扫码，UI polling后按account id upsert。计划SHA=`12c7641c...`；当前等待用户精确授权，RC8未发布、三任务PAUSED。

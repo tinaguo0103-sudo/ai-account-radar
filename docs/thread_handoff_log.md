@@ -3484,3 +3484,12 @@
 - 结果：browser从 `/dash/login` 进入 `/dash`，证明admin auth已接受。provider check-only仍 `login_required`；canonical DB integrity=ok，account status=0 count=1，feed status=1 count=1，articles=48，说明内部公众号账号会话仍不可用。
 - Stop discipline：dashboard无可见QR/SMS/MFA或登录/重新登录/添加账号入口，只有刷新动作；未点击试错。production Git仍clean `8af0846`，RC8未发布，无key/refresh/Feishu/card/collection/06，三任务PAUSED。
 - Next：production线程只读审计fixed dashboard路由和exact provider源码，定位正式re-login/reactivation路径并产出独立最小授权计划；本轮不执行mutation，PM不轮询。
+
+### 2026-07-16 WeWe provider account reauth 支持路径确认
+
+- 结论：`Read-only RCA Complete / Reauth Requires Account-Owner QR / RC8 Not Released`。RCA=`/private/tmp/ar034b_wewe_reauth_readonly_20260716_2200/SUPPORTED_PATH_FINDINGS.md`，SHA256=`92507c40c344355e40fc4fd8bea29afd25c0fb9bb5ecfb7ae16b20c92e4b4e7a`。
+- 根因：provider遇到上游 `WeReadError401` 会把account status置0；抓取只选status=1。admin auth与provider account session分离，直接把status改回1只会重启失效token，不是支持路径。
+- 正式路径：fixed `http://127.0.0.1:4000/dash/accounts` 的“添加读书账号”调用protected login URL，展示QR并poll结果，成功后 `account.add` 按account id upsert新token/name/status=1。不存在独立re-login按钮；owner扫码不可替代。
+- 授权计划：`/private/tmp/ar034b_wewe_reauth_readonly_20260716_2200/plan/PROVIDER_ACCOUNT_REAUTH_AUTHORIZATION_PLAN.md`，SHA256=`12c7641c7f3f920c8dcfa92669ef76d8554bd407de331f39282ad24b6985b7cb`。只允许fixed 9334一次add-account和owner扫码；禁止手改DB/status、直接API、refresh、其他browser/profile。
+- 成功门：canonical DB integrity/feed/article identity无漂移、无重复账号歧义、active account>=1；provider check-only必须 `ok=true/status=refresh_required` 且零refresh/secret read。green后回到fresh RC8 Phase 0。
+- 当前边界：production clean `8af0846`，三任务PAUSED，key absent，RC8未发布，无refresh/Feishu/card/collection/06；未读取secret或QR内容。
