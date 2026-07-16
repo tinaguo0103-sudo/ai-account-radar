@@ -774,7 +774,7 @@
 
 - 类型：生产数据正确性 / 多来源采集闭环 / 固定认证运行时 / editorial owner contract
 - 优先级：P0
-- 状态：RC6 Production Preflight Blocked / No Release / AR-034B Legacy Lineage Attestation Plan Pending
+- 状态：RC6 Production Preflight Blocked / AR-034B Legacy Lineage Attestation Development Authorized
 - 来源：对 `run_20260716_080311` 的生产只读复核发现，抖音 probe 实际为 31 attempted、29 succeeded、2 failed，并产出 87 条有效成功账号 items；但 `daily_pipeline.py` 把 account-partial 映射为 `optional_failed=true`，随后整份 Douyin manual artifact 未进入 combined input。最终 `content_items.csv` 为 AIHOT 53、公众号 5、抖音 0；`today_10_topics.csv` 为 AIHOT 8、公众号 1、抖音 0。Feishu 03 同 run 关联记录为 AIHOT 36、公众号历史记录 5、抖音 0。因此当前 9 条不是全源比较结果，不得继续作为 04/Topic Card 恢复输入。
 - 公众号根因：唯一 active 公众号源的 provider 缓存仍是 2026-06-11 至 2026-06-16 的 5 篇旧文章；`ai-radar-wewe-rss` 自至少 2026-07-10 起反复报告 `暂无可用读书账号!`。现有 readiness 只证明 HTTP 能返回可解析缓存，没有证明账号可用、feed 刷新成功、内容新鲜或本次新增。因此旧缓存被错误记为今日采集。
 - 抖音闭环：`completed_with_failures` 必须保留所有成功账号的有效 items，只隔离失败账号；成功 artifact fingerprint 必须可审计地进入 combined input、`content_items.csv`、Feishu 03 和 shortlist universe。`downstream_usable` 必须验证逐层来源闭环，任一成功 artifact 丢失即 false；对外状态必须明确为 partial，不能称全量成功。
@@ -812,3 +812,4 @@
 - 生产 preflight：Blocked before writes。保存的Douyin probe可证明31 planned/attempted、29 success、2 failure、失败账号artifact=0和87行manual，但旧版probe没有顶层 `run_id` / `manual_artifact`，87行本身也没有逐行 `运行批次`。RC6 `ar034_recovery_check.py --check-only` 正确返回 `manual_artifact_identity_missing`；production仍clean `8af0846`，key absent、refresh/Feishu/card/automation change均为0。
 - 独立证据复核：daily log exact run=`run_20260716_080311`；唯一Douyin step使用canonical 9333、account-limit=0、video-limit=3、retries=2，started_at=08:03:13、daily generated_at=08:08:10。probe与resolver manual均为current UID、regular/single-link，mtime约08:07:39；probe resolver精确指向该manual，hash=`5af4d08662fddc7b09f8c0c906288cf36f6ade5d9ee01fad5270932ba001f496`、size=100159、rows=87。daily log只保留截断stdout，不能把它伪称完整probe byte proof。
 - AR-034B建议：新增显式 legacy lineage attestation，不修改原probe/manual、不手工补字段、不重采集。只有调用者同时提供canonical daily log、expected source run和旧artifact路径时，代码才从single step command/status/time window、file identity、resolver path、hash/size/row count、coverage/account/item lineage重算source identity；输出带source run与ordered fingerprints的验证报告，后续write前再次读原artifact复核。正常新产物仍走RC6原生identity，legacy路径不可自动fallback。须从production base构建包含RC6+AR-034B的fresh RC7，完整QA后重新申请生产授权。
+- 用户确认：批准AR-034B进入开发。开发只实现显式legacy attestation、对抗测试与fresh production-base RC7；不运行生产、不写/改旧artifact、不重采集、不自行派QA。旧RC6生产授权已因scope变化失效，RC7完整QA后必须重新申请。

@@ -3359,3 +3359,12 @@
 - PM独立只读复核：daily exact run=`run_20260716_080311`；唯一Douyin step canonical 9333/account-limit0/video-limit3/retries2，08:03:13开始、08:08:10结束；probe/manual均current UID、regular/single-link并在08:07:39写成；resolver路径精确指向manual，manual SHA=`5af4d08662fddc7b09f8c0c906288cf36f6ade5d9ee01fad5270932ba001f496`、size=100159、rows=87。daily stdout为截断尾部，不冒充完整byte proof。
 - 推荐AR-034B：提供显式legacy attestation校验器，从daily log + expected run + canonical old probe/manual重新计算run/file/account/item闭环；不改旧artifact、不重采集、不自动fallback，正常新产物继续RC6严格合同。形成production-base fresh RC7并full QA后，必须重新获得生产授权。
 - 证据：`/private/tmp/ar034_rc6_production_preflight_blocked_20260716_1947/PM_HANDOFF.md`、`cdp_probe_results.json`、`content_items_manual.jsonl`；PM只读审计脚本=`/private/tmp/ar034_legacy_lineage_audit.js`。
+
+### 2026-07-16 用户批准 AR-034B legacy lineage attestation 开发
+
+- 目标：不修改旧probe/manual、不重新采集，通过显式daily log + expected source run + canonical old artifacts重算旧Douyin source identity，使保存的87条成功items可进入RC6 full-source recovery合同。
+- 核心门：exact daily run/date、唯一Douyin step、canonical 9333/account-limit0/video-limit3/retries2、return/partial状态、started/generated时间窗、probe/manual current UID regular single-link、resolver exact path、hash/size/row count、31/29/2 coverage、失败0 artifact、87 fingerprint/account bijection。daily stdout为截断证据，不作为完整probe byte proof。
+- Legacy只可显式启用，禁止自动fallback；已有原生 `run_id/manual_artifact` 的新产物不得降级走legacy；任何证据不足typed fail。正常RC6身份合同保持。
+- 交付：feature commit/push；从production base `8af084621d01e639c54b5dc847a6439ce96fd8bd` 组包含完整RC6+AR-034B的fresh RC7；exact manifest/patch/apply/tree；focused mutations、full regression、pre_merge；开发不自行派QA。
+- 生产边界：0旧artifact edit、0collection/refresh/key/Feishu/card/06/automation/Chrome/Skill/SCF/production Git。旧生产授权不沿用。
+- PM派发：固定开发线程 `019f1de3-f3f2-71d2-ae63-a74cd38f8474`；省略 `model` 与 `thinking`。

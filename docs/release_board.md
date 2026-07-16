@@ -256,3 +256,4 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - 用户授权：已确认完整26-file生产执行计划。固定生产线程负责执行，PM线程不直接改生产；允许本次Git发布、密钥配置、单次真实refresh、03/04写入、一次个人卡片和official automation cwd/status变更。禁止Douyin重采集、旧9行恢复、06/callback/schema/global Skill/SCF/Chrome/profile改动及任何raw TOML workaround。
 - Production preflight：`Preflight Blocked / No Release / Automations Paused`。RC6 recovery gate在任何状态变化前发现旧Douyin probe/manual缺少新合同要求的run/artifact identity；production仍为clean `8af0846`，key未创建、provider未refresh、Feishu/card/automation均未变。
 - 下一候选：AR-034B legacy lineage attestation。只允许显式old-artifact模式，通过daily run唯一step、canonical command、时间窗、regular/single-link/UID、resolver path、probe/manual hash/size/count、31/29/2与87 fingerprint/account闭环重建source identity；不得修改旧artifact、不得自动fallback、不得降低新产物RC6合同。fresh RC7必须包含完整RC6 scope加该窄修复并重跑full QA，旧生产授权不沿用。
+- 用户已授权AR-034B开发；固定开发线程负责feature实现与production-base fresh RC7，完成开发自验后回传PM，不得直接派QA或执行生产。
