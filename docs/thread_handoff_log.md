@@ -3453,3 +3453,11 @@
 - 登录验收：单listener PID、marker/WebSocket/open-file/profile identity全部匹配；provider check-only必须返回 `ok=true/status=refresh_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false`，active account/feed与canonical DB identity保持。
 - 自动续跑：上述read-back green后无需再次确认，从fresh RC8 Phase 0继续既有Git/key/one signed refresh/full-source/03/04/card/cwd/status-only resume授权。若出现QR/SMS/MFA，只由账号所有者在该固定窗口完成；任一 mismatch 保持三任务PAUSED并停止。
 - 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；派发省略 `model` 与 `thinking`，PM不轮询。
+
+### 2026-07-16 固定 9334 WeWe 登录窗口已就绪，等待账号所有者交互
+
+- 结论：`Login Interaction Required / RC8 Not Released / Automations Paused`。证据根=`/private/tmp/ar034b_wewe_9334_login_20260716_2132`。
+- Browser identity：port=9334、PID=72440、canonical profile，listener/marker/WebSocket/open-file proof均通过；唯一页面=`http://127.0.0.1:4000/dash/login`。
+- 认证边界：平台要求账号所有者在当前固定窗口完成登录。生产线程未读取/截图QR、账号身份、cookie、token、localStorage，未寻找或切换其他浏览器。
+- 当前状态：provider check-only仍为 `ok=false/status=login_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false`；canonical migration parity无漂移。production main仍clean `8af0846`，RC8未发布，三任务PAUSED且hash未变；无key/refresh/Feishu/card/collection/06/Douyin 9333变化。
+- Resume trigger：用户在当前固定窗口完成登录并回复“已登录”。PM随后只派check-only read-back；仅 `ok=true/status=refresh_required` + canonical identity green时，生产线程自动继续既有RC8授权。
