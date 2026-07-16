@@ -230,6 +230,30 @@ class AR034LegacyDouyinLineageTests(unittest.TestCase):
             self.assertEqual(exit_code, 4); self.assertFalse(payload["ok"])
             self.assertIn("legacy_returncode_type_invalid", payload["error"])
 
+    def test_configured_root_identity_mutations_fail(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp).resolve(); real = base / "real"; real.mkdir(); (real / "child").mkdir(); link = base / "link"; link.symlink_to(real, target_is_directory=True)
+            with self.assertRaisesRegex(lineage.LineageError, "root_symlink"):
+                lineage.verify_legacy_production_root(link)
+            with self.assertRaisesRegex(lineage.LineageError, "root_alias"):
+                lineage.verify_legacy_production_root(link / "child")
+        with tempfile.TemporaryDirectory() as tmp:
+            file_path = Path(tmp).resolve() / "file"; file_path.write_text("x")
+            with self.assertRaises(lineage.LineageError): lineage.verify_legacy_production_root(file_path)
+            with self.assertRaisesRegex(lineage.LineageError, "unavailable"):
+                lineage.verify_legacy_production_root(file_path.with_name("missing"))
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp).resolve(); actual = root.stat()
+            wrong_owner = SimpleNamespace(st_mode=actual.st_mode, st_uid=os.getuid() + 1, st_dev=actual.st_dev, st_ino=actual.st_ino)
+            with mock.patch.object(lineage.os, "fstat", return_value=wrong_owner), self.assertRaisesRegex(lineage.LineageError, "wrong_owner"):
+                lineage.verify_legacy_production_root(root)
+            changed = SimpleNamespace(st_mode=actual.st_mode, st_uid=actual.st_uid, st_dev=actual.st_dev, st_ino=actual.st_ino + 1)
+            with mock.patch.object(lineage.os, "lstat", side_effect=[actual, changed]), self.assertRaisesRegex(lineage.LineageError, "identity_swap"):
+                lineage.verify_legacy_production_root(root)
+            identity = lineage.verify_legacy_production_root(root); identity["inode"] += 1
+            with self.assertRaisesRegex(lineage.LineageError, "identity_drift"):
+                lineage.verify_legacy_production_root(root, identity)
+
 
 if __name__ == "__main__":
     unittest.main()
