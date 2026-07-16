@@ -76,7 +76,11 @@ class ProductionReleaseGateTests(unittest.TestCase):
     def test_default_gate_accepts_rc2_but_not_main(self) -> None:
         with patch.object(gate, "run", return_value=command_result("## release/ar020e-rc2-20260715...origin/main\n")):
             self.assertTrue(gate.check_git_dev()["ok"])
+        with patch.object(gate, "run", return_value=command_result("## release/ar033b-exact-input-20260716...origin/release/ar033b-exact-input-20260716\n")):
+            self.assertTrue(gate.check_git_dev()["ok"])
         with patch.object(gate, "run", return_value=command_result("## main...origin/main\n")):
+            self.assertFalse(gate.check_git_dev()["ok"])
+        with patch.object(gate, "run", return_value=command_result("## release/unrelated...origin/release/unrelated\n")):
             self.assertFalse(gate.check_git_dev()["ok"])
 
     def test_real_temporary_git_fixture_enforces_main_clean_and_remote_head(self) -> None:

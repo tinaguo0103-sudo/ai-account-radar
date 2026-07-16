@@ -64,6 +64,7 @@ def check_git_dev() -> dict[str, Any]:
     ok = status["returncode"] == 0 and (
         "feature/next-production-flow" in first_line
         or "release/ar020e-rc" in first_line
+        or "release/ar033" in first_line
     )
     return {"ok": ok, "name": "dev worktree branch/status", **status}
 
