@@ -774,7 +774,7 @@
 
 - 类型：生产数据正确性 / 多来源采集闭环 / 固定认证运行时 / editorial owner contract
 - 优先级：P0
-- 状态：RC6 Independent Full QA Passed / Ready for PM Production Authorization Plan（26-file scope corrected）
+- 状态：RC6 Production Authorized / Production Execution Dispatched（26-file scope corrected）
 - 来源：对 `run_20260716_080311` 的生产只读复核发现，抖音 probe 实际为 31 attempted、29 succeeded、2 failed，并产出 87 条有效成功账号 items；但 `daily_pipeline.py` 把 account-partial 映射为 `optional_failed=true`，随后整份 Douyin manual artifact 未进入 combined input。最终 `content_items.csv` 为 AIHOT 53、公众号 5、抖音 0；`today_10_topics.csv` 为 AIHOT 8、公众号 1、抖音 0。Feishu 03 同 run 关联记录为 AIHOT 36、公众号历史记录 5、抖音 0。因此当前 9 条不是全源比较结果，不得继续作为 04/Topic Card 恢复输入。
 - 公众号根因：唯一 active 公众号源的 provider 缓存仍是 2026-06-11 至 2026-06-16 的 5 篇旧文章；`ai-radar-wewe-rss` 自至少 2026-07-10 起反复报告 `暂无可用读书账号!`。现有 readiness 只证明 HTTP 能返回可解析缓存，没有证明账号可用、feed 刷新成功、内容新鲜或本次新增。因此旧缓存被错误记为今日采集。
 - 抖音闭环：`completed_with_failures` 必须保留所有成功账号的有效 items，只隔离失败账号；成功 artifact fingerprint 必须可审计地进入 combined input、`content_items.csv`、Feishu 03 和 shortlist universe。`downstream_usable` 必须验证逐层来源闭环，任一成功 artifact 丢失即 false；对外状态必须明确为 partial，不能称全量成功。
@@ -808,3 +808,4 @@
 - RC6 scope correction：QA发现派发口径误写为25 files，而RC diff、combined patch和release manifest从一开始均为26 files。唯一口径差异文件是 `scripts/test_ar034_wewe_receipt_adapter.py`，为302行AR-034 receipt/key专项测试，需求相关、非运行时、非禁入范围。PM明确接受实际26-file scope；不重出RC，不静默改写历史，并以本条作为后续生产授权的精确范围。
 - RC6 Independent QA：A=`RC architecture/control Passed`；B=`Production release/recoverability Blocked pending explicit production authorization`。26/26 scope/hash/apply/tree parity、signed receipt/key/fd contract、provider protected tRPC语义、Douyin 29/31 partial ingestion closure、WeChat watermark/fixed runtime、AIHOT owner和完整回归均通过；production key、真实refresh、Feishu、automation与production Git变更均为0。
 - 生产授权计划：保持三条automation PAUSED；先Git-only发布并动态gate/read-back，再单独授权provision canonical HMAC key并只验证0700/0600与runtime UID；验证provider auth/config后，在exclusive lease下执行一次bounded signed refresh，独立复核signed trio/all-feed/live DB；仅在full-source closure成立后执行03 exact write/read-back、watermark、版本化current-task recovery、04/read-back、Topic Card check-only与一次个人发送；最后通过official control修production cwd并status-only resume。任一scope/key/receipt/DB/03/watermark/card mismatch立即停止并保持PAUSED。
+- 用户生产授权：已明确确认上述完整计划，授权精确26-file Git发布、canonical HMAC key provision、一次真实bounded signed WeChat refresh、版本化full-source recovery、03/04精确写入与回读、一次个人Topic Card，以及official projectless cwd repair/status-only resume。禁止重用原错误9行、禁止Douyin重采集、禁止06/callback/schema/Skill/SCF/Chrome/profile/手改automation TOML；组件失败按边界停止，不口头豁免。

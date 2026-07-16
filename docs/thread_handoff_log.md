@@ -3343,3 +3343,11 @@
 - 下一状态：等待用户明确生产授权。授权顺序为保持automation PAUSED -> Git release/gate -> canonical key权限配置 -> provider read-back -> 单次bounded signed refresh -> full-source/03/watermark闭环 -> versioned editorial/04/card -> official cwd repair -> status-only resume。任一不一致立即停止。
 - QA证据：`/private/tmp/ar034_rc6_independent_qa_20260716/AR034_RC6_INDEPENDENT_QA_REPORT.md`、`qa_summary.json`、`scope_patch_manifest_recompute.json`、`signed_receipt_key_matrix.json`、`provider_source_semantics.json`、`business_control_matrix.json`、`regression_results.json`、`production_boundary_snapshot.json`。
 - 派发模型规则继续有效：除非用户明确要求，不传 `model` 或 `thinking`。
+
+### 2026-07-16 用户授权 AR-034 RC6 生产发布与版本化全源恢复
+
+- 授权目标：RC=`0353e723bc3dc719299fd4962d302a291e6ab714`，production base=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，实际26-file scope，patch SHA=`97904e1dca8b0ef3917b2feeb6f5210974d7615f695510d9597980016c5dbe1b`。
+- 授权动作：保持三任务PAUSED完成备份与preflight；Git-only fast-forward/push与dynamic gate；provision canonical HMAC key并只回读owner/mode；固定provider auth/config验证；一次exclusive-lease bounded signed refresh；signed trio/all-feed/live DB复核；版本化full-source recovery与03 exact write/read-back/watermark；current-task editorial、04 read-back、card check-only后一次个人发送；official projectless production cwd repair和status-only resume。
+- 禁止：旧错误9行继续恢复、Douyin重采集、任意来源补位、public async refresh GET、手工receipt、schema/callback/06/global Skill/SCF/Chrome/profile变更、手改automation TOML、手动catch-up旧schedule。
+- Stop rule：scope/Git/key/provider/receipt/DB/full-source/03/watermark/editorial/04/card/cwd任一不一致，立即停止后续阶段并保持automation PAUSED；只回滚失败组件，不抹除已验证证据，不把partial写成complete。
+- PM动作：向固定生产线程 `019f2bc4-079e-7530-903e-484707590482` 派发一次完整生产任务；省略 `model` 与 `thinking`，不轮询执行线程。
