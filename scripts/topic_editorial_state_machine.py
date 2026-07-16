@@ -23,6 +23,7 @@ import topic_research_contract as research_contract
 import editorial_expression_policy as expression_policy
 import persona_reference_builder as persona_builder
 import trusted_exact_source_adapter as source_adapter
+import exact_candidate_input as exact_input
 
 
 VERSION = "ar020d_research_grounded_state_machine_v2"
@@ -111,7 +112,10 @@ def load_state(out_dir: Path) -> dict[str, Any]:
     path = state_path(out_dir)
     if not path.exists():
         raise RuntimeError(f"Missing state machine: {path}. Run prepare-stage1 first.")
-    return read_json(path)
+    state = read_json(path)
+    if state.get("input_mode") == "exact_same_day_candidate_input":
+        revalidate_exact_mode_state(state)
+    return state
 
 
 def save_state(out_dir: Path, state: dict[str, Any]) -> None:
@@ -222,7 +226,54 @@ def shortlist(args: argparse.Namespace) -> tuple[list[Path], list[content_sample
 
 
 def candidate_rows_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
+    if state.get("input_mode") == "exact_same_day_candidate_input":
+        _, candidates, _ = revalidate_exact_mode_state(state)
+        return candidates
     return read_json(Path(state["out_dir"]) / "shortlist_candidates.json")
+
+
+def revalidate_exact_mode_state(
+    state: dict[str, Any],
+) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
+    out_dir = Path(str(state.get("out_dir") or ""))
+    manifest_path = out_dir / "exact_candidate_input_manifest.json"
+    candidates_path = out_dir / "shortlist_candidates.json"
+    source_manifest_path = out_dir / "local_source_manifest.json"
+    if not manifest_path.is_file() or not candidates_path.is_file() or not source_manifest_path.is_file():
+        raise exact_input.ExactInputError("missing_exact_input_state_artifact")
+    manifest = read_json(manifest_path)
+    rows, manifest = exact_input.revalidate_locked_manifest(manifest)
+    expected_state = {
+        "input_mode": manifest["mode"],
+        "run_id": manifest["run_id"],
+        "run_date": manifest["run_date"],
+        "exact_candidate_input_manifest_hash": manifest["manifest_hash"],
+        "content_csvs": [manifest["input_path"]],
+    }
+    for field, expected_value in expected_state.items():
+        if state.get(field) != expected_value:
+            raise exact_input.ExactInputError(f"exact_input_state_drift:{field}")
+    source_manifest = read_json(source_manifest_path)
+    if hash_json(source_manifest) != state.get("source_manifest_hash"):
+        raise exact_input.ExactInputError("exact_input_source_manifest_hash_mismatch")
+    source_manifest_expected = {
+        "input_mode": manifest["mode"],
+        "run_id": manifest["run_id"],
+        "run_date": manifest["run_date"],
+        "exact_candidate_input_manifest_hash": manifest["manifest_hash"],
+        "input_files": [manifest["input_path"]],
+        "input_file_hashes": {manifest["input_path"]: manifest["input_file_sha256"]},
+        "content_items": manifest["row_count"],
+        "candidate_count": manifest["row_count"],
+        "pre_skill_pool_count": manifest["row_count"],
+        "source_traces": [local_source_trace(row, index) for index, row in enumerate(rows)],
+    }
+    for field, expected_value in source_manifest_expected.items():
+        if source_manifest.get(field) != expected_value:
+            raise exact_input.ExactInputError(f"exact_input_source_manifest_drift:{field}")
+    candidates = read_json(candidates_path)
+    exact_input.validate_candidate_lineage(candidates, manifest)
+    return rows, candidates, manifest
 
 
 def update_terminal_stage(state: dict[str, Any], stage_name: str) -> None:
@@ -254,7 +305,10 @@ def source_open_candidate(row: dict[str, Any], index: int) -> dict[str, Any]:
         "index": index,
         "candidate_id": candidate_id(row, index),
         "exact_url": exact_url,
+        "content_fingerprint": str(row.get("内容指纹") or ""),
+        "candidate_fingerprint": "",
         "csv_title": str(row.get("原始来源标题") or ""),
+        "original_publication_copy": str(row.get("原始发布文案") or ""),
         "source_account": str(row.get("原始来源账号") or ""),
         "source_type": str(row.get("来源类型") or ""),
         "platform": str(row.get("平台") or ""),
@@ -264,17 +318,62 @@ def source_open_candidate(row: dict[str, Any], index: int) -> dict[str, Any]:
     }
 
 
+def exact_source_open_candidate(row: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
+    item = source_open_candidate(row, identity["index"])
+    item.update({
+        "candidate_id": f"candidate_{identity['index']:03d}_{identity['content_fingerprint']}",
+        "exact_url": identity["exact_url"],
+        "content_fingerprint": identity["content_fingerprint"],
+        "candidate_fingerprint": identity["candidate_fingerprint"],
+        "csv_title": identity["original_source_title"],
+        "original_publication_copy": identity["original_publication_copy"],
+        "source_account": identity["source_account"],
+        "source_type": identity["source_type"],
+        "platform": identity["platform"],
+        "local_trace_hash": identity["row_hash"],
+        "primary_adapter": source_adapter.primary_adapter_for_url(identity["exact_url"]),
+        "expected_page_identity": source_adapter.expected_identity(identity["exact_url"]),
+    })
+    return item
+
+
+def prepare_input_candidates(args: argparse.Namespace) -> tuple[list[Path], list[Any], dict[str, Any], list[dict[str, Any]], dict[str, Any] | None]:
+    exact_path = str(getattr(args, "exact_input_csv", "") or "").strip()
+    exact_arguments = (
+        exact_path,
+        str(getattr(args, "run_id", "") or "").strip(),
+        str(getattr(args, "exact_input_sha256", "") or "").strip(),
+    )
+    if any(exact_arguments) and not all(exact_arguments):
+        raise exact_input.ExactInputError("incomplete_exact_input_arguments")
+    if not exact_path:
+        csv_paths, items, pre = shortlist(args)
+        return csv_paths, items, pre, pre["pre_skill_pool"], None
+    rows, manifest = exact_input.load_exact_input(
+        Path(exact_path),
+        run_id=exact_arguments[1],
+        expected_sha256=exact_arguments[2],
+        project_root=exact_input.infer_project_root(
+            Path(exact_path), exact_arguments[1]
+        ),
+    )
+    pre = {"candidates": rows, "pre_skill_pool": rows}
+    return [Path(exact_path).resolve()], rows, pre, rows, manifest
+
+
 def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
     out_dir = Path(args.out_dir)
     out_dir.mkdir(parents=True, exist_ok=True)
     if state_path(out_dir).exists():
         raise RuntimeError("Output directory already contains a run; use a fresh out-dir or explicit stage resume")
-    csv_paths, items, pre = shortlist(args)
-    pool = pre["pre_skill_pool"]
+    csv_paths, items, pre, pool, exact_manifest = prepare_input_candidates(args)
     candidates: list[dict[str, Any]] = []
     source_state: dict[str, Any] = {}
     for index, row in enumerate(pool):
-        item = source_open_candidate(row, index)
+        item = (
+            exact_source_open_candidate(row, exact_manifest["ordered_candidates"][index])
+            if exact_manifest else source_open_candidate(row, index)
+        )
         candidates.append(item)
         path = out_dir / "source_open" / item["candidate_id"]
         write_json(path / "input.json", {
@@ -291,6 +390,9 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
         })
         source_state[item["candidate_id"]] = stage_record("prepared", input_hash=file_hash(path / "input.json"), index=index)
     write_json(out_dir / "shortlist_candidates.json", candidates)
+    if exact_manifest:
+        write_json(out_dir / "exact_candidate_input_manifest.json", exact_manifest)
+        exact_input.validate_candidate_lineage(candidates, exact_manifest)
     prov = provenance(args.task_id)
     persona_manifest = persona_builder.build_bundle(Path(args.persona_docx), out_dir / "private_persona")
     prov.update({
@@ -300,6 +402,10 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
         "prohibited_paths": [],
     })
     source_manifest = {
+        "input_mode": exact_manifest["mode"] if exact_manifest else "content_items_shortlist",
+        "run_id": exact_manifest["run_id"] if exact_manifest else "",
+        "run_date": exact_manifest["run_date"] if exact_manifest else "",
+        "exact_candidate_input_manifest_hash": exact_manifest["manifest_hash"] if exact_manifest else "",
         "input_files": [str(path) for path in csv_paths],
         "input_file_hashes": {str(path): file_hash(path) for path in csv_paths},
         "content_items": len(items),
@@ -328,6 +434,10 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
         "writes_feishu": False,
         "strict_fail_closed": True,
         "source_manifest_hash": hash_json(source_manifest),
+        "input_mode": exact_manifest["mode"] if exact_manifest else "content_items_shortlist",
+        "run_id": exact_manifest["run_id"] if exact_manifest else "",
+        "run_date": exact_manifest["run_date"] if exact_manifest else "",
+        "exact_candidate_input_manifest_hash": exact_manifest["manifest_hash"] if exact_manifest else "",
         "content_csvs": [str(path) for path in csv_paths],
         "since": args.since,
         "batch_size": args.batch_size,
@@ -343,7 +453,52 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
         },
     }
     save_state(out_dir, state)
-    return {"ok": True, "stage": "prepare_source_open", "candidates": len(candidates), "out_dir": str(out_dir)}
+    return {
+        "ok": True,
+        "stage": "prepare_source_open",
+        "input_mode": state["input_mode"],
+        "run_id": state["run_id"],
+        "candidates": len(candidates),
+        "exact_candidate_input_manifest_hash": state["exact_candidate_input_manifest_hash"],
+        "out_dir": str(out_dir),
+    }
+
+
+def check_exact_input(args: argparse.Namespace) -> dict[str, Any]:
+    rows, manifest = exact_input.load_exact_input(
+        Path(args.exact_input_csv),
+        run_id=args.run_id,
+        expected_sha256=args.exact_input_sha256,
+        project_root=exact_input.infer_project_root(Path(args.exact_input_csv), args.run_id),
+    )
+    candidates = [
+        exact_source_open_candidate(row, manifest["ordered_candidates"][index])
+        for index, row in enumerate(rows)
+    ]
+    exact_input.validate_candidate_lineage(candidates, manifest)
+    return {
+        "ok": True,
+        "check_only": True,
+        "stage": "check_exact_input",
+        "input_mode": manifest["mode"],
+        "run_id": manifest["run_id"],
+        "run_date": manifest["run_date"],
+        "input_path": manifest["input_path"],
+        "input_file_sha256": manifest["input_file_sha256"],
+        "row_count": manifest["row_count"],
+        "ordered_candidate_ids": [item["candidate_id"] for item in candidates],
+        "ordered_candidate_fingerprints": manifest["ordered_candidate_fingerprints"],
+        "ordered_exact_urls": [item["exact_url"] for item in candidates],
+        "manifest_hash": manifest["manifest_hash"],
+        "source_fetch_started": False,
+        "collection_started": False,
+        "writes_feishu": False,
+        "sends_topic_card": False,
+        "triggers_callback": False,
+        "triggers_script_generation": False,
+        "sends_notification": False,
+        "creates_output_artifacts": False,
+    }
 
 
 def validate_source_open(args: argparse.Namespace) -> dict[str, Any]:
@@ -492,14 +647,61 @@ def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def pool_from_state(state: dict[str, Any]) -> tuple[list[content_sampler.ContentItem], dict[str, Any]]:
+    """Legacy content-items pool. Exact mode must never call this function."""
     paths = [Path(value) for value in state["content_csvs"]]
     items = deterministic_replay.load_items(paths, date.fromisoformat(state["since"]))
     pre = replay.build_pre_skill_pool(items, int(state["max_skill_candidates"]))
     return items, pre
 
 
+def set_exact_source_title(item: content_sampler.ContentItem, row: dict[str, Any]) -> None:
+    item.title = str(row.get("原始来源标题") or "")
+
+
+def set_exact_source_body(item: content_sampler.ContentItem, row: dict[str, Any]) -> None:
+    item.body_snippet = str(row.get("来源内容") or "")
+
+
+def exact_content_item(row: dict[str, Any]) -> content_sampler.ContentItem:
+    item = content_sampler.ContentItem(
+        source_type=str(row.get("来源类型") or ""),
+        platform=str(row.get("平台") or ""),
+        account_name=str(row.get("原始来源账号") or ""),
+        title="",
+        url=str(row.get("来源链接") or ""),
+        content_shape="",
+        cover_text="",
+        body_snippet="",
+        published_at="",
+        comment_questions="",
+        ocr_text="",
+        fetch_method="exact_same_day_candidate_input",
+        fetch_status="locked",
+        failure_reason="",
+        fingerprint=str(row.get("内容指纹") or ""),
+    )
+    set_exact_source_title(item, row)
+    set_exact_source_body(item, row)
+    return item
+
+
+def stage_pool_from_state(
+    state: dict[str, Any],
+) -> tuple[list[content_sampler.ContentItem], dict[str, Any]]:
+    if state.get("input_mode") != "exact_same_day_candidate_input":
+        return pool_from_state(state)
+    rows, _, _ = revalidate_exact_mode_state(state)
+    items = [exact_content_item(row) for row in rows]
+    item_by_fp = {item.fingerprint: item for item in items}
+    return items, {
+        "candidates": rows,
+        "pre_skill_pool": rows,
+        "item_by_fp": item_by_fp,
+    }
+
+
 def eligible_source_rows(out_dir: Path, state: dict[str, Any]) -> list[dict[str, Any]]:
-    _, pre = pool_from_state(state)
+    _, pre = stage_pool_from_state(state)
     eligible = read_json(out_dir / "eligible_candidates.json")
     rows: list[dict[str, Any]] = []
     for item in eligible:
@@ -754,7 +956,7 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
     stage2_hashes = {batch_id: item["output_hash"] for batch_id, item in state["stages"]["stage2"]["batches"].items()}
     start_stage(record, hash_json(stage2_hashes))
     try:
-        items, pre = pool_from_state(state)
+        items, pre = stage_pool_from_state(state)
         rows: list[dict[str, Any]] = []
         batch_meta = []
         for batch_id, item in sorted(state["stages"]["stage2"]["batches"].items()):
@@ -876,6 +1078,13 @@ def main() -> int:
     prepare.add_argument("--max-skill-candidates", type=int, default=content_sampler.MAX_SKILL_REVIEW_CANDIDATES)
     prepare.add_argument("--task-id", default=os.getenv("CODEX_THREAD_ID", "current-codex-task"))
     prepare.add_argument("--persona-docx", required=True)
+    prepare.add_argument("--exact-input-csv", default="")
+    prepare.add_argument("--exact-input-sha256", default="")
+    prepare.add_argument("--run-id", default="")
+    check_input = sub.add_parser("check-exact-input")
+    check_input.add_argument("--exact-input-csv", required=True)
+    check_input.add_argument("--exact-input-sha256", required=True)
+    check_input.add_argument("--run-id", required=True)
     for name in ["validate-source-open", "validate-research"]:
         command = sub.add_parser(name)
         command.add_argument("--out-dir", required=True)
@@ -895,6 +1104,7 @@ def main() -> int:
     args = parser.parse_args()
     handlers = {
         "prepare-source-open": prepare_source_open,
+        "check-exact-input": check_exact_input,
         "validate-source-open": validate_source_open,
         "prepare-research": prepare_research,
         "validate-research": validate_research,
