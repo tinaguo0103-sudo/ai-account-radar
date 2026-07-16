@@ -112,7 +112,10 @@ def load_state(out_dir: Path) -> dict[str, Any]:
     path = state_path(out_dir)
     if not path.exists():
         raise RuntimeError(f"Missing state machine: {path}. Run prepare-stage1 first.")
-    return read_json(path)
+    state = read_json(path)
+    if state.get("input_mode") == "exact_same_day_candidate_input":
+        revalidate_exact_mode_state(state)
+    return state
 
 
 def save_state(out_dir: Path, state: dict[str, Any]) -> None:
@@ -223,14 +226,54 @@ def shortlist(args: argparse.Namespace) -> tuple[list[Path], list[content_sample
 
 
 def candidate_rows_from_state(state: dict[str, Any]) -> list[dict[str, Any]]:
-    candidates = read_json(Path(state["out_dir"]) / "shortlist_candidates.json")
     if state.get("input_mode") == "exact_same_day_candidate_input":
-        manifest = read_json(Path(state["out_dir"]) / "exact_candidate_input_manifest.json")
-        clean = {key: value for key, value in manifest.items() if key != "manifest_hash"}
-        if hash_json(clean) != manifest.get("manifest_hash"):
-            raise exact_input.ExactInputError("exact_input_manifest_hash_mismatch")
-        exact_input.validate_candidate_lineage(candidates, manifest)
-    return candidates
+        _, candidates, _ = revalidate_exact_mode_state(state)
+        return candidates
+    return read_json(Path(state["out_dir"]) / "shortlist_candidates.json")
+
+
+def revalidate_exact_mode_state(
+    state: dict[str, Any],
+) -> tuple[list[dict[str, str]], list[dict[str, Any]], dict[str, Any]]:
+    out_dir = Path(str(state.get("out_dir") or ""))
+    manifest_path = out_dir / "exact_candidate_input_manifest.json"
+    candidates_path = out_dir / "shortlist_candidates.json"
+    source_manifest_path = out_dir / "local_source_manifest.json"
+    if not manifest_path.is_file() or not candidates_path.is_file() or not source_manifest_path.is_file():
+        raise exact_input.ExactInputError("missing_exact_input_state_artifact")
+    manifest = read_json(manifest_path)
+    rows, manifest = exact_input.revalidate_locked_manifest(manifest)
+    expected_state = {
+        "input_mode": manifest["mode"],
+        "run_id": manifest["run_id"],
+        "run_date": manifest["run_date"],
+        "exact_candidate_input_manifest_hash": manifest["manifest_hash"],
+        "content_csvs": [manifest["input_path"]],
+    }
+    for field, expected_value in expected_state.items():
+        if state.get(field) != expected_value:
+            raise exact_input.ExactInputError(f"exact_input_state_drift:{field}")
+    source_manifest = read_json(source_manifest_path)
+    if hash_json(source_manifest) != state.get("source_manifest_hash"):
+        raise exact_input.ExactInputError("exact_input_source_manifest_hash_mismatch")
+    source_manifest_expected = {
+        "input_mode": manifest["mode"],
+        "run_id": manifest["run_id"],
+        "run_date": manifest["run_date"],
+        "exact_candidate_input_manifest_hash": manifest["manifest_hash"],
+        "input_files": [manifest["input_path"]],
+        "input_file_hashes": {manifest["input_path"]: manifest["input_file_sha256"]},
+        "content_items": manifest["row_count"],
+        "candidate_count": manifest["row_count"],
+        "pre_skill_pool_count": manifest["row_count"],
+        "source_traces": [local_source_trace(row, index) for index, row in enumerate(rows)],
+    }
+    for field, expected_value in source_manifest_expected.items():
+        if source_manifest.get(field) != expected_value:
+            raise exact_input.ExactInputError(f"exact_input_source_manifest_drift:{field}")
+    candidates = read_json(candidates_path)
+    exact_input.validate_candidate_lineage(candidates, manifest)
+    return rows, candidates, manifest
 
 
 def update_terminal_stage(state: dict[str, Any], stage_name: str) -> None:
@@ -604,14 +647,61 @@ def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def pool_from_state(state: dict[str, Any]) -> tuple[list[content_sampler.ContentItem], dict[str, Any]]:
+    """Legacy content-items pool. Exact mode must never call this function."""
     paths = [Path(value) for value in state["content_csvs"]]
     items = deterministic_replay.load_items(paths, date.fromisoformat(state["since"]))
     pre = replay.build_pre_skill_pool(items, int(state["max_skill_candidates"]))
     return items, pre
 
 
+def set_exact_source_title(item: content_sampler.ContentItem, row: dict[str, Any]) -> None:
+    item.title = str(row.get("原始来源标题") or "")
+
+
+def set_exact_source_body(item: content_sampler.ContentItem, row: dict[str, Any]) -> None:
+    item.body_snippet = str(row.get("来源内容") or "")
+
+
+def exact_content_item(row: dict[str, Any]) -> content_sampler.ContentItem:
+    item = content_sampler.ContentItem(
+        source_type=str(row.get("来源类型") or ""),
+        platform=str(row.get("平台") or ""),
+        account_name=str(row.get("原始来源账号") or ""),
+        title="",
+        url=str(row.get("来源链接") or ""),
+        content_shape="",
+        cover_text="",
+        body_snippet="",
+        published_at="",
+        comment_questions="",
+        ocr_text="",
+        fetch_method="exact_same_day_candidate_input",
+        fetch_status="locked",
+        failure_reason="",
+        fingerprint=str(row.get("内容指纹") or ""),
+    )
+    set_exact_source_title(item, row)
+    set_exact_source_body(item, row)
+    return item
+
+
+def stage_pool_from_state(
+    state: dict[str, Any],
+) -> tuple[list[content_sampler.ContentItem], dict[str, Any]]:
+    if state.get("input_mode") != "exact_same_day_candidate_input":
+        return pool_from_state(state)
+    rows, _, _ = revalidate_exact_mode_state(state)
+    items = [exact_content_item(row) for row in rows]
+    item_by_fp = {item.fingerprint: item for item in items}
+    return items, {
+        "candidates": rows,
+        "pre_skill_pool": rows,
+        "item_by_fp": item_by_fp,
+    }
+
+
 def eligible_source_rows(out_dir: Path, state: dict[str, Any]) -> list[dict[str, Any]]:
-    _, pre = pool_from_state(state)
+    _, pre = stage_pool_from_state(state)
     eligible = read_json(out_dir / "eligible_candidates.json")
     rows: list[dict[str, Any]] = []
     for item in eligible:
@@ -866,7 +956,7 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
     stage2_hashes = {batch_id: item["output_hash"] for batch_id, item in state["stages"]["stage2"]["batches"].items()}
     start_stage(record, hash_json(stage2_hashes))
     try:
-        items, pre = pool_from_state(state)
+        items, pre = stage_pool_from_state(state)
         rows: list[dict[str, Any]] = []
         batch_meta = []
         for batch_id, item in sorted(state["stages"]["stage2"]["batches"].items()):

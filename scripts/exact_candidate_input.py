@@ -164,3 +164,26 @@ def validate_candidate_lineage(candidates: list[dict[str, Any]], manifest: dict[
         for field, expected_value in expected_values.items():
             if candidate.get(field) != expected_value:
                 raise ExactInputError(f"exact_input_identity_drift:{index}:{field}")
+
+
+def revalidate_locked_manifest(manifest: dict[str, Any]) -> tuple[list[dict[str, str]], dict[str, Any]]:
+    if not isinstance(manifest, dict):
+        raise ExactInputError("malformed_exact_input_manifest")
+    clean = {key: value for key, value in manifest.items() if key != "manifest_hash"}
+    if hash_json(clean) != manifest.get("manifest_hash"):
+        raise ExactInputError("exact_input_manifest_hash_mismatch")
+    if manifest.get("schema_version") != "ar033b_exact_candidate_input_v1":
+        raise ExactInputError("exact_input_manifest_schema_mismatch")
+    if manifest.get("mode") != "exact_same_day_candidate_input":
+        raise ExactInputError("exact_input_manifest_mode_mismatch")
+    input_path = Path(str(manifest.get("input_path") or ""))
+    run_id = str(manifest.get("run_id") or "")
+    rows, reconstructed = load_exact_input(
+        input_path,
+        run_id=run_id,
+        expected_sha256=str(manifest.get("input_file_sha256") or ""),
+        project_root=infer_project_root(input_path, run_id),
+    )
+    if reconstructed != manifest:
+        raise ExactInputError("exact_input_manifest_source_drift")
+    return rows, reconstructed
