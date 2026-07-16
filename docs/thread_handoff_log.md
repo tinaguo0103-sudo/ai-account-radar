@@ -3305,3 +3305,13 @@
 - 返修：canonical path/filename/realpath + no-symlink，exact typed schema，逐 feed before/after/completion/new-count/revision/refreshed_at 全量重算，覆盖 missing/duplicate/extra/reorder/fake-before/symlink/external mutations；fresh RC 后再做完整 QA。
 - 证据：`/private/tmp/ar034_rc3_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_FAILED.md` 与 `/private/tmp/ar034_pm_forged_receipt_probe.py`。探针只在 `/private/tmp` 构造临时 SQLite/JSON，不访问 provider、Feishu、automation、Chrome/profile 或 production Git。
 - 派发模型规则：返修任务省略 `model` 与 `thinking`，保留开发线程用户设置。
+
+### 2026-07-16 AR-034 receipt RC4 仍缺 caller-bound attestation，QA 未启动
+
+- 开发回传：feature=`7e5ebab9f41d47f4d986c8889ddec9e02db01771`；fresh RC=`release/ar034-rc4-20260716@9868002c97e419a74fd0cb86c253037f40ff42f3`，parent=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，local=remote clean；patch SHA=`46b340b3a49333f981ddff990c17595d6cc49cd22b051992dbacd50d611ef11b`，tree/apply tree=`90de1d04e8f68b1399f30ce828e2b6109886e868`。
+- RC3 blocker closure：external/relative/path mismatch、symlink/hard-link、wrong/reordered feed、per-feed/count/revision/time drift 与 missing/tampered lineage 均已 fail closed；上一版外部 forged probe 也会在 identity/path gate 处失败。
+- 新 PM 反例：从零手工生成一套合法 canonical lease record + attempt lineage + receipt，三者都是 0600、regular、single-link，使用合法 run/32-char attempt、exact schema/hash、before/after/live DB parity。当前 verifier 仍 accepted，classifier=`updated_no_new_items`。
+- 结论：三份可同时手工生成的 JSON 只能形成自洽证明，不能证明 fixed adapter 调用了本次 protected tRPC；PID/host/timestamps/fake before 仍是声明值。状态保持 `PM Evidence Review Failed / QA Not Started`。
+- 返修决策：开发先选择 provider-persisted attempt nonce（优先）或独立 runtime signature，并明确 Unix-user threat boundary；禁止继续叠加普通 JSON。手工 canonical trio必须 typed fail，real before必须与 attestation绑定，再产 fresh production-base RC。
+- 证据：`/private/tmp/ar034_rc4_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_FAILED.md`、`/private/tmp/ar034_pm_forged_canonical_trio_probe.py`。仅使用 `/private/tmp` fake SQLite/JSON，无任何生产或外部动作。
+- 派发模型规则：继续省略 `model` 与 `thinking`。
