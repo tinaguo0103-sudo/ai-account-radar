@@ -3387,3 +3387,12 @@
 - 处置：RC8不进QA。开发只做RC9单点返修：raw configured path先通过`lstat`或directory fd `O_NOFOLLOW/fstat`验证directory/non-symlink/current UID/canonical identity，再交给initial和locked validator；加入public CLI symlink/alias/swap回归。RC8 schema与RC6业务合同不得重做或放宽。
 - 证据：`/private/tmp/ar034b_rc8_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_FAILED.md`、`/private/tmp/ar034b_rc8_pm_topology_probe.py`。仅写临时文件；production originals只读，未触发任何外部动作。
 - 派发模型规则继续省略 `model` 与 `thinking`。
+
+### 2026-07-16 PM 纠正 AR-034B 威胁边界，取消 RC9，RC8 恢复为 QA 候选
+
+- 用户指出连续返修疑似过度防御。PM复核后确认：RC7 的任意 evidence root 与 malformed traceback 是真实业务自动化边界；RC8 已关闭这两项。之后要求防同一 Unix 用户替换相邻 `ai_account_radar` 目录，已超出受信本机 production-thread 一次性迁移的实际威胁模型。
+- 当前生产根 `/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar` 已只读确认是普通目录而非 symlink，production main clean at `8af084621d01e639c54b5dc847a6439ce96fd8bd`。RC8 对该固定根的真实 originals 完成 initial 与 locked prewrite 两次重开，结果为31/31 attempted、29 success/2 failed、87 items，且副作用标志全 false。
+- PM已向开发线程发送停止指令。停止到达前 feature `9a739d82cce3f8e60c942abb4f4de1d70e107015` 与 RC9 `87e16909271bb10dc4ecd276f8cf9422ae0048e8` 已提交/push；不回滚、不rewrite、不删除，但明确不作为验收或发布候选。
+- 新决策：QA target 回到 RC8 `af0e4e520cefcacb0efa770992a34a2778b9d36f`。QA做完整范围与业务控制验证，但不得继续扩展 same-user malicious root replacement/symlink 对抗；该风险作为已接受的本机信任边界记录。
+- 状态：`RC8 PM Evidence Review Passed with Accepted Trust Boundary / Ready for Independent QA`。这不是生产授权；独立 QA 通过后仍需用户重新确认生产发布与恢复。
+- 派发模型规则继续省略 `model` 与 `thinking`。
