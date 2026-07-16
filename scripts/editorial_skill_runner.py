@@ -70,6 +70,8 @@ EXTRA_FIELDS = [
     "raw_stage2_drift_issues",
     "guard_blocked",
     "guard_blocked_reason",
+    "aihot_significance_rationale",
+    "aihot_significance_evidence_ids",
     "global_ranking_json",
     "persona_style_reference_state",
     "persona_style_hash",
@@ -219,6 +221,7 @@ STAGE2_OWNER_FIELDS = {
     "我的切入",
     "我准备怎么讲",
     "我会怎么讲",
+    "AIHOT重大性说明",
 }
 
 STAGE2_OPERATIONAL_FIELDS = [field for field in SKILL_FIELDS if field not in STAGE2_OWNER_FIELDS]
@@ -237,6 +240,7 @@ AR020D_LEGACY_CREATIVE_FIELDS = {
     "推荐动作原因", "降级原因", "模板词命中情况", "标题是否过度内部化",
     "标题改写原因", "推荐分", "标题结构模板", "标题生成规则",
     "是否只是资讯搬运", "是否有足够内容支撑", "为什么今天值得做",
+    "AIHOT重大性说明",
 }
 
 STAGE2_REQUIRED_OPERATIONAL_FIELDS = [
@@ -274,6 +278,7 @@ STAGE2_RAW_OWNER_EXPECTATIONS = {
     "今日建议级别": "locked_daily_level",
     "是否建议进入制作": "locked_should_produce",
     "title_permission": "locked_title_permission",
+    "AIHOT重大性说明": "aihot_significance_rationale",
 }
 
 EDITORIAL_DECISION_FIELDS = [
@@ -302,7 +307,14 @@ EDITORIAL_DECISION_FIELDS = [
     "hard_fact_usage",
     "fact_boundary_note",
     "editorial_expression_mode",
+    "aihot_significance_rationale",
+    "aihot_significance_evidence_ids",
 ]
+
+CONDITIONAL_EDITORIAL_DECISION_FIELDS = {
+    "aihot_significance_rationale",
+    "aihot_significance_evidence_ids",
+}
 
 NON_AUTHORITATIVE_HINT_FIELDS = {
     "对标转译角度",
@@ -557,7 +569,6 @@ def safe_source_facts(row: dict[str, str]) -> dict[str, str]:
         "source_weight_label": row.get("来源权重类型") or row.get("来源类型") or "",
         "source_influence_weight": row.get("来源影响权重") or "",
         "source_composition": row.get("来源构成") or "",
-        "aihot_major_news": row.get("AIHOT重大性说明") or "",
         "market_validation": row.get("市场验证依据") or "",
         "content_fingerprint": row.get("内容指纹") or "",
     }
@@ -582,8 +593,14 @@ def stage1_candidate_payload(row: dict[str, str], index: int) -> dict[str, Any]:
             "label": facts["source_weight_label"],
             "influence_weight": facts["source_influence_weight"],
             "composition": facts["source_composition"],
-            "aihot_major_news": facts["aihot_major_news"],
             "market_validation": facts["market_validation"],
+        },
+        "aihot_owner_contract": {
+            "stage1_is_only_owner": True,
+            "actionable_aihot_requires": ["aihot_significance_rationale", "aihot_significance_evidence_ids"],
+            "evidence_ids_must_come_from_current_research_dossier": True,
+            "non_aihot_or_non_actionable_must_be_empty": True,
+            "deterministic_significance_input_or_fallback": False,
         },
         "stage1_forbidden_inputs": sorted(STAGE1_FORBIDDEN_SOURCE_FIELDS),
     }
@@ -682,6 +699,8 @@ def editorial_decision_hash(decision: dict[str, Any]) -> str:
         "hard_fact_usage": decision.get("hard_fact_usage", ""),
         "fact_boundary_note": decision.get("fact_boundary_note", ""),
         "editorial_expression_mode": decision.get("editorial_expression_mode", ""),
+        "aihot_significance_rationale": decision.get("aihot_significance_rationale", ""),
+        "aihot_significance_evidence_ids": decision.get("aihot_significance_evidence_ids", ""),
     }
     return sha256_text(json.dumps(stable, ensure_ascii=False, sort_keys=True))
 
@@ -849,7 +868,10 @@ def validate_stage1_payload(
     raw_decisions: dict[int, dict[str, Any]] = {}
     seen_indices: set[int] = set()
     for item in stage1_payload.get("editorial_decisions", []):
-        missing = [field for field in EDITORIAL_DECISION_FIELDS if not str(item.get(field) or "").strip()]
+        missing = [
+            field for field in EDITORIAL_DECISION_FIELDS
+            if field not in CONDITIONAL_EDITORIAL_DECISION_FIELDS and not str(item.get(field) or "").strip()
+        ]
         if missing:
             raise RuntimeError(
                 f"Stage 1 output is incomplete; zero-fallback contract forbids filling: {', '.join(missing)}"
@@ -869,6 +891,23 @@ def validate_stage1_payload(
         if idx in seen_indices:
             raise RuntimeError(f"Stage 1 output has duplicate index: {idx}")
         seen_indices.add(idx)
+        source_type = str(source.get("source_facts", {}).get("source_type") or "")
+        is_aihot = "AIHOT" in source_type.upper()
+        actionable = canonical_decision(item.get("decision")) == "select"
+        significance = str(item.get("aihot_significance_rationale") or "").strip()
+        significance_ids = {
+            value.strip() for value in str(item.get("aihot_significance_evidence_ids") or "").split(",") if value.strip()
+        }
+        research_ids = {
+            value.strip() for value in str(item.get("research_evidence_ids") or "").split(",") if value.strip()
+        }
+        if is_aihot and actionable:
+            if not significance or not significance_ids:
+                raise RuntimeError("AIHOT actionable Stage 1 decision requires evidence-bound significance rationale")
+            if not significance_ids.issubset(research_ids):
+                raise RuntimeError("AIHOT significance used unknown research evidence IDs")
+        elif significance or significance_ids:
+            raise RuntimeError("AIHOT significance owner is forbidden for non-actionable or non-AIHOT decisions")
         raw_decisions[idx] = normalize_decision(item, idx, source)
     decisions: list[dict[str, Any]] = []
     for offset in range(len(rows)):
@@ -1014,6 +1053,7 @@ def stage2_invariant_issues(decision: dict[str, Any], row: dict[str, str]) -> li
     expected_level = normalize_space(decision.get("locked_daily_level", ""))
     expected_should = normalize_space(decision.get("locked_should_produce", ""))
     expected_title_permission = normalize_space(decision.get("locked_title_permission", ""))
+    expected_aihot = normalize_space(decision.get("aihot_significance_rationale", ""))
 
     if normalize_space(row.get("editorial_decision_id")) != expected_id:
         issues.append("editorial_decision_id mismatch")
@@ -1055,6 +1095,8 @@ def stage2_invariant_issues(decision: dict[str, Any], row: dict[str, str]) -> li
         issues.append("主编判断摘要 diverged from Stage 1 public_decision_summary")
     if normalize_space(row.get("标题思路")) != expected_rationale:
         issues.append("标题思路 diverged from Stage 1 title_rationale")
+    if normalize_space(row.get("AIHOT重大性说明")) != expected_aihot:
+        issues.append("AIHOT重大性说明 diverged from Stage 1 significance rationale")
     if normalize_space(row.get("主编筛选")) != expected_decision:
         issues.append("主编筛选 diverged from Stage 1 decision")
     return issues
@@ -1131,6 +1173,7 @@ def reapply_locked_stage2_fields(row: dict[str, Any], decision: dict[str, Any]) 
     out["主编自由稿"] = expected_summary
     out["主编判断摘要"] = expected_summary
     out["标题思路"] = str(decision.get("title_rationale", ""))
+    out["AIHOT重大性说明"] = str(decision.get("aihot_significance_rationale", ""))
     out["选题判断"] = expected_summary
     out["推荐理由"] = expected_tradeoff or expected_summary
     out["主编判断"] = expected_summary

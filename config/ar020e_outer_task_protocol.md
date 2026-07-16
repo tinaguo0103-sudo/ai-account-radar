@@ -35,6 +35,10 @@ subagent, deterministic editorial logic, or a second model session.
    only, never source evidence.
 7. Ranking orders all eligible rows and never caps or truncates them. Stage 2
    cannot rewrite decision, title, angle, rationale, recommendation or rank.
+   For an actionable AIHOT row, Stage 1 must also author
+   `aihot_significance_rationale` and its current research evidence IDs. Stage 2
+   may only copy that locked value to `AIHOT重大性说明`; deterministic candidate
+   logic and cross-field substitution are forbidden.
 8. Only after finalize succeeds, run
    `python3 scripts/finalize_daily_pipeline_after_editorial.py --run-id <run_id>
    --write-feishu --update-scheduled-log`. This write command is forbidden in

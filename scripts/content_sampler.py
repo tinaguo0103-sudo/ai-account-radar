@@ -2702,6 +2702,8 @@ def write_content_ledger_to_feishu(
     emit("creating_new_records")
     created_records = batch_create_records(token, app_token, table_id, to_create) if to_create else 0
     progress["created_records"] = created_records
+    read_back = all_records(token, app_token, table_id)
+    read_back_identity = verify_content_ledger_readback(items, read_back, run_id)
     emit("configuring_views")
     return {
         "table": table_name("content_inbox"),
@@ -2710,7 +2712,44 @@ def write_content_ledger_to_feishu(
         "created_records": created_records,
         "updated_existing": updated_existing,
         "skipped_duplicates": skipped_duplicates,
+        "read_back_identity": read_back_identity,
         "today_view": ensure_content_inbox_today_view(token, app_token, table_id),
+    }
+
+
+def verify_content_ledger_readback(
+    items: list[ContentItem], read_back: list[dict[str, Any]], run_id: str
+) -> dict[str, Any]:
+    read_back_by_fingerprint = {
+        str(record.get("fields", {}).get("内容指纹") or ""): record
+        for record in read_back
+        if str(record.get("fields", {}).get("内容指纹") or "")
+    }
+    planned_fingerprints = [item.fingerprint for item in items]
+    missing_fingerprints = [value for value in planned_fingerprints if value not in read_back_by_fingerprint]
+    wrong_run_fingerprints = [
+        value for value in planned_fingerprints
+        if value in read_back_by_fingerprint
+        and run_id not in {
+            str(read_back_by_fingerprint[value].get("fields", {}).get("运行批次") or ""),
+            str(read_back_by_fingerprint[value].get("fields", {}).get("最近参与运行批次") or ""),
+        }
+    ]
+    duplicate_fingerprints = [
+        value for value in planned_fingerprints
+        if sum(1 for record in read_back if str(record.get("fields", {}).get("内容指纹") or "") == value) != 1
+    ]
+    if missing_fingerprints or wrong_run_fingerprints or duplicate_fingerprints:
+        raise RuntimeError(
+            "content_inbox_readback_identity_failed:"
+            f"missing={len(missing_fingerprints)}; wrong_run={len(wrong_run_fingerprints)}; "
+            f"duplicate={len(duplicate_fingerprints)}"
+        )
+    return {
+        "ok": True,
+        "planned_count": len(planned_fingerprints),
+        "matched_count": len(planned_fingerprints),
+        "ordered_fingerprints": planned_fingerprints,
     }
 
 
@@ -3256,6 +3295,7 @@ def main() -> int:
     parser.add_argument("--write-feishu", action="store_true", help="Write all analyzed ContentItems into Feishu 03 内容收件箱 as the content ledger.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
     parser.add_argument("--debug-top10", action="store_true", help="Write local candidate generation diagnostics into this run's output directory.")
+    parser.add_argument("--source-lineage-manifest", default="", help="Fail-closed source lineage contract validated before any Feishu write.")
     parser.add_argument(
         "--recover-content-inbox-from-run",
         default="",
@@ -3311,8 +3351,38 @@ def main() -> int:
             "debug_top10_markdown": str(output_dir / "debug_today10_generation.md"),
         },
     }
+    source_report = None
+    if args.source_lineage_manifest:
+        from source_ingestion_lineage import (
+            validate_feishu_readback_identity,
+            validate_ingestion_bijection,
+        )
+        manifest = json.loads(Path(args.source_lineage_manifest).read_text(encoding="utf-8"))
+        if str(manifest.get("run_id") or "") != run_id:
+            raise RuntimeError("source_lineage_manifest_run_mismatch")
+        source_report = manifest.get("source_report")
+        if not isinstance(source_report, dict) or not source_report.get("ok"):
+            raise RuntimeError("source_lineage_manifest_invalid")
+        local_closure = validate_ingestion_bijection(
+            source_report,
+            Path(str(manifest["combined_path"])),
+            output_dir / "content_items.csv",
+            output_dir / "content_breakdowns.csv",
+            output_dir / "today_10_topics.csv",
+        )
+        local_closure["feishu_03_identity"] = validate_feishu_readback_identity(
+            source_report, None, run_id, write_mode=False,
+        )
+        run_log["source_ingestion_closure"] = local_closure
     if args.write_feishu:
         run_log["feishu_content_ledger"] = write_content_ledger_to_feishu(items, run_id)
+        if source_report is not None:
+            run_log["source_ingestion_closure"]["feishu_03_identity"] = validate_feishu_readback_identity(
+                source_report,
+                run_log["feishu_content_ledger"].get("read_back_identity"),
+                run_id,
+                write_mode=True,
+            )
     log_path = output_dir / "content_sampler_log.json"
     run_log["outputs"]["content_sampler_log"] = str(log_path)
     run_log["mirrors"] = mirror_run_outputs(output_dir, args.write_feishu, md_path)
