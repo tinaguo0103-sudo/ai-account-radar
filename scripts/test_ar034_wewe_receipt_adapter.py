@@ -49,7 +49,7 @@ class ReceiptAdapterTests(unittest.TestCase):
             temporary, data, health_dir = self.fixture(); self.addCleanup(temporary.cleanup); clock = Clock()
             result = refresh.run_refresh("run_20260716_080311", 1_900_000, data_dir=data, health_dir=health_dir, request_fn=self.completing_request(data / "wewe-rss.db", clock, add_article=add_article), clock_ms=clock.now, sleep_fn=clock.sleep)
             self.assertTrue(result["ok"]); self.assertEqual(result["new_item_count"], expected)
-            receipt = health.validate_refresh_receipt(Path(result["receipt_path"]), result["receipt_sha256"], run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, now_ms=clock.now())
+            receipt = health.validate_refresh_receipt(Path(result["receipt_path"]), result["receipt_sha256"], run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000)
             self.assertEqual(receipt["new_item_count"], expected)
 
     def test_multiple_feeds_all_complete(self) -> None:
@@ -135,11 +135,60 @@ class ReceiptAdapterTests(unittest.TestCase):
         result = refresh.run_refresh("run_20260716_080311", 1_900_000, data_dir=data, health_dir=health_dir, request_fn=self.completing_request(data / "wewe-rss.db", clock), clock_ms=clock.now, sleep_fn=clock.sleep)
         path = Path(result["receipt_path"])
         for run_id, attempt_id, digest in (("other", result["attempt_id"], result["receipt_sha256"]), (result["run_id"], "other", result["receipt_sha256"]), (result["run_id"], result["attempt_id"], "0" * 64)):
-                with self.subTest(run_id=run_id, attempt=attempt_id), self.assertRaises(ValueError): health.validate_refresh_receipt(path, digest, run_id=run_id, attempt_id=attempt_id, data_dir=data, now_ms=clock.now())
+                with self.subTest(run_id=run_id, attempt=attempt_id), self.assertRaises(ValueError): health.validate_refresh_receipt(path, digest, run_id=run_id, attempt_id=attempt_id, data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000)
         with self.assertRaisesRegex(ValueError, "replayed"):
-            health.validate_refresh_receipt(path, result["receipt_sha256"], run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, now_ms=clock.now(), previous_attempt_id=result["attempt_id"])
+            health.validate_refresh_receipt(path, result["receipt_sha256"], run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000, previous_attempt_id=result["attempt_id"])
         path.write_text("{", encoding="utf-8")
-        with self.assertRaises(ValueError): health.validate_refresh_receipt(path, refresh.sha256_bytes(path.read_bytes()), run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, now_ms=clock.now())
+        with self.assertRaises(ValueError): health.validate_refresh_receipt(path, refresh.sha256_bytes(path.read_bytes()), run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000)
+
+    def test_manual_external_symlink_and_hardlink_receipts_fail(self) -> None:
+        temporary, data, health_dir = self.fixture(); self.addCleanup(temporary.cleanup); clock = Clock()
+        result = refresh.run_refresh("run_20260716_080311", 1_900_000, data_dir=data, health_dir=health_dir, request_fn=self.completing_request(data / "wewe-rss.db", clock), clock_ms=clock.now, sleep_fn=clock.sleep)
+        canonical = Path(result["receipt_path"]); external = Path(temporary.name) / "manual.json"; external.write_bytes(canonical.read_bytes())
+        kwargs = dict(run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000)
+        with self.assertRaisesRegex(ValueError, "path_not_owned"):
+            health.validate_refresh_receipt(external, refresh.sha256_bytes(external.read_bytes()), **kwargs)
+        canonical.unlink(); canonical.symlink_to(external)
+        with self.assertRaisesRegex(ValueError, "path_not_owned"):
+            health.validate_refresh_receipt(canonical, refresh.sha256_bytes(external.read_bytes()), **kwargs)
+        canonical.unlink(); os.link(external, canonical)
+        with self.assertRaisesRegex(ValueError, "path_not_owned"):
+            health.validate_refresh_receipt(canonical, refresh.sha256_bytes(external.read_bytes()), **kwargs)
+
+    def test_relational_receipt_mutations_fail(self) -> None:
+        mutations = {
+            "wrong_per_feed_id": lambda value: value["per_feed"][0].__setitem__("feed_id", "not-the-live-feed"),
+            "reordered_feed_ids": lambda value: value.__setitem__("feed_ids", list(reversed(value["feed_ids"]))),
+            "wrong_sync": lambda value: value["per_feed"][0].__setitem__("after_sync_time", 999999),
+            "wrong_completion": lambda value: value["per_feed"][0].__setitem__("completion_advanced", False),
+            "wrong_new_count": lambda value: value.__setitem__("new_item_count", 99),
+            "wrong_revision": lambda value: value.__setitem__("refresh_revision", 99),
+            "wrong_refreshed_at": lambda value: value.__setitem__("refreshed_at_ms", 99),
+            "unknown_key": lambda value: value.__setitem__("forged", True),
+            "bool_as_int": lambda value: value.__setitem__("new_item_count", False),
+        }
+        for name, mutate in mutations.items():
+            temporary, data, health_dir = self.fixture(("a", "b")); self.addCleanup(temporary.cleanup); clock = Clock()
+            result = refresh.run_refresh("run_20260716_080311", 1_900_000, data_dir=data, health_dir=health_dir, request_fn=self.completing_request(data / "wewe-rss.db", clock), clock_ms=clock.now, sleep_fn=clock.sleep)
+            path = Path(result["receipt_path"]); payload = json.loads(path.read_text()); mutate(payload); refresh.atomic_write(path, payload)
+            with self.subTest(name=name), self.assertRaises(ValueError):
+                health.validate_refresh_receipt(path, refresh.sha256_bytes(path.read_bytes()), run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000)
+
+    def test_attempt_lineage_missing_or_tampered_fails(self) -> None:
+        temporary, data, health_dir = self.fixture(); self.addCleanup(temporary.cleanup); clock = Clock()
+        result = refresh.run_refresh("run_20260716_080311", 1_900_000, data_dir=data, health_dir=health_dir, request_fn=self.completing_request(data / "wewe-rss.db", clock), clock_ms=clock.now, sleep_fn=clock.sleep)
+        lineage = health_dir / "attempts" / f'{result["run_id"]}_{result["attempt_id"]}.json'
+        lineage.write_text("{}", encoding="utf-8")
+        with self.assertRaises(ValueError):
+            health.validate_refresh_receipt(Path(result["receipt_path"]), result["receipt_sha256"], run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000)
+
+    def test_nested_schema_and_time_mutations_are_typed_failures(self) -> None:
+        for field, value in (("before", []), ("after", None), ("per_feed", "bad")):
+            temporary, data, health_dir = self.fixture(); self.addCleanup(temporary.cleanup); clock = Clock()
+            result = refresh.run_refresh("run_20260716_080311", 1_900_000, data_dir=data, health_dir=health_dir, request_fn=self.completing_request(data / "wewe-rss.db", clock), clock_ms=clock.now, sleep_fn=clock.sleep)
+            path = Path(result["receipt_path"]); payload = json.loads(path.read_text()); payload[field] = value; refresh.atomic_write(path, payload)
+            with self.subTest(field=field), self.assertRaisesRegex(ValueError, "refresh_receipt_"):
+                health.validate_refresh_receipt(path, refresh.sha256_bytes(path.read_bytes()), run_id=result["run_id"], attempt_id=result["attempt_id"], data_dir=data, health_dir=health_dir, now_ms=clock.now(), run_started_at_ms=1_900_000)
 
     def test_check_only_has_no_request_or_browser_side_effect(self) -> None:
         temporary, data, _ = self.fixture(); self.addCleanup(temporary.cleanup)
