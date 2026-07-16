@@ -17,6 +17,7 @@ OWNER_GROUPS = {
     },
     "visible_title": {"选题命题", "选题标题", "我的选题标题", "可发布标题", "selected_visible_title"},
     "natural_angle": {"我的切入", "natural_austin_angle", "locked_natural_austin_angle"},
+    "aihot_significance": {"AIHOT重大性说明", "aihot_significance_rationale"},
 }
 OWNER_FIELDS = set().union(*OWNER_GROUPS.values())
 ACTIVE_FILES = (
