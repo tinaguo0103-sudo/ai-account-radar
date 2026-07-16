@@ -15,6 +15,7 @@ import html
 import json
 import re
 import sys
+from datetime import datetime, timezone
 import urllib.parse
 import urllib.request
 import xml.etree.ElementTree as ET
@@ -222,6 +223,17 @@ def fingerprint(*parts: str) -> str:
     return hashlib.sha1("|".join(parts).encode("utf-8")).hexdigest()[:16]
 
 
+def published_epoch(value: str) -> int:
+    cleaned = (value or "").strip()
+    if cleaned.isdigit():
+        number = int(cleaned)
+        return number // 1000 if number > 10_000_000_000 else number
+    try:
+        return int(datetime.fromisoformat(cleaned.replace("Z", "+00:00")).timestamp())
+    except (ValueError, OverflowError):
+        return 0
+
+
 def raw_payload_path(provider: Provider, url: str, title: str, suffix: str = "html") -> Path:
     safe_id = fingerprint(provider.provider_id, url, title)
     return DEFAULT_RAW_DIR / f"{provider.provider_id}_{safe_id}.{suffix}"
@@ -288,7 +300,7 @@ def parse_json_items(raw: bytes, provider: Provider) -> list[dict[str, str]]:
     return rows
 
 
-def to_manual_row(provider: Provider, item: dict[str, str], status: str, failure: str) -> dict[str, str]:
+def to_manual_row(provider: Provider, item: dict[str, str], status: str, failure: str, *, refresh_revision: int = 0) -> dict[str, str]:
     body = item.get("body", "")
     title = item.get("title", "")
     url = item.get("url", "")
@@ -326,6 +338,8 @@ def to_manual_row(provider: Provider, item: dict[str, str], status: str, failure
         "provider": provider.provider,
         "source_id": provider.source_id,
         "feed_url_or_api_url": provider.feed_url,
+        "wewe_refresh_revision": str(refresh_revision),
+        "wewe_article_publish_epoch": str(published_epoch(item.get("published_at", ""))),
     }
 
 
@@ -361,6 +375,8 @@ def main() -> int:
     parser.add_argument("--out", default=str(DEFAULT_OUT))
     parser.add_argument("--csv", default=str(DEFAULT_CSV))
     parser.add_argument("--dry-run", action="store_true", help="Dry-run alias; this script never writes Feishu.")
+    parser.add_argument("--fresh-after-epoch", type=int, required=True)
+    parser.add_argument("--refresh-revision", type=int, required=True)
     args = parser.parse_args()
 
     providers = load_providers(Path(args.config))
@@ -375,12 +391,20 @@ def main() -> int:
         if args.limit is not None:
             provider.max_items = args.limit
         items, status, content_type = probe_provider(provider)
+        items = [item for item in items if published_epoch(item.get("published_at", "")) > args.fresh_after_epoch]
         if not items:
-            rows.append(to_manual_row(provider, {}, "failed", status))
+            report.append({
+                "provider_id": provider.provider_id,
+                "status": "updated_no_new_items" if status == "ok" else status,
+                "content_type": content_type,
+                "items": 0,
+                "fulltext_items": 0,
+            })
+            continue
         else:
             for item in items:
                 failure = "" if len(item.get("body", "")) >= 800 else "provider返回内容不足800字，暂不视为稳定全文。"
-                rows.append(to_manual_row(provider, item, "success", failure))
+                rows.append(to_manual_row(provider, item, "success", failure, refresh_revision=args.refresh_revision))
         report.append({
             "provider_id": provider.provider_id,
             "status": status,
@@ -389,7 +413,7 @@ def main() -> int:
             "fulltext_items": sum(1 for item in items if len(item.get("body", "")) >= 800),
         })
     write_outputs(rows, Path(args.out), Path(args.csv))
-    print(json.dumps({"ok": True, "providers": report, "output": args.out, "csv": args.csv}, ensure_ascii=False, indent=2))
+    print(json.dumps({"ok": True, "providers": report, "output": args.out, "csv": args.csv, "refresh_revision": args.refresh_revision, "fresh_after_epoch": args.fresh_after_epoch}, ensure_ascii=False, indent=2))
     for row in rows:
         print(f"- {row.get('抓取状态')} | 全文={row.get('是否全文解析')} | 长度={row.get('正文原始长度')} | {row.get('内容标题') or row.get('失败原因')}")
     return 0

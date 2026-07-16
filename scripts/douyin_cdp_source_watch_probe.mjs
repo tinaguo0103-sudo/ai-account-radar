@@ -11,6 +11,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { spawnSync } from "node:child_process";
+import { createHash } from "node:crypto";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DEFAULT_CONFIG = path.join(ROOT, "config/content_sources.yaml");
@@ -501,6 +502,11 @@ async function main() {
   }
   const options = parseArgs();
   options.accountLimit = accountGate.value;
+  const runId = String(process.env.AI_ACCOUNT_RADAR_RUN_ID || process.env.RUN_ID || "").trim();
+  if (!options.checkOnly && !/^run_\d{8}_\d{6}(?:_[A-Za-z0-9_-]+)?$/.test(runId)) {
+    console.log(JSON.stringify({ ok: false, status: "run_identity_missing", collection_started: false, writes_feishu: false }));
+    return 2;
+  }
   fs.mkdirSync(options.outDir, { recursive: true });
 
   const sources = selectedSources(loadSources(options.config));
@@ -614,6 +620,7 @@ async function main() {
 
   const manualJsonl = path.join(options.outDir, "content_items_manual.jsonl");
   const homepageCardItems = buildHomepageCardItems(rows);
+  for (const item of homepageCardItems) item["运行批次"] = runId;
   fs.writeFileSync(
     manualJsonl,
     homepageCardItems.map((item) => JSON.stringify(item)).join("\n") + (homepageCardItems.length ? "\n" : ""),
@@ -621,6 +628,15 @@ async function main() {
   );
   resolverResult.manual_jsonl = manualJsonl;
   resolverResult.homepage_card_items = homepageCardItems.length;
+  const manualStat = fs.statSync(manualJsonl);
+  const manualArtifact = {
+    run_id: runId,
+    path: fs.realpathSync(manualJsonl),
+    sha256: createHash("sha256").update(fs.readFileSync(manualJsonl)).digest("hex"),
+    size: manualStat.size,
+    mtime_ms: Math.trunc(manualStat.mtimeMs),
+    row_count: homepageCardItems.length,
+  };
 
   const coverage = buildCoverage(sources, rows);
   coverage.account_limit = options.accountLimit;
@@ -632,12 +648,14 @@ async function main() {
     status: coverage.ok ? "completed" : "completed_with_failures",
     check_only: false,
     writes_feishu: false,
+    run_id: runId,
     cdp_browser: version.Browser || "",
     coverage,
     item_lineage: itemLineage,
     accounts: rows.length,
     discovered_video_links: videoLinks.length,
     resolver: resolverResult,
+    manual_artifact: manualArtifact,
     rows,
   };
   fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(output, null, 2), "utf8");
