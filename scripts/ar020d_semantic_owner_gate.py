@@ -143,12 +143,16 @@ def behavioral_sentinel_matrix() -> dict[str, Any]:
             "locked_global_tradeoff_reason": "tradeoff", "selected_visible_title": "Decision title",
             "natural_austin_angle": "Decision angle", "title_rationale": "Decision rationale",
             "public_decision_summary": "Decision summary",
+            "aihot_significance_rationale": "Evidence-bound AIHOT significance",
         }
         mapped = runner.reapply_locked_stage2_fields(row, decision)
         _assert_equal(mapped["选题命题"], "Decision title", "stage title")
         _assert_equal(mapped["我的切入"], "Decision angle", "stage angle")
         _assert_equal(mapped["主编判断摘要"], "Decision summary", "stage summary")
         _assert_equal(mapped["标题思路"], "Decision rationale", "stage rationale")
+        _assert_equal(mapped["AIHOT重大性说明"], "Evidence-bound AIHOT significance", "stage AIHOT significance")
+        if not runner.raw_stage2_drift_issues(decision, {"AIHOT重大性说明": "Stage2-authored value"}):
+            raise AssertionError("Stage2 AIHOT owner mutation was not blocked")
     _case("stage_locked_owner_mapping", stage_lock_owner_wins, results)
 
     failures = [row for row in results if not row["ok"]]

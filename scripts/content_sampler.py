@@ -2702,6 +2702,8 @@ def write_content_ledger_to_feishu(
     emit("creating_new_records")
     created_records = batch_create_records(token, app_token, table_id, to_create) if to_create else 0
     progress["created_records"] = created_records
+    read_back = all_records(token, app_token, table_id)
+    read_back_identity = verify_content_ledger_readback(items, read_back, run_id)
     emit("configuring_views")
     return {
         "table": table_name("content_inbox"),
@@ -2710,7 +2712,44 @@ def write_content_ledger_to_feishu(
         "created_records": created_records,
         "updated_existing": updated_existing,
         "skipped_duplicates": skipped_duplicates,
+        "read_back_identity": read_back_identity,
         "today_view": ensure_content_inbox_today_view(token, app_token, table_id),
+    }
+
+
+def verify_content_ledger_readback(
+    items: list[ContentItem], read_back: list[dict[str, Any]], run_id: str
+) -> dict[str, Any]:
+    read_back_by_fingerprint = {
+        str(record.get("fields", {}).get("内容指纹") or ""): record
+        for record in read_back
+        if str(record.get("fields", {}).get("内容指纹") or "")
+    }
+    planned_fingerprints = [item.fingerprint for item in items]
+    missing_fingerprints = [value for value in planned_fingerprints if value not in read_back_by_fingerprint]
+    wrong_run_fingerprints = [
+        value for value in planned_fingerprints
+        if value in read_back_by_fingerprint
+        and run_id not in {
+            str(read_back_by_fingerprint[value].get("fields", {}).get("运行批次") or ""),
+            str(read_back_by_fingerprint[value].get("fields", {}).get("最近参与运行批次") or ""),
+        }
+    ]
+    duplicate_fingerprints = [
+        value for value in planned_fingerprints
+        if sum(1 for record in read_back if str(record.get("fields", {}).get("内容指纹") or "") == value) != 1
+    ]
+    if missing_fingerprints or wrong_run_fingerprints or duplicate_fingerprints:
+        raise RuntimeError(
+            "content_inbox_readback_identity_failed:"
+            f"missing={len(missing_fingerprints)}; wrong_run={len(wrong_run_fingerprints)}; "
+            f"duplicate={len(duplicate_fingerprints)}"
+        )
+    return {
+        "ok": True,
+        "planned_count": len(planned_fingerprints),
+        "matched_count": len(planned_fingerprints),
+        "ordered_fingerprints": planned_fingerprints,
     }
 
 
