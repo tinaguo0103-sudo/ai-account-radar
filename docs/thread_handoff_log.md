@@ -3415,3 +3415,14 @@
 - Stop rule：scope/head/tree、key/provider/receipt/live DB、legacy lineage、full-source、03/04 read-back、card readiness、cwd或automation state任一不一致立即停止，保持PAUSED并仅回滚受影响组件。
 - 授权计划：`/private/tmp/ar034b_rc8_pm_acceptance_20260716/PM_ACCEPTANCE_AND_AUTHORIZATION_PLAN.md`，SHA256=`f14efa246ab5488a6e032e4aad0db7d483a653c2986043e537344e8bc5106c17`。
 - PM派发：固定生产线程 `019f2bc4-079e-7530-903e-484707590482`；省略 `model` 与 `thinking`，不轮询执行线程。
+
+### 2026-07-16 AR-034B RC8 生产预检因 WeWe canonical runtime/auth 未迁移而停止
+
+- 结论：`Preflight Blocked / No Release / Automations Paused`。RC8 28/28 scope与legacy initial已通过；31/31、29/2、87 items及manual SHA保持。阻塞发生在Git/key/refresh/Feishu写入前。
+- 真实runtime：唯一容器`ai-radar-wewe-rss`仍bind production repo `.local_services/wewe-rss/data -> /app/data`；RC8 adapter固定读取`~/.codex/ai-account-radar-runtime/providers/wewe-rss/data`，该目录不存在。4000可达不能替代canonical DB identity。
+- Auth：容器`AUTH_CODE`仅masked-presence确认；production `.env.local`/当前host env无`WEWE_RSS_AUTH_CODE`或`AI_RADAR_WEWE_RSS_AUTH_CODE`，真实refresh会在receipt前失败。
+- 边界：原授权禁止container restart/migration/reauth，生产线程正确停线。production local=origin/main仍`8af084621d01e639c54b5dc847a6439ce96fd8bd` clean；key/refresh/03/04/card/automation changes=0。当前DB已完整备份，未修改源DB/provider。
+- 新决策需求：需用户单独授权runbook已有的provider Authorized migration与host auth wiring。它是一次production runtime迁移，不是新代码返修；成功后仍需从RC8 Phase 0 fresh重启，不能复用本次check-only作为refresh证据。
+- 证据：`/private/tmp/ar034b_rc8_production_release_20260716_2053/PM_HANDOFF.md`、`provider/refresh_check_only.json`、`sources/legacy_initial.json`。
+- Migration plan：`/private/tmp/ar034b_provider_runtime_migration_20260716/PROVIDER_MIGRATION_AUTHORIZATION_PLAN.md`，SHA256=`9bac54f0314635932bf92d3515b5dd4ba63217dd50343912ffab4d996546c0ab`。
+- 派发模型规则继续省略 `model` 与 `thinking`。
