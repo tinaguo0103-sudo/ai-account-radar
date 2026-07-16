@@ -3207,3 +3207,9 @@
 - 任务：实现独立 `downstream_usable`/full_collection_success 分离；保持 full collection partial 可见；让 10:00 guard 要求 downstream usable + 09:15 finalization/04 green，而不是要求 31/31 green；新增 repo/global/manifest 三方 Skill hash gate 并更新 outer protocol。
 - 边界：开发线程不得重跑采集、改历史03、写04、发卡、触发06、改 automation/Chrome/profile/global Skill/SCF/production Git。今日恢复动作只作为发布后生产计划。
 - RC 要求：基于 production `5e733cd` 组 production-base narrow RC，排除 PM docs/无关 AR；提供今日 run 的 read-only/check-only recovery readiness。
+
+### 2026-07-16 PM 派发模型设置规则修正
+
+- 用户纠正：固定开发、测试、生产线程收到 PM 任务后被自动切到 `gpt-5.5`，用户需要手工调回；原因是 PM 派发时显式传入了 `model=gpt-5.5` 和 `thinking=xhigh`。
+- 长期规则：PM 通过线程派发工具发送任务时，默认省略 `model` 和 `thinking` / `reasoning effort`，保留目标线程当前由用户选择的设置。只有用户在当前任务中明确要求指定模型或推理强度时才允许覆盖。
+- 生效边界：本规则只约束 PM 后续派发参数，不修改现有 automation 的模型字段，不改已经运行中的线程设置，也不触碰产品代码、生产配置或业务数据。
