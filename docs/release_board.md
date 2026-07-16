@@ -280,3 +280,4 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - Provider canonicalization：Passed。新容器唯一mount为canonical data；DB SHA/integrity/counts与迁移前一致；private auth已安全接入host runtime。production main仍clean `8af0846`，RC8未发布，三任务PAUSED，refresh/Feishu/card均为0。
 - Stop condition：RC8 provider check-only为 `login_required`，按授权未自动继续。下一门是单独授权固定9334 canonical admin Chrome登录；只打开local `/dash`，不随机寻找浏览器、不导出secret。read-back必须为 `ok=true/status=refresh_required`、account/feed一致、`refresh_requested=false`，随后才从RC8 Phase 0自动继续。
 - 9334 login authorization plan：`/private/tmp/ar034b_provider_runtime_migration_20260716/WEWE_9334_LOGIN_AUTHORIZATION_PLAN.md`，SHA256=`64f82417d8ff2cfb15c59ba343e870740ec808c5addb53ad50955cfa08398d13`。用户确认前不启动9334或改生产状态。
+- 用户授权：已确认 fixed 9334 canonical login plan。生产线程仅可运行 exact RC8 worktree launcher，固定9334/profile/local `/dash`；登录check-only必须为 `ok=true/status=refresh_required`、无refresh/secret read，随后自动继续已批准RC8发布恢复。QR/SMS/MFA若不可自动完成，只由用户在该固定窗口交互。

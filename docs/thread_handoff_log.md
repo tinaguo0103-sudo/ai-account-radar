@@ -3445,3 +3445,11 @@
 - Stop condition：RC8 adapter check-only返回 `ok=false/status=login_required`，`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false`。按用户授权正确停线，不将migration成功冒充账号健康。
 - 下一授权建议：只运行 exact RC8 worktree 的 `python3 scripts/start_wewe_rss_admin_chrome.py --foreground`，固定port=9334、profile=`~/.codex/ai-account-radar-runtime/browser_profiles/wewe-rss-admin-chrome-profile`、URL=`http://127.0.0.1:4000/dash`。read-back要求单listener PID、marker/WebSocket/open-file/profile identity一致；QR/SMS/MFA仅由账号所有者在该窗口完成，不捕获认证秘密。登录完成后provider check-only必须变为 `ok=true/status=refresh_required` 且不refresh，才自动继续RC8 Phase 0。
 - 授权计划：`/private/tmp/ar034b_provider_runtime_migration_20260716/WEWE_9334_LOGIN_AUTHORIZATION_PLAN.md`，SHA256=`64f82417d8ff2cfb15c59ba343e870740ec808c5addb53ad50955cfa08398d13`。用户确认前不派生产线程。
+
+### 2026-07-16 用户授权固定 9334 WeWe 登录，并允许绿灯后自动续跑 RC8
+
+- 用户确认：批准 `WEWE_9334_LOGIN_AUTHORIZATION_PLAN.md`，SHA256=`64f82417d8ff2cfb15c59ba343e870740ec808c5addb53ad50955cfa08398d13`。固定生产线程可从 exact RC8 worktree启动 `python3 scripts/start_wewe_rss_admin_chrome.py --foreground`。
+- 固定边界：port=`9334`；profile=`~/.codex/ai-account-radar-runtime/browser_profiles/wewe-rss-admin-chrome-profile`；URL=`http://127.0.0.1:4000/dash`。不得随机发现/切换浏览器、端口或profile，不捕获QR/cookie/token/localStorage/account identity。
+- 登录验收：单listener PID、marker/WebSocket/open-file/profile identity全部匹配；provider check-only必须返回 `ok=true/status=refresh_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false`，active account/feed与canonical DB identity保持。
+- 自动续跑：上述read-back green后无需再次确认，从fresh RC8 Phase 0继续既有Git/key/one signed refresh/full-source/03/04/card/cwd/status-only resume授权。若出现QR/SMS/MFA，只由账号所有者在该固定窗口完成；任一 mismatch 保持三任务PAUSED并停止。
+- 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；派发省略 `model` 与 `thinking`，PM不轮询。
