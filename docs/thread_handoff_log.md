@@ -3368,3 +3368,13 @@
 - 交付：feature commit/push；从production base `8af084621d01e639c54b5dc847a6439ce96fd8bd` 组包含完整RC6+AR-034B的fresh RC7；exact manifest/patch/apply/tree；focused mutations、full regression、pre_merge；开发不自行派QA。
 - 生产边界：0旧artifact edit、0collection/refresh/key/Feishu/card/06/automation/Chrome/Skill/SCF/production Git。旧生产授权不沿用。
 - PM派发：固定开发线程 `019f1de3-f3f2-71d2-ae63-a74cd38f8474`；省略 `model` 与 `thinking`。
+
+### 2026-07-16 AR-034B RC7 未通过 PM evidence gate，QA 未启动
+
+- 开发回传：feature=`e11a42accf9f255475185a843124aa06c5cd5fa6`；RC7=`release/ar034-rc7-20260716@fe09651b2b1cf6457f398b0253ddaa435abcd610`，parent=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，local=remote clean；28-file patch SHA=`acccdfb479335077904a67ec10d10b9f2632b791ac4a6a0aa007ceabe0c94afb`，manifest SHA=`5cf2151ca13918a937b6eb06a9edf630d1b7113a667e200afcebf29d7567b4ec`，tree/apply tree=`e2b215428502d4b8691c4f7752da04cfbb03f9a3`。
+- 通过项：RC Git/remote/parent/scope、8 项 AR-034B 单测、strict native 代码未被改写、真实旧证据只读复算 31/31、29/2、87 items、manual SHA=`5af4d08662fddc7b09f8c0c906288cf36f6ade5d9ee01fad5270932ba001f496`，以及 locked prewrite 对原件当前状态的 revalidation。
+- PM blocker 1：`validate_legacy_partial_source_artifact()` 从传入 daily path 的父目录反推 `production_root`。PM 在 `/private/tmp` 构造内部自洽的 daily/probe/manual，公共 CLI exit 0 并返回 `legacy_attestation_verified=true`。这使伪造根目录可生成初始 attestation 和后续 locked report，违反“canonical production originals”门。
+- PM blocker 2：把 daily step `returncode` 改为字符串 `not-an-int` 后，公共 CLI 抛未捕获 `ValueError`，exit 1、stdout 为空。证据畸形没有形成 typed fail，不满足自动化可见性和恢复合同。
+- 处置：不派独立 QA，不沿用 RC7 或旧生产授权。开发只做 AR-034B 窄返修：configured production root binding + public CLI exact schema/type fail-closed；RC6 native/receipt/WeChat/AIHOT 合同保持。fresh RC8 完整自验后由 PM重新 evidence review。
+- 证据：`/private/tmp/ar034b_rc7_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_FAILED.md`、`/private/tmp/ar034b_pm_public_cli_probe.py`。对抗只写 `/private/tmp`，未改生产 artifact、未采集、未写 Feishu、未改 automation/provider/Chrome/Skill/SCF/production Git。
+- 派发模型规则：固定开发线程任务省略 `model` 与 `thinking`。
