@@ -237,6 +237,28 @@ PYTHONPATH=scripts python3 scripts/topic_editorial_state_machine.py prepare-sour
 
 当前 Codex 任务随后按 `validate-source-open -> prepare-research -> validate-research -> prepare-stage1 -> validate-stage1 -> prepare-ranking -> validate-ranking -> prepare-stage2 -> validate-stage2 -> finalize` 协议执行。精确来源和研究失败均 fail closed；旧 one-shot/deterministic/nested CLI 会在读写业务输出前失败。
 
+同日正式候选恢复不得重新从 `content_items.csv` 抽样。先计算批准文件的
+SHA256，再用显式 exact-input 模式只读锁定全部行：
+
+```bash
+python3 scripts/topic_editorial_state_machine.py check-exact-input \\
+  --run-id <run_id> \\
+  --exact-input-csv output/runs/<run_id>/today_10_topics.csv \\
+  --exact-input-sha256 <sha256>
+
+python3 scripts/topic_editorial_state_machine.py prepare-source-open \\
+  --out-dir /private/tmp/<fresh-run> \\
+  --persona-docx "/absolute/private/path/to/我的案例库.docx" \\
+  --run-id <run_id> \\
+  --exact-input-csv output/runs/<run_id>/today_10_topics.csv \\
+  --exact-input-sha256 <sha256> \\
+  --batch-size 3
+```
+
+exact-input 会锁定规范 run 路径、文件 SHA256、行顺序、精确 URL、来源 owner
+字段和候选指纹。缺失、增加、重复、重排或替换都必须在下游开始前失败，且失败
+候选不得由其他内容补位。
+
 写入边界：
 
 - 只写入 `04 分析与选题` 的今日候选池。

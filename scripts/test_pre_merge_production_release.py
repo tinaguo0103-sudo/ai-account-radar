@@ -78,7 +78,11 @@ class ProductionReleaseGateTests(unittest.TestCase):
             self.assertTrue(gate.check_git_dev()["ok"])
         with patch.object(gate, "run", return_value=command_result("## release/ar033-source-identity-20260716...origin/release/ar033-source-identity-20260716\n")):
             self.assertTrue(gate.check_git_dev()["ok"])
+        with patch.object(gate, "run", return_value=command_result("## release/ar033b-exact-input-20260716...origin/release/ar033b-exact-input-20260716\n")):
+            self.assertTrue(gate.check_git_dev()["ok"])
         with patch.object(gate, "run", return_value=command_result("## main...origin/main\n")):
+            self.assertFalse(gate.check_git_dev()["ok"])
+        with patch.object(gate, "run", return_value=command_result("## release/unrelated...origin/release/unrelated\n")):
             self.assertFalse(gate.check_git_dev()["ok"])
 
     def test_real_temporary_git_fixture_enforces_main_clean_and_remote_head(self) -> None:
