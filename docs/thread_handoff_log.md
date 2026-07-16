@@ -3333,3 +3333,13 @@
 - QA派发：固定QA线程须从 fresh clone完整验证25-file scope/apply、HMAC/fd/secret evidence、fake provider receipt矩阵、Douyin ingestion closure、WeChat fixed runtime、AIHOT owner、AR033B/031/card/watermark及全回归。不得只做RC5窄项复测，不得 provision production key或调用真实provider。
 - 证据：`/private/tmp/ar034_rc6_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_PASSED.md`。
 - 派发模型规则：省略 `model` 与 `thinking`，保留QA线程当前设置。
+
+### 2026-07-16 AR-034 RC6 完整独立 QA 通过，PM 更正为26-file生产候选范围
+
+- QA结论分离：A=`RC architecture/control Passed`；B=`Production release/recoverability pending explicit production authorization`。当前最多为 `Ready for PM Production Authorization Plan`，不是Released、Production Ready或Recovery Complete。
+- Scope审计：fresh clone exact `0353e723bc3dc719299fd4962d302a291e6ab714`，single parent=`8af084621d01e639c54b5dc847a6439ce96fd8bd`；patch SHA=`97904e1dca8b0ef3917b2feeb6f5210974d7615f695510d9597980016c5dbe1b`；apply tree=RC tree=`d67398ecafb02358411a93084ecfe490003ba3d7`；forbidden scope=0。
+- 口径纠正：QA派发误写25 files；RC diff、combined patch和release manifest实际始终为26 files。多出的 `scripts/test_ar034_wewe_receipt_adapter.py` 为302行AR-034专项测试，不改变运行时表面且不属于禁入范围。PM明确接受26-file scope，不要求重出RC，并保留本次纠正记录。
+- 完整验证：signed receipt/key/fd ownership、secret evidence、protected provider tRPC、lease/crash/replay/live DB、Douyin 29/31 partial ingestion closure、WeChat watermark/fixed runtime、AIHOT semantic owner及完整回归通过；QA未provision production key、未refresh、未写Feishu、未改automation或production Git。
+- 下一状态：等待用户明确生产授权。授权顺序为保持automation PAUSED -> Git release/gate -> canonical key权限配置 -> provider read-back -> 单次bounded signed refresh -> full-source/03/watermark闭环 -> versioned editorial/04/card -> official cwd repair -> status-only resume。任一不一致立即停止。
+- QA证据：`/private/tmp/ar034_rc6_independent_qa_20260716/AR034_RC6_INDEPENDENT_QA_REPORT.md`、`qa_summary.json`、`scope_patch_manifest_recompute.json`、`signed_receipt_key_matrix.json`、`provider_source_semantics.json`、`business_control_matrix.json`、`regression_results.json`、`production_boundary_snapshot.json`。
+- 派发模型规则继续有效：除非用户明确要求，不传 `model` 或 `thinking`。
