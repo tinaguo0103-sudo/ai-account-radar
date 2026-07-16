@@ -41,6 +41,11 @@ PY_COMPILE_TARGETS = (
     "scripts/ar020e_schema_readiness.py",
     "scripts/semantic_owner_dataflow.py",
     "scripts/ar020d_semantic_owner_gate.py",
+    "scripts/source_ingestion_lineage.py",
+    "scripts/wewe_provider_health.py",
+    "scripts/wewe_admin_chrome_runtime.py",
+    "scripts/start_wewe_rss_admin_chrome.py",
+    "scripts/ar034_recovery_check.py",
     "scripts/install_production_keepawake.py",
 )
 DEFAULT_FEISHU_READ_TABLE_KEYS = ("topic_decision", "script_package")
@@ -65,6 +70,8 @@ def check_git_dev() -> dict[str, Any]:
         "feature/next-production-flow" in first_line
         or "release/ar020e-rc" in first_line
         or "release/ar033" in first_line
+        or "ar034" in first_line
+        or "release/ar034" in first_line
     )
     return {"ok": ok, "name": "dev worktree branch/status", **status}
 
@@ -196,6 +203,23 @@ def check_exact_candidate_input_gate() -> dict[str, Any]:
     return {
         "ok": result["returncode"] == 0,
         "name": "AR-033B exact same-day candidate input gate",
+        **result,
+    }
+
+
+def check_ar034_source_recovery_gate() -> dict[str, Any]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "scripts")
+    result = run([
+        sys.executable,
+        "-m",
+        "unittest",
+        "scripts.test_ar034_source_recovery",
+        "scripts.test_ar034_aihot_owner",
+    ], env=env)
+    return {
+        "ok": result["returncode"] == 0,
+        "name": "AR-034 partial-source freshness and AIHOT owner gate",
         **result,
     }
 
@@ -462,6 +486,7 @@ def main() -> int:
         check_py_compile(),
         check_ar020d_semantic_owner_gate(),
         check_exact_candidate_input_gate(),
+        check_ar034_source_recovery_gate(),
         check_failure_qa_rules(),
         check_douyin_runtime_gate(),
         check_feishu_receiver_node_tests(),
