@@ -3406,3 +3406,12 @@
 - 新授权必须点名RC8与28-file scope；RC6旧授权不沿用。生产执行仍由固定生产线程负责，PM不直接改生产。
 - 证据：`/private/tmp/ar034b_rc8_independent_qa_20260716/AR034B_RC8_INDEPENDENT_QA_REPORT.md`、`MACHINE_SUMMARY.json`。
 - 派发模型规则继续省略 `model` 与 `thinking`。
+
+### 2026-07-16 用户授权 AR-034B RC8 生产发布与全源恢复
+
+- 授权候选：RC8=`af0e4e520cefcacb0efa770992a34a2778b9d36f`，base=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，tree=`fc278ad966acc6e1f24e28082f98570986caef33`，28 files，patch SHA=`abea1284baf80e0c687373dcc65ac149ee67388719f9e2ba47cdb822c7b556dd`。
+- 授权动作：三任务PAUSED与完整备份；Git fast-forward/push及dynamic gate；canonical WeWe HMAC key metadata-safe provisioning；一次bounded signed refresh；旧Douyin originals initial+locked两次复核；基于87条成功items、真实WeChat refresh与same-day AIHOT构建versioned full-source run；03/04精确写入与read-back；card check-only后一次个人发送；official projectless cwd repair；status-only resume并确认无即时run。
+- 禁止：Douyin重采集、修改旧artifact、继续旧错误9行、source替换、public async refresh、手工receipt/lease、schema/callback/06/global Skill/SCF/runtime/Chrome/profile、raw automation TOML或手动catch-up。
+- Stop rule：scope/head/tree、key/provider/receipt/live DB、legacy lineage、full-source、03/04 read-back、card readiness、cwd或automation state任一不一致立即停止，保持PAUSED并仅回滚受影响组件。
+- 授权计划：`/private/tmp/ar034b_rc8_pm_acceptance_20260716/PM_ACCEPTANCE_AND_AUTHORIZATION_PLAN.md`，SHA256=`f14efa246ab5488a6e032e4aad0db7d483a653c2986043e537344e8bc5106c17`。
+- PM派发：固定生产线程 `019f2bc4-079e-7530-903e-484707590482`；省略 `model` 与 `thinking`，不轮询执行线程。
