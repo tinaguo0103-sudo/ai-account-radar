@@ -1,7 +1,11 @@
 from __future__ import annotations
 
+import contextlib
+import io
 import json
 import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -9,6 +13,7 @@ from types import SimpleNamespace
 from unittest import mock
 
 import source_ingestion_lineage as lineage
+import ar034_recovery_check as recovery_check
 
 
 RUN_ID = "run_20260716_080311"
@@ -62,7 +67,8 @@ class AR034LegacyDouyinLineageTests(unittest.TestCase):
         return daily.resolve(), probe.resolve(), manual.resolve()
 
     def validate(self, paths: tuple[Path, Path, Path]) -> dict:
-        return lineage.validate_legacy_partial_source_artifact(*paths, expected_run_id=RUN_ID)
+        root = paths[0].parent.parent.parent
+        return lineage.validate_legacy_partial_source_artifact(*paths, expected_run_id=RUN_ID, expected_root=root)
 
     def test_explicit_legacy_positive_and_native_strict_rejection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -105,6 +111,11 @@ class AR034LegacyDouyinLineageTests(unittest.TestCase):
             "unknown_account": lambda probe, rows: rows[0].update({"账号名/公众号名": "unknown"}),
             "item_lineage": lambda probe, rows: probe["item_lineage"].update(ok=False),
             "count_drift": lambda probe, rows: probe["coverage"]["per_account_artifact_counts"].update({"good-a": 2}),
+            "duplicate_failed_account": lambda probe, rows: probe["coverage"].update(
+                failed_account_count=2,
+                failed_accounts=[{"account_name": "bad", "artifact_count": 0}, {"account_name": "bad", "artifact_count": 0}],
+                successful_accounts=1,
+            ),
         }
         for name, mutate in mutations.items():
             with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
@@ -144,13 +155,80 @@ class AR034LegacyDouyinLineageTests(unittest.TestCase):
             rows.reverse(); paths[2].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
             timestamp = 1784160459; os.utime(paths[2], (timestamp, timestamp))
             with self.assertRaisesRegex(lineage.LineageError, "attestation_drift"):
-                lineage.revalidate_legacy_before_external_write(*paths, expected_run_id=RUN_ID, attested_report=attested)
+                lineage.revalidate_legacy_before_external_write(
+                    *paths, expected_run_id=RUN_ID, expected_root=paths[0].parent.parent.parent,
+                    attested_report=attested,
+                )
 
     def test_prewrite_revalidation_rejects_untrusted_report(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             paths = self.fixture(Path(tmp))
             with self.assertRaisesRegex(lineage.LineageError, "report_invalid"):
-                lineage.revalidate_legacy_before_external_write(*paths, expected_run_id=RUN_ID, attested_report={})
+                lineage.revalidate_legacy_before_external_write(
+                    *paths, expected_run_id=RUN_ID, expected_root=paths[0].parent.parent.parent,
+                    attested_report={},
+                )
+
+    def test_public_cli_rejects_arbitrary_fixture_root_with_typed_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.fixture(Path(tmp)); run_dir = Path(tmp) / "run"; run_dir.mkdir()
+            for name in ("content.csv", "topics.csv"):
+                (run_dir / name).write_text("来源类型\n", encoding="utf-8")
+            command = [
+                sys.executable, str(Path(__file__).with_name("ar034_recovery_check.py")),
+                "--probe-result", str(paths[1]), "--douyin-manual", str(paths[2]),
+                "--incident-content-items", str(run_dir / "content.csv"),
+                "--incident-today-candidates", str(run_dir / "topics.csv"), "--check-only",
+                "--legacy-daily-log", str(paths[0]), "--expected-source-run-id", RUN_ID,
+            ]
+            completed = subprocess.run(command, text=True, capture_output=True)
+            payload = json.loads(completed.stdout)
+            self.assertEqual(completed.returncode, 4); self.assertFalse(payload["ok"]); self.assertEqual(completed.stderr, "")
+
+    def test_exact_external_schema_mutations_fail(self) -> None:
+        mutations = {
+            "steps_string": lambda daily, probe, rows: daily.update(steps="bad"),
+            "command_item": lambda daily, probe, rows: daily["steps"][0]["command"].__setitem__(0, 1),
+            "returncode_string": lambda daily, probe, rows: daily["steps"][0].update(returncode="not-an-int"),
+            "returncode_bool": lambda daily, probe, rows: daily["steps"][0].update(returncode=False),
+            "optional_bool": lambda daily, probe, rows: daily["steps"][0].update(optional_returncode=True),
+            "timestamp_wrong_zone": lambda daily, probe, rows: daily["steps"][0].update(started_at="2026-07-16T08:03:13+00:00"),
+            "resolver_list": lambda daily, probe, rows: probe.update(resolver=[]),
+            "coverage_list": lambda daily, probe, rows: probe.update(coverage=[]),
+            "failures_object": lambda daily, probe, rows: probe["coverage"].update(failed_accounts={}),
+            "counts_list": lambda daily, probe, rows: probe["coverage"].update(per_account_artifact_counts=[]),
+            "invariant_int": lambda daily, probe, rows: probe["coverage"]["invariants"].update(attempted_equals_planned=1),
+            "item_lineage_string": lambda daily, probe, rows: probe.update(item_lineage="yes"),
+            "manual_fingerprint_int": lambda daily, probe, rows: rows[0].update({"内容指纹": 1}),
+            "manual_account_list": lambda daily, probe, rows: rows[0].update({"账号名/公众号名": []}),
+            "manual_run_bool": lambda daily, probe, rows: rows[0].update({"运行批次": True}),
+        }
+        for name, mutate in mutations.items():
+            with self.subTest(name=name), tempfile.TemporaryDirectory() as tmp:
+                paths = self.fixture(Path(tmp)); daily = json.loads(paths[0].read_text()); probe = json.loads(paths[1].read_text())
+                rows = [json.loads(line) for line in paths[2].read_text().splitlines()]
+                mutate(daily, probe, rows); paths[0].write_text(json.dumps(daily)); paths[1].write_text(json.dumps(probe))
+                paths[2].write_text("\n".join(json.dumps(row) for row in rows) + "\n")
+                timestamp = 1784160459; os.utime(paths[1], (timestamp, timestamp)); os.utime(paths[2], (timestamp, timestamp))
+                with self.assertRaises(lineage.LineageError): self.validate(paths)
+
+    def test_public_cli_malformed_terminal_is_single_typed_json(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            paths = self.fixture(Path(tmp)); daily = json.loads(paths[0].read_text())
+            daily["steps"][0]["returncode"] = "not-an-int"; paths[0].write_text(json.dumps(daily))
+            run_dir = Path(tmp) / "run"; run_dir.mkdir()
+            for name in ("content.csv", "topics.csv"): (run_dir / name).write_text("来源类型\n")
+            argv = [
+                "ar034_recovery_check.py", "--probe-result", str(paths[1]), "--douyin-manual", str(paths[2]),
+                "--incident-content-items", str(run_dir / "content.csv"), "--incident-today-candidates", str(run_dir / "topics.csv"),
+                "--check-only", "--legacy-daily-log", str(paths[0]), "--expected-source-run-id", RUN_ID,
+            ]
+            output = io.StringIO()
+            with mock.patch.object(sys, "argv", argv), mock.patch.object(recovery_check, "CONFIGURED_PRODUCTION_ROOT", paths[0].parent.parent.parent), contextlib.redirect_stdout(output):
+                exit_code = recovery_check.main()
+            payload = json.loads(output.getvalue())
+            self.assertEqual(exit_code, 4); self.assertFalse(payload["ok"])
+            self.assertIn("legacy_returncode_type_invalid", payload["error"])
 
 
 if __name__ == "__main__":

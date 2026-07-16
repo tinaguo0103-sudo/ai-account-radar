@@ -8,7 +8,7 @@ import json
 import os
 import re
 import stat
-from datetime import datetime
+from datetime import datetime, timedelta
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -73,16 +73,40 @@ def legacy_time(value: Any, reason: str) -> datetime:
         parsed = datetime.fromisoformat(value)
     except ValueError as exc:
         raise LineageError(reason) from exc
-    return parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai")) if parsed.tzinfo is None else parsed
+    parsed = parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai")) if parsed.tzinfo is None else parsed
+    if parsed.utcoffset() != timedelta(hours=8):
+        raise LineageError(reason)
+    return parsed
+
+
+def exact_int(value: Any, reason: str, *, minimum: int = 0) -> int:
+    if type(value) is not int or value < minimum:
+        raise LineageError(reason)
+    return value
+
+
+def exact_string(value: Any, reason: str, *, nonempty: bool = True) -> str:
+    if not isinstance(value, str) or (nonempty and not value):
+        raise LineageError(reason)
+    return value
 
 
 def validate_legacy_partial_source_artifact(
-    daily_log_path: Path, probe_path: Path, manual_path: Path, *, expected_run_id: str,
+    daily_log_path: Path,
+    probe_path: Path,
+    manual_path: Path,
+    *,
+    expected_run_id: str,
+    expected_root: Path,
 ) -> dict[str, Any]:
     if re.fullmatch(r"run_\d{8}_\d{6}", expected_run_id) is None:
         raise LineageError("legacy_expected_run_id_invalid")
     expected_date = f"{expected_run_id[4:8]}-{expected_run_id[8:10]}-{expected_run_id[10:12]}"
-    production_root = daily_log_path.parent.parent.parent.resolve()
+    if not expected_root.is_absolute() or expected_root.is_symlink():
+        raise LineageError("legacy_production_root_invalid")
+    production_root = expected_root.resolve()
+    if production_root != expected_root:
+        raise LineageError("legacy_production_root_alias")
     expected_daily = production_root / "output" / "logs" / f"daily_pipeline_{expected_date}.json"
     expected_probe = production_root / "output" / "spikes" / "douyin_cdp_source_watch_probe" / "cdp_probe_results.json"
     expected_manual = production_root / "output" / "spikes" / "douyin_cdp_source_watch_probe" / "content_items_manual.jsonl"
@@ -97,22 +121,32 @@ def validate_legacy_partial_source_artifact(
         raise LineageError("legacy_evidence_non_object")
     if "run_id" in probe or "manual_artifact" in probe:
         raise LineageError("legacy_mode_rejected_for_native_artifact")
-    if str(daily.get("run_id") or "") != expected_run_id:
+    if exact_string(daily.get("run_id"), "legacy_daily_run_type_invalid") != expected_run_id:
         raise LineageError("legacy_daily_run_mismatch")
     started_date = expected_run_id[4:12]
     if started_date != expected_date.replace("-", ""):
         raise LineageError("legacy_run_date_mismatch")
-    steps = [row for row in daily.get("steps", []) if isinstance(row, dict) and row.get("name") == "fetch daily Douyin homepage title/caption samples through Chrome CDP"]
+    all_steps = daily.get("steps")
+    if not isinstance(all_steps, list) or any(not isinstance(row, dict) for row in all_steps):
+        raise LineageError("legacy_daily_steps_schema_invalid")
+    steps = [row for row in all_steps if row.get("name") == "fetch daily Douyin homepage title/caption samples through Chrome CDP"]
     if len(steps) != 1:
         raise LineageError("legacy_douyin_step_not_unique")
     step = steps[0]
     script = production_root / "scripts" / "douyin_cdp_source_watch_probe.mjs"
     expected_command = ["node", str(script), "--cdp", "http://127.0.0.1:9333", "--account-limit", "0", "--video-limit", "3", "--retries", "2"]
-    if step.get("command") != expected_command:
+    command = step.get("command")
+    if not isinstance(command, list) or any(not isinstance(value, str) for value in command):
+        raise LineageError("legacy_douyin_command_schema_invalid")
+    if command != expected_command:
         raise LineageError("legacy_douyin_command_mismatch")
-    if int(step.get("returncode") if step.get("returncode") is not None else -1) != 0 or int(step.get("optional_returncode") if step.get("optional_returncode") is not None else -1) != 3 or step.get("optional_failed") is not True:
+    returncode = exact_int(step.get("returncode"), "legacy_returncode_type_invalid")
+    optional_returncode = exact_int(step.get("optional_returncode"), "legacy_optional_returncode_type_invalid")
+    if type(step.get("optional_failed")) is not bool:
+        raise LineageError("legacy_optional_failed_type_invalid")
+    if returncode != 0 or optional_returncode != 3 or step["optional_failed"] is not True:
         raise LineageError("legacy_step_terminal_status_mismatch")
-    if probe.get("status") != "completed_with_failures":
+    if exact_string(probe.get("status"), "legacy_probe_status_type_invalid") != "completed_with_failures":
         raise LineageError("legacy_probe_terminal_status_mismatch")
     started = legacy_time(step.get("started_at"), "legacy_step_time_invalid")
     generated = legacy_time(daily.get("generated_at"), "legacy_generated_time_invalid")
@@ -121,27 +155,40 @@ def validate_legacy_partial_source_artifact(
     for info in (probe_stat, manual_stat):
         if not (started.timestamp() <= info.st_mtime <= generated.timestamp()):
             raise LineageError("legacy_artifact_time_outside_run")
-    resolver = probe.get("resolver") if isinstance(probe.get("resolver"), dict) else {}
-    if str(resolver.get("manual_jsonl") or "") != str(expected_manual):
+    resolver = probe.get("resolver")
+    if not isinstance(resolver, dict):
+        raise LineageError("legacy_resolver_schema_invalid")
+    if exact_string(resolver.get("manual_jsonl"), "legacy_resolver_path_type_invalid") != str(expected_manual):
         raise LineageError("legacy_resolver_identity_mismatch")
-    coverage = probe.get("coverage") if isinstance(probe.get("coverage"), dict) else {}
-    coverage_values = [coverage.get(key) for key in ("planned_accounts", "attempted_accounts", "successful_accounts", "failed_account_count")]
-    if any(type(value) is not int or value < 0 for value in coverage_values):
-        raise LineageError("legacy_account_coverage_mismatch")
+    coverage = probe.get("coverage")
+    if not isinstance(coverage, dict):
+        raise LineageError("legacy_coverage_schema_invalid")
+    coverage_values = [exact_int(coverage.get(key), f"legacy_{key}_type_invalid") for key in ("planned_accounts", "attempted_accounts", "successful_accounts", "failed_account_count")]
     planned, attempted, successful, failed_count = coverage_values
     if planned == 0 or attempted != planned or successful + failed_count != attempted:
         raise LineageError("legacy_account_coverage_mismatch")
-    invariants = coverage.get("invariants") if isinstance(coverage.get("invariants"), dict) else {}
-    if not all(invariants.get(key) is True for key in ("attempted_equals_planned", "success_plus_failed_equals_attempted", "account_lineage_unique_and_complete")) or not bool((probe.get("item_lineage") or {}).get("ok")):
+    invariants = coverage.get("invariants")
+    item_lineage = probe.get("item_lineage")
+    if not isinstance(invariants, dict) or any(type(invariants.get(key)) is not bool for key in ("attempted_equals_planned", "success_plus_failed_equals_attempted", "account_lineage_unique_and_complete")):
+        raise LineageError("legacy_invariants_schema_invalid")
+    if not isinstance(item_lineage, dict) or type(item_lineage.get("ok")) is not bool:
+        raise LineageError("legacy_item_lineage_schema_invalid")
+    if not all(invariants.get(key) is True for key in ("attempted_equals_planned", "success_plus_failed_equals_attempted", "account_lineage_unique_and_complete")) or item_lineage["ok"] is not True:
         raise LineageError("legacy_lineage_invariant_failed")
-    failures = coverage.get("failed_accounts") if isinstance(coverage.get("failed_accounts"), list) else []
-    if len(failures) != failed_count or any(not isinstance(row, dict) or type(row.get("artifact_count")) is not int or row["artifact_count"] != 0 for row in failures):
+    failures = coverage.get("failed_accounts")
+    if not isinstance(failures, list) or any(not isinstance(row, dict) for row in failures):
+        raise LineageError("legacy_failed_accounts_schema_invalid")
+    if len(failures) != failed_count or any(not isinstance(row.get("account_name"), str) or not row["account_name"] or type(row.get("artifact_count")) is not int or row["artifact_count"] != 0 for row in failures):
         raise LineageError("legacy_failed_account_artifact_leak")
     failed_names = {str(row.get("account_name") or "") for row in failures}
-    counts = coverage.get("per_account_artifact_counts") if isinstance(coverage.get("per_account_artifact_counts"), dict) else {}
+    counts = coverage.get("per_account_artifact_counts")
+    if not isinstance(counts, dict) or any(not isinstance(name, str) or not name or type(value) is not int or value < 0 for name, value in counts.items()):
+        raise LineageError("legacy_account_counts_schema_invalid")
+    if len(failed_names) != failed_count or len(counts) != planned or any(name not in counts or counts[name] != 0 for name in failed_names):
+        raise LineageError("legacy_account_universe_mismatch")
     rows = read_jsonl(manual_path)
-    homepage_items = resolver.get("homepage_card_items")
-    if type(homepage_items) is not int or homepage_items <= 0 or len(rows) != homepage_items:
+    homepage_items = exact_int(resolver.get("homepage_card_items"), "legacy_homepage_items_type_invalid", minimum=1)
+    if len(rows) != homepage_items:
         raise LineageError("legacy_manual_row_count_mismatch")
     fingerprints = [row_identity(row) for row in rows]
     if any(not value for value in fingerprints) or len(set(fingerprints)) != len(fingerprints):
@@ -149,6 +196,13 @@ def validate_legacy_partial_source_artifact(
     actual_counts: dict[str, int] = {}
     mapping: dict[str, str] = {}
     for row, fingerprint in zip(rows, fingerprints):
+        if "内容指纹" not in row or not isinstance(row.get("内容指纹"), str) or not row["内容指纹"].strip():
+            raise LineageError("legacy_manual_fingerprint_type_invalid")
+        account_value = row.get("账号名/公众号名") if row.get("账号名/公众号名") is not None else row.get("原始来源账号")
+        if not isinstance(account_value, str) or not account_value.strip():
+            raise LineageError("legacy_manual_account_type_invalid")
+        if "运行批次" in row and row.get("运行批次") is not None and not isinstance(row.get("运行批次"), str):
+            raise LineageError("legacy_manual_run_type_invalid")
         row_run = str(row.get("运行批次") or "")
         if row_run and row_run != expected_run_id:
             raise LineageError("legacy_manual_row_run_mismatch")
@@ -184,12 +238,13 @@ def revalidate_legacy_before_external_write(
     manual_path: Path,
     *,
     expected_run_id: str,
+    expected_root: Path,
     attested_report: dict[str, Any],
 ) -> dict[str, Any]:
     if not isinstance(attested_report, dict) or attested_report.get("legacy_attestation_verified") is not True:
         raise LineageError("legacy_attestation_report_invalid")
     current = validate_legacy_partial_source_artifact(
-        daily_log_path, probe_path, manual_path, expected_run_id=expected_run_id,
+        daily_log_path, probe_path, manual_path, expected_run_id=expected_run_id, expected_root=expected_root,
     )
     locked_fields = (
         "source_run_id", "evidence_basis", "evidence_version", "planned_accounts", "attempted_accounts",

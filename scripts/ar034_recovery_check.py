@@ -15,6 +15,10 @@ from source_ingestion_lineage import (
 )
 
 
+ROOT = Path(__file__).resolve().parents[1]
+CONFIGURED_PRODUCTION_ROOT = (ROOT.parent / "ai_account_radar").resolve()
+
+
 def csv_source_counts(path: Path) -> dict[str, int]:
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         rows = list(csv.DictReader(handle))
@@ -48,11 +52,15 @@ def main() -> int:
                     locked = locked["preserved_douyin_success_artifact"]
                 douyin = revalidate_legacy_before_external_write(
                     args.legacy_daily_log, args.probe_result, args.douyin_manual,
-                    expected_run_id=str(args.expected_source_run_id), attested_report=locked,
+                    expected_run_id=str(args.expected_source_run_id), expected_root=CONFIGURED_PRODUCTION_ROOT,
+                    attested_report=locked,
                 )
                 douyin["prewrite_revalidated"] = True
             else:
-                douyin = validate_legacy_partial_source_artifact(args.legacy_daily_log, args.probe_result, args.douyin_manual, expected_run_id=str(args.expected_source_run_id))
+                douyin = validate_legacy_partial_source_artifact(
+                    args.legacy_daily_log, args.probe_result, args.douyin_manual,
+                    expected_run_id=str(args.expected_source_run_id), expected_root=CONFIGURED_PRODUCTION_ROOT,
+                )
         else:
             probe = json.loads(args.probe_result.read_text(encoding="utf-8"))
             douyin = validate_partial_source_artifact(probe, args.douyin_manual)
@@ -70,8 +78,10 @@ def main() -> int:
             "sends_topic_card": False,
             "triggers_script_generation": False,
         }
-    except (OSError, json.JSONDecodeError, LineageError, KeyError) as exc:
+    except (OSError, json.JSONDecodeError, LineageError, KeyError, ValueError, TypeError) as exc:
         result = {"ok": False, "check_only": True, "error": f"{type(exc).__name__}:{exc}"}
+    except Exception as exc:
+        result = {"ok": False, "check_only": True, "error": f"unexpected_legacy_validation_error:{type(exc).__name__}"}
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 4
 

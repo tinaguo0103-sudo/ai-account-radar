@@ -6,7 +6,9 @@ This migration-only path binds a preserved pre-RC6 Douyin probe and resolver man
 
 Legacy mode is enabled only when both `--legacy-daily-log` and `--expected-source-run-id` are supplied. Without them, `ar034_recovery_check.py` uses the strict native validator and rejects a probe missing `run_id` or `manual_artifact`. A probe containing either native identity field cannot be downgraded to legacy mode.
 
-The attestation independently reopens the canonical daily log, probe, and manual. It verifies file ownership and link identity, the exact scheduled command, run window, resolver identity, terminal coverage, failed-account isolation, ordered item fingerprints, and account counts. Truncated step stdout is recorded only as corroboration and is never an identity anchor.
+The public CLI owns the production root: it resolves the fixed `ai_account_radar` production worktree beside the executing repository. It does not infer trust from an evidence path and exposes no root override. Tests may inject an expected root only through the Python validator API. Initial and locked pre-write validation use the same owned root.
+
+The attestation independently reopens the canonical daily log, probe, and manual. It verifies file ownership and link identity, exact evidence field types, the exact scheduled command, run window, resolver identity, terminal coverage, failed-account isolation, ordered item fingerprints, and account counts. Malformed evidence always produces one typed JSON failure from the CLI. Truncated step stdout is recorded only as corroboration and is never an identity anchor.
 
 ## Check-only command
 
