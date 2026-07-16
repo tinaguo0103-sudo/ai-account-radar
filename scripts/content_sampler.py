@@ -3354,6 +3354,7 @@ def main() -> int:
     parser.add_argument("--write-feishu", action="store_true", help="Write all analyzed ContentItems into Feishu 03 内容收件箱 as the content ledger.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
     parser.add_argument("--debug-top10", action="store_true", help="Write local candidate generation diagnostics into this run's output directory.")
+    parser.add_argument("--source-lineage-manifest", default="", help="Fail-closed source lineage contract validated before any Feishu write.")
     parser.add_argument(
         "--recover-content-inbox-from-run",
         default="",
@@ -3411,8 +3412,38 @@ def main() -> int:
             "reverse_topic_evaluation": str(output_dir / "reverse_topic_evaluation.csv"),
         },
     }
+    source_report = None
+    if args.source_lineage_manifest:
+        from source_ingestion_lineage import (
+            validate_feishu_readback_identity,
+            validate_ingestion_bijection,
+        )
+        manifest = json.loads(Path(args.source_lineage_manifest).read_text(encoding="utf-8"))
+        if str(manifest.get("run_id") or "") != run_id:
+            raise RuntimeError("source_lineage_manifest_run_mismatch")
+        source_report = manifest.get("source_report")
+        if not isinstance(source_report, dict) or not source_report.get("ok"):
+            raise RuntimeError("source_lineage_manifest_invalid")
+        local_closure = validate_ingestion_bijection(
+            source_report,
+            Path(str(manifest["combined_path"])),
+            output_dir / "content_items.csv",
+            output_dir / "content_breakdowns.csv",
+            output_dir / "today_10_topics.csv",
+        )
+        local_closure["feishu_03_identity"] = validate_feishu_readback_identity(
+            source_report, None, run_id, write_mode=False,
+        )
+        run_log["source_ingestion_closure"] = local_closure
     if args.write_feishu:
         run_log["feishu_content_ledger"] = write_content_ledger_to_feishu(items, run_id)
+        if source_report is not None:
+            run_log["source_ingestion_closure"]["feishu_03_identity"] = validate_feishu_readback_identity(
+                source_report,
+                run_log["feishu_content_ledger"].get("read_back_identity"),
+                run_id,
+                write_mode=True,
+            )
     log_path = output_dir / "content_sampler_log.json"
     run_log["outputs"]["content_sampler_log"] = str(log_path)
     run_log["mirrors"] = mirror_run_outputs(output_dir, args.write_feishu, md_path)

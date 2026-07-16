@@ -49,7 +49,9 @@ def artifact_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
 
-def validate_partial_source_artifact(probe: dict[str, Any], manual_path: Path) -> dict[str, Any]:
+def validate_partial_source_artifact(
+    probe: dict[str, Any], manual_path: Path, *, expected_run_id: str | None = None,
+) -> dict[str, Any]:
     coverage = probe.get("coverage") if isinstance(probe.get("coverage"), dict) else {}
     invariants = coverage.get("invariants") if isinstance(coverage.get("invariants"), dict) else {}
     failures = coverage.get("failed_accounts") if isinstance(coverage.get("failed_accounts"), list) else []
@@ -60,6 +62,9 @@ def validate_partial_source_artifact(probe: dict[str, Any], manual_path: Path) -
     failed = int(coverage.get("failed_account_count") or 0)
     if str(probe.get("status") or "") not in {"completed", "completed_with_failures"}:
         raise LineageError("probe_not_terminal")
+    run_id = str(probe.get("run_id") or "").strip()
+    if expected_run_id and run_id != expected_run_id:
+        raise LineageError("probe_run_identity_mismatch")
     if planned != attempted or succeeded + failed != attempted:
         raise LineageError("account_plan_incomplete")
     if not all(bool(invariants.get(key)) for key in (
@@ -70,6 +75,23 @@ def validate_partial_source_artifact(probe: dict[str, Any], manual_path: Path) -
     if any(int(row.get("artifact_count") or 0) != 0 for row in failures):
         raise LineageError("failed_account_artifact_leak")
     rows = read_jsonl(manual_path)
+    artifact = probe.get("manual_artifact") if isinstance(probe.get("manual_artifact"), dict) else {}
+    expected_path = str(manual_path.resolve())
+    if not artifact:
+        raise LineageError("manual_artifact_identity_missing")
+    if str(artifact.get("run_id") or "") != run_id:
+        raise LineageError("manual_artifact_run_mismatch")
+    if str(Path(str(artifact.get("path") or "")).expanduser().resolve()) != expected_path:
+        raise LineageError("manual_artifact_path_mismatch")
+    actual_sha = artifact_sha256(manual_path)
+    if str(artifact.get("sha256") or "") != actual_sha:
+        raise LineageError("manual_artifact_hash_mismatch")
+    if int(artifact.get("size") or -1) != manual_path.stat().st_size:
+        raise LineageError("manual_artifact_size_mismatch")
+    if int(artifact.get("row_count") or -1) != len(rows):
+        raise LineageError("manual_artifact_row_count_mismatch")
+    if any(str(row.get("运行批次") or "") != run_id for row in rows):
+        raise LineageError("manual_row_run_identity_mismatch")
     fingerprints = [row_identity(row) for row in rows]
     if not rows or any(not value for value in fingerprints):
         raise LineageError("successful_artifact_empty_or_unidentified")
@@ -98,6 +120,8 @@ def validate_partial_source_artifact(probe: dict[str, Any], manual_path: Path) -
         "successful_item_count": len(rows),
         "manual_path": str(manual_path.resolve()),
         "manual_sha256": artifact_sha256(manual_path),
+        "run_id": run_id,
+        "manual_artifact_identity_verified": True,
         "ordered_fingerprints": fingerprints,
         "fingerprint_accounts": {row_identity(row): row_account(row) for row in rows},
         "failed_account_names": sorted(failed_names),
@@ -154,3 +178,31 @@ def validate_ingestion_bijection(
         "shortlist_count": len(shortlist),
         "shortlist_source_fingerprints": [value for value in shortlist if value in set(source)],
     }
+
+
+def planned_feishu_identity(source_report: dict[str, Any], run_id: str) -> dict[str, Any]:
+    ordered = list(source_report.get("ordered_fingerprints") or [])
+    payload = json.dumps({"run_id": run_id, "ordered_fingerprints": ordered}, ensure_ascii=False, separators=(",", ":"))
+    return {
+        "run_id": run_id,
+        "ordered_fingerprints": ordered,
+        "identity_sha256": hashlib.sha256(payload.encode("utf-8")).hexdigest(),
+        "count": len(ordered),
+    }
+
+
+def validate_feishu_readback_identity(
+    source_report: dict[str, Any], read_back: dict[str, Any] | None, run_id: str, *, write_mode: bool,
+) -> dict[str, Any]:
+    planned = planned_feishu_identity(source_report, run_id)
+    if not write_mode:
+        return {"ok": True, "mode": "dry_run", "planned_identity": planned, "read_back_required": False}
+    if not isinstance(read_back, dict) or not read_back.get("ok"):
+        raise LineageError("feishu_03_readback_missing")
+    if str(read_back.get("run_id") or "") != run_id:
+        raise LineageError("feishu_03_readback_run_mismatch")
+    read_fingerprints = list(read_back.get("ordered_fingerprints") or [])
+    for fingerprint in planned["ordered_fingerprints"]:
+        if read_fingerprints.count(fingerprint) != 1:
+            raise LineageError("feishu_03_readback_identity_mismatch")
+    return {"ok": True, "mode": "write", "planned_identity": planned, "read_back_required": True}

@@ -23,7 +23,15 @@ def identity_hash(path: Path) -> str:
     return hashlib.sha256(str(path.resolve()).encode()).hexdigest()
 
 
-def classify_snapshot(snapshot: dict[str, Any], *, now_ms: int, previous_success_revision: int = 0) -> dict[str, Any]:
+def classify_snapshot(
+    snapshot: dict[str, Any], *, now_ms: int, previous_watermark: dict[str, Any] | None = None,
+    run_id: str = "", run_started_at_ms: int = 0, refresh_attempt: dict[str, Any] | None = None,
+    previous_success_revision: int | None = None,
+) -> dict[str, Any]:
+    previous_watermark = dict(previous_watermark or {})
+    refresh_attempt = dict(refresh_attempt or {})
+    if previous_success_revision is not None:
+        previous_watermark.setdefault("refresh_revision", previous_success_revision)
     if not snapshot.get("provider_reachable") or not snapshot.get("database_readable"):
         state = "provider_failed"
     elif int(snapshot.get("active_account_count") or 0) < 1:
@@ -31,25 +39,45 @@ def classify_snapshot(snapshot: dict[str, Any], *, now_ms: int, previous_success
     else:
         revision = int(snapshot.get("refresh_revision") or 0)
         refreshed_at = int(snapshot.get("refreshed_at_ms") or 0)
-        refresh_age_ms = now_ms - refreshed_at
-        if previous_success_revision <= 0 or revision <= 0 or refreshed_at <= 0 or refresh_age_ms < 0 or refresh_age_ms > 24 * 3600 * 1000:
+        previous_revision = int(previous_watermark.get("refresh_revision") or 0)
+        previous_refreshed_at = int(previous_watermark.get("refreshed_at_ms") or 0)
+        attempt_ok = (
+            isinstance(refresh_attempt, dict)
+            and str(refresh_attempt.get("run_id") or "") == run_id
+            and str(refresh_attempt.get("status") or "") == "success"
+            and bool(refresh_attempt.get("attempt_id"))
+            and int(refresh_attempt.get("started_at_ms") or 0) >= run_started_at_ms
+            and int(refresh_attempt.get("completed_at_ms") or 0) >= int(refresh_attempt.get("started_at_ms") or 0)
+            and int(refresh_attempt.get("completed_at_ms") or 0) <= now_ms
+            and int(refresh_attempt.get("refresh_revision") or 0) == revision
+            and int(refresh_attempt.get("refreshed_at_ms") or 0) == refreshed_at
+        )
+        freshness_ok = (
+            revision > 0 and refreshed_at > previous_refreshed_at
+            and refreshed_at > run_started_at_ms and refreshed_at <= now_ms
+            and (revision > previous_revision or attempt_ok)
+        )
+        if previous_revision <= 0 or previous_refreshed_at <= 0 or not attempt_ok or not freshness_ok:
             state = "stale_cache"
-        elif revision > previous_success_revision and int(snapshot.get("new_item_count") or 0) > 0:
+        elif int(snapshot.get("new_item_count") or 0) > 0:
             state = "updated_with_new_items"
         else:
             state = "updated_no_new_items"
     return {"ok": state in {"updated_with_new_items", "updated_no_new_items"}, "state": state, **snapshot}
 
 
-def load_success_watermark(path: Path) -> dict[str, int]:
+def load_success_watermark(path: Path) -> dict[str, Any]:
     try:
         payload = json.loads(path.read_text(encoding="utf-8"))
         return {
             "refresh_revision": int(payload["refresh_revision"]),
+            "refreshed_at_ms": int(payload["refreshed_at_ms"]),
             "article_publish_watermark": int(payload["article_publish_watermark"]),
+            "refresh_attempt_id": str(payload["refresh_attempt_id"]),
+            "accepted_run_id": str(payload["accepted_run_id"]),
         }
     except (OSError, ValueError, TypeError, KeyError, json.JSONDecodeError):
-        return {"refresh_revision": 0, "article_publish_watermark": 0}
+        return {"refresh_revision": 0, "refreshed_at_ms": 0, "article_publish_watermark": 0, "refresh_attempt_id": "", "accepted_run_id": ""}
 
 
 def sqlite_snapshot(data_dir: Path, article_publish_watermark: int = 0) -> dict[str, Any]:
@@ -91,19 +119,33 @@ def main() -> int:
     parser.add_argument("--previous-success-revision", type=int, default=None)
     parser.add_argument("--article-publish-watermark", type=int, default=None)
     parser.add_argument("--now-ms", type=int, default=0)
+    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--run-started-at-ms", type=int, required=True)
+    parser.add_argument("--refresh-attempt", required=True)
     args = parser.parse_args()
     data_dir = configured_data_dir()
     state_path = Path(args.state_path).expanduser().resolve()
     watermark = load_success_watermark(state_path)
-    previous_revision = args.previous_success_revision if args.previous_success_revision is not None else watermark["refresh_revision"]
+    if args.previous_success_revision is not None:
+        watermark["refresh_revision"] = args.previous_success_revision
     article_watermark = args.article_publish_watermark if args.article_publish_watermark is not None else watermark["article_publish_watermark"]
     now_ms = args.now_ms or int(datetime.now(timezone.utc).timestamp() * 1000)
+    try:
+        refresh_attempt = json.loads(Path(args.refresh_attempt).read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError):
+        refresh_attempt = {}
     result = classify_snapshot(
         sqlite_snapshot(data_dir, article_watermark),
         now_ms=now_ms,
-        previous_success_revision=previous_revision,
+        previous_watermark=watermark,
+        run_id=args.run_id,
+        run_started_at_ms=args.run_started_at_ms,
+        refresh_attempt=refresh_attempt,
     )
-    result["previous_success_revision"] = previous_revision
+    result["previous_success_revision"] = watermark["refresh_revision"]
+    result["previous_refreshed_at_ms"] = watermark["refreshed_at_ms"]
+    result["refresh_attempt_id"] = str(refresh_attempt.get("attempt_id") or "")
+    result["run_id"] = args.run_id
     result["article_publish_watermark"] = article_watermark
     result["state_path"] = str(state_path)
     result.update({
