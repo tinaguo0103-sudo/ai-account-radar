@@ -6,6 +6,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import socket
 import sqlite3
 import time
@@ -20,7 +21,10 @@ CANONICAL_DATA_DIR = Path.home() / ".codex" / "ai-account-radar-runtime" / "prov
 HEALTH_DIR = CANONICAL_DATA_DIR.parent / "health"
 LEASE_PATH = HEALTH_DIR / "refresh.lock"
 RECEIPT_DIR = HEALTH_DIR / "receipts"
+ATTEMPT_DIR = HEALTH_DIR / "attempts"
 LEASE_TTL_MS = 10 * 60 * 1000
+RUN_ID_PATTERN = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,127}$")
+ATTEMPT_ID_PATTERN = re.compile(r"^[0-9a-f]{32}$")
 
 
 class RefreshError(RuntimeError):
@@ -85,6 +89,16 @@ def atomic_write(path: Path, payload: dict[str, Any]) -> None:
     temporary = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
     temporary.write_bytes(canonical_json(payload) + b"\n")
     os.replace(temporary, path)
+
+
+def exclusive_write(path: Path, payload: dict[str, Any]) -> str:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    raw = canonical_json(payload) + b"\n"
+    descriptor = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    with os.fdopen(descriptor, "wb") as handle:
+        handle.write(raw)
+        handle.flush(); os.fsync(handle.fileno())
+    return sha256_bytes(raw)
 
 
 def acquire_lease(path: Path, payload: dict[str, Any], now_ms: int) -> None:
@@ -164,6 +178,8 @@ def run_refresh(
     clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
     sleep_fn: Callable[[float], None] = time.sleep, deadline_ms: int = 120000, poll_interval_ms: int = 500,
 ) -> dict[str, Any]:
+    if not RUN_ID_PATTERN.fullmatch(run_id):
+        raise RefreshError("refresh_run_id_invalid")
     database = data_dir.resolve() / "wewe-rss.db"
     attempt_id = uuid.uuid4().hex
     started = clock_ms()
@@ -171,9 +187,21 @@ def run_refresh(
     lease = {"schema_version": 1, "attempt_id": attempt_id, "run_id": run_id, "pid": os.getpid(), "host": socket.gethostname(), "started_at_ms": started, "expires_at_ms": started + LEASE_TTL_MS, "provider_url": PROVIDER_URL, "data_identity": database_identity(database)}
     acquire_lease(lease_path, lease, started)
     try:
+        lease_record_path = health_dir / "leases" / f"{run_id}_{attempt_id}.json"
+        lease_hash = exclusive_write(lease_record_path, lease)
         before = snapshot_fn(database)
         requested_at = clock_ms()
         requested_ids = [row["feed_id"] for row in before["feeds"]]
+        lineage = {
+            "schema_version": 1, "attempt_id": attempt_id, "run_id": run_id,
+            "provider_url": PROVIDER_URL, "database_identity": before["database_identity"],
+            "feed_ids": requested_ids, "before_snapshot_sha256": before["snapshot_sha256"],
+            "lease_sha256": lease_hash, "pid": os.getpid(),
+            "host": socket.gethostname(), "started_at_ms": started, "requested_at_ms": requested_at,
+            "status": "requesting",
+        }
+        lineage_path = health_dir / "attempts" / f"{run_id}_{attempt_id}.json"
+        lineage_hash = exclusive_write(lineage_path, lineage)
         accepted = []
         for feed_id in requested_ids:
             try:
@@ -197,7 +225,7 @@ def run_refresh(
                 last_error = str(exc); sleep_fn(poll_interval_ms / 1000); continue
             if complete:
                 completed = clock_ms()
-                receipt = {"schema_version": 1, "attempt_id": attempt_id, "run_id": run_id, "provider_url": PROVIDER_URL, "database_identity": before["database_identity"], "feed_ids": requested_ids, "before_snapshot_sha256": before["snapshot_sha256"], "after_snapshot_sha256": after["snapshot_sha256"], "before": before, "after": after, "per_feed": per_feed, "started_at_ms": started, "requested_at_ms": requested_at, "completed_at_ms": completed, "new_item_count": new_count, "refresh_revision": max(row["after_sync_time"] for row in per_feed), "refreshed_at_ms": max(row["updated_at_ms"] for row in after["feeds"]), "status": "success"}
+                receipt = {"schema_version": 1, "attempt_id": attempt_id, "run_id": run_id, "provider_url": PROVIDER_URL, "database_identity": before["database_identity"], "feed_ids": requested_ids, "before_snapshot_sha256": before["snapshot_sha256"], "after_snapshot_sha256": after["snapshot_sha256"], "attempt_lineage_sha256": lineage_hash, "before": before, "after": after, "per_feed": per_feed, "started_at_ms": started, "requested_at_ms": requested_at, "completed_at_ms": completed, "new_item_count": new_count, "refresh_revision": max(row["after_sync_time"] for row in per_feed), "refreshed_at_ms": max(row["updated_at_ms"] for row in after["feeds"]), "status": "success"}
                 receipt_path = health_dir / "receipts" / f"{run_id}_{attempt_id}.json"
                 atomic_write(receipt_path, receipt)
                 receipt_hash = sha256_bytes(receipt_path.read_bytes())

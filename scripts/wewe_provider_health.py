@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import os
+import re
 import sqlite3
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from wewe_provider_refresh import canonical_json, read_snapshot, sha256_bytes
+from wewe_provider_refresh import ATTEMPT_ID_PATTERN, HEALTH_DIR, PROVIDER_URL, RUN_ID_PATTERN, canonical_json, read_snapshot, sha256_bytes
 
 CANONICAL_DATA_DIR = Path.home() / ".codex" / "ai-account-radar-runtime" / "providers" / "wewe-rss" / "data"
 CANONICAL_STATE_PATH = CANONICAL_DATA_DIR.parent / "health" / "last_success.json"
@@ -69,41 +72,117 @@ def classify_snapshot(
 
 def validate_refresh_receipt(
     receipt_path: Path, receipt_sha256: str, *, run_id: str, attempt_id: str,
-    data_dir: Path = CANONICAL_DATA_DIR, now_ms: int, previous_attempt_id: str = "",
+    data_dir: Path = CANONICAL_DATA_DIR, health_dir: Path = HEALTH_DIR,
+    now_ms: int, run_started_at_ms: int = 0, previous_attempt_id: str = "",
 ) -> dict[str, Any]:
+    if not isinstance(run_id, str) or not RUN_ID_PATTERN.fullmatch(run_id) or not isinstance(attempt_id, str) or not ATTEMPT_ID_PATTERN.fullmatch(attempt_id):
+        raise ValueError("refresh_receipt_identity_format_invalid")
+    root = health_dir.resolve()
+    expected = root / "receipts" / f"{run_id}_{attempt_id}.json"
+    lineage_path = root / "attempts" / f"{run_id}_{attempt_id}.json"
+    lease_record_path = root / "leases" / f"{run_id}_{attempt_id}.json"
+    supplied = Path(receipt_path)
+    if not supplied.is_absolute() or supplied != expected or supplied.parent.resolve() != (root / "receipts").resolve():
+        raise ValueError("refresh_receipt_path_not_owned")
+    for path, reason in ((expected, "refresh_receipt_path_not_owned"), (lineage_path, "refresh_attempt_lineage_missing"), (lease_record_path, "refresh_lease_lineage_missing")):
+        try:
+            info = path.lstat()
+        except OSError as exc:
+            raise ValueError(reason) from exc
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or path.is_symlink():
+            raise ValueError(reason)
     try:
-        raw = receipt_path.read_bytes()
+        raw = expected.read_bytes()
         receipt = json.loads(raw)
     except (OSError, json.JSONDecodeError, TypeError) as exc:
         raise ValueError("refresh_receipt_unreadable") from exc
     if sha256_bytes(raw) != receipt_sha256:
         raise ValueError("refresh_receipt_hash_mismatch")
-    required = {"schema_version", "attempt_id", "run_id", "provider_url", "database_identity", "feed_ids", "before_snapshot_sha256", "after_snapshot_sha256", "before", "after", "per_feed", "started_at_ms", "requested_at_ms", "completed_at_ms", "new_item_count", "refresh_revision", "refreshed_at_ms", "status"}
-    if not isinstance(receipt, dict) or not required.issubset(receipt):
+    required = {"schema_version", "attempt_id", "run_id", "provider_url", "database_identity", "feed_ids", "before_snapshot_sha256", "after_snapshot_sha256", "attempt_lineage_sha256", "before", "after", "per_feed", "started_at_ms", "requested_at_ms", "completed_at_ms", "new_item_count", "refresh_revision", "refreshed_at_ms", "status"}
+    if not isinstance(receipt, dict) or set(receipt) != required:
         raise ValueError("refresh_receipt_schema_invalid")
     if receipt["schema_version"] != 1 or receipt["status"] != "success" or receipt["run_id"] != run_id or receipt["attempt_id"] != attempt_id:
         raise ValueError("refresh_receipt_identity_mismatch")
     if previous_attempt_id and receipt["attempt_id"] == previous_attempt_id:
         raise ValueError("refresh_receipt_replayed")
-    if receipt["provider_url"] != "http://127.0.0.1:4000":
+    if receipt["provider_url"] != PROVIDER_URL:
         raise ValueError("refresh_receipt_provider_mismatch")
-    started, requested, completed = (int(receipt[key]) for key in ("started_at_ms", "requested_at_ms", "completed_at_ms"))
-    if not (0 < started <= requested <= completed <= now_ms):
+    integer_fields = ("schema_version", "started_at_ms", "requested_at_ms", "completed_at_ms", "new_item_count", "refresh_revision", "refreshed_at_ms")
+    if any(type(receipt.get(key)) is not int for key in integer_fields):
+        raise ValueError("refresh_receipt_type_invalid")
+    started, requested, completed = (receipt[key] for key in ("started_at_ms", "requested_at_ms", "completed_at_ms"))
+    if not (0 < run_started_at_ms <= started <= requested <= completed <= now_ms):
         raise ValueError("refresh_receipt_time_invalid")
-    if receipt["before_snapshot_sha256"] != sha256_bytes(canonical_json({key: value for key, value in receipt["before"].items() if key != "snapshot_sha256"})):
+    try:
+        lineage_raw = lineage_path.read_bytes(); lineage = json.loads(lineage_raw)
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("refresh_attempt_lineage_unreadable") from exc
+    lineage_keys = {"schema_version", "attempt_id", "run_id", "provider_url", "database_identity", "feed_ids", "before_snapshot_sha256", "lease_sha256", "pid", "host", "started_at_ms", "requested_at_ms", "status"}
+    if not isinstance(lineage, dict) or set(lineage) != lineage_keys or sha256_bytes(lineage_raw) != receipt["attempt_lineage_sha256"]:
+        raise ValueError("refresh_attempt_lineage_invalid")
+    if any(type(lineage.get(key)) is not int for key in ("schema_version", "pid", "started_at_ms", "requested_at_ms")):
+        raise ValueError("refresh_attempt_lineage_type_invalid")
+    if lineage["status"] != "requesting" or lineage["run_id"] != run_id or lineage["attempt_id"] != attempt_id or lineage["provider_url"] != PROVIDER_URL or lineage["started_at_ms"] != started or lineage["requested_at_ms"] != requested:
+        raise ValueError("refresh_attempt_lineage_identity_mismatch")
+    try:
+        lease_raw = lease_record_path.read_bytes(); lease = json.loads(lease_raw)
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        raise ValueError("refresh_lease_lineage_unreadable") from exc
+    lease_keys = {"schema_version", "attempt_id", "run_id", "pid", "host", "started_at_ms", "expires_at_ms", "provider_url", "data_identity"}
+    if not isinstance(lease, dict) or set(lease) != lease_keys or sha256_bytes(lease_raw) != lineage["lease_sha256"]:
+        raise ValueError("refresh_lease_lineage_invalid")
+    if lease["run_id"] != run_id or lease["attempt_id"] != attempt_id or lease["provider_url"] != PROVIDER_URL or lease["data_identity"] != receipt["database_identity"] or lease["started_at_ms"] != started or lease["pid"] != lineage["pid"] or lease["host"] != lineage["host"]:
+        raise ValueError("refresh_lease_lineage_identity_mismatch")
+    snapshot_keys = {"database_identity", "active_account_count", "feeds", "snapshot_sha256"}
+    identity_keys = {"path", "device", "inode"}
+    feed_keys = {"feed_id", "sync_time", "updated_at_ms", "article_count", "max_publish_time"}
+    per_feed_keys = {"feed_id", "before_sync_time", "after_sync_time", "completion_advanced", "new_item_count"}
+    before, after = receipt["before"], receipt["after"]
+    if not isinstance(before, dict) or not isinstance(after, dict) or set(before) != snapshot_keys or set(after) != snapshot_keys:
+        raise ValueError("refresh_receipt_snapshot_schema_invalid")
+    hash_fields = ("before_snapshot_sha256", "after_snapshot_sha256", "attempt_lineage_sha256")
+    if any(not isinstance(receipt.get(key), str) or not re.fullmatch(r"[0-9a-f]{64}", receipt[key]) for key in hash_fields):
+        raise ValueError("refresh_receipt_hash_type_invalid")
+    if receipt["before_snapshot_sha256"] != sha256_bytes(canonical_json({key: value for key, value in before.items() if key != "snapshot_sha256"})) or before["snapshot_sha256"] != receipt["before_snapshot_sha256"]:
         raise ValueError("refresh_receipt_before_hash_mismatch")
-    if receipt["after_snapshot_sha256"] != sha256_bytes(canonical_json({key: value for key, value in receipt["after"].items() if key != "snapshot_sha256"})):
+    if receipt["after_snapshot_sha256"] != sha256_bytes(canonical_json({key: value for key, value in after.items() if key != "snapshot_sha256"})) or after["snapshot_sha256"] != receipt["after_snapshot_sha256"]:
         raise ValueError("refresh_receipt_after_hash_mismatch")
+    if not isinstance(receipt["database_identity"], dict) or set(receipt["database_identity"]) != identity_keys or before["database_identity"] != receipt["database_identity"] or after["database_identity"] != receipt["database_identity"] or lineage["database_identity"] != receipt["database_identity"]:
+        raise ValueError("refresh_receipt_database_identity_mismatch")
+    if type(before["active_account_count"]) is not int or type(after["active_account_count"]) is not int or before["active_account_count"] < 1 or after["active_account_count"] < 1:
+        raise ValueError("refresh_receipt_account_state_invalid")
+    if not isinstance(before["feeds"], list) or not isinstance(after["feeds"], list) or not isinstance(receipt["per_feed"], list) or not isinstance(receipt["feed_ids"], list) or not receipt["feed_ids"]:
+        raise ValueError("refresh_receipt_feed_schema_invalid")
+    if any(not isinstance(row, dict) or set(row) != feed_keys for row in before["feeds"] + after["feeds"]) or any(not isinstance(row, dict) or set(row) != per_feed_keys for row in receipt["per_feed"]):
+        raise ValueError("refresh_receipt_feed_schema_invalid")
+    before_ids = [row["feed_id"] for row in before["feeds"]]; after_ids = [row["feed_id"] for row in after["feeds"]]
+    if any(not isinstance(value, str) or not value for value in receipt["feed_ids"] + before_ids + after_ids) or len(set(receipt["feed_ids"])) != len(receipt["feed_ids"]):
+        raise ValueError("refresh_receipt_feed_id_invalid")
+    if before_ids != receipt["feed_ids"] or after_ids != receipt["feed_ids"] or lineage["feed_ids"] != receipt["feed_ids"] or len(receipt["per_feed"]) != len(receipt["feed_ids"]):
+        raise ValueError("refresh_receipt_feed_set_mismatch")
+    expected_per_feed = []
+    total_new = 0
+    for old, new in zip(before["feeds"], after["feeds"]):
+        numeric = [old[key] for key in feed_keys - {"feed_id"}] + [new[key] for key in feed_keys - {"feed_id"}]
+        if any(type(value) is not int for value in numeric):
+            raise ValueError("refresh_receipt_feed_type_invalid")
+        if new["article_count"] < old["article_count"] or new["max_publish_time"] < old["max_publish_time"]:
+            raise ValueError("refresh_receipt_article_aggregate_rollback")
+        if not (requested <= new["updated_at_ms"] <= completed):
+            raise ValueError("refresh_receipt_completion_time_drift")
+        advanced = new["sync_time"] > old["sync_time"] and new["sync_time"] >= requested // 1000
+        added = new["article_count"] - old["article_count"]
+        expected_per_feed.append({"feed_id": old["feed_id"], "before_sync_time": old["sync_time"], "after_sync_time": new["sync_time"], "completion_advanced": advanced, "new_item_count": added})
+        total_new += added
+    if receipt["per_feed"] != expected_per_feed or not all(row["completion_advanced"] for row in expected_per_feed):
+        raise ValueError("refresh_receipt_per_feed_mismatch")
+    if receipt["new_item_count"] != total_new or receipt["refresh_revision"] != max(row["sync_time"] for row in after["feeds"]) or receipt["refreshed_at_ms"] != max(row["updated_at_ms"] for row in after["feeds"]):
+        raise ValueError("refresh_receipt_aggregate_mismatch")
+    if lineage["feed_ids"] != before_ids or lineage["before_snapshot_sha256"] != receipt["before_snapshot_sha256"]:
+        raise ValueError("refresh_attempt_lineage_snapshot_mismatch")
     live = read_snapshot(data_dir.resolve() / "wewe-rss.db")
     if live["database_identity"] != receipt["database_identity"] or live["snapshot_sha256"] != receipt["after_snapshot_sha256"]:
         raise ValueError("refresh_receipt_live_state_drift")
-    if [row["feed_id"] for row in live["feeds"]] != list(receipt["feed_ids"]):
-        raise ValueError("refresh_receipt_feed_set_mismatch")
-    if not all(bool(row.get("completion_advanced")) for row in receipt["per_feed"]):
-        raise ValueError("refresh_receipt_completion_missing")
-    calculated_new = sum(int(row.get("new_item_count") or 0) for row in receipt["per_feed"])
-    if calculated_new != int(receipt["new_item_count"]):
-        raise ValueError("refresh_receipt_new_item_mismatch")
     return receipt
 
 
@@ -174,7 +253,7 @@ def main() -> int:
     receipt_error = ""
     try:
         adapter_result = json.loads(Path(args.refresh_result).read_text(encoding="utf-8"))
-        receipt = validate_refresh_receipt(Path(adapter_result["receipt_path"]), str(adapter_result["receipt_sha256"]), run_id=args.run_id, attempt_id=str(adapter_result["attempt_id"]), now_ms=now_ms, previous_attempt_id=str(watermark.get("refresh_attempt_id") or ""))
+        receipt = validate_refresh_receipt(Path(adapter_result["receipt_path"]), str(adapter_result["receipt_sha256"]), run_id=args.run_id, attempt_id=str(adapter_result["attempt_id"]), now_ms=now_ms, run_started_at_ms=args.run_started_at_ms, previous_attempt_id=str(watermark.get("refresh_attempt_id") or ""))
     except (OSError, KeyError, ValueError, json.JSONDecodeError, TypeError) as exc:
         receipt_error = str(exc) or type(exc).__name__
         receipt = {}
