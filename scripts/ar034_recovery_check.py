@@ -7,7 +7,12 @@ import csv
 import json
 from pathlib import Path
 
-from source_ingestion_lineage import LineageError, validate_partial_source_artifact
+from source_ingestion_lineage import (
+    LineageError,
+    revalidate_legacy_before_external_write,
+    validate_legacy_partial_source_artifact,
+    validate_partial_source_artifact,
+)
 
 
 def csv_source_counts(path: Path) -> dict[str, int]:
@@ -27,10 +32,30 @@ def main() -> int:
     parser.add_argument("--incident-content-items", type=Path, required=True)
     parser.add_argument("--incident-today-candidates", type=Path, required=True)
     parser.add_argument("--check-only", action="store_true", required=True)
+    parser.add_argument("--legacy-daily-log", type=Path)
+    parser.add_argument("--expected-source-run-id")
+    parser.add_argument("--locked-legacy-attestation", type=Path)
     args = parser.parse_args()
     try:
-        probe = json.loads(args.probe_result.read_text(encoding="utf-8"))
-        douyin = validate_partial_source_artifact(probe, args.douyin_manual)
+        if bool(args.legacy_daily_log) != bool(args.expected_source_run_id):
+            raise LineageError("legacy_mode_arguments_incomplete")
+        if args.locked_legacy_attestation and not args.legacy_daily_log:
+            raise LineageError("legacy_locked_report_without_legacy_mode")
+        if args.legacy_daily_log:
+            if args.locked_legacy_attestation:
+                locked = json.loads(args.locked_legacy_attestation.read_text(encoding="utf-8"))
+                if isinstance(locked, dict) and isinstance(locked.get("preserved_douyin_success_artifact"), dict):
+                    locked = locked["preserved_douyin_success_artifact"]
+                douyin = revalidate_legacy_before_external_write(
+                    args.legacy_daily_log, args.probe_result, args.douyin_manual,
+                    expected_run_id=str(args.expected_source_run_id), attested_report=locked,
+                )
+                douyin["prewrite_revalidated"] = True
+            else:
+                douyin = validate_legacy_partial_source_artifact(args.legacy_daily_log, args.probe_result, args.douyin_manual, expected_run_id=str(args.expected_source_run_id))
+        else:
+            probe = json.loads(args.probe_result.read_text(encoding="utf-8"))
+            douyin = validate_partial_source_artifact(probe, args.douyin_manual)
         result = {
             "ok": True,
             "check_only": True,

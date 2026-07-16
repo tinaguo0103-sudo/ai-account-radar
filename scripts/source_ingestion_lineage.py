@@ -5,8 +5,13 @@ from __future__ import annotations
 import csv
 import hashlib
 import json
+import os
+import re
+import stat
+from datetime import datetime
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 
 class LineageError(RuntimeError):
@@ -47,6 +52,154 @@ def row_account(row: dict[str, Any]) -> str:
 
 def artifact_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def safe_legacy_artifact(path: Path, expected: Path, reason: str) -> os.stat_result:
+    if not path.is_absolute() or path != expected or path.is_symlink() or path.resolve() != expected:
+        raise LineageError(f"{reason}_path_mismatch")
+    try:
+        info = path.lstat()
+    except OSError as exc:
+        raise LineageError(f"{reason}_missing") from exc
+    if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid() or info.st_mode & 0o022:
+        raise LineageError(f"{reason}_identity_unsafe")
+    return info
+
+
+def legacy_time(value: Any, reason: str) -> datetime:
+    if not isinstance(value, str) or not value:
+        raise LineageError(reason)
+    try:
+        parsed = datetime.fromisoformat(value)
+    except ValueError as exc:
+        raise LineageError(reason) from exc
+    return parsed.replace(tzinfo=ZoneInfo("Asia/Shanghai")) if parsed.tzinfo is None else parsed
+
+
+def validate_legacy_partial_source_artifact(
+    daily_log_path: Path, probe_path: Path, manual_path: Path, *, expected_run_id: str,
+) -> dict[str, Any]:
+    if re.fullmatch(r"run_\d{8}_\d{6}", expected_run_id) is None:
+        raise LineageError("legacy_expected_run_id_invalid")
+    expected_date = f"{expected_run_id[4:8]}-{expected_run_id[8:10]}-{expected_run_id[10:12]}"
+    production_root = daily_log_path.parent.parent.parent.resolve()
+    expected_daily = production_root / "output" / "logs" / f"daily_pipeline_{expected_date}.json"
+    expected_probe = production_root / "output" / "spikes" / "douyin_cdp_source_watch_probe" / "cdp_probe_results.json"
+    expected_manual = production_root / "output" / "spikes" / "douyin_cdp_source_watch_probe" / "content_items_manual.jsonl"
+    daily_stat = safe_legacy_artifact(daily_log_path, expected_daily, "legacy_daily_log")
+    probe_stat = safe_legacy_artifact(probe_path, expected_probe, "legacy_probe")
+    manual_stat = safe_legacy_artifact(manual_path, expected_manual, "legacy_manual")
+    try:
+        daily = json.loads(daily_log_path.read_text(encoding="utf-8")); probe = json.loads(probe_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError, TypeError) as exc:
+        raise LineageError("legacy_evidence_malformed") from exc
+    if not isinstance(daily, dict) or not isinstance(probe, dict):
+        raise LineageError("legacy_evidence_non_object")
+    if "run_id" in probe or "manual_artifact" in probe:
+        raise LineageError("legacy_mode_rejected_for_native_artifact")
+    if str(daily.get("run_id") or "") != expected_run_id:
+        raise LineageError("legacy_daily_run_mismatch")
+    started_date = expected_run_id[4:12]
+    if started_date != expected_date.replace("-", ""):
+        raise LineageError("legacy_run_date_mismatch")
+    steps = [row for row in daily.get("steps", []) if isinstance(row, dict) and row.get("name") == "fetch daily Douyin homepage title/caption samples through Chrome CDP"]
+    if len(steps) != 1:
+        raise LineageError("legacy_douyin_step_not_unique")
+    step = steps[0]
+    script = production_root / "scripts" / "douyin_cdp_source_watch_probe.mjs"
+    expected_command = ["node", str(script), "--cdp", "http://127.0.0.1:9333", "--account-limit", "0", "--video-limit", "3", "--retries", "2"]
+    if step.get("command") != expected_command:
+        raise LineageError("legacy_douyin_command_mismatch")
+    if int(step.get("returncode") if step.get("returncode") is not None else -1) != 0 or int(step.get("optional_returncode") if step.get("optional_returncode") is not None else -1) != 3 or step.get("optional_failed") is not True:
+        raise LineageError("legacy_step_terminal_status_mismatch")
+    if probe.get("status") != "completed_with_failures":
+        raise LineageError("legacy_probe_terminal_status_mismatch")
+    started = legacy_time(step.get("started_at"), "legacy_step_time_invalid")
+    generated = legacy_time(daily.get("generated_at"), "legacy_generated_time_invalid")
+    if started >= generated or started.date().isoformat() != expected_date or generated.date().isoformat() != expected_date:
+        raise LineageError("legacy_time_window_invalid")
+    for info in (probe_stat, manual_stat):
+        if not (started.timestamp() <= info.st_mtime <= generated.timestamp()):
+            raise LineageError("legacy_artifact_time_outside_run")
+    resolver = probe.get("resolver") if isinstance(probe.get("resolver"), dict) else {}
+    if str(resolver.get("manual_jsonl") or "") != str(expected_manual):
+        raise LineageError("legacy_resolver_identity_mismatch")
+    coverage = probe.get("coverage") if isinstance(probe.get("coverage"), dict) else {}
+    coverage_values = [coverage.get(key) for key in ("planned_accounts", "attempted_accounts", "successful_accounts", "failed_account_count")]
+    if any(type(value) is not int or value < 0 for value in coverage_values):
+        raise LineageError("legacy_account_coverage_mismatch")
+    planned, attempted, successful, failed_count = coverage_values
+    if planned == 0 or attempted != planned or successful + failed_count != attempted:
+        raise LineageError("legacy_account_coverage_mismatch")
+    invariants = coverage.get("invariants") if isinstance(coverage.get("invariants"), dict) else {}
+    if not all(invariants.get(key) is True for key in ("attempted_equals_planned", "success_plus_failed_equals_attempted", "account_lineage_unique_and_complete")) or not bool((probe.get("item_lineage") or {}).get("ok")):
+        raise LineageError("legacy_lineage_invariant_failed")
+    failures = coverage.get("failed_accounts") if isinstance(coverage.get("failed_accounts"), list) else []
+    if len(failures) != failed_count or any(not isinstance(row, dict) or type(row.get("artifact_count")) is not int or row["artifact_count"] != 0 for row in failures):
+        raise LineageError("legacy_failed_account_artifact_leak")
+    failed_names = {str(row.get("account_name") or "") for row in failures}
+    counts = coverage.get("per_account_artifact_counts") if isinstance(coverage.get("per_account_artifact_counts"), dict) else {}
+    rows = read_jsonl(manual_path)
+    homepage_items = resolver.get("homepage_card_items")
+    if type(homepage_items) is not int or homepage_items <= 0 or len(rows) != homepage_items:
+        raise LineageError("legacy_manual_row_count_mismatch")
+    fingerprints = [row_identity(row) for row in rows]
+    if any(not value for value in fingerprints) or len(set(fingerprints)) != len(fingerprints):
+        raise LineageError("legacy_manual_fingerprint_invalid")
+    actual_counts: dict[str, int] = {}
+    mapping: dict[str, str] = {}
+    for row, fingerprint in zip(rows, fingerprints):
+        row_run = str(row.get("运行批次") or "")
+        if row_run and row_run != expected_run_id:
+            raise LineageError("legacy_manual_row_run_mismatch")
+        account = row_account(row)
+        if not account or account not in counts or account in failed_names:
+            raise LineageError("legacy_manual_account_contamination")
+        actual_counts[account] = actual_counts.get(account, 0) + 1; mapping[fingerprint] = account
+    expected_counts = {str(name): int(value) for name, value in counts.items() if name not in failed_names}
+    if len(expected_counts) != successful or actual_counts != expected_counts or sum(actual_counts.values()) != len(rows):
+        raise LineageError("legacy_per_account_count_mismatch")
+    command_digest = hashlib.sha256(json.dumps(expected_command, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    return {
+        "ok": True, "source_run_id": expected_run_id, "run_id": expected_run_id,
+        "legacy_attestation_verified": True, "evidence_basis": "daily_log_probe_manual_v1", "evidence_version": 1,
+        "collection_status": "completed_with_failures", "planned_accounts": planned, "attempted_accounts": attempted,
+        "successful_accounts": successful, "failed_accounts": failed_count, "successful_item_count": len(rows),
+        "daily_log": {"path": str(expected_daily), "sha256": artifact_sha256(expected_daily), "size": daily_stat.st_size, "mtime_ns": daily_stat.st_mtime_ns},
+        "probe": {"path": str(expected_probe), "sha256": artifact_sha256(expected_probe), "size": probe_stat.st_size, "mtime_ns": probe_stat.st_mtime_ns},
+        "manual": {"path": str(expected_manual), "sha256": artifact_sha256(expected_manual), "size": manual_stat.st_size, "mtime_ns": manual_stat.st_mtime_ns, "row_count": len(rows)},
+        "command_identity_sha256": command_digest, "started_at": started.isoformat(), "generated_at": generated.isoformat(),
+        "ordered_fingerprints": fingerprints, "fingerprint_accounts": mapping, "failed_account_names": sorted(failed_names),
+        "stdout_corroboration": {
+            "is_identity_anchor": False,
+            "sha256": hashlib.sha256(str(step.get("stdout") or "").encode("utf-8")).hexdigest(),
+            "size": len(str(step.get("stdout") or "").encode("utf-8")),
+        },
+    }
+
+
+def revalidate_legacy_before_external_write(
+    daily_log_path: Path,
+    probe_path: Path,
+    manual_path: Path,
+    *,
+    expected_run_id: str,
+    attested_report: dict[str, Any],
+) -> dict[str, Any]:
+    if not isinstance(attested_report, dict) or attested_report.get("legacy_attestation_verified") is not True:
+        raise LineageError("legacy_attestation_report_invalid")
+    current = validate_legacy_partial_source_artifact(
+        daily_log_path, probe_path, manual_path, expected_run_id=expected_run_id,
+    )
+    locked_fields = (
+        "source_run_id", "evidence_basis", "evidence_version", "planned_accounts", "attempted_accounts",
+        "successful_accounts", "failed_accounts", "successful_item_count", "daily_log", "probe", "manual",
+        "command_identity_sha256", "started_at", "generated_at", "ordered_fingerprints",
+        "fingerprint_accounts", "failed_account_names",
+    )
+    if any(current.get(field) != attested_report.get(field) for field in locked_fields):
+        raise LineageError("legacy_attestation_drift")
+    return current
 
 
 def validate_partial_source_artifact(
