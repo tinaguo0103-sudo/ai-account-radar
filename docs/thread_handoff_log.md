@@ -3426,3 +3426,13 @@
 - 证据：`/private/tmp/ar034b_rc8_production_release_20260716_2053/PM_HANDOFF.md`、`provider/refresh_check_only.json`、`sources/legacy_initial.json`。
 - Migration plan：`/private/tmp/ar034b_provider_runtime_migration_20260716/PROVIDER_MIGRATION_AUTHORIZATION_PLAN.md`，SHA256=`9bac54f0314635932bf92d3515b5dd4ba63217dd50343912ffab4d996546c0ab`。
 - 派发模型规则继续省略 `model` 与 `thinking`。
+
+### 2026-07-16 用户授权 WeWe provider canonical migration，并允许自动继续 RC8
+
+- 用户确认：批准 `/private/tmp/ar034b_provider_runtime_migration_20260716/PROVIDER_MIGRATION_AUTHORIZATION_PLAN.md` 所列 provider Authorized migration；迁移 read-back 通过后，无需再次请求确认，固定生产线程自动从 RC8 Phase 0 fresh 重启既有发布与版本化全源恢复。
+- Migration scope：保持 `ai-rebuild` / `ai-04-rebuild` / `ai-rebuild-2` PAUSED；fresh backup provider inspect、repo-local data/DB、container config 与 host env metadata；normal-stop exact `ai-radar-wewe-rss`；确认 4000 free 与 DB 无 open files；离线复制/校验到 `~/.codex/ai-account-radar-runtime/providers/wewe-rss/data`；同名/同镜像/同端口重建且仅切 canonical mount；现有 private auth 安全接入 host-supported `WEWE_RSS_AUTH_CODE`，不输出 secret bytes/hash。
+- Migration read-back：container name/image/port/mount、canonical DB path/inode、SQLite integrity、account/feed 数量、provider health、masked auth presence 必须全部一致；migration 子阶段不允许 refresh。若账号健康为 `login_required`，保持 PAUSED 并停止，后续只允许固定 9334 canonical 管理/登录入口，不得随机寻找浏览器。
+- Automatic RC8 continuation：migration green 后自动执行 RC8 exact Git release/gate、canonical HMAC key、一次 bounded signed WeWe refresh、旧 Douyin originals initial+locked 31/29/2/87 复核、versioned full-source run、03 exact write/read-back + watermark、current-task editorial、04 exact write/read-back、card check-only 后一次个人发送、official projectless production cwd repair 与 status-only resume。不得重采 Douyin、继续旧错误 9 行、调用 public async refresh、手工 receipt、触发 06/SCF/global Skill/Chrome/profile/schema/callback 或 raw TOML。
+- Stop/rollback：scope/head/tree、mount/DB/auth、provider/account/feed、receipt/live DB、legacy lineage、03/04/card/cwd/automation read-back 任一不一致立即停止，保持 PAUSED，只回滚失败组件；迁移失败恢复原 repo-local mount/container/data 并核对原 DB hash/health。
+- Combined authorization supplement：`/private/tmp/ar034b_provider_runtime_migration_20260716/MIGRATION_AND_RC8_CONTINUATION_AUTHORIZATION.md`，SHA256=`248f5725612087c13c4e28a71aec9c2691620afe9b1fd2c29df99a236aa7a772`。
+- 执行线程：固定 production `019f2bc4-079e-7530-903e-484707590482`；派发省略 `model` 与 `thinking`，PM不轮询。
