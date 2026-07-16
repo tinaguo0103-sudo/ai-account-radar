@@ -71,8 +71,37 @@ def write_job_log(steps: list[dict[str, Any]]) -> Path:
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "steps": steps,
     }
+    daily_log = read_daily_pipeline_log()
+    if daily_log:
+        for key in (
+            "run_id",
+            "full_collection_success",
+            "collection_status",
+            "downstream_usable",
+            "downstream_usable_reason",
+            "downstream_usable_checks",
+            "downstream_blocked_reasons",
+            "source_failure_count",
+            "system_failure_count",
+            "isolated_failed_account_count",
+            "isolated_failed_accounts",
+            "today_candidates",
+        ):
+            if key in daily_log:
+                payload[key] = daily_log[key]
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
+
+
+def read_daily_pipeline_log() -> dict[str, Any]:
+    path = LOG_DIR / f"daily_pipeline_{datetime.now().strftime('%Y-%m-%d')}.json"
+    if not path.exists():
+        return {}
+    try:
+        data = json.loads(path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError:
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 def failure_summary(steps: list[dict[str, Any]], log_path: Path) -> str:

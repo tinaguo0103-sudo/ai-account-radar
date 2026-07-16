@@ -754,3 +754,13 @@
 - 验证方式：函数级测试模拟成功、timeout、HTTPError、retry 多 attempt，检查 telemetry 只记录脱敏 method/path/table/record_id/payload_size/duration/attempt/error_kind/status_code/status_unknown；staging/test 或只读生产 smoke 仅验证日志文件可写和不含敏感信息，不做生产写入探针。
 - 关联分支/提交：dev `08685fb feat: add feishu request telemetry`、`6eaf223 fix: redact feishu telemetry paths`；production `70e16c8 feat: add feishu request telemetry`、`9e2faf3 fix: redact feishu telemetry paths`
 - 备注：排期建议在 AR-005 配置 hotfix 完成后立刻推进。AR-005 先处理“明天生产窗口必须完整唤醒”；AR-017 再处理“如果仍异常，必须能定位到请求级根因”。AR-017 不替代 AR-015，前者是观测，后者是非幂等动作的 checkpoint/read-back/idempotency。2026-07-04 测试线程 QA 主体验证通过，但发现两项非阻断风险：`records/batch_create` 被误识别为 record_id；旧 warning/exception 仍可能打印 raw path。PM 门禁已要求窄返修；开发提交 `6eaf223` 后测试线程 Round 2 复测通过。生产线程已通过 cherry-pick 同步并 push `70e16c8`、`9e2faf3`，未写生产表、未发卡、未触发采集；开发线程已确认 dev 与 production hotfix patch-equivalent，无需重复 cherry-pick。下一步是明天生产窗口只读观察。
+
+### AR-033 Partial Collection Downstream Usability + Persistent Editorial Skill Release Manifest
+
+- 类型：生产链路恢复 / collection-to-editorial contract / Skill release provenance
+- 优先级：P0
+- 状态：Development In Progress / Needs RC + QA
+- 来源：2026-07-16 生产 run `run_20260716_080311`。08:00 collection 的 canonical 9333/profile/login 通过，31 个抖音账号全部 attempted，29 succeeded、2 failed；失败账号 `铁锤人`、`歸藏 guizang.ai` 均 `artifact_count=0` 且被隔离。03 已写入，`today_10_topics.csv` 9 行存在，但 outer scheduled log 因 account-level partial 标记 `failed_or_partial`，10:00 Topic Card 因 `today_daily_pipeline_log_not_ok` 跳过；09:15 check-only 通过但缺少 Git-managed persistent Skill release manifest，外层任务无法机器验证 release evidence。
+- 目标：保留 `full_collection_success=false/completed_with_failures`，新增独立 `downstream_usable` 合同，允许账号级 typed failure 隔离后成功候选进入 09:15；同时增加持久 Skill release manifest，使 `ar020e_daily_editorial_entrypoint.py --check-only` 自动验证 repo/global/manifest 三方一致。10:00 Topic Card 改为要求同日 exact run、`downstream_usable=true`、09:15 finalization/04 latest_write/read-back green 和原有 freshness/owner/card guards。
+- 边界：不得重跑采集、不得修改历史 03、不得写 04/发卡/触发 06；开发线程只产出代码、测试、production-base narrow RC 和今日恢复 read-only/check-only 证据。发布后恢复 04 写入和个人选题卡发送需由生产/PM 授权线程执行。
+- 验收：对抗测试覆盖 29/31 isolated partial usable、failed rows leak、plan incomplete、login/global preflight fail、lineage mismatch、zero candidate、card guard 等；manifest 测试覆盖 exact pass、missing/malformed/unknown/hash mismatch/repo-global drift；RC 从 production `5e733cd` 逐 hunk 组装，排除 PM docs 和无关 AR。

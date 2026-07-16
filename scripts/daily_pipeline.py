@@ -36,6 +36,7 @@ WECHAT_FULLTEXT_RESOLVED_MANUAL = OUT / "wechat_fulltext_provider_items.jsonl"
 DOUYIN_CDP_RESOLVED_MANUAL = OUT / "spikes" / "douyin_cdp_source_watch_probe" / "content_items_manual.jsonl"
 DOUYIN_CDP_RETRY_DIR = OUT / "spikes" / "douyin_cdp_source_watch_probe_verification_retry"
 DOUYIN_CDP_RETRY_MANUAL = DOUYIN_CDP_RETRY_DIR / "content_items_manual.jsonl"
+DOUYIN_CDP_RESULT = OUT / "spikes" / "douyin_cdp_source_watch_probe" / "cdp_probe_results.json"
 DOUYIN_TRANSCRIPTS_MANUAL = OUT / "spikes" / "douyin_transcripts" / "transcribed_content_items.jsonl"
 COMBINED_MANUAL = OUT / "daily_pipeline_manual_combined.jsonl"
 DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG = ROOT / "config" / "wechat_fulltext_provider.example.yaml"
@@ -92,7 +93,12 @@ def require_feishu_env() -> None:
         raise SystemExit(f"--write-feishu requires environment variables: {', '.join(missing)}")
 
 
-def write_run_log(steps: list[dict[str, Any]], mode: str, run_id: str = "") -> Path:
+def write_run_log(
+    steps: list[dict[str, Any]],
+    mode: str,
+    run_id: str = "",
+    downstream_report: dict[str, Any] | None = None,
+) -> Path:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     path = LOG_DIR / f"daily_pipeline_{datetime.now().strftime('%Y-%m-%d')}.json"
     output_dir = pipeline_output_dir(run_id, mode == "write-feishu") if run_id else OUT
@@ -108,6 +114,8 @@ def write_run_log(steps: list[dict[str, Any]], mode: str, run_id: str = "") -> P
             "today_10_markdown": str(output_dir / f"today_10_topics_{datetime.now().strftime('%Y-%m-%d')}.md"),
         },
     }
+    if downstream_report is not None:
+        payload.update(downstream_report)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 
@@ -236,6 +244,90 @@ def douyin_verification_rows(result_path: Path) -> list[dict[str, Any]]:
         if row.get("status") == "needs_login_or_verification"
         and (row.get("account_name") or row.get("homepage_url"))
     ]
+
+
+def successful_step(steps: list[dict[str, Any]], name: str) -> bool:
+    return any(step.get("name") == name and step.get("returncode") == 0 for step in steps)
+
+
+def is_douyin_account_level_partial(step: dict[str, Any], probe: dict[str, Any]) -> bool:
+    if step.get("name") != "fetch daily Douyin homepage title/caption samples through Chrome CDP":
+        return False
+    if not step.get("optional_failed"):
+        return False
+    return str(probe.get("status") or "") == "completed_with_failures"
+
+
+def downstream_usability_report(
+    steps: list[dict[str, Any]],
+    output_dir: Path,
+    today_candidates: int,
+    probe_result_path: Path = DOUYIN_CDP_RESULT,
+) -> dict[str, Any]:
+    probe = read_json(probe_result_path)
+    coverage = probe.get("coverage") if isinstance(probe.get("coverage"), dict) else {}
+    invariants = coverage.get("invariants") if isinstance(coverage.get("invariants"), dict) else {}
+    failed_accounts = coverage.get("failed_accounts") if isinstance(coverage.get("failed_accounts"), list) else []
+    per_account_artifacts = coverage.get("per_account_artifact_counts")
+    if not isinstance(per_account_artifacts, dict):
+        per_account_artifacts = {}
+
+    full_collection_failures = collection_failure_steps(steps)
+    hard_failures = [
+        step for step in full_collection_failures
+        if not is_douyin_account_level_partial(step, probe)
+    ]
+    failed_artifact_leaks = [
+        str(row.get("account_name") or "")
+        for row in failed_accounts
+        if int(row.get("artifact_count") or 0) != 0
+    ]
+    failure_names = {str(row.get("account_name") or "") for row in failed_accounts}
+    successful_artifact_accounts = [
+        name for name, count in per_account_artifacts.items()
+        if name not in failure_names and int(count or 0) > 0
+    ]
+
+    checks = {
+        "canonical_profile_preflight_ok": successful_step(steps, "start/verify canonical Douyin Chrome CDP")
+        and successful_step(steps, "verify canonical Douyin profile login session"),
+        "planned_equals_attempted": bool(invariants.get("attempted_equals_planned")),
+        "success_plus_failed_equals_attempted": bool(invariants.get("success_plus_failed_equals_attempted")),
+        "account_lineage_unique_and_complete": bool(invariants.get("account_lineage_unique_and_complete")),
+        "failed_accounts_have_zero_artifacts": not failed_artifact_leaks,
+        "item_lineage_ok": bool((probe.get("item_lineage") or {}).get("ok")),
+        "successful_account_artifacts_nonempty": bool(successful_artifact_accounts),
+        "today_candidates_nonempty": today_candidates > 0,
+        "no_system_level_failures": not hard_failures,
+    }
+    blocked_reasons = [name for name, ok in checks.items() if not ok]
+    downstream_usable = not blocked_reasons
+    full_collection_success = not full_collection_failures
+    return {
+        "full_collection_success": full_collection_success,
+        "collection_status": "completed" if full_collection_success else "completed_with_failures",
+        "downstream_usable": downstream_usable,
+        "downstream_usable_reason": "full_collection_success" if full_collection_success else (
+            "account_failures_isolated" if downstream_usable else "blocked"
+        ),
+        "downstream_usable_checks": checks,
+        "downstream_blocked_reasons": blocked_reasons,
+        "source_failure_count": len(full_collection_failures),
+        "system_failure_count": len(hard_failures),
+        "isolated_failed_account_count": len(failed_accounts),
+        "isolated_failed_accounts": [
+            {
+                "account_name": row.get("account_name", ""),
+                "status": row.get("status", ""),
+                "failure_reason": row.get("failure_reason", ""),
+                "artifact_count": int(row.get("artifact_count") or 0),
+            }
+            for row in failed_accounts
+        ],
+        "probe_result_path": str(probe_result_path),
+        "run_output_dir": str(output_dir),
+        "today_candidates": today_candidates,
+    }
 
 
 def row_key(row: dict[str, Any]) -> str:
@@ -502,10 +594,16 @@ def main() -> int:
     output_dir = pipeline_output_dir(run_id, args.write_feishu)
     today10_path = output_dir / "today_10_topics.csv"
     generated_count = today10_count(today10_path)
+    downstream_report = downstream_usability_report(steps, output_dir, generated_count)
     if generated_count == 0:
         failures = collection_failure_steps(steps)
-        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
-        print(json.dumps({
+        log_path = write_run_log(
+            steps,
+            "write-feishu" if args.write_feishu else "dry-run",
+            run_id,
+            downstream_report=downstream_report,
+        )
+        payload = {
             "ok": not failures,
             "status": "failed_or_partial" if failures else "completed_empty",
             "mode": "write-feishu" if args.write_feishu else "dry-run",
@@ -514,7 +612,9 @@ def main() -> int:
             "log": str(log_path),
             "run_output_dir": str(output_dir),
             "note": f"No daily topic candidates generated. Check URL parsing failures in {output_dir / 'content_items.csv'} and {output_dir / 'content_breakdowns.csv'}.",
-        }, ensure_ascii=False, indent=2))
+        }
+        payload.update(downstream_report)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return 1 if failures else 0
 
     if args.defer_editorial:
@@ -533,12 +633,18 @@ def main() -> int:
         steps.append(defer_step)
         source_failures = collection_failure_steps(steps)
         collection_ok = not source_failures
-        log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
-        print(json.dumps({
+        downstream_report = downstream_usability_report(steps, output_dir, generated_count)
+        log_path = write_run_log(
+            steps,
+            "write-feishu" if args.write_feishu else "dry-run",
+            run_id,
+            downstream_report=downstream_report,
+        )
+        payload = {
             "ok": False,
             "deferred_editorial": True,
             "collection_ok": collection_ok,
-            "collection_status": "deferred_editorial" if collection_ok else "failed_or_partial",
+            "collection_status": "deferred_editorial" if collection_ok else downstream_report["collection_status"],
             "source_failure_steps": [str(step.get("name") or "") for step in source_failures],
             "mode": "write-feishu" if args.write_feishu else "dry-run",
             "run_id": run_id,
@@ -546,7 +652,9 @@ def main() -> int:
             "today_10_topics": str(today10_path),
             "log": str(log_path),
             "note": "Outer Codex automation must apply ai-account-editorial-director and finalize the run before 10:00 card sending.",
-        }, ensure_ascii=False, indent=2))
+        }
+        payload.update(downstream_report)
+        print(json.dumps(payload, ensure_ascii=False, indent=2))
         return deferred_exit_code(steps)
 
     editorial_report_path = output_dir / "editorial_skill_report.json"
@@ -592,9 +700,22 @@ def main() -> int:
         refresh_cmd = [py, str(ROOT / "scripts" / "refresh_console_daily.py")]
         steps.append(run_step("refresh Feishu 00 主控台", refresh_cmd, env=step_env))
 
-    log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
     ok = all(step["returncode"] == 0 for step in steps)
-    print(json.dumps({
+    final_report = dict(downstream_report)
+    final_report.update({
+        "editorial_finalized": ok,
+        "finalization_ok": ok,
+        "status": "completed" if ok and downstream_report.get("full_collection_success") else (
+            "completed_with_failures" if ok else "failed"
+        ),
+    })
+    log_path = write_run_log(
+        steps,
+        "write-feishu" if args.write_feishu else "dry-run",
+        run_id,
+        downstream_report=final_report,
+    )
+    payload = {
         "ok": ok,
         "mode": "write-feishu" if args.write_feishu else "dry-run",
         "run_id": run_id,
@@ -602,7 +723,9 @@ def main() -> int:
         "today_10_topics": str(today10_path),
         "log": str(log_path),
         "wrote_feishu": bool(args.write_feishu and ok),
-    }, ensure_ascii=False, indent=2))
+    }
+    payload.update(final_report)
+    print(json.dumps(payload, ensure_ascii=False, indent=2))
     return 0 if ok else 1
 
 

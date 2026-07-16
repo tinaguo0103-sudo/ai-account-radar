@@ -9,6 +9,10 @@ subagent, deterministic editorial logic, or a second model session.
    instead of selecting an older run.
 2. Run `python3 scripts/ar020e_daily_editorial_entrypoint.py --check-only
    --run-id <run_id> --input <today_10_topics.csv>`. Stop if it is not ready.
+   This owned gate verifies the persistent Git-managed Skill release manifest
+   against both the repo mirror and the deployed global Skill. The outer task
+   must not manually search chats, `/private/tmp` artifacts, or ad-hoc release
+   notes as a substitute for `manifest_verified=true`.
 3. Run the current-task state machine in this order:
    `prepare-source-open -> current task exact-source capture ->
    validate-source-open -> prepare-research -> current task web research ->
@@ -19,9 +23,10 @@ subagent, deterministic editorial logic, or a second model session.
 4. Every exact source and opened research result must retain raw evidence,
    hashes and literal excerpts. Candidate failures remain excluded and visible;
    partial runs remain non-green.
-5. Use the global `ai-account-editorial-director` only after its deployed hash
-   has been verified against the release manifest. Persona material is style
-   and judgment reference only, never source evidence.
+5. Use the global `ai-account-editorial-director` only after
+   `ar020e_daily_editorial_entrypoint.py --check-only` reports
+   `manifest_verified=true`. Persona material is style and judgment reference
+   only, never source evidence.
 6. Ranking orders all eligible rows and never caps or truncates them. Stage 2
    cannot rewrite decision, title, angle, rationale, recommendation or rank.
 7. Only after finalize succeeds, run

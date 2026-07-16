@@ -196,3 +196,11 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - P0/P1 进入 Hotfix Lane。
 - 非紧急需求进入 Next Feature Release 或 Parked。
 - 明确今天是修生产稳定，还是推进 dev 大功能。
+
+## 2026-07-16 AR-033 Release Board Entry
+
+- 结论：`Development In Progress / Production-base Narrow RC Required`。
+- 生产事实：`run_20260716_080311` 为 account-level partial，31 planned/attempted、29 succeeded、2 failed、03 已写入、9 条 today candidates 已生成；不得重跑采集或改历史 03。
+- 发布目标：新增 downstream usability machine field 与 persistent editorial Skill release manifest，恢复 09:15/10:00 对 partial-but-usable collection 的正确判定。
+- 发布边界：feature 开发与生产基线 RC 分离；PM docs 只留 feature 追踪，不进入 product RC patch。生产 04 写入、个人 Topic Card 发送和任何恢复动作必须在修复发布与独立 QA 通过后由生产线程执行。
+- 停止条件：global/profile/CDP failure、计划未完整 attempted、lineage 破坏、失败账号 artifact 泄漏、候选为空、manifest 缺失/漂移、04 finalization 未完成或 card guard 不新鲜时均 fail closed。

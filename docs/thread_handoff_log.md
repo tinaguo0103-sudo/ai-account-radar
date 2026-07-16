@@ -3200,3 +3200,10 @@
 - 即时状态：automation_runs无新记录；恢复后无new logs/runs/latest_write/decision_cards/script packages。未运行、未补跑、未修改其他字段。
 - 生产边界：production clean local=remote=`5e733cd`；01八条隔离、03、canonical9333/profile/login未变；无Feishu、card/callback、06、Git/Skill/SCF/Chrome动作。
 - 后续：不轮询、不手动运行、不再自动暂停；明日按正常08:00/09:15/10:00做scheduled-day smoke。AR-032保持Cancelled/No Release。
+
+### 2026-07-16 AR-033 已派开发：partial collection 可下游使用 + Skill manifest
+
+- 背景：生产 `run_20260716_080311` 真实 31 账号全量 attempted，29 succeeded、2 failed 且失败账号 artifact_count=0；03 和 9 条 today candidates 已生成，但 outer scheduled log 为 `failed_or_partial`，Topic Card 因 `today_daily_pipeline_log_not_ok` 跳过。09:15 `ar020e_daily_editorial_entrypoint.py --check-only` 通过基础门禁，但缺少持久 Git-managed Skill release manifest，外层任务不能机器确认 release evidence。
+- 任务：实现独立 `downstream_usable`/full_collection_success 分离；保持 full collection partial 可见；让 10:00 guard 要求 downstream usable + 09:15 finalization/04 green，而不是要求 31/31 green；新增 repo/global/manifest 三方 Skill hash gate 并更新 outer protocol。
+- 边界：开发线程不得重跑采集、改历史03、写04、发卡、触发06、改 automation/Chrome/profile/global Skill/SCF/production Git。今日恢复动作只作为发布后生产计划。
+- RC 要求：基于 production `5e733cd` 组 production-base narrow RC，排除 PM docs/无关 AR；提供今日 run 的 read-only/check-only recovery readiness。

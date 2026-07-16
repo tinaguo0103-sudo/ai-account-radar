@@ -9,6 +9,8 @@ import json
 from pathlib import Path
 from typing import Any
 
+from skill_release_manifest import verify_skill_release_manifest
+
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_PATH = ROOT / "skills" / "ai-account-editorial-director" / "SKILL.md"
@@ -62,6 +64,9 @@ def check_readiness(run_id: str, input_path: Path | None) -> dict[str, Any]:
                 failures.append("empty_input_csv")
             if run_id and run_id not in str(input_path):
                 failures.append("input_run_id_mismatch")
+    manifest_result = verify_skill_release_manifest()
+    if not manifest_result["ok"]:
+        failures.append("skill_release_manifest_unverified")
     return {
         "ok": not failures,
         "check_only": True,
@@ -71,6 +76,8 @@ def check_readiness(run_id: str, input_path: Path | None) -> dict[str, Any]:
         "input_rows": row_count,
         "repo_skill_path": str(SKILL_PATH),
         "repo_skill_sha256": sha256_file(SKILL_PATH) if SKILL_PATH.is_file() else "",
+        "skill_release_manifest": manifest_result,
+        "manifest_verified": bool(manifest_result.get("manifest_verified")),
         "protocol_path": str(PROTOCOL_PATH),
         "state_machine_path": str(STATE_MACHINE_PATH),
         "required_stages": list(STAGES),
