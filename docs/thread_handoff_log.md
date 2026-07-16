@@ -3213,3 +3213,12 @@
 - 用户纠正：固定开发、测试、生产线程收到 PM 任务后被自动切到 `gpt-5.5`，用户需要手工调回；原因是 PM 派发时显式传入了 `model=gpt-5.5` 和 `thinking=xhigh`。
 - 长期规则：PM 通过线程派发工具发送任务时，默认省略 `model` 和 `thinking` / `reasoning effort`，保留目标线程当前由用户选择的设置。只有用户在当前任务中明确要求指定模型或推理强度时才允许覆盖。
 - 生效边界：本规则只约束 PM 后续派发参数，不修改现有 automation 的模型字段，不改已经运行中的线程设置，也不触碰产品代码、生产配置或业务数据。
+
+### 2026-07-16 AR-033 已发布，AR-033B exact-input 恢复修复获用户确认并派发
+
+- 生产结果：production main 已发布 `e6f04c547d70745c65b88d08aa2c4a9694b732fa`；release gate、Skill manifest/source identity、今日 downstream usability check-only 均通过。
+- 恢复阻断：`run_20260716_080311` 的授权 `today_10_topics.csv` 是 9 行，官方 `prepare-source-open` 从 `content_items.csv` 重算为 8 行并发生 source identity 缺失/替换。生产线程按 stop condition 停在 04/card 前；Feishu 04 仍为 0，Topic Card 未发送。
+- 用户确认的合并方案：开发 AR-033B exact-input 模式，严格绑定 9 行 run/date/order/URL/fingerprint/file SHA，禁止重采样和补位；独立 QA 通过后发布 hotfix，并从 Phase 2 恢复 04/read-back/个人 Topic Card，不重新采集、不重写 03、不触发 06。
+- Automation 修复：三条任务当前 PAUSED。用户改成 projectless 后 cwd 同时变为 `~`；后续 production 线程须通过 official automation control 保留 projectless、当前模型、prompt、schedule，仅修复 cwd 为 production repo。若 official contract 不支持则停止，不手改 TOML或重建项目。
+- 派发：已向固定开发线程 `019f1de3-f3f2-71d2-ae63-a74cd38f8474` 发送 AR-033B consolidated hotfix 任务卡。派发参数已按新规则省略 `model` 和 `thinking`；开发不得碰旧 dirty worktree，不得执行任何生产写入或恢复动作。
+- 下一门：开发回传 fresh production-base RC 后，PM 再派固定 QA 线程做完整独立验证；不是 callback-only 或 micro-recheck。

@@ -199,8 +199,12 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 
 ## 2026-07-16 AR-033 Release Board Entry
 
-- 结论：`Development In Progress / Production-base Narrow RC Required`。
+- 结论：`AR-033 Released / AR-033B Development In Progress / Today Recovery Blocked`。
 - 生产事实：`run_20260716_080311` 为 account-level partial，31 planned/attempted、29 succeeded、2 failed、03 已写入、9 条 today candidates 已生成；不得重跑采集或改历史 03。
 - 发布目标：新增 downstream usability machine field 与 persistent editorial Skill release manifest，恢复 09:15/10:00 对 partial-but-usable collection 的正确判定。
 - 发布边界：feature 开发与生产基线 RC 分离；PM docs 只留 feature 追踪，不进入 product RC patch。生产 04 写入、个人 Topic Card 发送和任何恢复动作必须在修复发布与独立 QA 通过后由生产线程执行。
 - 停止条件：global/profile/CDP failure、计划未完整 attempted、lineage 破坏、失败账号 artifact 泄漏、候选为空、manifest 缺失/漂移、04 finalization 未完成或 card guard 不新鲜时均 fail closed。
+- AR-033 发布：production main 已发布 fresh RC `e6f04c547d70745c65b88d08aa2c4a9694b732fa`，release gate、manifest/source identity 和 exact run check-only 均通过。
+- AR-033B 阻断：状态机官方 prepare 路径把 exact 9 行 same-day CSV 重算成 8 行，出现 candidate identity 缺失/替换；生产线程已在 04/card 前停止，业务写入和发送均为 0。
+- AR-033B 发布门：exact-input 9/9 ordered bijection、URL/fingerprint/file hash 绑定、no-resampling/no-replacement 对抗测试、完整回归、production-base narrow RC、独立 QA。通过后才允许恢复今日 04/read-back/个人 Topic Card。
+- Automation 门：三条任务保持 PAUSED。恢复前必须保留 projectless 和用户当前模型设置，并通过 official control 把 cwd 从 `~` 修复为 production repo；不得手改 TOML。最终仅 status-only 恢复 ACTIVE，并确认无即时补跑。
