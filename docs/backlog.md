@@ -767,5 +767,20 @@
 - 2026-07-16 发布结果：fresh RC `e6f04c547d70745c65b88d08aa2c4a9694b732fa` 已通过独立 QA 并发布到 production main；downstream usability、Skill release manifest 和 source commit identity gate 均已生效。
 - 今日恢复阻断：授权输入 `output/runs/run_20260716_080311/today_10_topics.csv` 为 9 行，但 current-task state machine 的 `prepare-source-open` 从 `content_items.csv` 重算为 8 行，并替换/遗漏 source identity。生产线程已在 04/card 前停止，04 对该 run 仍为 0，Topic Card 未发送。
 - AR-033B 用户确认：新增 exact same-day candidate input 模式，直接绑定 9 行 CSV 的 run/date/order/URL/fingerprint/file SHA，不调用 shortlist/resampling，不允许缺失、额外、重复、重排、替换或 URL 漂移。候选级 source/research 失败保持 typed visible，且不得以其他候选补位。
-- AR-033B 当前状态：`Fresh RC QA Passed / Production Release and Recovery In Progress`。失败 RC=`f99db53ca428a6c2f650f9e51176205422d6c1c2` 保留历史，不得发布；批准 fresh RC=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，base=`e6f04c547d70745c65b88d08aa2c4a9694b732fa`。独立 QA 证明原 CSV/candidate/manifest mutation 全部 typed fail，四个后续公共阶段 legacy builder 调用数为 0，真实 9 行 L2 和完整回归通过。基于用户已确认的合并方案，生产线程正在执行 Git-only release、exact Phase 2 recovery、04/read-back、一次个人 Topic Card；不重新采集、不重写 03、不触发 06。
+- AR-033B 当前状态：`Released / Recovery Blocked`。fresh RC=`8af084621d01e639c54b5dc847a6439ce96fd8bd` 已发布到 production main；exact 9 行 source-open 5/9、research 3/9、Stage1 3/3、ranking 3/3 后，Stage2 因 AIHOT actionable 候选要求 `AIHOT重大性说明`、但 Stage1/Stage2 均没有合法 owner 而系统性阻断。04 仍为 0，Topic Card 未发送，三条 automation 保持 PAUSED。
 - Automation 联动：三条任务当前 PAUSED；用户手工改成 projectless 后 cwd 实际变为 `~`，不可直接恢复。后续只允许通过 official automation control 保留 projectless、当前模型、prompt、schedule 等字段，仅将 cwd 改回 production repo；若官方接口不支持则停止报告，不手改 TOML、不重新创建项目。
+
+### AR-034 Full-Source Ingestion Closure + Canonical WeChat Provider Session + AIHOT Owner
+
+- 类型：生产数据正确性 / 多来源采集闭环 / 固定认证运行时 / editorial owner contract
+- 优先级：P0
+- 状态：Approved for Consolidated Development
+- 来源：对 `run_20260716_080311` 的生产只读复核发现，抖音 probe 实际为 31 attempted、29 succeeded、2 failed，并产出 87 条有效成功账号 items；但 `daily_pipeline.py` 把 account-partial 映射为 `optional_failed=true`，随后整份 Douyin manual artifact 未进入 combined input。最终 `content_items.csv` 为 AIHOT 53、公众号 5、抖音 0；`today_10_topics.csv` 为 AIHOT 8、公众号 1、抖音 0。Feishu 03 同 run 关联记录为 AIHOT 36、公众号历史记录 5、抖音 0。因此当前 9 条不是全源比较结果，不得继续作为 04/Topic Card 恢复输入。
+- 公众号根因：唯一 active 公众号源的 provider 缓存仍是 2026-06-11 至 2026-06-16 的 5 篇旧文章；`ai-radar-wewe-rss` 自至少 2026-07-10 起反复报告 `暂无可用读书账号!`。现有 readiness 只证明 HTTP 能返回可解析缓存，没有证明账号可用、feed 刷新成功、内容新鲜或本次新增。因此旧缓存被错误记为今日采集。
+- 抖音闭环：`completed_with_failures` 必须保留所有成功账号的有效 items，只隔离失败账号；成功 artifact fingerprint 必须可审计地进入 combined input、`content_items.csv`、Feishu 03 和 shortlist universe。`downstream_usable` 必须验证逐层来源闭环，任一成功 artifact 丢失即 false；对外状态必须明确为 partial，不能称全量成功。
+- 公众号 freshness 合同：新增 `updated_with_new_items / updated_no_new_items / stale_cache / login_required / provider_failed`。只有 provider 账号健康且本轮刷新有可核验时间/版本证据时，结果才可作为本日来源；确实无新文章时允许 `updated_no_new_items`，不能为了凑数量复用旧缓存。历史文章可保留，但不得标记为今日新采集。
+- 公众号固定登录运行时：daily automation 只检查固定 `wewe-rss` provider 的账号和更新健康，不自行寻找、启动或切换浏览器。需要重新认证时才使用独立于抖音 9333 的固定端口、固定 canonical Chrome profile、profile identity marker、PID/WebSocket/open-file proof，并只打开本机 `wewe-rss` 管理/登录页。不得读取或导出 cookie/token/localStorage，不得随机使用任意线程浏览器。profile、provider data dir 与迁移方案必须脱离 worktree 且可备份回滚；真实迁移/扫码另需生产授权。
+- AIHOT owner：Stage1 是 evidence-bound `aihot_significance_rationale` 及 evidence IDs 的唯一语义 owner；Stage2 只能 locked pass-through 到 `AIHOT重大性说明`，新增、改写、丢失或 deterministic fallback 均 fail closed。不得放宽正式字段合同或手改恢复 artifacts。
+- 恢复策略：保留原 run 和错误 9 行作为事故证据，不在其上继续 Stage2。允许复用已保存的 87 条抖音成功 artifacts，但必须排除 5 条陈旧公众号缓存；公众号在授权生产线程完成固定认证/刷新后，以真实 fresh result 与同日 AIHOT snapshot 构建版本化 recovery run。先证明各来源进入 comparison universe，再由质量排序自然产生 0..N，不设置来源数量配额。
+- 验收：开发须从当前 production base 组装窄 RC；测试覆盖 partial-success ingestion、fingerprint 逐层 bijection、failed-account zero artifact、stale/login/provider/empty freshness 状态、wrong browser/profile/port fail-closed、AIHOT owner mutation、AR-020E/031/033 adjacent regression。独立 QA 通过后，生产授权顺序为 provider migration/login/read-back、fresh WeChat refresh、recovery run、03 exact write/read-back、current-task editorial、04/read-back、card check-only/一次个人发送、official cwd repair、status-only resume。
+- 边界：开发与 QA 不运行真实采集、不写生产 Feishu、不发卡、不触发 06、不改 automation/Chrome/profile/provider data/global Skill/SCF/production Git；任何生产认证、迁移、刷新、写入与恢复必须另行授权。

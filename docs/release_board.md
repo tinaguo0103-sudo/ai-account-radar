@@ -217,3 +217,17 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - Fresh QA：exact targeted 10、full Python 336、receiver 32、Douyin 39+6、Unicode 4/4、semantic 7/7、compile/node/diff/pre-merge 全通过；独立 patch/apply/parity 7/7，forbidden scope=0，production telemetry 和业务状态未变化。结论 `Ready for PM Production Authorization`。
 - PM 验收/授权：用户此前已确认合并方案，授权 Git-only release、exact same-day current-task recovery、一次 04 write/read-back、一次个人 Topic Card，以及三条 projectless automation 的 official cwd repair/status-only resume。PM 已派固定生产线程执行。
 - 生产 stop order：release gate -> exact SHA/manifest -> source-open/research/Stage1/ranking/Stage2/finalize -> 04 read-back -> card check-only -> one personal send -> official cwd repair -> status-only ACTIVE。任一阶段失败停在当前组件，不绕过、不重采集、不改 03/06。
+
+## 2026-07-16 AR-034 Release Board Entry
+
+- 结论：`Approved for Consolidated Development / Production Recovery Blocked`。
+- 触发事实：AR-033B 已发布，但 exact recovery 在 AIHOT owner contract 处阻断；进一步只读复核证明今天的 candidate universe 本身不完整，不能只修 Stage2 后继续原 9 行。
+- 抖音数据：31 attempted、29 succeeded、2 failed、87 valid items；account-partial 被 `optional_failed` 吞掉后，87 条均未进入 combined input、content items、03 或 shortlist。任何成功来源 artifact 丢失都必须使 `downstream_usable=false`。
+- 公众号数据：本日仅使用 1 个 active 公众号源，返回 5 篇 2026-06-11..16 的缓存；provider 日志持续 `暂无可用读书账号!`。HTTP/cache 可读不等于登录健康、刷新成功或今日新增。
+- 固定认证门：公众号和抖音一样使用 canonical runtime identity。正常定时只访问固定 provider；重新登录只允许独立固定端口/profile/marker 和本机管理页，不允许线程自行寻找随机浏览器。生产 profile/data migration、扫码和刷新需单独授权及 read-back。
+- 内容门：先证明 Douyin/WeChat/AIHOT 各自合格产物进入同一 comparison universe，再进行动态 0..N 排序；不设来源配额，但不得把缺源结果称为全源选题。
+- Owner 门：Stage1 独占 evidence-bound AIHOT significance rationale，Stage2 只允许 locked mapping；禁止 deterministic fallback、跨字段代填或手改 artifacts。
+- 原 run：`run_20260716_080311` 及错误 9 行作为事故证据保留，04=0、card unsent；不得在该 candidate set 上继续。新恢复须是版本化 recovery run，并可复用 87 条已保存的抖音成功 artifacts，排除陈旧公众号缓存。
+- Automation：三条任务保持 PAUSED。AR-034 完成、生产恢复通过后，才通过 official control 保留 projectless/model/prompt/schedule 并只修 production cwd，然后 status-only resume；不得手改 TOML。
+- 发布路径：fixed dev -> production-base narrow RC -> independent full QA -> PM production authorization -> canonical WeChat migration/login/read-back -> fresh refresh + recovery -> 03/04/card closure -> automation resume。
+- 当前禁止：生产采集/Feishu 写入/卡片/06、automation/Chrome/profile/provider data/Skill/SCF/main 变更。

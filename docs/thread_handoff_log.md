@@ -3258,3 +3258,13 @@
 - PM 验收：测试覆盖用户真实目标，结论未过度扩张；production 仍 clean、04=0、卡片未发。用户此前确认的合并方案已覆盖发布、今日恢复、个人卡和 automation cwd repair，因此不重复请求授权。
 - 生产派发：已向固定生产线程 `019f2bc4-079e-7530-903e-484707590482` 派有序执行。发布后 current-task 为唯一 editorial surface；不 nested model/API/subagent。完成 04/read-back/card 后，才用 official automation control 在保留 projectless、当前模型/prompt/schedule 的前提下把 cwd 从 `~` 修回 production repo；不支持则保持 PAUSED，不手改 TOML。
 - 派发模型规则：生产线程任务省略 `model` 与 `thinking`，保留线程用户设置。
+
+### 2026-07-16 AR-033B 发布后恢复阻断，用户批准 AR-034 合并修复
+
+- 生产结果：AR-033B `8af084621d01e639c54b5dc847a6439ce96fd8bd` 已发布；exact recovery 完成 source-open 5/9、research 3/9、Stage1 3/3、ranking 3/3，Stage2 因 `AIHOT重大性说明` 没有合法 owner 而阻断。04 仍为 0，Topic Card 未发送，三条 projectless automation 保持 PAUSED。
+- 上游事故确认：抖音 31 attempted、29 succeeded、2 failed，并产出 87 条有效 items，但 account-partial 被映射为 `optional_failed` 后整份成功 artifact 被丢弃。最终 `content_items.csv` 为 AIHOT 53、公众号 5、抖音 0；today 9 行为 AIHOT 8、公众号 1、抖音 0；03 同 run 关联记录同样无抖音。因此当前选题不能视为全源比较结果。
+- 公众号事故确认：当前仅 1 个 active 公众号源；5 篇输入全部来自 2026-06-11..16 的旧缓存。`ai-radar-wewe-rss` 日志持续 `暂无可用读书账号!`，但 readiness 只验证缓存 HTTP 可读，未验证账号、刷新和新鲜度。
+- 用户批准：合并开发 AR-034，而不是继续原 9 行 Stage2。范围包括抖音 partial-success 下游 bijection、公众号 freshness/login/provider typed states、AIHOT Stage1 owner + Stage2 locked mapping，以及版本化 recovery run。
+- 用户新增明确要求：公众号登录必须像抖音一样固定管理，线程不得自行寻找浏览器。daily automation 只检查固定 provider；重新认证只使用独立固定端口、canonical Chrome profile、identity marker 和本机管理页。不得读取/导出认证秘密；生产 profile/data migration 与扫码另行授权。
+- 恢复边界：原 run 与 9 行保留为事故证据；87 条抖音成功 artifacts 可复用，5 条陈旧公众号缓存必须排除。只有 fresh WeChat result 与同日 AIHOT/Douyin 共同形成新 comparison universe 后，才可重跑 editorial、03/04/card。
+- PM 动作：登记 AR-034 P0，向固定开发线程派一次 consolidated task；派发省略 `model` 与 `thinking`。开发只产出 feature commit、production-base narrow RC、对抗测试和 read-only evidence，不执行生产认证、采集、写入或恢复。
