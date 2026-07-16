@@ -284,3 +284,4 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - Fixed login result：`Login Interaction Required`。9334 PID 72440 与 canonical profile identity全绿，当前唯一页为local `/dash/login`；需要账号所有者在该固定窗口完成登录。production Git仍clean `8af0846`，RC8/key/refresh/Feishu/card均未发生，三任务PAUSED。用户完成后只需回报“已登录”，生产线程将check-only读回并在green后自动续跑RC8。
 - Secret injection blocker：自动使用existing host auth被本机安全审查拒绝，未读取或materialize secret。当前需用户明确批准受控通道：只在本机内存读取，使用CDP直接填入fixed 9334 local页面，禁止disk/log/clipboard/回显。未获该授权前RC8不发布、三任务保持PAUSED。
 - Controlled injection authorization：用户已明确同意。production线程只能以本机内存 + CDP操作fixed 9334 local页面；禁止secret落盘、日志、clipboard、截图或回显。login check-only green后自动继续既有RC8 Phase 0；任一身份/账号/feed/DB mismatch保持PAUSED并停止。
+- Controlled injection result：admin auth accepted，fixed 9334进入local `/dash`，secret boundary全满足；但provider account仍status=0，check-only=`login_required`。当前转为只读定位正式account reauth/reactivation路径；不点击refresh试错，不发布RC8，不恢复automation。

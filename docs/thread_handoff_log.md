@@ -3476,3 +3476,11 @@
 - 授权边界：仅允许本机进程内存读取existing owner-only `WEWE_RSS_AUTH_CODE`，通过CDP直接填入fixed 9334 / PID 72440 / canonical profile的local `/dash/login`；禁止disk/log/clipboard/AppleScript/screenshot/临时secret文件/明文回显。
 - 验收与续跑：登录后先执行零refresh provider check-only；仅canonical identity和account/feed/DB一致且 `ok=true/status=refresh_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false` 时，自动继续既有RC8 Phase 0授权。
 - 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
+
+### 2026-07-16 WeWe admin auth通过，provider account reauth仍阻断
+
+- 结论：`Admin Auth Accepted / Provider Account Still Login Required / RC8 Not Released / Automations Paused`。证据=`/private/tmp/ar034b_wewe_9334_login_20260716_2132/LOGIN_ATTEMPT_RESULT.md`。
+- 受控输入：existing owner-only auth仅在单次本机进程内存读取并经CDP填入fixed 9334 local页面；未落盘、stdout/stderr/log/evidence/chat/screenshot/clipboard/AppleScript，输出仅 `submitted=true,secrets_exposed=false`。
+- 结果：browser从 `/dash/login` 进入 `/dash`，证明admin auth已接受。provider check-only仍 `login_required`；canonical DB integrity=ok，account status=0 count=1，feed status=1 count=1，articles=48，说明内部公众号账号会话仍不可用。
+- Stop discipline：dashboard无可见QR/SMS/MFA或登录/重新登录/添加账号入口，只有刷新动作；未点击试错。production Git仍clean `8af0846`，RC8未发布，无key/refresh/Feishu/card/collection/06，三任务PAUSED。
+- Next：production线程只读审计fixed dashboard路由和exact provider源码，定位正式re-login/reactivation路径并产出独立最小授权计划；本轮不执行mutation，PM不轮询。
