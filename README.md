@@ -250,7 +250,7 @@ python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-full
 python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5 --write-feishu
 ```
 
-默认 `python3 scripts/daily_pipeline.py` 不拉取 `wewe-rss`，也不依赖本地全文服务。`wewe-rss` 是低频 P1 全文源；如果本地服务不可用，回退到 `02 URL投喂入口` 单篇文章 URL，不再用公共 feed 摘要补候选。
+正式 daily automation 固定读取 canonical `wewe-rss` provider/data dir，并在摄取前校验账号健康、refresh revision 和上次成功水位。本地服务、登录或刷新不可证明时，该来源 typed fail 且不进候选；不会用 `02 URL投喂入口`、公共 feed 摘要或旧缓存补齐。
 
 规则测试时，如果飞书里没有新的待处理 URL，但你想让已解析过的公众号/抖音内容重新参与本轮候选池，可以显式加复用参数：
 
@@ -644,7 +644,7 @@ AIHOT 的做法值得学习：信源分级、官方源优先、AI 预筛、聚�
 
 ## 自动拉取边界
 
-当前默认自动源是 AIHOT精选、AIHOT日报、官方 RSS/Atom、官方网页/普通网页/Jina Reader、`02 URL投喂入口` 的单条 URL 投喂，以及主对标抖音账号主页的标题/文案采样。抖音主页采样会默认尝试启动或复用本机专用 Chrome CDP；单账号失败会重试，重试仍失败就记录失败原因并跳到下一个账号，不阻塞 AIHOT、公众号、URL 投喂和候选池生成。若某个账号明确返回 `needs_login_or_verification`，日常流程会把专用 Chrome 前台打开到该账号主页，等待你处理登录/验证后只重试这些账号；仍失败才记录为待处理。临时不想跑抖音时可加 `--no-fetch-douyin`；无人值守时可加 `--douyin-verification-action log-only` 避免弹出验证窗口。`--include-resolved-url-intake` 只用于复用已解析 URL 做规则测试，不作为默认日常流程；卡兹克公众号 Wechat2RSS 公共 feed 已降级为发现源说明，不再进入候选池；本地 `wewe-rss` 全文源只在显式传 `--fetch-wechat-fulltext-provider` 或 `--wechat-fulltext-provider wewe-rss` 时拉取。
+当前定时全源路径包含 AIHOT、URL 投喂、全量有效抖音对标账号和固定 canonical `wewe-rss` 全文 provider。抖音使用 canonical 9333/profile 并保留账号级 partial lineage；WeChat 仅在 active account、refresh revision 与 new-since-last-success 水位同时通过时进入 fresh comparison universe。定时路径不会自动打开浏览器、切换 profile/provider 或使用旧缓存补齐。
 
 完整路线、主对标池逐个判断和未来 PoC 分支命名见 [docs/source_autofetch_plan.md](docs/source_autofetch_plan.md)。
 

@@ -44,7 +44,7 @@ class TopicFlowReworkTests(unittest.TestCase):
         topic = content_sampler.editorial_judgement(topic, ordinary)
 
         self.assertEqual(flow.source_influence_weight(ordinary), flow.AIHOT_IMPORTANCE_WEIGHT)
-        self.assertIn("普通 AI Hot", topic["AIHOT重大性说明"])
+        self.assertEqual(topic["AIHOT重大性说明"], "")
         self.assertFalse(content_sampler.include_in_skill_review_pool(topic))
         self.assertLessEqual(content_sampler.score_item(ordinary, scene), 64)
 
@@ -54,7 +54,7 @@ class TopicFlowReworkTests(unittest.TestCase):
         topic = content_sampler.editorial_judgement(topic, major)
 
         self.assertTrue(flow.is_major_aihot(major))
-        self.assertIn("重大 AI Hot", topic["AIHOT重大性说明"])
+        self.assertEqual(topic["AIHOT重大性说明"], "")
 
     def test_competitor_translation_fields_are_added_without_hardcoding_topic_whitelist(self) -> None:
         competitor = item("对标视频", "用 Codex 改造 PPT 工作流", "实战教程，评论很多人收藏，讲如何把 PPT、飞书和自动化流程串起来。")
@@ -130,7 +130,7 @@ class TopicFlowReworkTests(unittest.TestCase):
         major = item("AIHOT热点", "GPT-5 发布新的 Agent API", "重大模型能力更新，影响 Agent 工作流、API 和视频生产。")
         topic = content_sampler.topic_from_breakdown(content_sampler.breakdown(major), major)
 
-        self.assertIn("重大 AI Hot", topic["AIHOT重大性说明"])
+        self.assertEqual(topic["AIHOT重大性说明"], "")
         self.assertTrue(topic["对标转译角度"])
         self.assertIn(topic["Austin转译质量"], {"具体可转译", "需补重大性落地证据"})
 

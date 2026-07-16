@@ -15,13 +15,14 @@ import subprocess
 import sys
 import csv
 import shutil
-from datetime import datetime
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlparse
 
 from local_env import load_local_env
 from full_account_collection_contract import rejection_payload, validate_account_limit_argv
+from source_ingestion_lineage import LineageError, validate_ingestion_bijection, validate_partial_source_artifact
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
@@ -163,6 +164,29 @@ def read_json(path: Path) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return data if isinstance(data, dict) else {}
+
+
+def stdout_json(step: dict[str, Any]) -> dict[str, Any]:
+    try:
+        value = json.loads(str(step.get("stdout") or ""))
+    except json.JSONDecodeError:
+        return {}
+    return value if isinstance(value, dict) else {}
+
+
+def commit_wechat_success_watermark(freshness: dict[str, Any]) -> Path:
+    target = Path(str(freshness["state_path"])).expanduser().resolve()
+    payload = {
+        "schema_version": 1,
+        "refresh_revision": int(freshness["refresh_revision"]),
+        "article_publish_watermark": int(freshness["latest_article_publish_time"]),
+        "committed_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+    }
+    target.parent.mkdir(parents=True, exist_ok=True)
+    temporary = target.with_suffix(target.suffix + ".tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    temporary.replace(target)
+    return target
 
 
 def write_json(path: Path, payload: dict[str, Any]) -> None:
@@ -375,7 +399,6 @@ def main() -> int:
     parser.add_argument("--wechat-fulltext-provider-config", default=str(DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG), help="Config for explicit WeChat fulltext provider intake.")
     parser.add_argument("--wechat-fulltext-provider", default="", help="Provider id/name to fetch, e.g. wewe-rss. Only used with explicit WeChat fulltext provider mode.")
     parser.add_argument("--wechat-feed-limit", type=int, default=5, help="Max articles to fetch from the explicit WeChat fulltext provider.")
-    parser.add_argument("--no-auto-start-wewe-rss", action="store_true", help="Do not auto-start the local wewe-rss Docker provider before WeChat fulltext fetch.")
     parser.add_argument("--fetch-douyin-cdp-source-watch", action="store_true", help="Compatibility flag: Douyin homepage title/caption sampling is now attempted by default unless --no-fetch-douyin is set.")
     parser.add_argument("--no-fetch-douyin-cdp-source-watch", "--no-fetch-douyin", dest="no_fetch_douyin_cdp_source_watch", action="store_true", help="Skip daily Douyin homepage title/caption sampling.")
     parser.add_argument("--douyin-cdp", default=os.getenv("DOUYIN_CDP_URL", "http://127.0.0.1:9333"), help="Chrome DevTools endpoint for explicit Douyin homepage probe.")
@@ -404,6 +427,8 @@ def main() -> int:
     steps: list[dict[str, Any]] = []
     manual_path = args.manual
     manual_inputs: list[Path] = [Path(args.manual)]
+    douyin_source_lineage: dict[str, Any] | None = None
+    wechat_freshness: dict[str, Any] | None = None
     run_id = new_run_id()
     step_env = os.environ.copy()
     step_env["RUN_ID"] = run_id
@@ -427,40 +452,43 @@ def main() -> int:
         manual_inputs = [URL_RESOLVED_MANUAL]
 
     if args.fetch_wechat_fulltext_provider or args.wechat_fulltext_provider:
-        provider_hint = str(args.wechat_fulltext_provider or "wewe_rss_local").lower()
-        should_start_wewe = not args.no_auto_start_wewe_rss and ("wewe" in provider_hint or not args.wechat_fulltext_provider)
-        if should_start_wewe:
-            start_wewe_cmd = [
+        health_cmd = [py, str(ROOT / "scripts" / "wewe_provider_health.py"), "--check-only"]
+        steps.append(run_step("verify canonical wewe-rss account and refresh freshness", health_cmd, env=step_env))
+        wechat_freshness = stdout_json(steps[-1])
+        if steps[-1]["returncode"] != 0:
+            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
+            print(json.dumps({"ok": False, "wechat_freshness": wechat_freshness, "log": str(log_path)}, ensure_ascii=False, indent=2))
+            return steps[-1]["returncode"]
+        if wechat_freshness.get("state") == "updated_no_new_items":
+            provider_cmd = []
+        else:
+            provider_cmd = [
                 py,
-                str(ROOT / "scripts" / "start_wewe_rss.py"),
+                str(ROOT / "scripts" / "wechat_fulltext_provider_probe.py"),
+                "--config",
+                args.wechat_fulltext_provider_config,
+                "--out",
+                str(WECHAT_FULLTEXT_RESOLVED_MANUAL),
+                "--csv",
+                str(OUT / "wechat_fulltext_provider_items.csv"),
+                "--dry-run",
+                "--fresh-after-epoch",
+                str(int(wechat_freshness.get("article_publish_watermark") or 0)),
+                "--refresh-revision",
+                str(int(wechat_freshness.get("refresh_revision") or 0)),
             ]
-            steps.append(run_step("start/check local wewe-rss fulltext provider", start_wewe_cmd, env=step_env))
+
+        if provider_cmd and args.wechat_fulltext_provider:
+            provider_cmd.extend(["--provider-id", args.wechat_fulltext_provider])
+        if provider_cmd and args.wechat_feed_limit:
+            provider_cmd.extend(["--limit", str(args.wechat_feed_limit)])
+        if provider_cmd:
+            steps.append(run_step("fetch refreshed WeChat fulltext provider into ContentItem rows", provider_cmd, env=step_env))
             if steps[-1]["returncode"] != 0:
                 log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
                 print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
                 return steps[-1]["returncode"]
-
-        provider_cmd = [
-            py,
-            str(ROOT / "scripts" / "wechat_fulltext_provider_probe.py"),
-            "--config",
-            args.wechat_fulltext_provider_config,
-            "--out",
-            str(WECHAT_FULLTEXT_RESOLVED_MANUAL),
-            "--csv",
-            str(OUT / "wechat_fulltext_provider_items.csv"),
-            "--dry-run",
-        ]
-        if args.wechat_fulltext_provider:
-            provider_cmd.extend(["--provider-id", args.wechat_fulltext_provider])
-        if args.wechat_feed_limit:
-            provider_cmd.extend(["--limit", str(args.wechat_feed_limit)])
-        steps.append(run_step("fetch explicit WeChat fulltext provider into ContentItem rows", provider_cmd, env=step_env))
-        if steps[-1]["returncode"] != 0:
-            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
-            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
-            return steps[-1]["returncode"]
-        manual_inputs.append(WECHAT_FULLTEXT_RESOLVED_MANUAL)
+            manual_inputs.append(WECHAT_FULLTEXT_RESOLVED_MANUAL)
 
     fetch_douyin = not args.no_fetch_douyin_cdp_source_watch or args.fetch_douyin_cdp_source_watch
     if fetch_douyin:
@@ -563,8 +591,15 @@ def main() -> int:
                     str(args.douyin_retries),
                 ]
                 steps.append(run_optional_step("retry full Douyin account plan after user verification", retry_cmd, env=step_env))
-            if not douyin_step.get("optional_failed") and DOUYIN_CDP_RESOLVED_MANUAL.exists():
-                manual_inputs.append(DOUYIN_CDP_RESOLVED_MANUAL)
+            if DOUYIN_CDP_RESOLVED_MANUAL.exists():
+                try:
+                    douyin_source_lineage = validate_partial_source_artifact(read_json(DOUYIN_CDP_RESULT), DOUYIN_CDP_RESOLVED_MANUAL)
+                except LineageError as exc:
+                    douyin_step["lineage_error"] = str(exc)
+                else:
+                    manual_inputs.append(DOUYIN_CDP_RESOLVED_MANUAL)
+                    douyin_step["partial_success_ingested"] = True
+                    douyin_step["successful_item_count"] = douyin_source_lineage["successful_item_count"]
             if DOUYIN_CDP_RETRY_MANUAL.exists() and file_modified_today(DOUYIN_CDP_RETRY_MANUAL):
                 manual_inputs.append(DOUYIN_CDP_RETRY_MANUAL)
             if not douyin_step.get("optional_failed") and DOUYIN_CDP_RESOLVED_MANUAL.exists() and file_modified_today(DOUYIN_CDP_RESOLVED_MANUAL):
@@ -592,9 +627,35 @@ def main() -> int:
         return steps[-1]["returncode"]
 
     output_dir = pipeline_output_dir(run_id, args.write_feishu)
+    ingestion_lineage: dict[str, Any] | None = None
+    if douyin_source_lineage:
+        try:
+            ingestion_lineage = validate_ingestion_bijection(
+                douyin_source_lineage,
+                Path(manual_path),
+                output_dir / "content_items.csv",
+                output_dir / "content_breakdowns.csv",
+                output_dir / "today_10_topics.csv",
+            )
+        except LineageError as exc:
+            steps.append({
+                "name": "verify Douyin successful-item downstream lineage",
+                "command": ["lineage-check"],
+                "started_at": datetime.now().isoformat(timespec="seconds"),
+                "returncode": 3,
+                "stdout": "",
+                "stderr": str(exc),
+            })
     today10_path = output_dir / "today_10_topics.csv"
     generated_count = today10_count(today10_path)
     downstream_report = downstream_usability_report(steps, output_dir, generated_count)
+    downstream_report["douyin_partial_ingestion"] = douyin_source_lineage or {}
+    downstream_report["ingestion_bijection"] = ingestion_lineage or {}
+    downstream_report["wechat_freshness"] = wechat_freshness or {}
+    if args.write_feishu and downstream_report.get("downstream_usable") and wechat_freshness and wechat_freshness.get("state") in {"updated_with_new_items", "updated_no_new_items"}:
+        watermark_path = commit_wechat_success_watermark(wechat_freshness)
+        downstream_report["wechat_freshness"]["watermark_committed"] = True
+        downstream_report["wechat_freshness"]["watermark_path"] = str(watermark_path)
     if generated_count == 0:
         failures = collection_failure_steps(steps)
         log_path = write_run_log(
