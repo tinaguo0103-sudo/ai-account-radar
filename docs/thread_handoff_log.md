@@ -3461,3 +3461,11 @@
 - 认证边界：平台要求账号所有者在当前固定窗口完成登录。生产线程未读取/截图QR、账号身份、cookie、token、localStorage，未寻找或切换其他浏览器。
 - 当前状态：provider check-only仍为 `ok=false/status=login_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false`；canonical migration parity无漂移。production main仍clean `8af0846`，RC8未发布，三任务PAUSED且hash未变；无key/refresh/Feishu/card/collection/06/Douyin 9333变化。
 - Resume trigger：用户在当前固定窗口完成登录并回复“已登录”。PM随后只派check-only read-back；仅 `ok=true/status=refresh_required` + canonical identity green时，生产线程自动继续既有RC8授权。
+
+### 2026-07-16 WeWe auth 自动注入被本机安全审查阻断
+
+- 结论：`Login Secret Injection Blocked / RC8 Not Released / Automations Paused`。
+- 已授权意图：从owner-only host wiring读取existing `WEWE_RSS_AUTH_CODE`并直接填入fixed 9334 local login页面，不向用户显示secret。
+- 实际结果：本机安全审查拒绝执行，理由是可能在protected wiring之外以plaintext materialize。未生成脚本、未读取/输出secret、未使用clipboard或AppleScript，也未尝试绕过。
+- 当前状态：9334 PID 72440和canonical profile保持，窗口仍在 `/dash/login`；provider check-only仍为 `login_required`，无refresh。production main clean `8af0846`，RC8未发布，三任务PAUSED。
+- 待授权通道：仅在本机进程内存读取existing secret，并通过CDP直接填入当前固定local页面；禁止落盘、日志、clipboard、截图和secret回显。只有用户明确接受该风险后才可重试；失败继续保持PAUSED。
