@@ -43,13 +43,35 @@ def sha256_bytes(value: bytes) -> str:
 
 
 def load_attestation_key(path: Path = ATTESTATION_KEY_PATH) -> bytes:
+    path = Path(path).expanduser()
+    parent = path.parent
+    if not path.is_absolute() or parent.is_symlink() or parent.resolve() != parent:
+        raise RefreshError("refresh_attestation_parent_unsafe")
+    directory_fd = -1
+    key_fd = -1
     try:
-        info = path.lstat()
-        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or path.is_symlink() or info.st_mode & 0o077:
+        directory_fd = os.open(parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0))
+        parent_info = os.fstat(directory_fd)
+        if not stat.S_ISDIR(parent_info.st_mode) or parent_info.st_uid != os.getuid() or parent_info.st_mode & 0o022:
+            raise RefreshError("refresh_attestation_parent_unsafe")
+        key_fd = os.open(path.name, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0), dir_fd=directory_fd)
+        info = os.fstat(key_fd)
+        if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid() or info.st_mode & 0o077:
             raise RefreshError("refresh_attestation_key_unsafe")
-        key = path.read_bytes()
+        chunks = []
+        while True:
+            chunk = os.read(key_fd, 4096)
+            if not chunk:
+                break
+            chunks.append(chunk)
+        key = b"".join(chunks)
     except OSError as exc:
         raise RefreshError("refresh_attestation_key_unavailable") from exc
+    finally:
+        if key_fd >= 0:
+            os.close(key_fd)
+        if directory_fd >= 0:
+            os.close(directory_fd)
     if len(key) < 32:
         raise RefreshError("refresh_attestation_key_invalid")
     return key
@@ -265,7 +287,7 @@ def run_refresh(
                 receipt_path = health_dir / "receipts" / f"{run_id}_{attempt_id}.json"
                 atomic_write(receipt_path, receipt)
                 receipt_hash = sha256_bytes(receipt_path.read_bytes())
-                return {"ok": True, "status": "success", "run_id": run_id, "attempt_id": attempt_id, "receipt_path": str(receipt_path.resolve()), "receipt_sha256": receipt_hash, "feed_count": len(requested_ids), "new_item_count": new_count, "starts_browser": False, "starts_provider": False, "secrets_read": False}
+                return {"ok": True, "status": "success", "run_id": run_id, "attempt_id": attempt_id, "receipt_path": str(receipt_path.resolve()), "receipt_sha256": receipt_hash, "feed_count": len(requested_ids), "new_item_count": new_count, "starts_browser": False, "starts_provider": False, "secret_material_read": True, "secrets_exposed": False}
             sleep_fn(poll_interval_ms / 1000)
         raise RefreshError(last_error or "refresh_completion_timeout")
     finally:
@@ -276,8 +298,8 @@ def check_only_plan(data_dir: Path = CANONICAL_DATA_DIR) -> dict[str, Any]:
     try:
         snapshot = read_snapshot(data_dir.resolve() / "wewe-rss.db")
     except (OSError, RefreshError) as exc:
-        return {"ok": False, "status": str(exc), "check_only": True, "refresh_requested": False}
-    return {"ok": True, "status": "refresh_required", "check_only": True, "refresh_requested": False, "provider_url": PROVIDER_URL, "feed_ids": [row["feed_id"] for row in snapshot["feeds"]], "active_account_count": snapshot["active_account_count"], "database_identity": snapshot["database_identity"], "starts_browser": False, "starts_provider": False}
+        return {"ok": False, "status": str(exc), "check_only": True, "refresh_requested": False, "secret_material_read": False, "secrets_exposed": False}
+    return {"ok": True, "status": "refresh_required", "check_only": True, "refresh_requested": False, "provider_url": PROVIDER_URL, "feed_ids": [row["feed_id"] for row in snapshot["feeds"]], "active_account_count": snapshot["active_account_count"], "database_identity": snapshot["database_identity"], "starts_browser": False, "starts_provider": False, "secret_material_read": False, "secrets_exposed": False}
 
 
 def main() -> int:
@@ -290,10 +312,13 @@ def main() -> int:
     if args.check_only:
         result = check_only_plan()
     else:
+        secret_material_read = False
         try:
-            result = run_refresh(args.run_id, args.run_started_at_ms)
+            key = load_attestation_key()
+            secret_material_read = True
+            result = run_refresh(args.run_id, args.run_started_at_ms, signing_key=key)
         except (OSError, RefreshError, urllib.error.URLError) as exc:
-            result = {"ok": False, "status": "provider_failed", "reason": str(exc), "run_id": args.run_id, "refresh_requested": True, "receipt_written": False}
+            result = {"ok": False, "status": "provider_failed", "reason": str(exc), "run_id": args.run_id, "refresh_requested": True, "receipt_written": False, "secret_material_read": secret_material_read, "secrets_exposed": False}
     atomic_write(Path(args.out).expanduser().resolve(), result)
     print(json.dumps(result, ensure_ascii=False, indent=2))
     return 0 if result["ok"] else 4
