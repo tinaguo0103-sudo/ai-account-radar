@@ -3469,3 +3469,10 @@
 - 实际结果：本机安全审查拒绝执行，理由是可能在protected wiring之外以plaintext materialize。未生成脚本、未读取/输出secret、未使用clipboard或AppleScript，也未尝试绕过。
 - 当前状态：9334 PID 72440和canonical profile保持，窗口仍在 `/dash/login`；provider check-only仍为 `login_required`，无refresh。production main clean `8af0846`，RC8未发布，三任务PAUSED。
 - 待授权通道：仅在本机进程内存读取existing secret，并通过CDP直接填入当前固定local页面；禁止落盘、日志、clipboard、截图和secret回显。只有用户明确接受该风险后才可重试；失败继续保持PAUSED。
+
+### 2026-07-16 用户批准 WeWe auth 受控内存注入
+
+- 用户明确回复：`同意受控内存注入`。
+- 授权边界：仅允许本机进程内存读取existing owner-only `WEWE_RSS_AUTH_CODE`，通过CDP直接填入fixed 9334 / PID 72440 / canonical profile的local `/dash/login`；禁止disk/log/clipboard/AppleScript/screenshot/临时secret文件/明文回显。
+- 验收与续跑：登录后先执行零refresh provider check-only；仅canonical identity和account/feed/DB一致且 `ok=true/status=refresh_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false` 时，自动继续既有RC8 Phase 0授权。
+- 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
