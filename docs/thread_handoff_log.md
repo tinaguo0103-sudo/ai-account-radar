@@ -3396,3 +3396,13 @@
 - 新决策：QA target 回到 RC8 `af0e4e520cefcacb0efa770992a34a2778b9d36f`。QA做完整范围与业务控制验证，但不得继续扩展 same-user malicious root replacement/symlink 对抗；该风险作为已接受的本机信任边界记录。
 - 状态：`RC8 PM Evidence Review Passed with Accepted Trust Boundary / Ready for Independent QA`。这不是生产授权；独立 QA 通过后仍需用户重新确认生产发布与恢复。
 - 派发模型规则继续省略 `model` 与 `thinking`。
+
+### 2026-07-16 AR-034B RC8 完整独立 QA 通过，等待新的生产授权
+
+- QA target=`af0e4e520cefcacb0efa770992a34a2778b9d36f`，base=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，tree=`fc278ad966acc6e1f24e28082f98570986caef33`；fresh clone clean/local=remote/single-parent。28/28 manifest、patch SHA=`abea1284baf80e0c687373dcc65ac149ee67388719f9e2ba47cdb822c7b556dd`、apply/tree/byte parity及forbidden scope=0通过。
+- 真实旧证据：initial与locked prewrite均验证 `run_20260716_080311` 为31/31 attempted、29 success/2 failed、87 items；失败账号 `歸藏 guizang.ai`、`铁锤人` 零产物；manual SHA=`5af4d08662fddc7b09f8c0c906288cf36f6ade5d9ee01fad5270932ba001f496`。daily/probe/manual前后SHA、size、mtime_ns不变。
+- 对抗与回归：独立8/8 legacy mutation阻断；AR-034 50/50、Python 387/387、receiver 32/32、Douyin Node 8/8、semantic static 0/behavioral 7/7、compileall/node/diff/supported pre-merge通过。RC6 signed WeChat、full-source/03 identity/watermark、AIHOT owner及AR-033/033B/031/020D/E均覆盖。
+- PM验收：QA覆盖实际恢复目标，结论受限于accepted local trust boundary，生产零副作用。状态=`Ready for PM Production Authorization`，不是Released/Production Ready/Recovery Complete。
+- 新授权必须点名RC8与28-file scope；RC6旧授权不沿用。生产执行仍由固定生产线程负责，PM不直接改生产。
+- 证据：`/private/tmp/ar034b_rc8_independent_qa_20260716/AR034B_RC8_INDEPENDENT_QA_REPORT.md`、`MACHINE_SUMMARY.json`。
+- 派发模型规则继续省略 `model` 与 `thinking`。

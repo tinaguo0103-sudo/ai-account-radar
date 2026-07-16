@@ -774,7 +774,7 @@
 
 - 类型：生产数据正确性 / 多来源采集闭环 / 固定认证运行时 / editorial owner contract
 - 优先级：P0
-- 状态：RC8 PM Evidence Review Passed with Accepted Trust Boundary / Ready for Independent QA
+- 状态：RC8 Full QA Passed / Ready for PM Production Authorization
 - 来源：对 `run_20260716_080311` 的生产只读复核发现，抖音 probe 实际为 31 attempted、29 succeeded、2 failed，并产出 87 条有效成功账号 items；但 `daily_pipeline.py` 把 account-partial 映射为 `optional_failed=true`，随后整份 Douyin manual artifact 未进入 combined input。最终 `content_items.csv` 为 AIHOT 53、公众号 5、抖音 0；`today_10_topics.csv` 为 AIHOT 8、公众号 1、抖音 0。Feishu 03 同 run 关联记录为 AIHOT 36、公众号历史记录 5、抖音 0。因此当前 9 条不是全源比较结果，不得继续作为 04/Topic Card 恢复输入。
 - 公众号根因：唯一 active 公众号源的 provider 缓存仍是 2026-06-11 至 2026-06-16 的 5 篇旧文章；`ai-radar-wewe-rss` 自至少 2026-07-10 起反复报告 `暂无可用读书账号!`。现有 readiness 只证明 HTTP 能返回可解析缓存，没有证明账号可用、feed 刷新成功、内容新鲜或本次新增。因此旧缓存被错误记为今日采集。
 - 抖音闭环：`completed_with_failures` 必须保留所有成功账号的有效 items，只隔离失败账号；成功 artifact fingerprint 必须可审计地进入 combined input、`content_items.csv`、Feishu 03 和 shortlist universe。`downstream_usable` 必须验证逐层来源闭环，任一成功 artifact 丢失即 false；对外状态必须明确为 partial，不能称全量成功。
@@ -794,6 +794,7 @@
 - PM 威胁边界纠正：上述 RC9 单点门已取消。它把受信 production 线程执行的一次性历史迁移，扩展成防同一 Unix 用户主动替换相邻项目目录的攻击模型，超出用户目标和本次生产恢复边界。真实 production root 已只读确认是固定普通目录、非 symlink，production main clean；RC8 已绑定该固定根，并对真实原件完成 initial + locked prewrite 两次重开校验。因此 RC8 恢复为独立 QA 候选。
 - RC9 历史：停止消息到达前已产生 feature `9a739d82cce3f8e60c942abb4f4de1d70e107015` 与 RC9 `87e16909271bb10dc4ecd276f8cf9422ae0048e8`。两者仅保留审计历史，不作为 PM 验收或发布候选，不回滚、不改写、不继续测试。
 - 接受的残余风险：同一受信 Unix runtime identity 若主动替换项目目录或代码，可绕过纯路径身份检查；这与现有 HMAC key 的已接受本机信任边界一致。本轮 QA 不再构造同用户恶意 root replacement/symlink 攻击；重点验证实际 production root、旧原件 31/31、29/2、87 行闭环、prewrite 重验、RC6 native 合同、WeChat signed refresh、AIHOT owner 和全回归。
+- RC8 独立 QA：fresh clone 的28/28 scope/manifest/patch/apply/tree通过；真实 production originals initial + locked prewrite均为31/31、29/2、87 items，失败账号零产物，manual SHA=`5af4d08662fddc7b09f8c0c906288cf36f6ade5d9ee01fad5270932ba001f496`，三原件前后SHA/size/mtime不变。独立8/8 legacy mutation、AR-034 50/50、Python 387/387、receiver 32/32、Douyin Node 8/8、semantic 7/7及supported pre-merge全部通过。状态进入新的生产授权请求，不沿用RC6授权。
 - 首次开发回传：feature=`43a7d747b8a30522e27e285ef52a620dd8efe3cc`，production-base RC=`11fab145b0efccce7ff75a458f700606a9f4e183`，21-file patch SHA=`03072f758cb28bee3a6c3e680b5ed581e2dff8aedebf13b66ed98a26ed5534de`。RC lineage/tree/remote/patch 可复核，但 PM 对抗审查发现两个 active-path 阻断，因此未派 QA。
 - 阻断一：`downstream_usability_report()` 不要求 source artifact / combined / content / 03 / comparison lineage 通过。独立探针在完全没有下游 artifact 证据、只有 probe 自报 coverage 和 9 条其他来源候选时仍返回 `downstream_usable=true`；原 Douyin 87 条丢失事故可重现。修复必须把 exact run/file hash/account+item lineage/bijection/03 read-back 变为 mandatory checks，missing/stale manual artifact typed fail，`today_candidates_nonempty` 不得替代来源闭环。
 - 阻断二：WeChat `refresh_revision == previous_success_revision` 且无新文章时仍返回 `updated_no_new_items + ok=true`。当前 watermark 未保存上次 refresh timestamp/attempt identity，不能证明本轮刷新发生；24 小时内旧缓存可被误接受。修复必须绑定 current run refresh attempt 或独立前进的 revision/timestamp，并覆盖 unchanged/old cache 集成反例。
