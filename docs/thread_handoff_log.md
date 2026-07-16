@@ -3351,3 +3351,11 @@
 - 禁止：旧错误9行继续恢复、Douyin重采集、任意来源补位、public async refresh GET、手工receipt、schema/callback/06/global Skill/SCF/Chrome/profile变更、手改automation TOML、手动catch-up旧schedule。
 - Stop rule：scope/Git/key/provider/receipt/DB/full-source/03/watermark/editorial/04/card/cwd任一不一致，立即停止后续阶段并保持automation PAUSED；只回滚失败组件，不抹除已验证证据，不把partial写成complete。
 - PM动作：向固定生产线程 `019f2bc4-079e-7530-903e-484707590482` 派发一次完整生产任务；省略 `model` 与 `thinking`，不轮询执行线程。
+
+### 2026-07-16 AR-034 RC6 生产 preflight 因旧Douyin身份封套缺失而安全停止
+
+- 生产结论：`Preflight Blocked / No Release / Automations Paused`。Phase 0即停止；production保持clean `8af084621d01e639c54b5dc847a6439ce96fd8bd`，无Git/key/refresh/watermark/03/04/card/collection/06/automation/Chrome变化。
+- 阻断：旧probe有31/31、29/2、失败0 artifact与item lineage，manual为87行；但probe无 `run_id`/`manual_artifact`，manual行也无 `运行批次`。RC6 strict validator报 `manual_artifact_identity_missing`，不能手工补JSON后继续。
+- PM独立只读复核：daily exact run=`run_20260716_080311`；唯一Douyin step canonical 9333/account-limit0/video-limit3/retries2，08:03:13开始、08:08:10结束；probe/manual均current UID、regular/single-link并在08:07:39写成；resolver路径精确指向manual，manual SHA=`5af4d08662fddc7b09f8c0c906288cf36f6ade5d9ee01fad5270932ba001f496`、size=100159、rows=87。daily stdout为截断尾部，不冒充完整byte proof。
+- 推荐AR-034B：提供显式legacy attestation校验器，从daily log + expected run + canonical old probe/manual重新计算run/file/account/item闭环；不改旧artifact、不重采集、不自动fallback，正常新产物继续RC6严格合同。形成production-base fresh RC7并full QA后，必须重新获得生产授权。
+- 证据：`/private/tmp/ar034_rc6_production_preflight_blocked_20260716_1947/PM_HANDOFF.md`、`cdp_probe_results.json`、`content_items_manual.jsonl`；PM只读审计脚本=`/private/tmp/ar034_legacy_lineage_audit.js`。
