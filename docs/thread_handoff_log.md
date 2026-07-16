@@ -3231,3 +3231,12 @@
 - 测试：feature Python 365、RC Python 332、targeted 108、Douyin Node 8（内含 39 cases）、receiver/SCF 32、semantic 7/7、compile/node/diff/pre-merge 均通过。
 - QA 派发：已向固定 QA 线程 `019f4714-3f76-7bb1-b71f-08a41d9f8860` 发送完整 RC QA 任务卡；要求 fresh scope/apply、exact 9 行、prepare 后 CSV/state mutation、no-resampling/no-replacement、legacy/adjacent regression、production read-only boundary 和 recovery plan。不是 micro-recheck。
 - 派发模型规则：本次 QA 派发省略 `model` 与 `thinking`，保留线程用户设置。
+
+### 2026-07-16 AR-033B 首个 RC QA 失败，已退回集中返修
+
+- QA 结论：`AR-033B RC QA Failed / Development Rework Required`。RC `f99db53ca428a6c2f650f9e51176205422d6c1c2` 的 lineage、7-file scope、patch/apply/parity、真实 9 行初始 lock 和完整基础回归均通过，但不能覆盖两个 active-path 阻断。
+- 阻断一：exact `prepare-source-open` 绕过 shortlist，但 `validate_stage1 -> eligible_source_rows -> pool_from_state`、`prepare_stage2`、`validate_stage2`、`finalize` 仍调用 `deterministic_replay.load_items + build_pre_skill_pool`；独立 sentinel 实际触发 `exact_mode_resampling_or_pool_rebuild_called`。
+- 阻断二：prepare 后修改临时 CSV，后续读取没有重新打开原文件并核对 locked `input_file_sha256`，QA 结果为 `NOT_BLOCKED`。candidate URL 和 stored manifest mutation 能阻断，但 source-file immutability 没有端到端闭合。
+- 生产边界：Feishu 04 对 run 仍为 0，Topic Card 未发送；无代码/业务写入、采集、06、automation、Chrome、Skill、SCF 或 production Git 改动。GET-only 仅追加本地 telemetry，已披露。
+- PM 动作：失败 RC 保留历史且不得发布；已向固定开发线程派一次集中返修，要求四个后续公共阶段的 legacy pool builder 调用数为 0，并在每次 exact state 读取前复核 canonical CSV 当前 SHA 和 ordered identity。须产出 fresh production-base RC，再做完整独立 QA。
+- 派发模型规则：开发返修任务省略 `model` 与 `thinking`，保留线程用户设置。

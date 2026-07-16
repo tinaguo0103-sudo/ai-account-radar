@@ -199,7 +199,7 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 
 ## 2026-07-16 AR-033 Release Board Entry
 
-- 结论：`AR-033 Released / AR-033B Independent QA In Progress / Today Recovery Blocked`。
+- 结论：`AR-033 Released / AR-033B RC QA Failed - Rework In Progress / Today Recovery Blocked`。
 - 生产事实：`run_20260716_080311` 为 account-level partial，31 planned/attempted、29 succeeded、2 failed、03 已写入、9 条 today candidates 已生成；不得重跑采集或改历史 03。
 - 发布目标：新增 downstream usability machine field 与 persistent editorial Skill release manifest，恢复 09:15/10:00 对 partial-but-usable collection 的正确判定。
 - 发布边界：feature 开发与生产基线 RC 分离；PM docs 只留 feature 追踪，不进入 product RC patch。生产 04 写入、个人 Topic Card 发送和任何恢复动作必须在修复发布与独立 QA 通过后由生产线程执行。
@@ -210,3 +210,5 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - Automation 门：三条任务保持 PAUSED。恢复前必须保留 projectless 和用户当前模型设置，并通过 official control 把 cwd 从 `~` 修复为 production repo；不得手改 TOML。最终仅 status-only 恢复 ACTIVE，并确认无即时补跑。
 - RC：`release/ar033b-exact-input-20260716@f99db53ca428a6c2f650f9e51176205422d6c1c2`，production base=`e6f04c547d70745c65b88d08aa2c4a9694b732fa`，7-file patch SHA=`68b8db2d725f9b1e14680775949417dcf6b9c7ea8b97e65e8e0a9fad954826b2`，clean-base apply/byte parity 7/7。
 - Dev evidence：真实 `run_20260716_080311` CSV SHA=`63450c79afa389d6ee7435681bfb55994f4424fb9302535b8e99587d898e64f5`；check-exact-input 与 official prepare 均 9/9，source outputs=0，writes/sends/collection=false。QA 必须独立重算并覆盖 prepare 后 CSV/state mutation、no-resampling/no-replacement 和完整 adjacent regressions。
+- QA 阻断：exact prepare 本身通过，但后续四个公共阶段仍调用 legacy pool reconstruction；QA sentinel 命中 `exact_mode_resampling_or_pool_rebuild_called`。此外 prepare 后修改 CSV，`candidate_rows_from_state` 未复核当前文件 SHA，结果为 `NOT_BLOCKED`。绿色 332 Python/Node/semantic/pre-merge 不覆盖这两个独立反例。
+- 返修门：集中 exact-mode state revalidation；每阶段重新读取 canonical CSV 并核对 bytes SHA/run/date/order/URL/fingerprint/manifest；exact pool 全程只来自 locked candidates，legacy builder 调用数必须为 0。原 QA 两个 probe 必须原样通过，再产出 new production-base RC 做完整 QA。
