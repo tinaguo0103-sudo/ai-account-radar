@@ -3296,3 +3296,12 @@
 - 后续：fresh production-base RC + full independent QA 通过后，才申请 production canonical data migration、9334 reauth、一次真实 refresh/read-back 和版本化 recovery run。
 - 证据：`/private/tmp/ar034_rc2_independent_qa_20260716/AR034_RC2_INDEPENDENT_QA_REPORT.md`。
 - 派发模型规则：receipt adapter 开发继续省略 `model` 与 `thinking`。
+
+### 2026-07-16 AR-034 receipt RC3 未通过 PM evidence gate，QA 未启动
+
+- 开发回传：feature=`a7c198a401b0acc911456e19d43f43a8c176b188`；fresh RC=`release/ar034-rc3-20260716@d23ee694a15499f927922eed68a6aadc6578c161`，parent 为 production `8af084621d01e639c54b5dc847a6439ce96fd8bd`，local=remote clean。25-file manifest、patch SHA `0f16151ea7cdd898e40c964dbc608bc83e61127d2e31a283d5432e3a77ea4455` 与 tree/apply tree `1d2b6df49a5e9dde2a6c319964f0d48c650dec33` 可复核。
+- PM 对抗结果：当前 `validate_refresh_receipt()` 接受 canonical receipts 目录之外的任意 receipt path，也没有重算 `per_feed` 与 ordered feed set、before/after snapshots 的逐条关系。独立探针使用手工构造外部 JSON，并把 `per_feed.feed_id` 设为非 live feed，仍得到 verifier accepted 与 `updated_no_new_items`。
+- 影响：文件 hash 和 live DB parity 只能证明 JSON 自洽且 after 等于当前 DB，不能证明 receipt 由本次 caller-bound adapter/lease 生成；这直接违反 release plan 的 `manual receipt construction` 禁令。状态改为 `PM Evidence Review Failed / Development Rework Required`，不浪费独立 QA 轮次。
+- 返修：canonical path/filename/realpath + no-symlink，exact typed schema，逐 feed before/after/completion/new-count/revision/refreshed_at 全量重算，覆盖 missing/duplicate/extra/reorder/fake-before/symlink/external mutations；fresh RC 后再做完整 QA。
+- 证据：`/private/tmp/ar034_rc3_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_FAILED.md` 与 `/private/tmp/ar034_pm_forged_receipt_probe.py`。探针只在 `/private/tmp` 构造临时 SQLite/JSON，不访问 provider、Feishu、automation、Chrome/profile 或 production Git。
+- 派发模型规则：返修任务省略 `model` 与 `thinking`，保留开发线程用户设置。
