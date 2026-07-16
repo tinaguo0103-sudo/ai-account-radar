@@ -3315,3 +3315,12 @@
 - 返修决策：开发先选择 provider-persisted attempt nonce（优先）或独立 runtime signature，并明确 Unix-user threat boundary；禁止继续叠加普通 JSON。手工 canonical trio必须 typed fail，real before必须与 attestation绑定，再产 fresh production-base RC。
 - 证据：`/private/tmp/ar034_rc4_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_FAILED.md`、`/private/tmp/ar034_pm_forged_canonical_trio_probe.py`。仅使用 `/private/tmp` fake SQLite/JSON，无任何生产或外部动作。
 - 派发模型规则：继续省略 `model` 与 `thinking`。
+
+### 2026-07-16 AR-034 RC5 HMAC 方向通过，证据语义与 key owner 需窄返修
+
+- 开发回传：选择 B Dedicated Runtime HMAC Signature；feature=`11ea9805fefb0d005c87d959b439c0d6fea77cd7`，fresh RC=`release/ar034-rc5-20260716@5c0c203c781aeb50d9ce2c6b04ad4b313a059a49`，parent=`8af084621d01e639c54b5dc847a6439ce96fd8bd`，patch SHA=`94d00404c995c1a747822d3e733757be72043bcf5c7bd20252f62b9d619309fc`，tree=`c171f6b7b579375afa0be9a92270741e161c1b86`。
+- PM architecture verdict：Accepted。key 脱离 health/data，scheduled 不生成；lease/attempt/receipt 三份签名，verifier 独立读 key 并先验签；无 key/错 key/错签名 fail；同 Unix identity arbitrary code 是明确最终信任边界。
+- 窄阻断：adapter 读取 HMAC key + provider auth、health 读取 HMAC key，却输出 `secrets_read=false`，审计字段与事实相反；同时 key loader未检查 current UID，且 `lstat` 与 `read_bytes` 分离。
+- 返修：输出准确的 `secret_material_read` / `secrets_exposed` 语义；用 fd 级 `O_NOFOLLOW + fstat` 验证 regular、nlink=1、st_uid=current uid、owner-only mode后读取；canonical secrets parent current uid且非 group/world writable。补 owner/mode/symlink swap/TOCTOU模拟和 check-only无 secret read tests，形成 fresh RC 后再派完整 QA。
+- 证据：`/private/tmp/ar034_rc5_pm_evidence_review_20260716/PM_EVIDENCE_REVIEW_NEEDS_NARROW_REWORK.md`。仅静态审计与本地 RC证据复核，无生产动作。
+- 派发模型规则：继续省略 `model` 与 `thinking`。
