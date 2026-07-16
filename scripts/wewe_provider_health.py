@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import hmac
 import json
 import os
 import re
@@ -12,7 +13,7 @@ import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from wewe_provider_refresh import ATTEMPT_ID_PATTERN, HEALTH_DIR, PROVIDER_URL, RUN_ID_PATTERN, canonical_json, read_snapshot, sha256_bytes
+from wewe_provider_refresh import ATTEMPT_ID_PATTERN, HEALTH_DIR, PROVIDER_URL, RUN_ID_PATTERN, RefreshError, attestation_key_id, canonical_json, load_attestation_key, read_snapshot, sha256_bytes, sign_payload
 
 CANONICAL_DATA_DIR = Path.home() / ".codex" / "ai-account-radar-runtime" / "providers" / "wewe-rss" / "data"
 CANONICAL_STATE_PATH = CANONICAL_DATA_DIR.parent / "health" / "last_success.json"
@@ -74,7 +75,13 @@ def validate_refresh_receipt(
     receipt_path: Path, receipt_sha256: str, *, run_id: str, attempt_id: str,
     data_dir: Path = CANONICAL_DATA_DIR, health_dir: Path = HEALTH_DIR,
     now_ms: int, run_started_at_ms: int = 0, previous_attempt_id: str = "",
+    signing_key: bytes | None = None,
 ) -> dict[str, Any]:
+    try:
+        key = signing_key if signing_key is not None else load_attestation_key()
+    except RefreshError as exc:
+        raise ValueError(str(exc)) from exc
+    expected_key_id = attestation_key_id(key)
     if not isinstance(run_id, str) or not RUN_ID_PATTERN.fullmatch(run_id) or not isinstance(attempt_id, str) or not ATTEMPT_ID_PATTERN.fullmatch(attempt_id):
         raise ValueError("refresh_receipt_identity_format_invalid")
     root = health_dir.resolve()
@@ -98,11 +105,13 @@ def validate_refresh_receipt(
         raise ValueError("refresh_receipt_unreadable") from exc
     if sha256_bytes(raw) != receipt_sha256:
         raise ValueError("refresh_receipt_hash_mismatch")
-    required = {"schema_version", "attempt_id", "run_id", "provider_url", "database_identity", "feed_ids", "before_snapshot_sha256", "after_snapshot_sha256", "attempt_lineage_sha256", "before", "after", "per_feed", "started_at_ms", "requested_at_ms", "completed_at_ms", "new_item_count", "refresh_revision", "refreshed_at_ms", "status"}
+    required = {"schema_version", "attempt_id", "run_id", "provider_url", "database_identity", "feed_ids", "before_snapshot_sha256", "after_snapshot_sha256", "attempt_lineage_sha256", "before", "after", "per_feed", "started_at_ms", "requested_at_ms", "completed_at_ms", "new_item_count", "refresh_revision", "refreshed_at_ms", "status", "attestation_key_id", "attestation_signature"}
     if not isinstance(receipt, dict) or set(receipt) != required:
         raise ValueError("refresh_receipt_schema_invalid")
     if receipt["schema_version"] != 1 or receipt["status"] != "success" or receipt["run_id"] != run_id or receipt["attempt_id"] != attempt_id:
         raise ValueError("refresh_receipt_identity_mismatch")
+    if receipt["attestation_key_id"] != expected_key_id or not hmac.compare_digest(str(receipt["attestation_signature"]), sign_payload(receipt, key)):
+        raise ValueError("refresh_receipt_attestation_invalid")
     if previous_attempt_id and receipt["attempt_id"] == previous_attempt_id:
         raise ValueError("refresh_receipt_replayed")
     if receipt["provider_url"] != PROVIDER_URL:
@@ -117,20 +126,24 @@ def validate_refresh_receipt(
         lineage_raw = lineage_path.read_bytes(); lineage = json.loads(lineage_raw)
     except (OSError, json.JSONDecodeError, TypeError) as exc:
         raise ValueError("refresh_attempt_lineage_unreadable") from exc
-    lineage_keys = {"schema_version", "attempt_id", "run_id", "provider_url", "database_identity", "feed_ids", "before_snapshot_sha256", "lease_sha256", "pid", "host", "started_at_ms", "requested_at_ms", "status"}
+    lineage_keys = {"schema_version", "attempt_id", "run_id", "provider_url", "database_identity", "feed_ids", "before_snapshot_sha256", "lease_sha256", "pid", "host", "started_at_ms", "requested_at_ms", "status", "attestation_key_id", "attestation_signature"}
     if not isinstance(lineage, dict) or set(lineage) != lineage_keys or sha256_bytes(lineage_raw) != receipt["attempt_lineage_sha256"]:
         raise ValueError("refresh_attempt_lineage_invalid")
     if any(type(lineage.get(key)) is not int for key in ("schema_version", "pid", "started_at_ms", "requested_at_ms")):
         raise ValueError("refresh_attempt_lineage_type_invalid")
+    if lineage["attestation_key_id"] != expected_key_id or not hmac.compare_digest(str(lineage["attestation_signature"]), sign_payload(lineage, key)):
+        raise ValueError("refresh_attempt_attestation_invalid")
     if lineage["status"] != "requesting" or lineage["run_id"] != run_id or lineage["attempt_id"] != attempt_id or lineage["provider_url"] != PROVIDER_URL or lineage["started_at_ms"] != started or lineage["requested_at_ms"] != requested:
         raise ValueError("refresh_attempt_lineage_identity_mismatch")
     try:
         lease_raw = lease_record_path.read_bytes(); lease = json.loads(lease_raw)
     except (OSError, json.JSONDecodeError, TypeError) as exc:
         raise ValueError("refresh_lease_lineage_unreadable") from exc
-    lease_keys = {"schema_version", "attempt_id", "run_id", "pid", "host", "started_at_ms", "expires_at_ms", "provider_url", "data_identity"}
+    lease_keys = {"schema_version", "attempt_id", "run_id", "pid", "host", "started_at_ms", "expires_at_ms", "provider_url", "data_identity", "attestation_key_id", "attestation_signature"}
     if not isinstance(lease, dict) or set(lease) != lease_keys or sha256_bytes(lease_raw) != lineage["lease_sha256"]:
         raise ValueError("refresh_lease_lineage_invalid")
+    if lease["attestation_key_id"] != expected_key_id or not hmac.compare_digest(str(lease["attestation_signature"]), sign_payload(lease, key)):
+        raise ValueError("refresh_lease_attestation_invalid")
     if lease["run_id"] != run_id or lease["attempt_id"] != attempt_id or lease["provider_url"] != PROVIDER_URL or lease["data_identity"] != receipt["database_identity"] or lease["started_at_ms"] != started or lease["pid"] != lineage["pid"] or lease["host"] != lineage["host"]:
         raise ValueError("refresh_lease_lineage_identity_mismatch")
     snapshot_keys = {"database_identity", "active_account_count", "feeds", "snapshot_sha256"}
