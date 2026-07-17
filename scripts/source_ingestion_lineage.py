@@ -50,6 +50,22 @@ def row_account(row: dict[str, Any]) -> str:
     return str(row.get("账号名/公众号名") or row.get("原始来源账号") or "").strip()
 
 
+def row_source_type(row: dict[str, Any]) -> str:
+    return str(row.get("来源类型") or "").strip()
+
+
+def row_url(row: dict[str, Any]) -> str:
+    return str(row.get("内容链接") or "").strip()
+
+
+def row_title(row: dict[str, Any]) -> str:
+    return str(row.get("内容标题") or "").strip()
+
+
+def canonical_identity(row: dict[str, Any], run_id: str) -> tuple[str, str, str, str]:
+    return (run_id, row_source_type(row), row_url(row), row_account(row))
+
+
 def artifact_sha256(path: Path) -> str:
     return hashlib.sha256(path.read_bytes()).hexdigest()
 
@@ -64,6 +80,43 @@ def safe_legacy_artifact(path: Path, expected: Path, reason: str) -> os.stat_res
     if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1 or info.st_uid != os.getuid() or info.st_mode & 0o022:
         raise LineageError(f"{reason}_identity_unsafe")
     return info
+
+
+def verify_legacy_production_root(path: Path, expected_identity: dict[str, Any] | None = None) -> dict[str, Any]:
+    raw = Path(os.path.abspath(os.fspath(path)))
+    if not path.is_absolute() or path != raw:
+        raise LineageError("legacy_production_root_alias")
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    try:
+        before = os.lstat(raw)
+        if stat.S_ISLNK(before.st_mode):
+            raise LineageError("legacy_production_root_symlink")
+        fd = os.open(raw, flags)
+    except LineageError:
+        raise
+    except OSError as exc:
+        raise LineageError("legacy_production_root_unavailable") from exc
+    try:
+        opened = os.fstat(fd)
+        after = os.lstat(raw)
+        if not stat.S_ISDIR(opened.st_mode) or not stat.S_ISDIR(after.st_mode):
+            raise LineageError("legacy_production_root_not_directory")
+        if opened.st_uid != os.getuid() or after.st_uid != os.getuid():
+            raise LineageError("legacy_production_root_wrong_owner")
+        if (opened.st_dev, opened.st_ino) != (before.st_dev, before.st_ino) or (opened.st_dev, opened.st_ino) != (after.st_dev, after.st_ino):
+            raise LineageError("legacy_production_root_identity_swap")
+        if Path(os.path.realpath(raw)) != raw:
+            raise LineageError("legacy_production_root_alias")
+        identity = {
+            "path": str(raw), "device": opened.st_dev, "inode": opened.st_ino, "uid": opened.st_uid,
+        }
+        if expected_identity is not None and identity != expected_identity:
+            raise LineageError("legacy_production_root_identity_drift")
+        return identity
+    except OSError as exc:
+        raise LineageError("legacy_production_root_identity_read_failed") from exc
+    finally:
+        os.close(fd)
 
 
 def legacy_time(value: Any, reason: str) -> datetime:
@@ -98,15 +151,13 @@ def validate_legacy_partial_source_artifact(
     *,
     expected_run_id: str,
     expected_root: Path,
+    expected_root_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if re.fullmatch(r"run_\d{8}_\d{6}", expected_run_id) is None:
         raise LineageError("legacy_expected_run_id_invalid")
     expected_date = f"{expected_run_id[4:8]}-{expected_run_id[8:10]}-{expected_run_id[10:12]}"
-    if not expected_root.is_absolute() or expected_root.is_symlink():
-        raise LineageError("legacy_production_root_invalid")
-    production_root = expected_root.resolve()
-    if production_root != expected_root:
-        raise LineageError("legacy_production_root_alias")
+    root_identity = verify_legacy_production_root(expected_root, expected_root_identity)
+    production_root = Path(root_identity["path"])
     expected_daily = production_root / "output" / "logs" / f"daily_pipeline_{expected_date}.json"
     expected_probe = production_root / "output" / "spikes" / "douyin_cdp_source_watch_probe" / "cdp_probe_results.json"
     expected_manual = production_root / "output" / "spikes" / "douyin_cdp_source_watch_probe" / "content_items_manual.jsonl"
@@ -214,6 +265,7 @@ def validate_legacy_partial_source_artifact(
     if len(expected_counts) != successful or actual_counts != expected_counts or sum(actual_counts.values()) != len(rows):
         raise LineageError("legacy_per_account_count_mismatch")
     command_digest = hashlib.sha256(json.dumps(expected_command, ensure_ascii=False, separators=(",", ":")).encode()).hexdigest()
+    verify_legacy_production_root(production_root, root_identity)
     return {
         "ok": True, "source_run_id": expected_run_id, "run_id": expected_run_id,
         "legacy_attestation_verified": True, "evidence_basis": "daily_log_probe_manual_v1", "evidence_version": 1,
@@ -223,6 +275,7 @@ def validate_legacy_partial_source_artifact(
         "probe": {"path": str(expected_probe), "sha256": artifact_sha256(expected_probe), "size": probe_stat.st_size, "mtime_ns": probe_stat.st_mtime_ns},
         "manual": {"path": str(expected_manual), "sha256": artifact_sha256(expected_manual), "size": manual_stat.st_size, "mtime_ns": manual_stat.st_mtime_ns, "row_count": len(rows)},
         "command_identity_sha256": command_digest, "started_at": started.isoformat(), "generated_at": generated.isoformat(),
+        "production_root_identity": root_identity,
         "ordered_fingerprints": fingerprints, "fingerprint_accounts": mapping, "failed_account_names": sorted(failed_names),
         "stdout_corroboration": {
             "is_identity_anchor": False,
@@ -240,16 +293,18 @@ def revalidate_legacy_before_external_write(
     expected_run_id: str,
     expected_root: Path,
     attested_report: dict[str, Any],
+    expected_root_identity: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     if not isinstance(attested_report, dict) or attested_report.get("legacy_attestation_verified") is not True:
         raise LineageError("legacy_attestation_report_invalid")
     current = validate_legacy_partial_source_artifact(
         daily_log_path, probe_path, manual_path, expected_run_id=expected_run_id, expected_root=expected_root,
+        expected_root_identity=expected_root_identity,
     )
     locked_fields = (
         "source_run_id", "evidence_basis", "evidence_version", "planned_accounts", "attempted_accounts",
         "successful_accounts", "failed_accounts", "successful_item_count", "daily_log", "probe", "manual",
-        "command_identity_sha256", "started_at", "generated_at", "ordered_fingerprints",
+        "command_identity_sha256", "started_at", "generated_at", "production_root_identity", "ordered_fingerprints",
         "fingerprint_accounts", "failed_account_names",
     )
     if any(current.get(field) != attested_report.get(field) for field in locked_fields):
@@ -341,32 +396,96 @@ def validate_ingestion_bijection(
     comparison_path: Path | None = None, shortlist_path: Path | None = None,
 ) -> dict[str, Any]:
     source = list(source_report.get("ordered_fingerprints") or [])
+    manual_path = Path(str(source_report.get("manual_path") or ""))
+    if not manual_path.is_absolute() or not manual_path.exists() or artifact_sha256(manual_path) != str(source_report.get("manual_sha256") or ""):
+        raise LineageError("source_artifact_prewrite_identity_drift")
+    current_source_rows = read_jsonl(manual_path)
+    if [row_identity(row) for row in current_source_rows] != source:
+        raise LineageError("source_artifact_prewrite_order_drift")
+    expected_accounts = dict(source_report.get("fingerprint_accounts") or {})
+    run_id = str(source_report.get("run_id") or "").strip()
+    if not run_id:
+        raise LineageError("source_run_identity_missing")
+    legacy_run_binding = source_report.get("legacy_attestation_verified") is True
+    for row in current_source_rows:
+        if row_account(row) != str(expected_accounts.get(row_identity(row)) or ""):
+            raise LineageError("source_artifact_prewrite_account_drift")
+        row_run = str(row.get("运行批次") or "")
+        if row_run != run_id and not (legacy_run_binding and not row_run):
+            raise LineageError("source_artifact_prewrite_run_drift")
+        if not all((row_source_type(row), row_url(row), row_account(row), row_title(row))):
+            raise LineageError("source_identity_field_missing")
     combined_rows = read_jsonl(combined_path)
     content_rows = read_csv_rows(content_items_path)
     combined = [row_identity(row) for row in combined_rows]
     content = [row_identity(row) for row in content_rows]
     if any(not value for value in combined + content):
         raise LineageError("downstream_identity_missing")
-    combined_set, content_set = set(combined), set(content)
-    missing_combined = [value for value in source if value not in combined_set]
-    missing_content = [value for value in source if value not in content_set]
-    if missing_combined or missing_content:
-        raise LineageError("successful_source_artifact_dropped")
+    if len(combined) != len(set(combined)) or len(content) != len(set(content)):
+        raise LineageError("downstream_fingerprint_collision")
+    content_set = set(content)
     fingerprint_accounts = dict(source_report.get("fingerprint_accounts") or {})
+    combined_source_order = [value for value in combined if value in set(source)]
+    if combined_source_order != source:
+        raise LineageError("source_order_or_membership_drift")
+    manual_by_fingerprint = {row_identity(row): row for row in current_source_rows}
     for fingerprint in source:
         combined_matches = [row for row in combined_rows if row_identity(row) == fingerprint]
-        content_matches = [row for row in content_rows if row_identity(row) == fingerprint]
-        if len(combined_matches) != 1 or len(content_matches) != 1:
+        if len(combined_matches) != 1:
             raise LineageError("source_fingerprint_not_bijective")
-        expected_account = str(fingerprint_accounts.get(fingerprint) or "")
-        if row_account(combined_matches[0]) != expected_account or row_account(content_matches[0]) != expected_account:
+        combined_row = combined_matches[0]
+        source_truth = manual_by_fingerprint[fingerprint]
+        combined_run = str(combined_row.get("运行批次") or "")
+        if combined_run != run_id and not (legacy_run_binding and not combined_run):
+            raise LineageError("source_run_identity_drift")
+        if row_source_type(combined_row) != row_source_type(source_truth):
+            raise LineageError("source_type_identity_drift")
+        if row_url(combined_row) != row_url(source_truth):
+            raise LineageError("source_url_identity_drift")
+        if row_account(combined_row) != row_account(source_truth):
             raise LineageError("cross_account_lineage_contamination")
-    mapping = [{"source_fingerprint": value, "surviving_fingerprint": value} for value in source]
+        if row_title(combined_row) != row_title(source_truth):
+            raise LineageError("source_title_identity_drift")
+    source_rows = current_source_rows
+    source_keys = [canonical_identity(row, run_id) for row in source_rows]
+    if len(source_keys) != len(set(source_keys)):
+        raise LineageError("source_identity_collision")
+    source_types = {row_source_type(row) for row in source_rows}
+    canonical_rows = [row for row in content_rows if row_source_type(row) in source_types]
+    canonical_keys = [canonical_identity(row, run_id) for row in canonical_rows]
+    if len(canonical_keys) != len(set(canonical_keys)):
+        raise LineageError("canonical_identity_collision")
+    canonical_by_key = {canonical_identity(row, run_id): row for row in canonical_rows}
+    if set(canonical_by_key) != set(source_keys):
+        raise LineageError("successful_source_artifact_dropped_or_replaced")
+    if canonical_keys != source_keys:
+        raise LineageError("canonical_identity_order_drift")
+    mapping: list[dict[str, Any]] = []
+    for source_row in source_rows:
+        key = canonical_identity(source_row, run_id)
+        canonical_row = canonical_by_key[key]
+        if row_title(canonical_row) != row_title(source_row):
+            raise LineageError("source_title_identity_drift")
+        mapping.append({
+            "run_id": run_id,
+            "source_type": row_source_type(source_row),
+            "canonical_url": row_url(source_row),
+            "account": row_account(source_row),
+            "title": row_title(source_row),
+            "source_fingerprint": row_identity(source_row),
+            "canonical_fingerprint": row_identity(canonical_row),
+        })
+    source_fingerprints = [row["source_fingerprint"] for row in mapping]
+    canonical_fingerprints = [row["canonical_fingerprint"] for row in mapping]
+    if len(source_fingerprints) != len(set(source_fingerprints)):
+        raise LineageError("source_fingerprint_collision")
+    if len(canonical_fingerprints) != len(set(canonical_fingerprints)):
+        raise LineageError("canonical_fingerprint_collision")
     comparison: list[str] = []
     shortlist: list[str] = []
     if comparison_path is not None:
         comparison = [row_identity(row) for row in read_csv_rows(comparison_path)]
-        if any(not value for value in comparison) or any(value not in set(comparison) for value in source):
+        if any(not value for value in comparison) or any(value not in set(comparison) for value in canonical_fingerprints):
             raise LineageError("comparison_universe_fingerprint_drift")
     if shortlist_path is not None:
         shortlist = [row_identity(row) for row in read_csv_rows(shortlist_path)]
@@ -378,18 +497,22 @@ def validate_ingestion_bijection(
         "combined_count": len(combined_rows),
         "content_items_count": len(content_rows),
         "source_to_survivor_count": len(mapping),
+        "source_to_canonical_mapping": mapping,
         "dedupe_mapping": mapping,
         "combined_sha256": artifact_sha256(combined_path),
         "content_items_sha256": artifact_sha256(content_items_path),
-        "feishu_03_planned_fingerprints": source,
+        "ordered_canonical_fingerprints": canonical_fingerprints,
+        "feishu_03_planned_fingerprints": canonical_fingerprints,
         "comparison_universe_count": len(comparison),
         "shortlist_count": len(shortlist),
-        "shortlist_source_fingerprints": [value for value in shortlist if value in set(source)],
+        "shortlist_canonical_fingerprints": [value for value in shortlist if value in set(canonical_fingerprints)],
     }
 
 
 def planned_feishu_identity(source_report: dict[str, Any], run_id: str) -> dict[str, Any]:
-    ordered = list(source_report.get("ordered_fingerprints") or [])
+    ordered = list(source_report.get("ordered_canonical_fingerprints") or [])
+    if not ordered:
+        raise LineageError("canonical_feishu_identity_missing")
     payload = json.dumps({"run_id": run_id, "ordered_fingerprints": ordered}, ensure_ascii=False, separators=(",", ":"))
     return {
         "run_id": run_id,
@@ -410,7 +533,6 @@ def validate_feishu_readback_identity(
     if str(read_back.get("run_id") or "") != run_id:
         raise LineageError("feishu_03_readback_run_mismatch")
     read_fingerprints = list(read_back.get("ordered_fingerprints") or [])
-    for fingerprint in planned["ordered_fingerprints"]:
-        if read_fingerprints.count(fingerprint) != 1:
-            raise LineageError("feishu_03_readback_identity_mismatch")
+    if read_fingerprints != planned["ordered_fingerprints"] or len(read_fingerprints) != len(set(read_fingerprints)):
+        raise LineageError("feishu_03_readback_identity_mismatch")
     return {"ok": True, "mode": "write", "planned_identity": planned, "read_back_required": True}
