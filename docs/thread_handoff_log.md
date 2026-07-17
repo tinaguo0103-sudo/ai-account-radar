@@ -3477,6 +3477,13 @@
 - 验收与续跑：登录后先执行零refresh provider check-only；仅canonical identity和account/feed/DB一致且 `ok=true/status=refresh_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false` 时，自动继续既有RC8 Phase 0授权。
 - 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
 
+### 2026-07-17 AR-034D production 与 AR-034E PM校准
+
+- Production结果：`Released / Bounded Read Passed / Today Recovery Blocked / Automations Paused`。production已发布clean `d88d0e5eb812d3a69ef816161446d0d8f1ca05e6`；唯一WeChat bounded read为19/19，无第二refresh/read；本地全源为87 Douyin + 19 WeChat + 56 AIHOT。证据=`/private/tmp/ar034d_production_20260717_104416/final/PM_HANDOFF.md`。
+- 03前阻塞：旧 `validate_ingestion_bijection()` 把上游 `douyin_cdp_*` provenance fingerprint和sampler 16位canonical fingerprint视为同一身份。PM只读复核87 source rows与87 downstream rows：URL intersection=87，missing/extra=0，account/title mismatch=0，source/canonical/pair uniqueness均=87。
+- PM判定：这是正常归一化边界缺少显式映射，不是采集失败、候选级失败或真实数据污染；不能绕过03 read-back，但也不应继续扩展签名/attestation体系。
+- 待用户确认方案：AR-034E只建立source fingerprint -> canonical fingerprint双向唯一映射，canonical identity进入comparison/03/read-back，source identity保留provenance；复用现有local artifacts，不重采集、不第二refresh/read。一个窄RC、一次独立QA。计划SHA=`c23fe579c1153e13f85aa7bbd5c85fa7cf302f823fbb501c2a4b5f68bced684b`。
+
 ### 2026-07-17 AR-034C生产读取被800字硬门阻断，派AR-034D语义修复
 
 - Production结论：`Released / Recovery Blocked / Automations Paused`。production已fast-forward/push到 `b7530452f5059dd02c274b32e5adb73d7dc68e72`；dynamic gate和reader check-only=19/0 requests通过。
