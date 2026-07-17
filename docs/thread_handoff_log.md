@@ -3783,3 +3783,9 @@
 - 用户已在UI中将`ai-rebuild`、`ai-04-rebuild`、`ai-rebuild-2`手工切为ACTIVE；official file read-back确认三条schedule仍为08:00/09:15/10:00，projectless、model和reasoning未变。
 - UI本次只改变status，三条`cwds`仍为`["~"]`，而prompt仍调用相对路径`python3 scripts/...`；因此当前只能标记`ACTIVE / Production Entrypoint Repair Pending`，不能宣称定时任务可运行。
 - 用户手工收口二选一：若UI有工作目录字段，设为`/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar`；若无该字段，在每条prompt开头加入“先切换到上述生产目录，后续命令只在该目录运行”。继续保持projectless，不绑定项目、不raw-edit TOML。
+
+### 2026-07-17 Manual automation entrypoint repair passed
+
+- 用户已在三条prompt正文开头加入生产目录切换指令；read-back确认三条均为ACTIVE、projectless，并在任何相对`python3 scripts/...`入口前明确切换到`/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar`。
+- 09:15任务保留英文AR-020E协议，中文目录指令位于协议正文之前；混合语言不改变命令语义或执行顺序。三条schedule/model/reasoning保持用户当前配置，未由PM覆盖。
+- 定时任务入口已完成恢复，不手工补跑旧run；等待下一次正常08:00/09:15/10:00 schedule做业务观察。
