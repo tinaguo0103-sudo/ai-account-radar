@@ -3485,6 +3485,7 @@
 - 待用户确认方案：AR-034E只建立source fingerprint -> canonical fingerprint双向唯一映射，canonical identity进入comparison/03/read-back，source identity保留provenance；复用现有local artifacts，不重采集、不第二refresh/read。一个窄RC、一次独立QA。计划SHA=`c23fe579c1153e13f85aa7bbd5c85fa7cf302f823fbb501c2a4b5f68bced684b`。
 - 用户确认：已明确批准AR-034E按上述计划进入开发。固定dev线程=`019f1de3-f3f2-71d2-ae63-a74cd38f8474`，状态派发前idle；任务省略model/thinking。开发只交付feature commit、production-base narrow RC、测试和PM交接，不派QA、不触碰production或外部系统。
 - Dev handoff：`Dev Self-Validation Passed / Ready for Independent QA`。RC=`ad708bea96934e1906f04ce339c6c3dfbd6476a7`，base=`d88d0e5...`，3-file patch SHA=`2ba0e3ba32f55d6cedf85eeea79dbff78eb10616ef47411ee2d5d59b7c0d6985`；真实87行证据SHA=`24b602fa...`，Python396、focused16、receiver32、Douyin39、semantic/premerge通过。PM核对remote HEAD/scope/diff/patch与real evidence后派唯一QA；QA需独立验证协同修改combined+content时source manual仍为truth anchor。
+- QA handoff：`AR-034E Independent Full RC QA Failed / Development Rework Required`。P0：combined+content协同wrong URL/title/source_type均unexpected pass；source manual不是完整truth anchor。P1：RC parent=`9cd516d...`而非exact production base，manifest无per-file SHA256。证据=`/private/tmp/ar034e_independent_qa_20260717/AR034E_INDEPENDENT_FULL_QA_REPORT.md`；production boundary为0。PM将同一根因三项合并回派dev，不要求用户重复确认，不拆micro-recheck。
 
 ### 2026-07-17 AR-034C生产读取被800字硬门阻断，派AR-034D语义修复
 
