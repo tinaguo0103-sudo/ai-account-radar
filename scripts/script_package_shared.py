@@ -117,8 +117,25 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 
 
 def fields_by_name(token: str, app_token: str, table_id: str) -> dict[str, dict[str, Any]]:
-    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields", token=token)
-    return {field["field_name"]: field for field in payload.get("data", {}).get("items", [])}
+    fields: dict[str, dict[str, Any]] = {}
+    page_token = ""
+    while True:
+        suffix = f"?page_size=100{('&page_token=' + page_token) if page_token else ''}"
+        payload = feishu.request_json(
+            "GET",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields{suffix}",
+            token=token,
+        )
+        data = payload.get("data", {})
+        for field in data.get("items", []):
+            name = field.get("field_name")
+            if name:
+                fields[str(name)] = field
+        if not data.get("has_more"):
+            return fields
+        page_token = str(data.get("page_token") or "")
+        if not page_token:
+            raise RuntimeError("Feishu field metadata pagination is missing page_token")
 
 
 def ensure_text_fields(token: str, app_token: str, table_id: str, field_names: list[str]) -> list[str]:

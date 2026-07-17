@@ -17,6 +17,7 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
@@ -857,10 +858,22 @@ def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: P
     }
 
 
-def clickable_link_value(url: str, label: str, field_type: Any) -> Any:
-    clean_url = str(url or "").strip()
+def validated_http_link(url: Any, field_name: str) -> str:
+    if not isinstance(url, str):
+        raise ValueError(f"{field_name} must be an http(s) URL string")
+    clean_url = url.strip()
     if not clean_url:
         return ""
+    parsed = urlsplit(clean_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        raise ValueError(f"{field_name} must be a valid http(s) URL")
+    return clean_url
+
+
+def clickable_link_value(url: Any, label: str, field_type: Any, field_name: str = "Link field") -> Any:
+    clean_url = validated_http_link(url, field_name)
+    if not clean_url:
+        return None if int(field_type or 0) == BITABLE_URL_FIELD_TYPE else ""
     try:
         normalized_type = int(field_type or 0)
     except (TypeError, ValueError):
@@ -874,11 +887,22 @@ def format_script_package_record_fields(row: dict[str, Any], field_meta: dict[st
     fields = dict(row)
     for field_name, spec in CLICKABLE_LINK_FIELDS.items():
         label = spec["label"]
-        value = str(fields.get(field_name) or "").strip()
-        fields[field_name] = clickable_link_value(value, label, field_meta.get(field_name, {}).get("type"))
+        value = fields.get(field_name, "")
+        rendered = clickable_link_value(value, label, field_meta.get(field_name, {}).get("type"), field_name)
+        if rendered is None:
+            fields.pop(field_name, None)
+        else:
+            fields[field_name] = rendered
         mirror_field = spec["mirror_field"]
         if mirror_field in field_meta:
-            fields[mirror_field] = clickable_link_value(value, label, field_meta.get(mirror_field, {}).get("type"))
+            mirror_type = field_meta[mirror_field].get("type")
+            if int(mirror_type or 0) != BITABLE_URL_FIELD_TYPE:
+                raise ValueError(f"{mirror_field} must be a Feishu Link field (type 15)")
+            mirror_value = clickable_link_value(value, label, mirror_type, mirror_field)
+            if mirror_value is None:
+                fields.pop(mirror_field, None)
+            else:
+                fields[mirror_field] = mirror_value
     return fields
 
 
