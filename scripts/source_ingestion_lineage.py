@@ -528,11 +528,36 @@ def validate_feishu_readback_identity(
     planned = planned_feishu_identity(source_report, run_id)
     if not write_mode:
         return {"ok": True, "mode": "dry_run", "planned_identity": planned, "read_back_required": False}
-    if not isinstance(read_back, dict) or not read_back.get("ok"):
+    if not isinstance(read_back, dict) or read_back.get("ok") is not True:
         raise LineageError("feishu_03_readback_missing")
-    if str(read_back.get("run_id") or "") != run_id:
+    if not isinstance(read_back.get("run_id"), str) or read_back["run_id"] != run_id:
         raise LineageError("feishu_03_readback_run_mismatch")
-    read_fingerprints = list(read_back.get("ordered_fingerprints") or [])
-    if read_fingerprints != planned["ordered_fingerprints"] or len(read_fingerprints) != len(set(read_fingerprints)):
+    read_fingerprints = read_back.get("ordered_fingerprints")
+    if (
+        not isinstance(read_fingerprints, list)
+        or not read_fingerprints
+        or any(not isinstance(value, str) or not value for value in read_fingerprints)
+        or len(read_fingerprints) != len(set(read_fingerprints))
+    ):
+        raise LineageError("feishu_03_readback_identity_malformed")
+    full_ledger_count = len(read_fingerprints)
+    for field in ("planned_count", "matched_count"):
+        if field in read_back and (
+            isinstance(read_back[field], bool)
+            or not isinstance(read_back[field], int)
+            or read_back[field] != full_ledger_count
+        ):
+            raise LineageError("feishu_03_readback_count_mismatch")
+    planned_set = set(planned["ordered_fingerprints"])
+    source_projection = [value for value in read_fingerprints if value in planned_set]
+    if source_projection != planned["ordered_fingerprints"]:
         raise LineageError("feishu_03_readback_identity_mismatch")
-    return {"ok": True, "mode": "write", "planned_identity": planned, "read_back_required": True}
+    return {
+        "ok": True,
+        "mode": "write",
+        "planned_identity": planned,
+        "read_back_required": True,
+        "full_ledger_count": full_ledger_count,
+        "source_projection_count": len(source_projection),
+        "source_projection": source_projection,
+    }
