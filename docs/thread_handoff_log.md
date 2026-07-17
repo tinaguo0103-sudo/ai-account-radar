@@ -3477,6 +3477,14 @@
 - 验收与续跑：登录后先执行零refresh provider check-only；仅canonical identity和account/feed/DB一致且 `ok=true/status=refresh_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false` 时，自动继续既有RC8 Phase 0授权。
 - 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
 
+### 2026-07-17 同日流程在首次 watermark 基线门停止
+
+- 结论：`Released / Provider Reauth Passed / Signed Refresh Passed / Collection Blocked at Canonical Watermark Gate / Automations Paused`。证据根=`/private/tmp/ar034b_same_day_20260717_093048`。
+- Refresh：run=`run_20260717_093104`，attempt=`c74357ebcc87460d8ba730e6e40b5e5e`；唯一一次signed refresh成功，feed=1，articles 48->67，new items=19，receipt SHA=`617754496dd5f9fdda7d384444d040e8bb222c2185bdee100b0b8f69c3f8275b`，secret未暴露。
+- Blocker：canonical `health/last_success.json` 首次启用前不存在，released classifier要求positive previous revision/timestamp，故同一有效receipt被判 `stale_cache`。用preserved pre-refresh DB在/private/tmp生成的诊断基线已只读验证同receipt为 `updated_with_new_items`、19 items、signature/live DB closure green；未写canonical。
+- Stop：未第二次refresh；gate在Douyin/AIHOT前失败，因此未启动其他采集，无03/04/card/callback/06，三任务PAUSED。
+- Repair plan：`final/WATERMARK_BASELINE_REPAIR_AUTHORIZATION_PLAN.md`，SHA256=`97e2fc503aefa99be567b3fc180523ad012b606075a8ddb588ce827ab83e5736`。只允许atomic install exact pre-refresh baseline SHA=`83fd50f1...`、canonical read-back、existing receipt check-only；green后继续同run，禁止第二次refresh。
+
 ### 2026-07-17 WeWe reauth与RC8发布成功，旧恢复因跨日停止
 
 - 结论：`Released / Provider Reauth Passed / Recovery Blocked by Date Boundary / Automations Paused`。证据根=`/private/tmp/ar034b_rc8_release_20260717_092520`；报告=`final/RELEASED_RECOVERY_BLOCKED_DATE_BOUNDARY.md`。
