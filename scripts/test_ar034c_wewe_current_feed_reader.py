@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import sqlite3
 import tempfile
@@ -8,6 +9,7 @@ import urllib.parse
 from pathlib import Path
 from unittest import mock
 
+import daily_pipeline
 import wewe_current_feed_reader as reader
 import wewe_provider_health as health
 import wewe_provider_refresh as refresh
@@ -37,11 +39,11 @@ class CurrentFeedReaderTests(unittest.TestCase):
         self.temporary = tempfile.TemporaryDirectory(); self.addCleanup(self.temporary.cleanup)
         self.root = Path(self.temporary.name); self.data = self.root / "data"; self.health = self.root / "health"; self.data.mkdir()
         create_database(self.data / "wewe-rss.db")
-        self.key = b"isolated-ar034c-attestation-key" * 2
-        self.clock = Clock()
-        self.health_key = mock.patch.object(health, "load_attestation_key", return_value=self.key); self.health_key.start(); self.addCleanup(self.health_key.stop)
+        self.key = b"isolated-ar034d-attestation-key" * 2
+        self.clock = Clock(); self.current_count = 0
+        patch = mock.patch.object(health, "load_attestation_key", return_value=self.key); patch.start(); self.addCleanup(patch.stop)
 
-    def refresh_result(self, count: int = 3) -> tuple[dict, Path]:
+    def refresh_result(self, count: int) -> tuple[dict, Path]:
         self.current_count = count
         def request(feed_id: str, _: float) -> int:
             connection = sqlite3.connect(self.data / "wewe-rss.db")
@@ -53,91 +55,117 @@ class CurrentFeedReaderTests(unittest.TestCase):
             "run_20260717_093104", 1_900_000, data_dir=self.data, health_dir=self.health,
             request_fn=request, clock_ms=self.clock.now, sleep_fn=self.clock.sleep, signing_key=self.key,
         )
-        result_path = self.root / "refresh.json"; result_path.write_text(json.dumps(result), encoding="utf-8")
-        return result, result_path
+        path = self.root / "refresh.json"; path.write_text(json.dumps(result), encoding="utf-8")
+        return result, path
 
-    def fetcher(self, url: str) -> tuple[bytes, str]:
-        query = urllib.parse.parse_qs(urllib.parse.urlparse(url).query)
-        page = int(query["page"][0]); index = self.current_count - page
-        payload = {"items": [{
-            "id": f"https://mp.weixin.qq.com/s/new-{index}", "url": f"https://mp.weixin.qq.com/s/new-{index}",
-            "title": f"New {index}", "date_published": f"2026-07-{17-index:02d}T00:00:00Z",
-            "content_html": "<p>" + (f"body-{index} " * 150) + "</p>",
-        }]}
-        return json.dumps(payload).encode(), "application/feed+json"
-
-    def test_receipt_bound_three_item_positive_and_check_only(self) -> None:
-        result, result_path = self.refresh_result()
-        plan = reader.run(refresh_result_path=result_path, run_id=result["run_id"], run_started_at_ms=1_900_000, data_dir=self.data, health_dir=self.health, check_only=True, fetcher=lambda _: (_ for _ in ()).throw(AssertionError("check-only must not fetch")))
-        self.assertEqual(plan["planned_items"], 3); self.assertEqual(plan["provider_requests"], 0); self.assertFalse(plan["uses_full_feed_json"])
-        out = self.root / "items.jsonl"; csv_path = self.root / "items.csv"
-        actual = reader.run(refresh_result_path=result_path, run_id=result["run_id"], run_started_at_ms=1_900_000, data_dir=self.data, health_dir=self.health, out=out, csv_path=csv_path, fetcher=self.fetcher)
-        self.assertEqual(actual["fulltext_items"], 3)
-        rows = [json.loads(line) for line in out.read_text().splitlines()]
-        self.assertEqual([row["内容标题"] for row in rows], ["New 2", "New 1", "New 0"])
-        self.assertTrue(all(row["账号名/公众号名"] == "Feed A" and row["是否全文解析"] == "是" for row in rows))
-
-    def test_equivalent_nineteen_item_fixture_is_lossless(self) -> None:
-        result, result_path = self.refresh_result(19)
-        out = self.root / "nineteen.jsonl"; csv_path = self.root / "nineteen.csv"
-        actual = reader.run(refresh_result_path=result_path, run_id=result["run_id"], run_started_at_ms=1_900_000, data_dir=self.data, health_dir=self.health, out=out, csv_path=csv_path, fetcher=self.fetcher)
-        rows = [json.loads(line) for line in out.read_text().splitlines()]
-        self.assertEqual(actual["planned_items"], 19)
-        self.assertEqual(actual["provider_requests"], 19)
-        self.assertEqual(len(rows), 19)
-        self.assertEqual(len({row["内容链接"] for row in rows}), 19)
-
-    def test_page_mutations_fail_closed(self) -> None:
-        result, result_path = self.refresh_result()
-        base = json.loads(self.fetcher("http://x?page=1")[0])
-        mutations = {
-            "malformed": lambda _: b"{",
-            "partial": lambda value: json.dumps({"items": []}).encode(),
-            "duplicate": lambda value: json.dumps({"items": value["items"] * 2}).encode(),
-            "identity": lambda value: json.dumps({"items": [{**value["items"][0], "id": "https://mp.weixin.qq.com/s/wrong", "url": "https://mp.weixin.qq.com/s/wrong"}]}).encode(),
-            "title": lambda value: json.dumps({"items": [{**value["items"][0], "title": "wrong"}]}).encode(),
-            "fulltext": lambda value: json.dumps({"items": [{**value["items"][0], "content_html": "short"}]}).encode(),
+    def response(self, url: str, variants: dict[int, str] | None = None) -> tuple[bytes, str]:
+        page = int(urllib.parse.parse_qs(urllib.parse.urlparse(url).query)["page"][0])
+        index = self.current_count - page; variant = (variants or {}).get(index, "normal")
+        if variant == "timeout": raise TimeoutError("fixture timeout")
+        if variant == "malformed": return b'{"items":[{"content_html":"unterminated', "application/feed+json"
+        article_id = "wrong" if variant == "identity" else f"new-{index}"
+        content = {
+            "short": "<p>短正文</p>",
+            "image": '<div><img src="image.jpg"></div>',
+            "empty": "",
+            "placeholder": "<p>获取全文失败，请重试~</p>",
+            "login": '<div class="login-qrcode">请先登录</div>',
+        }.get(variant, "<p>" + (f"body-{index} " * 150) + "</p>")
+        item = {
+            "id": f"https://mp.weixin.qq.com/s/{article_id}",
+            "url": f"https://mp.weixin.qq.com/s/{article_id}",
+            "title": f"New {index}", "date_published": "2026-07-17T00:00:00Z",
         }
-        for name, mutate in mutations.items():
-            def broken(url: str, mutation=mutate):
-                value = json.loads(self.fetcher(url)[0]); return mutation(value), "application/feed+json"
-            with self.subTest(name=name), self.assertRaises(reader.CurrentFeedError):
-                reader.run(refresh_result_path=result_path, run_id=result["run_id"], run_started_at_ms=1_900_000, data_dir=self.data, health_dir=self.health, out=self.root / name, csv_path=self.root / f"{name}.csv", fetcher=broken)
+        if variant != "missing": item["content_html"] = content
+        return json.dumps({"items": [item]}).encode(), "application/feed+json"
 
-    def test_database_revision_count_watermark_owner_and_identity_drift_fail(self) -> None:
-        result, result_path = self.refresh_result()
-        mutations = {
-            "revision": "update feeds set sync_time=999",
-            "count": "delete from articles where id='new-0'",
-            "watermark": "update articles set publish_time=5 where id='new-0'",
-            "owner": "update feeds set mp_name=''",
-        }
-        database = self.data / "wewe-rss.db"
-        original = database.read_bytes()
-        for name, statement in mutations.items():
-            with self.subTest(name=name):
-                database.write_bytes(original)
-                connection = sqlite3.connect(database); connection.execute(statement); connection.commit(); connection.close()
-                with self.assertRaises((reader.CurrentFeedError, ValueError)):
-                    reader.run(refresh_result_path=result_path, run_id=result["run_id"], run_started_at_ms=1_900_000, data_dir=self.data, health_dir=self.health, check_only=True)
+    def run_read(self, result: dict, result_path: Path, fetcher, stem: str = "items") -> tuple[dict, Path, Path, Path]:
+        out = self.root / f"{stem}.jsonl"; csv_path = self.root / f"{stem}.csv"; report = self.root / f"{stem}.report.json"
+        actual = reader.run(
+            refresh_result_path=result_path, run_id=result["run_id"], run_started_at_ms=1_900_000,
+            data_dir=self.data, health_dir=self.health, out=out, csv_path=csv_path,
+            report_path=report, fetcher=fetcher,
+        )
+        return actual, out, csv_path, report
 
-    def test_out_of_order_and_cross_feed_are_rejected_by_identity(self) -> None:
-        result, result_path = self.refresh_result()
-        def reversed_fetch(url: str):
-            parsed = urllib.parse.urlparse(url); query = urllib.parse.parse_qs(parsed.query); page = int(query["page"][0]);
-            return self.fetcher(url.replace(f"page={page}", f"page={4-page}"))
-        with self.assertRaisesRegex(reader.CurrentFeedError, "identity_mismatch"):
-            reader.run(refresh_result_path=result_path, run_id=result["run_id"], run_started_at_ms=1_900_000, data_dir=self.data, health_dir=self.health, out=self.root / "out", csv_path=self.root / "out.csv", fetcher=reversed_fetch)
+    def test_real_failure_shape_short_body_is_truthful_success(self) -> None:
+        result, path = self.refresh_result(3)
+        actual, out, _, report_path = self.run_read(result, path, lambda url: self.response(url, {0: "short", 1: "image"}))
+        report = json.loads(report_path.read_text())
+        self.assertTrue(actual["full_collection_success"])
+        self.assertEqual(report["planned"], 3); self.assertEqual(report["succeeded"], 3); self.assertEqual(report["failed"], 0)
+        self.assertEqual([row["content_quality"] for row in report["outcomes"]], ["normal", "short_text", "short_text"])
+        rows = [json.loads(line) for line in out.read_text().splitlines()]
+        self.assertTrue(all(row["是否全文解析"] == "是" and not row["失败原因"] for row in rows))
 
-    def test_giant_feed_path_is_physically_absent(self) -> None:
+    def test_nineteen_mixed_candidate_local_failures_preserve_successes(self) -> None:
+        result, path = self.refresh_result(19)
+        variants = {0: "short", 1: "image", 2: "timeout", 3: "malformed", 4: "identity"}
+        actual, out, _, report_path = self.run_read(result, path, lambda url: self.response(url, variants), "mixed")
+        report = json.loads(report_path.read_text())
+        self.assertFalse(actual["full_collection_success"]); self.assertTrue(actual["downstream_usable"])
+        self.assertEqual((report["planned"], report["attempted"], report["succeeded"], report["failed"]), (19, 19, 16, 3))
+        self.assertEqual(report["status"], "completed_with_failures")
+        self.assertEqual(len(out.read_text().splitlines()), 16)
+        failed = [row for row in report["outcomes"] if row["status"] == "failed"]
+        self.assertTrue(all(row["artifact_count"] == 0 for row in failed))
+        self.assertEqual(report["outputs"]["raw_artifact_count"], 16)
+        serialized = report_path.read_text()
+        self.assertNotIn("body-", serialized); self.assertNotIn("content_html", serialized)
+        self.assertTrue(all(set(("page", "article_id", "title", "reason", "response_bytes", "html_chars", "text_chars")) <= set(row) for row in failed))
+
+    def test_provider_error_missing_and_empty_html_are_candidate_local(self) -> None:
+        result, path = self.refresh_result(5)
+        variants = {0: "placeholder", 1: "login", 2: "missing", 3: "empty"}
+        actual, _, _, report_path = self.run_read(result, path, lambda url: self.response(url, variants), "provider-errors")
+        report = json.loads(report_path.read_text())
+        self.assertEqual((actual["succeeded"], actual["failed"]), (1, 4))
+        self.assertEqual({row["reason"] for row in report["outcomes"] if row["status"] == "failed"}, {
+            "current_feed_provider_error_payload", "current_feed_content_html_missing", "current_feed_content_html_empty",
+        })
+
+    def test_all_short_articles_are_success_not_partial(self) -> None:
+        result, path = self.refresh_result(6)
+        actual, _, _, report_path = self.run_read(result, path, lambda url: self.response(url, {i: "short" for i in range(6)}), "all-short")
+        report = json.loads(report_path.read_text())
+        self.assertTrue(actual["full_collection_success"]); self.assertTrue(report["downstream_usable"])
+        self.assertTrue(all(row["content_quality"] == "short_text" for row in report["outcomes"]))
+
+    def test_system_post_read_drift_is_zero_output_hard_failure(self) -> None:
+        result, path = self.refresh_result(3); calls = {"count": 0}
+        def drift_after_last(url: str):
+            response = self.response(url); calls["count"] += 1
+            if calls["count"] == 3:
+                connection = sqlite3.connect(self.data / "wewe-rss.db"); connection.execute("update feeds set sync_time=999"); connection.commit(); connection.close()
+            return response
+        out = self.root / "drift.jsonl"; csv_path = self.root / "drift.csv"; report = self.root / "drift.report.json"
+        with self.assertRaises(ValueError):
+            reader.run(refresh_result_path=path, run_id=result["run_id"], run_started_at_ms=1_900_000, data_dir=self.data, health_dir=self.health, out=out, csv_path=csv_path, report_path=report, fetcher=drift_after_last)
+        self.assertFalse(out.exists()); self.assertFalse(csv_path.exists()); self.assertFalse(report.exists())
+        self.assertFalse((self.root / "wewe_current_feed_raw").exists())
+
+    def test_atomic_report_binds_outputs_and_failed_items_have_no_artifact(self) -> None:
+        result, path = self.refresh_result(3)
+        _, out, csv_path, report_path = self.run_read(result, path, lambda url: self.response(url, {0: "timeout"}), "atomic")
+        report = json.loads(report_path.read_text())
+        self.assertEqual(hashlib.sha256(out.read_bytes()).hexdigest(), report["outputs"]["jsonl_sha256"])
+        self.assertEqual(hashlib.sha256(csv_path.read_bytes()).hexdigest(), report["outputs"]["csv_sha256"])
+        failed_id = next(row["article_id"] for row in report["outcomes"] if row["status"] == "failed")
+        self.assertNotIn(failed_id, out.read_text())
+
+    def test_partial_downstream_is_usable_but_watermark_is_not_allowed(self) -> None:
+        outcome = {"status": "completed_with_failures", "planned": 19, "attempted": 19, "succeeded": 18, "failed": 1, "downstream_usable": True, "full_collection_success": False}
+        self.assertTrue(all(daily_pipeline.wechat_candidate_partial_checks(outcome).values()))
+        self.assertTrue(daily_pipeline.is_candidate_local_partial({"candidate_local_partial": True}, {}))
+        self.assertFalse(daily_pipeline.wechat_watermark_allowed(write_feishu=True, downstream_usable=True, freshness={"state": "updated_with_new_items"}, read_outcome=outcome))
+        self.assertTrue(daily_pipeline.wechat_watermark_allowed(write_feishu=True, downstream_usable=True, freshness={"state": "updated_with_new_items"}, read_outcome={"full_collection_success": True}))
+
+    def test_check_only_and_whole_feed_absence(self) -> None:
+        result, path = self.refresh_result(3)
+        plan = reader.run(refresh_result_path=path, run_id=result["run_id"], run_started_at_ms=1_900_000, data_dir=self.data, health_dir=self.health, check_only=True, fetcher=lambda _: (_ for _ in ()).throw(AssertionError("must not fetch")))
+        self.assertEqual(plan["provider_requests"], 0)
         source = Path(reader.__file__).read_text(encoding="utf-8")
-        self.assertNotIn("/feeds/all", source)
-        self.assertNotIn("MAX_FEED_BYTES", source)
-        self.assertIn('"limit": 1', source)
-        daily = (Path(reader.__file__).parent / "daily_pipeline.py").read_text(encoding="utf-8")
-        block = daily[daily.index('"request fixed wewe-rss provider refresh"'):daily.index("fetch_douyin =")]
-        self.assertIn("wewe_current_feed_reader.py", block)
-        self.assertNotIn("wechat_fulltext_provider_probe.py", block)
+        self.assertNotIn("/feeds/all", source); self.assertNotIn("MAX_FEED_BYTES", source); self.assertIn('"limit": 1', source)
 
 
 if __name__ == "__main__":
