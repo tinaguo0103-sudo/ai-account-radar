@@ -3486,6 +3486,14 @@
 - Telemetry：必须安全输出page/article/title/reason/response bytes/html chars/text chars，不输出正文、secret；19-row mixed outcome满足planned=attempted=success+failed和failed zero artifact。
 - 开发线程：`019f1de3-f3f2-71d2-ae63-a74cd38f8474`；production base=`b7530452...` fresh narrow RC，full regression，未QA/未生产动作；不指定model/thinking，PM不轮询。
 
+### 2026-07-17 PM确认AR-034返工被过度防御放大，暂停AR-034D
+
+- 结论：真实生产缺陷存在，但PM过程设计过严。必要硬门包括same-day/run/source identity、no stale/cross-run substitution、secret、external writes/read-back、system receipt/DB/plan drift；这些继续保留。
+- 过度部分：把800字质量阈值当全文truth、把单篇/单账号失败当整批system failure、可逆只读动作也反复索要授权、每个边缘问题拆成micro-RC+full QA、在未先观察真实provider payload时以理想fixture定义合同。
+- 用户影响：成功数据反复被整体丢弃，生产长期PAUSED，开发/QA/发布线程在同一问题上循环，用户需要多次确认低风险动作。这是PM责任，不归因于用户或工具。
+- 新原则：truth与quality分离；item/account failure candidate-local并保留成功结果，overall partial显性但可downstream；system drift才零输出。可逆read-only动作自动执行；observability和真实等价fixture先行；同一根因只允许一个收敛RC和一次独立QA。
+- 即时动作：dev已确认停止；本轮没有commit/push/RC/新测试。隔离worktree保留 `scripts/daily_pipeline.py` 与 `scripts/wewe_current_feed_reader.py` 两个未提交草稿，不能作为候选或发布输入，后续由收敛版任务审计后决定取舍。production保持clean `b7530452`、三任务PAUSED、existing signed refresh/DB/baseline不变。
+
 ### 2026-07-17 WeChat全文巨型JSON截断，派发AR-034C窄修复
 
 - 结论：`Retry Executed Once / Truthful Current Result Unavailable / Full-Source Flow Blocked / Automations Paused`。报告=`/private/tmp/ar034b_same_day_20260717_093048/final/BOUNDED_WECHAT_READ_RETRY_FAILED.md`。
