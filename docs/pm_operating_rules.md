@@ -43,6 +43,16 @@
 
 ## 开发-测试闭环
 
+### 门禁强度与返工收敛
+
+- 门禁必须先区分 `system/run`、`source/account`、`candidate/item` 和 `quality` 四个层级。不得因为实现方便，把低层级失败自动提升为整条生产链 hard stop。
+- 只有日期/run/source identity 错误、stale/cross-run substitution、secret/auth 泄漏或失效、外部写入/read-back 不一致、system receipt/signature/DB/plan drift、不可恢复状态污染等系统级风险，才默认整批停止并零下游输出。
+- 单来源、单账号、单候选、单篇读取失败必须局部隔离：失败项零 artifact，不得 fallback 或补位；同批其它身份和证据完整的成功项继续，整体明确标记 `partial` / `completed_with_failures` / non-green，不能冒充 full success。
+- 内容长度、表达风格、质量分、样例偏好等质量信号默认不是数据真实性证明。除非用户明确把某项质量阈值定义为业务硬门，否则只能作为质量标注、排序信号或候选级拒绝理由，不能据此丢弃整批真实数据。
+- 在用户已授权的同一目标和影响边界内，可逆、只读、无外部写入的诊断与 read-back 默认自动推进，不应对每个 retry、GET-only 或本地证据检查重复索要授权。涉及 secret、账号所有者交互、不可逆动作、真实写入、通知或新增成本边界时仍须停线确认。
+- 新门禁设计前先观察真实 payload、失败 telemetry 和真实运行环境，再构造等价 fixture；不得只根据理想 mock 推导生产合同。缺少定位信息时先补 observability，不先叠加新的身份层、签名层或授权层。
+- 同一根因只形成一个收敛修复包、一个 production-base 窄 RC 和一次独立 QA。QA 的多个发现应一次性汇总返修，不得把每个字段、边缘输入或报告差异拆成独立 micro-RC / micro-recheck。若根因或产品目标实质变化，PM 先重新校准方案再决定是否开启新一轮。
+
 - 开发线程完成后主动回传 PM；PM 自验后再派测试线程。
 - 测试线程默认不改功能代码，只做独立验证、对抗性审查、staging/test 验证和证据整理。
 - 测试发现 bug 时回传 PM，不直接打断开发线程。

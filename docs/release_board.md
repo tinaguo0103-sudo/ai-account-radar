@@ -298,3 +298,4 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - AR-034C authorization：用户已确认计划SHA=`e6567babbd94...`。production线程执行exact RC `b7530452...`、19-page bounded read和同run后续业务闭环；禁止second refresh/whole-feed/old run/06。三任务在业务与cwd read-back前保持PAUSED，任一gate失败停止。
 - AR-034C production：release passed；19-page actual read因任一body<800硬门返回current_feed_fulltext_insufficient，0 output/0 downstream。AR-034D已派dev，移除长度=truth硬门：valid短文成功+质量标注，真实page失败candidate-local partial，system identity drift仍hard fail；补安全失败telemetry。production clean `b7530452`，三任务PAUSED。
 - PM recalibration：确认返工部分由过严指令造成。AR-034D开发已暂停；不再把内容长度/单篇失败/只读retry升级为system blocker，不再每个单点出micro-RC。后续仅保留真实性、身份、外部写入与system drift硬门；item/account partial保留成功项并显性partial。先完成收敛版单RC定义后再恢复开发。
+- AR-034D resumed：用户确认继续后，已以收敛版单RC合同恢复固定dev线程；当前仅开发，不派QA/不生产。项目PM规则与global multi-agent Skill同步升级，派发工具继续默认省略model/thinking。

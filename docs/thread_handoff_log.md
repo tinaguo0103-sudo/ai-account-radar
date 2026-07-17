@@ -3494,6 +3494,13 @@
 - 新原则：truth与quality分离；item/account failure candidate-local并保留成功结果，overall partial显性但可downstream；system drift才零输出。可逆read-only动作自动执行；observability和真实等价fixture先行；同一根因只允许一个收敛RC和一次独立QA。
 - 即时动作：dev已确认停止；本轮没有commit/push/RC/新测试。隔离worktree保留 `scripts/daily_pipeline.py` 与 `scripts/wewe_current_feed_reader.py` 两个未提交草稿，不能作为候选或发布输入，后续由收敛版任务审计后决定取舍。production保持clean `b7530452`、三任务PAUSED、existing signed refresh/DB/baseline不变。
 
+### 2026-07-17 用户确认继续AR-034D，并同步multi-agent PM Skill
+
+- Dev dispatch：固定dev线程恢复；省略model/thinking。要求复用并审计现有两个草稿，只处理短正文truth/quality、candidate-local partial、安全telemetry和partial watermark语义；system receipt/DB/plan drift仍hard fail。只允许一个基于production `b7530452...` 的窄RC，开发不得自行派QA或生产动作。
+- Project rules：`docs/pm_operating_rules.md` 新增四层failure classification、truth/quality分离、read-only autonomy、真实payload/telemetry优先和single-root-cause RC/QA收敛规则。
+- Global Skill：源码仓库 `.runtime/github-publish/multi-agent-pm-orchestrator-skill` 更新 `SKILL.md` 与thread/dispatch/QA/release/production references；默认不覆盖model/thinking，候选级失败不得自动升级整批，禁止micro-RC循环。Skill Creator `quick_validate.py` 验证通过后提交、push并同步global install。
+- Production boundary：production仍clean `b7530452...`，三automation PAUSED，existing signed refresh/receipt/DB/baseline不变；本轮无provider/Feishu/card/06/automation动作。
+
 ### 2026-07-17 WeChat全文巨型JSON截断，派发AR-034C窄修复
 
 - 结论：`Retry Executed Once / Truthful Current Result Unavailable / Full-Source Flow Blocked / Automations Paused`。报告=`/private/tmp/ar034b_same_day_20260717_093048/final/BOUNDED_WECHAT_READ_RETRY_FAILED.md`。
