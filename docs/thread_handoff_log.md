@@ -3486,6 +3486,15 @@
 - Current：provider DB integrity=ok，accounts/feeds status1各1，articles=48；三automation PAUSED且配置未变。
 - PM recommendation：不再恢复7/16旧run；授权一次完整2026-07-17同日全源流程，正常取得7/17 Douyin、AIHOT、signed WeChat，再做03/current-task/04/personal card。完成后修复production cwd并status-only恢复三任务。
 
+### 2026-07-17 用户批准完整同日全源生产运行
+
+- 用户确认：同意PM推荐的2026-07-17完整同日运行。
+- Scope：全新2026-07-17 run；固定9333全量Douyin、same-day AIHOT、一次bounded signed WeChat refresh；mandatory manual/combined/content/comparison/03 closure后执行current-task exact-source/research/Stage1/dynamic ranking/Stage2/finalize；一次04 write/read-back和一次personal Topic Card。
+- Truth contract：不复用、不修改、不回放 `run_20260716_080311`；account-partial保持 `full_collection_success=false`，仅在lineage完整和 `downstream_usable=true` 时下游继续；禁止旧cache或其他来源补位。
+- Exclusions：不点击卡片、不callback、不触发06/script generation，不手改DB/TOML，不降低身份/date/hash/owner/freshness门。
+- Automation：全程先PAUSED；业务完成后仅使用official control保留model/prompt/schedule/target并修复cwd为production worktree，read-back正确后status-only恢复。official control不支持或任一gate失败则保持PAUSED。
+- 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
+
 ### 2026-07-16 WeWe admin auth通过，provider account reauth仍阻断
 
 - 结论：`Admin Auth Accepted / Provider Account Still Login Required / RC8 Not Released / Automations Paused`。证据=`/private/tmp/ar034b_wewe_9334_login_20260716_2132/LOGIN_ATTEMPT_RESULT.md`。
