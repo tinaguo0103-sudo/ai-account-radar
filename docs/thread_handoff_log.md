@@ -3713,3 +3713,12 @@
 - PM判断：optional published_at calibration不是live 26 conflict的唯一根因。继续自动放宽URL/title/account/platform等身份字段会把历史脏数据猜成canonical记录，既可能错误PUT，也可能掩盖真实重复；因此不直接派RC4，也不把绿色fixture当production readiness。
 - 固定QA线程获准在同一read-only边界做一次字段级根因分解：每条仅输出source、planned metadata presence、potential/compatible counts、fingerprint state、run/field-match booleans与typed mismatch labels，禁止落盘标题、URL、账号、时间原值、正文或secret。须区分历史字段缺失、值冲突、多候选、旧非空fingerprint占用和shared-candidate collision，并给出按来源计数。
 - 该任务不是QA重跑或micro-recheck，不改代码、不建RC、不授权恢复。若需第三次以上live GET或原始值则停止。结果只用于PM选择纯数据迁移、item-local隔离或停止当日恢复；production、03/04/card、provider和三条PAUSED automation保持不变。
+
+### 2026-07-17 AR-034F field diagnosis / AR-034G business dedup decision
+
+- 字段级只读诊断保持RC3 QA Failed：26/26均有且仅有1个exact potential candidate，candidate均已持有other nonempty fingerprint且run match；22/26还被其他planned item共享。empty fingerprint、true absence、multiple potential、wrong run、missing record ID均为0，实际动作继续0 PUT/0 POST/26 BLOCK。来源为21 AIHOT、2公众号、3对标视频；证据=`/private/tmp/ar034f_rc3_independent_qa_20260717/LIVE_26_CONFLICT_ROOT_CAUSE_REPORT.md`。
+- PM产品判断：这不是26条待修复记录，而是中间planned identity与既有canonical owner重复。继续要求162 fingerprint逐个成为独立03 owner属于过度防御，并非用户业务需求。必要保护仅保留“不覆盖existing nonempty fingerprint、不创建重复记录、不跨run/多owner猜测”。
+- 用户确认“继续”后，固定dev线程接收AR-034G：把162 raw planned确定性投影为现有owner union。当前数学期望为136 direct +4 additional existing owners=140 unique owners；22 shared aliases折叠，另外4 aliases映射到未出现在raw planned fingerprint set中的同批次owner。26全部标`deduplicated_alias`，不再标missing/failure。
+- Owner规则：URL非空时exact normalized URL可作为same-run unique owner dedupe key；URL空时仍需唯一完整title+source+account/platform composite。元数据差异只记录diagnostic，不覆盖owner。multiple owners、wrong run、missing ID或duplicate owner仍硬阻断。现有owner fingerprint/fields不PUT/POST/PATCH/DELETE。
+- Downstream规则：构建140 unique owner universe及planned->owner provenance manifest；direct planned owner优先，4个owner-not-in-planned场景保留当前local content但使用existing owner identity。旧11候选不得盲目复用，须在140 owners上按现有评分/主编逻辑重新计算或去重映射；最终候选必须属于owner set。Douyin仍保持29/31 partial事实。
+- 开发边界：fresh production `07940e8...`单RC，零Feishu/provider/collection/03/04/card/06/automation/Chrome/DB/Skill/SCF动作；不新增安全架构、不改评分/质量/标题/主编。完成只回PM、不派QA、不指定model/thinking；三automation继续PAUSED。
