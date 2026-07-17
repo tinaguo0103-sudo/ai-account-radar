@@ -3650,3 +3650,10 @@
 - PM独立复核：Git hunk只落在`validate_source_ingestion_manifest`、`write_content_ledger_with_source_gate`、`main`接线、identity helpers、bijection、canonical 03/read-back和对应AR-034E测试；RC2曾污染的11个editorial/selection函数及3个legacy validator函数全部与production字节一致，forbidden count=0。
 - Manifest 3/3 exact-byte SHA已从Git object重算匹配；patch、manifest、real87 evidence哈希匹配。协同wrong URL/title/source_type/account/run均typed fail且writer call=0；真实87 source/87 canonical、comparison 162、shortlist 11、03 plan 87保持。
 - 决策：PM evidence gate通过，固定QA线程=`019f4714-3f76-7bb1-b71f-08a41d9f8860`已确认idle并接收一次fresh full QA；不拆micro-recheck、不指定model/thinking、不触发production/Feishu/provider/automation。通过仅可进入PM Production Authorization。
+
+### 2026-07-17 AR-034E RC3 QA passed but PM production-flow acceptance failed
+
+- QA结论：`AR-034E RC3 Independent Full QA Passed / Ready for PM Production Authorization`。fresh clone、hunk ownership、forbidden parity、协同漂移writer sentinel、真实87映射和397 Python等回归均通过；证据=`/private/tmp/ar034e_rc3_independent_qa_20260717/AR034E_RC3_INDEPENDENT_FULL_QA_REPORT.md`。
+- PM acceptance阻断：实际`write_content_ledger_to_feishu(items, run_id)`对本次162 items返回全部162个`ordered_fingerprints`；AR-034E closure只计划87个Douyin canonical fingerprints。RC3 `validate_feishu_readback_identity()`对整列表做exact equality，故真实写入后必因75个合法WeChat/AIHOT fingerprints报`feishu_03_readback_identity_mismatch`。
+- 等价证据：在RC3 worktree用87 planned +75 legitimate other-source read-back调用真实validator，typed得到`LineageError:feishu_03_readback_identity_mismatch`。完整说明=`/private/tmp/ar034e_rc3_pm_acceptance_20260717/PM_ACCEPTANCE_BLOCKER.md`，SHA256=`77c953fcc0bb38f155b5fff5ce94a614ead7e25cadf2fa06fff87ecd68519443`。
+- 决策：QA绿色不等于PM接受；RC3降级为Development Rework、不得发布。固定dev线程只允许保留writer对162全量identity验证，再把full read-back有序投影到87个planned canonical fingerprints并严格比对；补87+19+56真实形态与read-back mutation。manual truth、coordinated drift zero-writer、scope exclusions和production base保持不变；不指定model/thinking，不触碰生产或automation。
