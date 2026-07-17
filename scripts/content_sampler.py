@@ -2626,21 +2626,39 @@ def write_content_ledger_to_feishu(
         raise SystemExit(f"Missing Feishu table: {table_name('content_inbox')}")
     created_fields = ensure_content_inbox_fields(token, app_token, table_id)
     existing = all_records(token, app_token, table_id)
+    from canonical_owner_projection import resolve_owner_projection
+
+    owner_projection = resolve_owner_projection(items, existing, run_id, allow_new=True)
+    raw_planned_count = len(items)
+    items = owner_projection.projected_items
+    progress["raw_planned_items"] = raw_planned_count
+    progress["total_items"] = len(items)
+    progress["remaining_items"] = len(items)
     emit("loaded_existing_records")
-    by_fp, by_url, by_title_time, by_wechat_title = content_record_indexes(existing)
+    owner_record_ids = {
+        row["owner_fingerprint"]: row["record_id"]
+        for row in owner_projection.manifest["owners"]
+    }
+    owner_rows = {
+        row["owner_fingerprint"]: row
+        for row in owner_projection.manifest["owners"]
+    }
+    existing_by_id = {
+        str(record.get("record_id") or record.get("id") or ""): record
+        for record in existing
+        if str(record.get("record_id") or record.get("id") or "")
+    }
     to_create: list[dict[str, str]] = []
     updated_existing = 0
     skipped_duplicates = 0
     for item in items:
-        title_key = normalize_space(item.title)
-        published_key = normalize_space(item.published_at)
-        record = (
-            by_fp.get(item.fingerprint)
-            or by_url.get(item.url)
-            or by_title_time.get((title_key, published_key))
-            or (by_wechat_title.get(title_key) if item.source_type == "公众号文章" else None)
-        )
+        record = existing_by_id.get(owner_record_ids.get(item.fingerprint, ""))
         if record:
+            if owner_rows[item.fingerprint]["representative_kind"] == "alias_source":
+                skipped_duplicates += 1
+                progress["skipped_duplicates"] = skipped_duplicates
+                progress["processed_items"] += 1
+                continue
             record_id = record.get("record_id") or record.get("id") or ""
             if not record_id:
                 skipped_duplicates += 1
@@ -2693,12 +2711,6 @@ def write_content_ledger_to_feishu(
         progress["queued_create"] = len(to_create)
         if progress["processed_items"] % 10 == 0:
             emit("matching_records")
-        by_fp[item.fingerprint] = {"record_id": ""}
-        by_url[item.url] = {"record_id": ""}
-        if title_key and published_key:
-            by_title_time[(title_key, published_key)] = {"record_id": ""}
-        if title_key and item.source_type == "公众号文章":
-            by_wechat_title[title_key] = {"record_id": ""}
     emit("creating_new_records")
     created_records = batch_create_records(token, app_token, table_id, to_create) if to_create else 0
     progress["created_records"] = created_records
@@ -2712,6 +2724,7 @@ def write_content_ledger_to_feishu(
         "created_records": created_records,
         "updated_existing": updated_existing,
         "skipped_duplicates": skipped_duplicates,
+        "owner_projection": owner_projection.manifest,
         "read_back_identity": read_back_identity,
         "today_view": ensure_content_inbox_today_view(token, app_token, table_id),
     }
@@ -3310,10 +3323,23 @@ def validate_source_ingestion_manifest(manifest_path: Path, output_dir: Path, ru
 def write_content_ledger_with_source_gate(
     items: list[ContentItem], run_id: str, manifest_path: Path, output_dir: Path,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
+    from canonical_owner_projection import project_fingerprints
     from source_ingestion_lineage import validate_feishu_readback_identity
 
     _, closure = validate_source_ingestion_manifest(manifest_path, output_dir, run_id)
     ledger = write_content_ledger_to_feishu(items, run_id)
+    raw_source_fingerprints = list(closure["ordered_canonical_fingerprints"])
+    closure["source_ordered_canonical_fingerprints"] = raw_source_fingerprints
+    closure["ordered_canonical_fingerprints"] = project_fingerprints(
+        raw_source_fingerprints, ledger["owner_projection"],
+    )
+    closure["canonical_owner_projection"] = {
+        key: ledger["owner_projection"][key]
+        for key in (
+            "raw_planned_count", "unique_owner_count", "direct_count", "alias_count",
+            "shared_alias_count", "additional_owner_count", "per_source_owner_counts",
+        )
+    }
     closure["feishu_03_identity"] = validate_feishu_readback_identity(
         closure, ledger.get("read_back_identity"), run_id, write_mode=True,
     )
