@@ -3777,3 +3777,9 @@
 - `multi-agent-pm-orchestrator` Skill源仓库提交并push：`60cc7a4721ca5d1b752e64d2b78880b1c6549654`（`docs: align PM guardrails with business impact`）。更新`SKILL.md`及5个reference文件。
 - Git source、`.runtime/skill-build`镜像与global install `~/.codex/skills/multi-agent-pm-orchestrator` payload逐文件SHA256一致；source/global均通过official skill validator。
 - 本次Skill与PM文档同步没有修改production业务代码、Feishu、Topic Card、automation状态或运行产物。
+
+### 2026-07-17 Manual automation activation read-back
+
+- 用户已在UI中将`ai-rebuild`、`ai-04-rebuild`、`ai-rebuild-2`手工切为ACTIVE；official file read-back确认三条schedule仍为08:00/09:15/10:00，projectless、model和reasoning未变。
+- UI本次只改变status，三条`cwds`仍为`["~"]`，而prompt仍调用相对路径`python3 scripts/...`；因此当前只能标记`ACTIVE / Production Entrypoint Repair Pending`，不能宣称定时任务可运行。
+- 用户手工收口二选一：若UI有工作目录字段，设为`/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar`；若无该字段，在每条prompt开头加入“先切换到上述生产目录，后续命令只在该目录运行”。继续保持projectless，不绑定项目、不raw-edit TOML。
