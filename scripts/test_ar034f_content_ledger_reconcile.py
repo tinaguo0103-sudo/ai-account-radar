@@ -83,6 +83,8 @@ class FakeLedger:
         if self.behavior == "timeout_before_once" and self.calls == 1:
             raise TimeoutError("timed out before commit")
         target["fields"].update(fields)
+        if self.behavior == "conflict_after_once" and self.calls == 1:
+            target["fields"]["内容指纹"] = "conflicting-fingerprint"
         if self.behavior == "timeout_after_once" and self.calls == 1:
             raise TimeoutError("timed out after commit")
         if self.behavior == "malformed_after_once" and self.calls == 1:
@@ -174,6 +176,14 @@ class AR034FContentLedgerReconcileTests(unittest.TestCase):
         self.assertTrue(report["ok"])
         self.assertEqual(store.calls, 26)
         self.assertTrue(report["outcomes"][0]["ambiguity_resolved"])
+
+    def test_post_update_conflict_stops_without_retry(self) -> None:
+        store = FakeLedger(self.existing, behavior="conflict_after_once")
+        with self.assertRaises(reconcile.ReconcileAbort) as raised:
+            self.run_reconcile(store, write=True)
+        self.assertEqual(store.put_calls, 1)
+        self.assertEqual(store.post_calls, 0)
+        self.assertIn("conflict", raised.exception.report["reason"])
 
     def test_rate_limit_after_commit_is_resolved_by_readback(self) -> None:
         store = FakeLedger(self.existing)

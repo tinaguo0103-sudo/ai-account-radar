@@ -313,7 +313,7 @@ def reconcile_missing_records(
                 else:
                     report["already_committed"] += 1
                 break
-            if observed in {"duplicate", "wrong_run"}:
+            if observed in {"duplicate", "wrong_run", "conflict"}:
                 abort(f"post_create_{observed}_identity", stage="post_create_readback_failed")
             if acknowledged:
                 outcome["reason"] = "acknowledged_create_not_visible"
