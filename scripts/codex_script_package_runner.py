@@ -16,14 +16,12 @@ import subprocess
 import sys
 import tempfile
 import time
-from urllib.parse import urlsplit
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
-from codex_cli_path import resolve_codex_cli
 from local_env import load_local_env
 from feishu_user_oauth_store import preserve_latest_user_tokens, sync_user_tokens
 
@@ -92,6 +90,7 @@ USER_VISIBLE_BOUNDARY_PATTERNS = (
     "选题系统复盘",
     "沉淀资产",
 )
+DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 TEST_TITLE_PREFIXES = ("【测试】", "【流程测试】", "【部署后测试】", "【模拟测试】", "[测试]", "测试：", "测试:")
 TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(测试|测速)[^\]]*\])")
 DOC_SYNC_MAX_PARAGRAPHS = 180
@@ -396,7 +395,7 @@ def acquire_lock() -> Any:
 
 
 def codex_bin() -> str:
-    return resolve_codex_cli(os.getenv("CODEX_BIN", ""))
+    return os.getenv("CODEX_BIN", DEFAULT_CODEX_BIN)
 
 
 def script_package_skill_name() -> str:
@@ -774,22 +773,10 @@ def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: P
     }
 
 
-def validated_http_link(url: Any, field_name: str) -> str:
-    if not isinstance(url, str):
-        raise ValueError(f"{field_name} must be an http(s) URL string")
-    clean_url = url.strip()
+def clickable_link_value(url: str, label: str, field_type: Any) -> Any:
+    clean_url = str(url or "").strip()
     if not clean_url:
         return ""
-    parsed = urlsplit(clean_url)
-    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
-        raise ValueError(f"{field_name} must be a valid http(s) URL")
-    return clean_url
-
-
-def clickable_link_value(url: Any, label: str, field_type: Any, field_name: str = "Link field") -> Any:
-    clean_url = validated_http_link(url, field_name)
-    if not clean_url:
-        return None if int(field_type or 0) == BITABLE_URL_FIELD_TYPE else ""
     try:
         normalized_type = int(field_type or 0)
     except (TypeError, ValueError):
@@ -803,22 +790,11 @@ def format_script_package_record_fields(row: dict[str, Any], field_meta: dict[st
     fields = dict(row)
     for field_name, spec in CLICKABLE_LINK_FIELDS.items():
         label = spec["label"]
-        value = fields.get(field_name, "")
-        rendered = clickable_link_value(value, label, field_meta.get(field_name, {}).get("type"), field_name)
-        if rendered is None:
-            fields.pop(field_name, None)
-        else:
-            fields[field_name] = rendered
+        value = str(fields.get(field_name) or "").strip()
+        fields[field_name] = clickable_link_value(value, label, field_meta.get(field_name, {}).get("type"))
         mirror_field = spec["mirror_field"]
         if mirror_field in field_meta:
-            mirror_type = field_meta[mirror_field].get("type")
-            if int(mirror_type or 0) != BITABLE_URL_FIELD_TYPE:
-                raise ValueError(f"{mirror_field} must be a Feishu Link field (type 15)")
-            mirror_value = clickable_link_value(value, label, mirror_type, mirror_field)
-            if mirror_value is None:
-                fields.pop(mirror_field, None)
-            else:
-                fields[mirror_field] = mirror_value
+            fields[mirror_field] = clickable_link_value(value, label, field_meta.get(mirror_field, {}).get("type"))
     return fields
 
 

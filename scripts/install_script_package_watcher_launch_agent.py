@@ -11,7 +11,6 @@ import subprocess
 import sys
 from pathlib import Path
 
-from codex_cli_path import resolve_codex_cli
 from feishu_user_oauth_store import preserve_latest_user_tokens, sync_user_tokens
 
 
@@ -20,6 +19,7 @@ DEFAULT_RUNTIME_DIR = Path.home() / ".codex" / "ai-account-radar-runtime"
 LABEL = "com.austin.ai-account-radar.script-package-watcher"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 LOG_DIR = Path.home() / "Library" / "Logs" / "ai-account-radar"
+CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 RUNTIME_DIRS = ("scripts", "config", "skills", "docs")
 RUNTIME_FILES = ("README.md", ".env.local", ".env")
 DEFAULT_DISPLAY_LINK_NAME = "06 完整脚本与制作包"
@@ -138,7 +138,6 @@ def runtime_sync_report(runtime_dir: Path) -> dict[str, object]:
 
 def build_plist(runtime_dir: Path, display_root: Path, interval_minutes: float, limit: int, max_age_days: int, python_bin: str) -> dict[str, object]:
     interval = max(1.0, float(interval_minutes))
-    codex_bin = resolve_codex_cli(os.getenv("CODEX_BIN", ""))
     return {
         "Label": LABEL,
         "ProgramArguments": [
@@ -153,8 +152,8 @@ def build_plist(runtime_dir: Path, display_root: Path, interval_minutes: float, 
         ],
         "WorkingDirectory": str(runtime_dir),
         "EnvironmentVariables": {
-            "PATH": f"{Path(codex_bin).parent}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-            "CODEX_BIN": codex_bin,
+            "PATH": "/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "CODEX_BIN": CODEX_BIN,
             "PYTHONUNBUFFERED": "1",
             "SCRIPT_PACKAGE_OUTPUT_ROOT": str(runtime_dir / "output" / "script_execution_packages"),
             "SCRIPT_PACKAGE_DISPLAY_OUTPUT_ROOT": str(display_root),

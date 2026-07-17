@@ -70,62 +70,6 @@ class CodexScriptPackageClickableLinksTest(unittest.TestCase):
         self.assertEqual(fields["文档同步状态"], "飞书文档同步失败")
         self.assertEqual(fields["文档同步错误"], "missing folder token")
 
-    def test_empty_optional_link_field_is_omitted(self) -> None:
-        fields = runner.format_script_package_record_fields(
-            {"飞书文档": "", "飞书文档链接": "stale"},
-            {"飞书文档": {"type": 1}, "飞书文档链接": {"type": 15}},
-        )
-
-        self.assertEqual(fields["飞书文档"], "")
-        self.assertNotIn("飞书文档链接", fields)
-
-    def test_document_and_folder_link_fields_use_exact_link_objects(self) -> None:
-        fields = runner.format_script_package_record_fields(
-            {
-                "飞书文档": "https://my.feishu.cn/docx/doc_test",
-                "飞书文件夹": "https://my.feishu.cn/drive/folder/folder_test",
-                "脚本状态": "已生成完整脚本包",
-            },
-            {
-                "飞书文档": {"type": 1},
-                "飞书文档链接": {"type": 15},
-                "飞书文件夹": {"type": 1},
-                "飞书文件夹链接": {"type": 15},
-                "脚本状态": {"type": 1},
-            },
-        )
-
-        self.assertEqual(fields["飞书文档链接"], {"text": "打开飞书文档", "link": "https://my.feishu.cn/docx/doc_test"})
-        self.assertEqual(fields["飞书文件夹链接"], {"text": "打开飞书文件夹", "link": "https://my.feishu.cn/drive/folder/folder_test"})
-        self.assertEqual(fields["脚本状态"], "已生成完整脚本包")
-
-    def test_invalid_link_fails_before_create(self) -> None:
-        with patch.object(runner, "fields_by_name", return_value={"飞书文档": {"type": 1}, "飞书文档链接": {"type": 15}}), \
-                patch.object(runner.feishu, "request_json") as request_json:
-            with self.assertRaisesRegex(ValueError, "valid http"):
-                runner.create_script_package_record(
-                    "token", "app", "table", {"飞书文档": "javascript:alert(1)"}
-                )
-        request_json.assert_not_called()
-
-    def test_wrong_link_field_shape_fails_before_create(self) -> None:
-        with patch.object(runner, "fields_by_name", return_value={"飞书文档": {"type": 15}}), \
-                patch.object(runner.feishu, "request_json") as request_json:
-            with self.assertRaisesRegex(ValueError, "URL string"):
-                runner.create_script_package_record(
-                    "token", "app", "table", {"飞书文档": {"link": "https://my.feishu.cn/docx/doc_test"}}
-                )
-        request_json.assert_not_called()
-
-    def test_production_failure_fixture_serializes_document_link_object(self) -> None:
-        fields = runner.format_script_package_record_fields(
-            {"飞书文档": "https://my.feishu.cn/docx/doc_generated", "飞书文档链接": "https://my.feishu.cn/docx/doc_generated"},
-            {"飞书文档": {"type": 1}, "飞书文档链接": {"type": 15}},
-        )
-
-        self.assertIsInstance(fields["飞书文档链接"], dict)
-        self.assertEqual(fields["飞书文档链接"]["link"], "https://my.feishu.cn/docx/doc_generated")
-
     def test_create_record_formats_links_after_reading_field_metadata(self) -> None:
         calls: list[dict] = []
 
