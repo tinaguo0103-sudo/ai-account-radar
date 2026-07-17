@@ -183,6 +183,40 @@ class AR034SourceRecoveryTests(unittest.TestCase):
             with self.assertRaisesRegex(lineage.LineageError, "run_identity"):
                 lineage.validate_ingestion_bijection(report, combined, content)
 
+    def test_coordinated_drift_blocks_public_writer_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); manual = root / "manual.jsonl"; combined = root / "combined.jsonl"; output = root / "output"; output.mkdir()
+            self.write_manual(manual)
+            source_rows = [json.loads(line) for line in manual.read_text().splitlines()]
+            report = lineage.validate_partial_source_artifact(self.probe(manual=manual), manual)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"run_id": report["run_id"], "source_report": report, "combined_path": str(combined)}), encoding="utf-8")
+
+            def write_csv(path: Path, rows: list[dict]) -> None:
+                with path.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=["来源类型", "账号名/公众号名", "内容标题", "内容链接", "内容指纹", "运行批次"])
+                    writer.writeheader(); writer.writerows(rows)
+
+            mutations = {
+                "url": ("内容链接", "https://www.douyin.com/video/coordinated-drift"),
+                "title": ("内容标题", "coordinated drift"),
+                "source_type": ("来源类型", "公众号文章"),
+                "account": ("账号名/公众号名", "other-account"),
+                "run": ("运行批次", "run_20260717_000000"),
+            }
+            for name, (field, value) in mutations.items():
+                changed_source = [dict(row) for row in source_rows]
+                changed_canonical = self.canonical_rows(source_rows)
+                changed_source[0][field] = value
+                changed_canonical[0][field] = value
+                combined.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in changed_source) + "\n", encoding="utf-8")
+                for filename in ("content_items.csv", "content_breakdowns.csv", "today_10_topics.csv"):
+                    write_csv(output / filename, changed_canonical)
+                with self.subTest(name=name), mock.patch.object(content_sampler, "write_content_ledger_to_feishu") as writer:
+                    with self.assertRaises(lineage.LineageError):
+                        content_sampler.write_content_ledger_with_source_gate([], report["run_id"], manifest, output)
+                    writer.assert_not_called()
+
     def test_wechat_typed_states(self) -> None:
         base = {"provider_reachable": True, "database_readable": True, "active_account_count": 1, "active_source_count": 1, "refresh_revision": 20, "refreshed_at_ms": 900, "new_item_count": 1}
         previous = {"refresh_revision": 10, "refreshed_at_ms": 700}
@@ -219,8 +253,8 @@ class AR034SourceRecoveryTests(unittest.TestCase):
 
     def test_sampler_lineage_gate_precedes_feishu_write(self) -> None:
         source = Path(content_sampler.__file__).read_text(encoding="utf-8")
-        main_source = source[source.index("def main() -> int:"):]
-        self.assertLess(main_source.index("validate_ingestion_bijection("), main_source.index("write_content_ledger_to_feishu(items, run_id)"))
+        gated_writer = source[source.index("def write_content_ledger_with_source_gate("):source.index("def main() -> int:")]
+        self.assertLess(gated_writer.index("validate_source_ingestion_manifest("), gated_writer.index("write_content_ledger_to_feishu(items, run_id)"))
 
     def test_wewe_browser_identity_fail_closed(self) -> None:
         profile = Path("/tmp/wewe-profile").resolve(); version = {"webSocketDebuggerUrl": "ws://browser/one"}

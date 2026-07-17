@@ -403,8 +403,18 @@ def validate_ingestion_bijection(
     if [row_identity(row) for row in current_source_rows] != source:
         raise LineageError("source_artifact_prewrite_order_drift")
     expected_accounts = dict(source_report.get("fingerprint_accounts") or {})
-    if any(row_account(row) != str(expected_accounts.get(row_identity(row)) or "") for row in current_source_rows):
-        raise LineageError("source_artifact_prewrite_account_drift")
+    run_id = str(source_report.get("run_id") or "").strip()
+    if not run_id:
+        raise LineageError("source_run_identity_missing")
+    legacy_run_binding = source_report.get("legacy_attestation_verified") is True
+    for row in current_source_rows:
+        if row_account(row) != str(expected_accounts.get(row_identity(row)) or ""):
+            raise LineageError("source_artifact_prewrite_account_drift")
+        row_run = str(row.get("运行批次") or "")
+        if row_run != run_id and not (legacy_run_binding and not row_run):
+            raise LineageError("source_artifact_prewrite_run_drift")
+        if not all((row_source_type(row), row_url(row), row_account(row), row_title(row))):
+            raise LineageError("source_identity_field_missing")
     combined_rows = read_jsonl(combined_path)
     content_rows = read_csv_rows(content_items_path)
     combined = [row_identity(row) for row in combined_rows]
@@ -414,27 +424,29 @@ def validate_ingestion_bijection(
     if len(combined) != len(set(combined)) or len(content) != len(set(content)):
         raise LineageError("downstream_fingerprint_collision")
     content_set = set(content)
-    run_id = str(source_report.get("run_id") or "").strip()
-    if not run_id:
-        raise LineageError("source_run_identity_missing")
     fingerprint_accounts = dict(source_report.get("fingerprint_accounts") or {})
-    source_rows: list[dict[str, Any]] = []
     combined_source_order = [value for value in combined if value in set(source)]
     if combined_source_order != source:
         raise LineageError("source_order_or_membership_drift")
+    manual_by_fingerprint = {row_identity(row): row for row in current_source_rows}
     for fingerprint in source:
         combined_matches = [row for row in combined_rows if row_identity(row) == fingerprint]
         if len(combined_matches) != 1:
             raise LineageError("source_fingerprint_not_bijective")
-        expected_account = str(fingerprint_accounts.get(fingerprint) or "")
-        source_row = combined_matches[0]
-        if row_account(source_row) != expected_account:
-            raise LineageError("cross_account_lineage_contamination")
-        if str(source_row.get("运行批次") or run_id) != run_id:
+        combined_row = combined_matches[0]
+        source_truth = manual_by_fingerprint[fingerprint]
+        combined_run = str(combined_row.get("运行批次") or "")
+        if combined_run != run_id and not (legacy_run_binding and not combined_run):
             raise LineageError("source_run_identity_drift")
-        if not all((row_source_type(source_row), row_url(source_row), row_account(source_row), row_title(source_row))):
-            raise LineageError("source_identity_field_missing")
-        source_rows.append(source_row)
+        if row_source_type(combined_row) != row_source_type(source_truth):
+            raise LineageError("source_type_identity_drift")
+        if row_url(combined_row) != row_url(source_truth):
+            raise LineageError("source_url_identity_drift")
+        if row_account(combined_row) != row_account(source_truth):
+            raise LineageError("cross_account_lineage_contamination")
+        if row_title(combined_row) != row_title(source_truth):
+            raise LineageError("source_title_identity_drift")
+    source_rows = current_source_rows
     source_keys = [canonical_identity(row, run_id) for row in source_rows]
     if len(source_keys) != len(set(source_keys)):
         raise LineageError("source_identity_collision")
