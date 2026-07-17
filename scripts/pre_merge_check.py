@@ -28,6 +28,7 @@ PY_COMPILE_TARGETS = (
     "scripts/check_douyin_session.py",
     "scripts/run_topic_card_if_fresh.py",
     "scripts/watch_script_package_queue.py",
+    "scripts/resume_existing_script_package_document.py",
     "scripts/local_env.py",
     "scripts/check_feishu_card_cloud_receiver.py",
     "scripts/topic_flow_rework.py",
@@ -204,6 +205,24 @@ def check_exact_candidate_input_gate() -> dict[str, Any]:
     return {
         "ok": result["returncode"] == 0,
         "name": "AR-033B exact same-day candidate input gate",
+        **result,
+    }
+
+
+def check_script_package_document_resume_gate() -> dict[str, Any]:
+    env = os.environ.copy()
+    env["PYTHONPATH"] = str(ROOT / "scripts")
+    result = run([
+        sys.executable,
+        "-m",
+        "unittest",
+        "scripts.test_resume_existing_script_package_document",
+        "scripts.test_codex_script_package_clickable_links",
+        "scripts.test_codex_cli_path",
+    ], env=env)
+    return {
+        "ok": result["returncode"] == 0,
+        "name": "AR-035C existing 06 document resume gate",
         **result,
     }
 
@@ -458,6 +477,7 @@ def main() -> int:
             check_py_compile(),
             check_ar020d_semantic_owner_gate(),
             check_exact_candidate_input_gate(),
+            check_script_package_document_resume_gate(),
             check_failure_qa_rules(),
             check_douyin_runtime_gate(),
             check_feishu_receiver_node_tests(),
@@ -491,6 +511,7 @@ def main() -> int:
         check_py_compile(),
         check_ar020d_semantic_owner_gate(),
         check_exact_candidate_input_gate(),
+        check_script_package_document_resume_gate(),
         check_ar034_source_recovery_gate(),
         check_failure_qa_rules(),
         check_douyin_runtime_gate(),
