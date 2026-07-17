@@ -3699,3 +3699,10 @@
 - PM根因：`is_legacy_compatible`把`发布时间`列为无条件nonempty required；planned published_at为空时任何candidate都不可能通过。`is_potential_legacy_identity`在planned URL存在时仍回退title，same-title/different-URL历史行也会制造假冲突。这是identity matcher过严，而非live 26条已被证明歧义。
 - 决策：RC2不得生产恢复；固定dev线程只做同根因calibration。planned URL非空时candidate仅exact URL；title/source/account/platform等planned非空字段继续exact；planned published_at为空时忽略该可选字段，非空时仍exact。URL为空时禁止title-only，需唯一title+source+account+platform composite，发布时间有值才纳入。两个exact URL、多候选、非空冲突fingerprint、wrong run仍阻断。
 - 其余writer root fix、unique legacy PUT、truly absent POST、ambiguous read-back、record-count preservation、162+87与second-run 0 write合同不变。fresh production-base RC3后再做一次完整QA；不新增架构、不请求用户重复确认、不指定model/thinking，production/automation保持clean/PAUSED。
+
+### 2026-07-17 AR-034F RC3 PM evidence accepted / independent QA dispatched
+
+- Dev回传：fresh RC3=`release/ar034f-rc3-20260717@ad3d48e704f7f96b47157e1a37ce511f055a52f4`，direct parent=`07940e899e08201ee42528fbb42782ea5410acce`，tree=`89f3d1ae8951606cc758c0e95d4088727fca31a1`，patch SHA=`23505db716d46e905a2a41ccbbec5f70cebc2bb83e35c65c655cfca2ed86bfa9`，manifest SHA=`635bfa18edee05b34bec5cb64038443534e82b238a9984b78baeb5ffa5efe3d2`。
+- PM证据复核：RC2->RC3产品差异只修改`is_legacy_compatible`与`is_potential_legacy_identity`及测试。planned URL非空时只允许exact normalized URL候选，不再title fallback；planned published_at为空时作为unknown optional metadata，非空时仍exact。required title/source/account/platform、ambiguous/conflict、writer root fix、legacy PUT/true absence POST、完整162 read-back+87投影与second-run 0 write均未放宽。
+- Named结果：empty planned time、same-title different URL、URL-empty unique composite均按合同通过；known time mismatch、two exact URLs、required-field drift、title-only和composite collision均阻断。production-shape fixture=`136 exact +26 legacy +0 conflict`，first=`26 PUT/0 POST`，second=0 write；开发阶段0外部动作。
+- 决策：固定QA线程`019f4714-3f76-7bb1-b71f-08a41d9f8860`已接收一次fresh full QA。除L0/mutation/regression外，必须用exact RC3做current Feishu 03 bounded GET-only分类并报告真实PUT/POST split；通过门为planned=162、gap=26、conflict=0、duplicate=0、wrong_run=0、writes=0。任何conflict仍Fail，不拆micro-recheck、不指定model/thinking、不触碰production或三条PAUSED automations。
