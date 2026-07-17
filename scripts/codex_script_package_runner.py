@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from codex_cli_path import resolve_codex_cli
 from local_env import load_local_env
 from feishu_user_oauth_store import preserve_latest_user_tokens, sync_user_tokens
 
@@ -90,7 +91,6 @@ USER_VISIBLE_BOUNDARY_PATTERNS = (
     "选题系统复盘",
     "沉淀资产",
 )
-DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 TEST_TITLE_PREFIXES = ("【测试】", "【流程测试】", "【部署后测试】", "【模拟测试】", "[测试]", "测试：", "测试:")
 TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(测试|测速)[^\]]*\])")
 DOC_SYNC_MAX_PARAGRAPHS = 180
@@ -395,7 +395,7 @@ def acquire_lock() -> Any:
 
 
 def codex_bin() -> str:
-    return os.getenv("CODEX_BIN", DEFAULT_CODEX_BIN)
+    return resolve_codex_cli(os.getenv("CODEX_BIN", ""))
 
 
 def script_package_skill_name() -> str:
