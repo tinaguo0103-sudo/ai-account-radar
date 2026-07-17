@@ -223,8 +223,9 @@ class CanonicalOwnerProjectionTests(unittest.TestCase):
              mock.patch.object(content_sampler.time, "sleep"):
             result = content_sampler.write_content_ledger_to_feishu(items, RUN_ID)
         self.assertEqual(140, result["owner_projection"]["unique_owner_count"])
-        self.assertEqual(140, len(updates))
+        self.assertEqual(136, len(updates))
         self.assertEqual([], posts)
+        self.assertFalse({"rec-owner-extra-0", "rec-owner-extra-1", "rec-owner-extra-2", "rec-owner-extra-3"} & {record_id for record_id, _ in updates})
         self.assertFalse(any(row["planned_fingerprint"] in {field.get("内容指纹") for _, field in updates} for row in result["owner_projection"]["mappings"] if row["resolution"] == "alias"))
 
     def test_current_recovery_surface_has_zero_writer_calls(self) -> None:

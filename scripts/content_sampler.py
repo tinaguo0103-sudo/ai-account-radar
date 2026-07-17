@@ -2674,6 +2674,10 @@ def write_content_ledger_to_feishu(
         row["owner_fingerprint"]: row["record_id"]
         for row in owner_projection.manifest["owners"]
     }
+    owner_rows = {
+        row["owner_fingerprint"]: row
+        for row in owner_projection.manifest["owners"]
+    }
     existing_by_id = {
         str(record.get("record_id") or record.get("id") or ""): record
         for record in existing
@@ -2685,6 +2689,11 @@ def write_content_ledger_to_feishu(
     for item in items:
         record = existing_by_id.get(owner_record_ids.get(item.fingerprint, ""))
         if record:
+            if owner_rows[item.fingerprint]["representative_kind"] == "alias_source":
+                skipped_duplicates += 1
+                progress["skipped_duplicates"] = skipped_duplicates
+                progress["processed_items"] += 1
+                continue
             record_id = record.get("record_id") or record.get("id") or ""
             if not record_id:
                 skipped_duplicates += 1
