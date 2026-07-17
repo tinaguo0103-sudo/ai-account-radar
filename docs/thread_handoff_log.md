@@ -3477,6 +3477,15 @@
 - 验收与续跑：登录后先执行零refresh provider check-only；仅canonical identity和account/feed/DB一致且 `ok=true/status=refresh_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false` 时，自动继续既有RC8 Phase 0授权。
 - 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
 
+### 2026-07-17 WeChat全文巨型JSON截断，派发AR-034C窄修复
+
+- 结论：`Retry Executed Once / Truthful Current Result Unavailable / Full-Source Flow Blocked / Automations Paused`。报告=`/private/tmp/ar034b_same_day_20260717_093048/final/BOUNDED_WECHAT_READ_RETRY_FAILED.md`。
+- Retry：严格1次，固定existing run/revision/watermark/receipt；provider返回 `parse_failed:JSONDecodeError:Unterminated string`，JSON约49,149,586 bytes处截断，items=0/fulltext_items=0/output rows=0。
+- Truth：不是updated_no_new，未用旧cache、DB历史行、历史artifact或其他来源补位；无第二次read retry或refresh。Douyin/AIHOT未启动，无03/04/card/callback/06，三任务PAUSED。
+- PM判断：这是current-feed读取实现缺陷，不是刷新失败或应继续重试的瞬时故障。需要代码级response shaping/bounded read修复。
+- Dev任务：AR-034C，要求receipt、canonical DB identity、feed set、after revision、before watermark和19条aggregate绑定的bounded读取；优先read-only SQLite精确区间或正式分页接口，截断/partial/duplicate/stale/drift均typed fail。发布后继续同 `run_20260717_093104`，禁止第二次refresh。
+- 执行线程：dev `019f1de3-f3f2-71d2-ae63-a74cd38f8474`；只在隔离worktree开发、fresh production-base RC、full regression，完成后不自行派QA。PM不轮询且未指定model/thinking。
+
 ### 2026-07-17 watermark repair通过，允许一次bounded全文只读重试
 
 - Repair结果：canonical `health/last_success.json` 从absent变为approved baseline，source/target SHA=`83fd50f15f8985b9d64a1f790b626e79701908ed91078d5920393c5236d90d4d`；existing signed receipt验证 `ok=true/state=updated_with_new_items/new_item_count=19/article_count=67`，零第二次refresh。
