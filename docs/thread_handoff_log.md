@@ -3636,3 +3636,10 @@
 - 禁止：直接API/DB、手改status、refresh、其他browser/profile、读取/截图/OCR/记录QR内容、账号身份、cookie/token/localStorage。
 - 成功门：DB/feed/article identity无漂移、无重复账号歧义、active account>=1；provider check-only=`ok=true/status=refresh_required`且零refresh/secret read。green后自动回fresh RC8 Phase 0；失败保持三任务PAUSED。
 - 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
+
+### 2026-07-17 AR-034E RC2 PM evidence review 阻断
+
+- Dev回传：fresh RC2=`release/ar034e-rc2-20260717@46030c8f18cb74a1a258d7ba1ee3dcce7f7782c3`，direct parent=`d88d0e5eb812d3a69ef816161446d0d8f1ca05e6`，tree=`81a8a4c5fe844160110d4c7fcbf0e616a5ab2ad1`，patch SHA=`92fae1d47e8e6ee19b8b550a163e0408caf38ab894f47ef0b5b301b5872db220`。manifest 3/3含Git blob与exact bytes SHA；PM从Git对象重算三文件SHA完全一致。
+- 历史阻断闭合：协同wrong URL/title/source_type/account/run均typed fail；5项writer-call sentinel均为0 call；真实87行source/canonical映射、comparison 162、shortlist 11、03 canonical plan 87通过。
+- 新PM阻断：path count=3并不等于hunk scope正确。相对production，`content_sampler.py` 有165行级改动并触及`own_scenario_angle`、priority、score、recommendation、Skill review pool等非身份映射行为；`source_ingestion_lineage.py` 也带入非本需求legacy production-root identity差异。交接声明“无quality-gate change”与实际Git diff不一致。
+- 决策：RC2在PM evidence gate失败，未派QA、不得发布；这不是新增业务门禁，而是阻止未授权feature差异进入production。固定dev线程一次性重组fresh exact-parent RC，仅移植AR-034E mapping/prewrite/read-back与对应测试，排除editorial、legacy RC9及其他feature-only hunks。完成后再进行一次full independent QA；不做micro-recheck，不触碰production/Feishu/provider/automation。
