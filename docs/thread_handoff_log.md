@@ -3485,6 +3485,15 @@
 - Stop：未第二次refresh；gate在Douyin/AIHOT前失败，因此未启动其他采集，无03/04/card/callback/06，三任务PAUSED。
 - Repair plan：`final/WATERMARK_BASELINE_REPAIR_AUTHORIZATION_PLAN.md`，SHA256=`97e2fc503aefa99be567b3fc180523ad012b606075a8ddb588ce827ab83e5736`。只允许atomic install exact pre-refresh baseline SHA=`83fd50f1...`、canonical read-back、existing receipt check-only；green后继续同run，禁止第二次refresh。
 
+### 2026-07-17 用户批准一次性 canonical watermark baseline repair
+
+- 用户明确同意：一次性修复watermark并继续同一 `run_20260717_093104`。
+- 授权计划：`/private/tmp/ar034b_same_day_20260717_093048/final/WATERMARK_BASELINE_REPAIR_AUTHORIZATION_PLAN.md`，SHA256=`97e2fc503aefa99be567b3fc180523ad012b606075a8ddb588ce827ab83e5736`。
+- 唯一写入：将pre-refresh diagnostic baseline精确bytes原子安装到canonical `health/last_success.json`，source/target SHA=`83fd50f15f8985b9d64a1f790b626e79701908ed91078d5920393c5236d90d4d`。
+- 验证：existing signed receipt SHA=`617754496dd5f9fdda7d384444d040e8bb222c2185bdee100b0b8f69c3f8275b` 必须check-only返回updated_with_new_items=19、article_count=67、receipt error空；green后继续同run的Douyin/AIHOT/03/editorial/04/personal card/cwd/status-only resume授权。
+- 禁止：第二次WeWe refresh，修改lease/attempt/receipt/provider DB/backup/baseline值，使用7/16数据补位，card click/callback/06。任一gate失败保持PAUSED。
+- 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
+
 ### 2026-07-17 WeWe reauth与RC8发布成功，旧恢复因跨日停止
 
 - 结论：`Released / Provider Reauth Passed / Recovery Blocked by Date Boundary / Automations Paused`。证据根=`/private/tmp/ar034b_rc8_release_20260717_092520`；报告=`final/RELEASED_RECOVERY_BLOCKED_DATE_BOUNDARY.md`。
