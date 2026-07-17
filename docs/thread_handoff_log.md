@@ -3504,6 +3504,16 @@
 - 计划边界：release exact RC -> check-only -> 一次19-page bounded read，无update/refresh -> 19/19 closure -> 同run Douyin/AIHOT/03/current-task/04/一次personal card -> official cwd repair/status-only resume。禁止第二次refresh、whole-feed、旧cache、7/16数据、card click/callback/06。
 - 当前：production仍clean `af0e4e5`，三任务PAUSED；QA零provider page/refresh/Feishu/card/automation动作。未指定model/thinking。
 
+### 2026-07-17 用户批准 AR-034C 生产发布与同run续跑
+
+- 用户确认：同意AR-034C production release并继续 `run_20260717_093104`。
+- 计划：`/private/tmp/ar034c_independent_qa_20260717/AR034C_PRODUCTION_AUTHORIZATION_PLAN.md`，SHA256=`e6567babbd94ccb684b2b677e9b513818980b4dfd3a8b17904306ebd600255bc`。
+- Release：exact RC=`b7530452f5059dd02c274b32e5adb73d7dc68e72`、base=`af0e4e520cefcacb0efa770992a34a2778b9d36f`、tree=`1314a57a...`、5 paths、patch SHA=`b4cb2a2a...`；normal fast-forward/push + dynamic gate。
+- Read：check-only 19 identities/0 requests后，只允许一次19-page `limit=1&page=N&mode=fulltext`，无update/refresh；19/19 identity/fulltext和post-read receipt/DB/plan green后才下游。
+- Continuation：同run full Douyin/same-day AIHOT、source closure、Feishu03、current-task、一次04、一次personal Topic Card、normal watermark；业务green后official production cwd repair和status-only resume。
+- Forbidden：第二次WeWe refresh、whole-feed、7/16 run/旧cache/历史或unbound DB补位、direct DB/status/signed artifact/key edit、card click/callback/06、manual TOML/model/prompt/schedule/target改变。失败保持PAUSED。
+- 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
+
 ### 2026-07-17 watermark repair通过，允许一次bounded全文只读重试
 
 - Repair结果：canonical `health/last_success.json` 从absent变为approved baseline，source/target SHA=`83fd50f15f8985b9d64a1f790b626e79701908ed91078d5920393c5236d90d4d`；existing signed receipt验证 `ok=true/state=updated_with_new_items/new_item_count=19/article_count=67`，零第二次refresh。
