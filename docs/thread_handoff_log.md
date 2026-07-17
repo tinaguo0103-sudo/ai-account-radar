@@ -3515,6 +3515,13 @@
 - Authorization plan：`/private/tmp/ar034d_production_authorization_20260717/AR034D_PRODUCTION_AUTHORIZATION_PLAN.md`，SHA256=`4e7a9ab78cc5faeb534e74d689923d5b5e107a12e7fcdf79764bbe4286d1033f`。
 - Scope：exact RC release；existing signed refresh一次19-page bounded read且无retry/second refresh；green或truthful partial后继续same-run Douyin/AIHOT、03、current-task、04、card check-only后一次personal send。partial不推进watermark。本次不改automation definition/status，三任务继续PAUSED。
 
+### 2026-07-17 用户确认AR-034D生产授权，派production执行
+
+- Authorization：用户明确回复“确认”；精确计划=`/private/tmp/ar034d_production_authorization_20260717/AR034D_PRODUCTION_AUTHORIZATION_PLAN.md`，SHA256=`4e7a9ab78cc5faeb534e74d689923d5b5e107a12e7fcdf79764bbe4286d1033f`。
+- Production dispatch：固定production线程在idle状态收到exact base/RC/tree/3-file/patch、dynamic gate、existing signed refresh一次19-page read、same-run source/03/current-task/04/card任务卡；省略model/thinking。
+- Hard boundary：禁止second refresh/read retry、stale/7-16/failed/historical/cross-source替代、06/Skill/SCF/provider/Chrome/key和automation change。partial保留成功项但watermark不前移；system/read-back/card guard失败立即停止。
+- Current state：Running；三automation保持PAUSED且definition/status不变。PM不轮询，等待主动handoff。
+
 ### 2026-07-17 WeChat全文巨型JSON截断，派发AR-034C窄修复
 
 - 结论：`Retry Executed Once / Truthful Current Result Unavailable / Full-Source Flow Blocked / Automations Paused`。报告=`/private/tmp/ar034b_same_day_20260717_093048/final/BOUNDED_WECHAT_READ_RETRY_FAILED.md`。
