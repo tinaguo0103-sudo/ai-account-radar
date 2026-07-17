@@ -3706,3 +3706,10 @@
 - PM证据复核：RC2->RC3产品差异只修改`is_legacy_compatible`与`is_potential_legacy_identity`及测试。planned URL非空时只允许exact normalized URL候选，不再title fallback；planned published_at为空时作为unknown optional metadata，非空时仍exact。required title/source/account/platform、ambiguous/conflict、writer root fix、legacy PUT/true absence POST、完整162 read-back+87投影与second-run 0 write均未放宽。
 - Named结果：empty planned time、same-title different URL、URL-empty unique composite均按合同通过；known time mismatch、two exact URLs、required-field drift、title-only和composite collision均阻断。production-shape fixture=`136 exact +26 legacy +0 conflict`，first=`26 PUT/0 POST`，second=0 write；开发阶段0外部动作。
 - 决策：固定QA线程`019f4714-3f76-7bb1-b71f-08a41d9f8860`已接收一次fresh full QA。除L0/mutation/regression外，必须用exact RC3做current Feishu 03 bounded GET-only分类并报告真实PUT/POST split；通过门为planned=162、gap=26、conflict=0、duplicate=0、wrong_run=0、writes=0。任何conflict仍Fail，不拆micro-recheck、不指定model/thinking、不触碰production或三条PAUSED automations。
+
+### 2026-07-17 AR-034F RC3 QA failed / field-level data diagnosis dispatched
+
+- QA结论：`AR-034F RC3 Independent Full QA Failed / Production Recovery Not Authorized`。fresh L0、two-matcher scope、12/12 mutation、28 focused、428 Python及相邻回归均通过；但exact current Feishu 03 GET-only仍为planned=162、exact=136、legacy PUT=0、absence POST=0、conflict=26、duplicate=0、wrong_run=0、writes=0。来源分布为21 AIHOT、2公众号、3对标视频；统一typed reason=`ambiguous_or_conflicting_legacy_identity`。报告=`/private/tmp/ar034f_rc3_independent_qa_20260717/AR034F_RC3_INDEPENDENT_FULL_QA_REPORT.md`。
+- PM判断：optional published_at calibration不是live 26 conflict的唯一根因。继续自动放宽URL/title/account/platform等身份字段会把历史脏数据猜成canonical记录，既可能错误PUT，也可能掩盖真实重复；因此不直接派RC4，也不把绿色fixture当production readiness。
+- 固定QA线程获准在同一read-only边界做一次字段级根因分解：每条仅输出source、planned metadata presence、potential/compatible counts、fingerprint state、run/field-match booleans与typed mismatch labels，禁止落盘标题、URL、账号、时间原值、正文或secret。须区分历史字段缺失、值冲突、多候选、旧非空fingerprint占用和shared-candidate collision，并给出按来源计数。
+- 该任务不是QA重跑或micro-recheck，不改代码、不建RC、不授权恢复。若需第三次以上live GET或原始值则停止。结果只用于PM选择纯数据迁移、item-local隔离或停止当日恢复；production、03/04/card、provider和三条PAUSED automation保持不变。
