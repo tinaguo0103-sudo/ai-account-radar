@@ -3678,3 +3678,10 @@
 - 唯一一次正式03 writer接收162 items；写后read-back为unique matched=136、missing=26、wrong_run=0、run-related records=140。独立只读确认实际multi-record fingerprint=0；旧`duplicate=26`来自同一missing集合的`count != 1`分类，不是26组真实重复。记录IDs和缺失fingerprints见`/private/tmp/ar034e_production_20260717_121830/feishu03/post_failure_readonly.json`。
 - 硬门生效：未提交watermark，未运行主编、04、card/callback/06；三automation保持PAUSED且定义未变。不得盲目重跑162 writer。
 - PM派发AR-034F到固定dev线程：基于脱敏证据查明26条共同特征，提供exact-run、check-only、only-missing、ambiguous-create read-back、bounded retry、second-run no-op及完整162+87验证的幂等reconcile窄RC。开发阶段0 Feishu/外部调用，不自行派QA，不指定model/thinking。
+
+### 2026-07-17 AR-034F RC1 PM evidence review failed
+
+- Dev RC1=`release/ar034f-rc-20260717@461bd6606781afe9b357895f5bbef20f80a13088`，direct parent=`07940e899e08201ee42528fbb42782ea5410acce`，4 files，patch SHA=`4a5731a7e0aebe25e324d6a5b157c5cfbf0c6e314fa2bb0db6405448e6afdf23`。它正确修复missing/duplicate分类，并实现check-only、only-missing create、ambiguous read-back与second-run no-op。
+- Dev根因同时证明：26 missing fingerprints分别属于AIHOT 21、WeChat 2、Douyin 3，均是writer已通过legacy URL/title identity命中的existing records；因`内容指纹`只在fulltext update分支写入，26条旧记录没有canonical fingerprint。95 create +41 exact existing=136 canonical。
+- PM阻断：RC1按fingerprint count=0直接POST 26条，会保留已有canonical-less记录并新增同URL/title内容，形成业务重复；该方案不得派QA或发布。这是实际数据完整性问题，不是新增安全架构。
+- 集中返修已回派固定dev线程：未来writer对唯一existing empty-fingerprint记录必须独立于fulltext写入fingerprint；reconcile须区分136 exact、unique compatible legacy、truly absent、ambiguous/conflict，当前production fixture应为26 precise PUT/0 POST且record count不增加。冲突非空fingerprint、title-only collision或多候选写前阻断；最终仍要求162 exact +87 ordered projection和second-run 0 write。开发0外部动作，不指定model/thinking。
