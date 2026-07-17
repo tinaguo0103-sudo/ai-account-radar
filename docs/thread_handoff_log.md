@@ -3730,11 +3730,14 @@
 - 决策：RC1在PM evidence gate失败，未派QA、不得发布；这是直接业务去重缺陷，不是新增identity/security门。固定dev线程须fresh RC2：先按normalized URL或URL-empty完整composite分组raw planned；同key无existing owner且allow_new时只选首个确定性new owner，剩余全部alias，future writer每owner key最多create一次。same-title/different-URL保持独立，multiple existing owners/wrong run等原边界不变。
 - RC2须保留current 162->140、26 aliases、0 new/0 Feishu write、140 read-back和candidate owner projection；新增2/3 same-URL new items ->1 owner/1 create、URL-empty composite group、writer payload sentinel及second-run no-op。fresh production-base单提交，RC1历史保留；不指定model/thinking、不触碰生产或三条PAUSED automation。
 
-### 2026-07-17 AR-034G RC2 PM evidence accepted / QA passed / production release dispatched
+### 2026-07-17 AR-034G RC2 PM evidence accepted / QA passed / production released
 
 - QA结论：`AR-034G RC2 Independent Full QA Passed / Ready for PM Production Authorization`。exact RC=`207060c1877afd3a96a27a85a4268de6c82043e9`，base=`07940e899e08201ee42528fbb42782ea5410acce`，5/5 byte parity、forbidden scope=0；future-new dedup独立12/12，full Python=417，receiver=32，Douyin=8 top-level+39 internal，semantic=6+7。
 - Live GET-only：162 raw ->140 unique same-run owners，136 direct、26 existing aliases、22 shared、4 additional、0 new；140 owner read-back精确，来源分布87 Douyin/18 WeChat/35 AIHOT，11条重算候选唯一且全部属于owner set，Feishu business write=0。证据根=`/private/tmp/ar034g_rc2_independent_qa_20260717`。
 - 用户明确要求“不要再做修改，直接发布”。PM据此停止候选文件交接面的追加rework，不再派development或新RC；固定production线程接收exact RC2发布与现有正式恢复任务。不得重采/provider refresh/03修补/新安全架构；三automation在业务闭环前保持PAUSED，不指定model/thinking。真实入口若失败则按当前错误如实停止并回传，不在production内改代码。
+- Production回传：normal fast-forward/push成功，production local=origin/main=`207060c1877afd3a96a27a85a4268de6c82043e9`、tree=`2d73bffd2516750457158ba01f87f7552baea675`、clean；dynamic gate通过，Topic Card仅check-only且sent/writes=false。
+- Released-code smoke：`run_20260717_093104`的content-items SHA=`4cae055a...`；owner projection为162 raw、136 direct、26 aliases、22 shared、4 additional、0 new、140 owners/read-back，来源87 Douyin/18 WeChat/35 AIHOT，candidate=11，业务写入0。三automation全程PAUSED且byte-identical。证据根=`/private/tmp/ar034g_rc2_production_20260717_1230`。
+- PM验收：本次“直接发布”目标完成，结论=`Released / Check-only Smoke Passed / Automations Paused`。release-only边界未包含03 reconciliation、watermark、editorial、04或card，因此业务恢复仍未完成；后续外部写入需单独授权，但不因该边界追加产品修改。
 
 - Dev回传：fresh RC2=`release/ar034g-rc2-20260717@207060c1877afd3a96a27a85a4268de6c82043e9`，direct parent=`07940e899e08201ee42528fbb42782ea5410acce`，tree=`2d73bffd2516750457158ba01f87f7552baea675`，5 files，patch SHA=`1d919d72bb7a3ed64040e99e2cc4167c621dba1874fc4f33ce33e42a17436951`，manifest SHA=`6a1bb0ea00f1de3a214a9c58b759aca5a1c567f70deb42ffe148efc485bae123`。
 - RC1根因闭合：raw planned先按normalized URL或URL-empty完整composite分组。无existing owner且allow_new时，首个raw item是唯一new owner，其余为new_alias；existing owner唯一时整组映射。PM exact反例从RC1的`2 owners/2 creates`变为RC2的`2 raw/1 owner/1 new/1 alias/1 create`，三项同URL同样只有1 create；second run看到owner后new=0。
