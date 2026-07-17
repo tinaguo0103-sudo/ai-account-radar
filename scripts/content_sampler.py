@@ -2681,6 +2681,9 @@ def write_content_ledger_to_feishu(
                 skipped_duplicates += 1
                 continue
             record_fields = record.get("fields", {})
+            existing_fingerprint = str(record_fields.get("内容指纹") or "")
+            if existing_fingerprint and existing_fingerprint != item.fingerprint:
+                raise RuntimeError("content_inbox_conflicting_fingerprint")
             same_run_new = str(record_fields.get("运行批次", "")) == run_id or str(record_fields.get("最近参与运行批次", "")) == run_id
             fields = item_to_content_inbox_fields(item, run_id, is_new=same_run_new, duplicate=not same_run_new)
             update_fields = {
@@ -2691,6 +2694,8 @@ def write_content_ledger_to_feishu(
                 "是否本次新增": "是" if same_run_new else "否",
                 "是否重复": str(record_fields.get("是否重复", "否")) if same_run_new else "是",
             }
+            if not existing_fingerprint:
+                update_fields["内容指纹"] = item.fingerprint
             if fields.get("是否全文解析") == "是":
                 update_fields.update({
                     "标题": fields["标题"],

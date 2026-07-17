@@ -49,7 +49,58 @@ def validate_planned_items(items: list[content_sampler.ContentItem], run_id: str
     return fingerprints
 
 
-def classify_records(planned_fingerprints: list[str], records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
+def record_id(record: dict[str, Any]) -> str:
+    return str(record.get("record_id") or record.get("id") or "")
+
+
+def normalized(value: Any) -> str:
+    return " ".join(str(value or "").split())
+
+
+def run_matches(fields: dict[str, Any], run_id: str) -> bool:
+    return run_id in {
+        str(fields.get("\u8fd0\u884c\u6279\u6b21") or ""),
+        str(fields.get("\u6700\u8fd1\u53c2\u4e0e\u8fd0\u884c\u6279\u6b21") or ""),
+    }
+
+
+def legacy_identity_values(item: content_sampler.ContentItem) -> dict[str, str]:
+    account = normalized(item.account_name or item.platform)
+    return {
+        "\u6807\u9898": normalized(item.title or item.url),
+        "\u6765\u6e90\u7c7b\u578b": normalized(item.source_type),
+        "\u94fe\u63a5": normalized(item.url),
+        "\u5e73\u53f0": normalized(item.platform),
+        "\u53d1\u5e03\u65f6\u95f4": normalized(item.published_at),
+        "\u4f5c\u8005/\u8d26\u53f7": account,
+        "\u6765\u6e90\u540d\u79f0": account,
+    }
+
+
+def is_legacy_compatible(item: content_sampler.ContentItem, fields: dict[str, Any]) -> bool:
+    expected = legacy_identity_values(item)
+    if str(fields.get("\u5185\u5bb9\u6307\u7eb9") or ""):
+        return False
+    required = ["\u6807\u9898", "\u6765\u6e90\u7c7b\u578b", "\u5e73\u53f0", "\u53d1\u5e03\u65f6\u95f4"]
+    if expected["\u94fe\u63a5"]:
+        required.append("\u94fe\u63a5")
+    if any(not normalized(fields.get(name)) or normalized(fields.get(name)) != expected[name] for name in required):
+        return False
+    account_values = [
+        normalized(fields.get(name))
+        for name in ("\u4f5c\u8005/\u8d26\u53f7", "\u6765\u6e90\u540d\u79f0")
+        if normalized(fields.get(name))
+    ]
+    return bool(account_values) and all(value == expected["\u4f5c\u8005/\u8d26\u53f7"] for value in account_values)
+
+
+def is_potential_legacy_identity(item: content_sampler.ContentItem, fields: dict[str, Any]) -> bool:
+    if normalized(item.url) and normalized(fields.get("\u94fe\u63a5")) == normalized(item.url):
+        return True
+    return bool(normalized(item.title) and normalized(fields.get("\u6807\u9898")) == normalized(item.title))
+
+
+def classify_records(items: list[content_sampler.ContentItem], records: list[dict[str, Any]], run_id: str) -> dict[str, Any]:
     if not isinstance(records, list):
         raise ReconcileError("readback_schema_invalid")
     by_fingerprint: dict[str, list[dict[str, Any]]] = defaultdict(list)
@@ -64,30 +115,59 @@ def classify_records(planned_fingerprints: list[str], records: list[dict[str, An
         by_fingerprint[value].append(record)
 
     exact_unique: list[str] = []
-    missing: list[str] = []
+    legacy_updates: list[dict[str, str]] = []
+    absent: list[str] = []
     duplicates: dict[str, list[str]] = {}
     wrong_run: list[str] = []
-    for fingerprint in planned_fingerprints:
+    conflicts: list[str] = []
+    claimed_legacy_ids: set[str] = set()
+    for item in items:
+        fingerprint = item.fingerprint
         matches = by_fingerprint.get(fingerprint, [])
-        if not matches:
-            missing.append(fingerprint)
-        elif len(matches) > 1:
-            duplicates[fingerprint] = [str(row.get("record_id") or row.get("id") or "") for row in matches]
-        else:
+        if len(matches) > 1:
+            duplicates[fingerprint] = [record_id(row) for row in matches]
+            continue
+        if len(matches) == 1:
             fields = matches[0]["fields"]
-            run_values = {str(fields.get("\u8fd0\u884c\u6279\u6b21") or ""), str(fields.get("\u6700\u8fd1\u53c2\u4e0e\u8fd0\u884c\u6279\u6b21") or "")}
-            (exact_unique if run_id in run_values else wrong_run).append(fingerprint)
+            colliding_identity = [
+                row for row in records
+                if record_id(row) != record_id(matches[0]) and is_potential_legacy_identity(item, row["fields"])
+            ]
+            if colliding_identity:
+                conflicts.append(fingerprint)
+                continue
+            (exact_unique if run_matches(fields, run_id) else wrong_run).append(fingerprint)
+            continue
+        potential = [row for row in records if is_potential_legacy_identity(item, row["fields"])]
+        compatible = [row for row in potential if is_legacy_compatible(item, row["fields"])]
+        if len(potential) == 1 and len(compatible) == 1:
+            legacy_id = record_id(compatible[0])
+            if not legacy_id or legacy_id in claimed_legacy_ids or not run_matches(compatible[0]["fields"], run_id):
+                conflicts.append(fingerprint)
+                continue
+            claimed_legacy_ids.add(legacy_id)
+            legacy_updates.append({"fingerprint": fingerprint, "record_id": legacy_id})
+        elif potential:
+            conflicts.append(fingerprint)
+        else:
+            absent.append(fingerprint)
     return {
-        "planned_count": len(planned_fingerprints),
+        "planned_count": len(items),
         "existing_unique_count": len(exact_unique),
-        "missing_count": len(missing),
+        "legacy_update_count": len(legacy_updates),
+        "create_count": len(absent),
+        "missing_count": len(legacy_updates) + len(absent),
         "actual_duplicate_count": len(duplicates),
         "wrong_run_count": len(wrong_run),
+        "conflict_count": len(conflicts),
         "exact_unique_fingerprints": exact_unique,
-        "missing_fingerprints": missing,
+        "legacy_updates": legacy_updates,
+        "create_fingerprints": absent,
+        "missing_fingerprints": [row["fingerprint"] for row in legacy_updates] + absent,
         "duplicate_fingerprints": list(duplicates),
         "duplicate_record_ids": duplicates,
         "wrong_run_fingerprints": wrong_run,
+        "conflict_fingerprints": conflicts,
     }
 
 
@@ -96,15 +176,25 @@ def require_reconcilable(classification: dict[str, Any]) -> None:
         raise ReconcileError("actual_duplicate_identity")
     if classification["wrong_run_count"]:
         raise ReconcileError("wrong_run_identity")
+    if classification["conflict_count"]:
+        raise ReconcileError("ambiguous_or_conflicting_legacy_identity")
 
 
-def exact_fingerprint_state(records: list[dict[str, Any]], fingerprint: str, run_id: str) -> str:
-    state = classify_records([fingerprint], records, run_id)
+def exact_fingerprint_state(
+    records: list[dict[str, Any]], item: content_sampler.ContentItem, run_id: str
+) -> tuple[str, str]:
+    state = classify_records([item], records, run_id)
     if state["actual_duplicate_count"]:
-        return "duplicate"
+        return "duplicate", ""
     if state["wrong_run_count"]:
-        return "wrong_run"
-    return "committed" if state["existing_unique_count"] == 1 else "absent"
+        return "wrong_run", ""
+    if state["conflict_count"]:
+        return "conflict", ""
+    if state["existing_unique_count"] == 1:
+        return "committed", ""
+    if state["legacy_update_count"] == 1:
+        return "legacy", state["legacy_updates"][0]["record_id"]
+    return "absent", ""
 
 
 def ambiguous_create_error(exc: BaseException) -> bool:
@@ -130,6 +220,7 @@ def reconcile_missing_records(
     items: list[content_sampler.ContentItem], run_id: str, source_closure: dict[str, Any], *,
     read_records: Callable[[], list[dict[str, Any]]],
     create_record: Callable[[dict[str, str]], dict[str, Any]],
+    update_record: Callable[[str, dict[str, str]], dict[str, Any]],
     revalidate_plan: Callable[[], None], write: bool,
     max_ambiguous_attempts: int = 2, readback_polls: int = 3,
     sleep: Callable[[float], None] = time.sleep,
@@ -137,12 +228,13 @@ def reconcile_missing_records(
     fingerprints = validate_planned_items(items, run_id)
     item_by_fingerprint = {item.fingerprint: item for item in items}
     revalidate_plan()
-    before = classify_records(fingerprints, read_records(), run_id)
+    before = classify_records(items, read_records(), run_id)
     require_reconcilable(before)
     report: dict[str, Any] = {
         "ok": False, "run_id": run_id, "mode": "write_missing" if write else "check_only",
         "planned": len(fingerprints), "existing": before["existing_unique_count"], "missing": before["missing_count"],
-        "attempted": 0, "created": 0, "already_committed": 0, "failed": 0, "outcomes": [],
+        "attempted": 0, "legacy_updates": 0, "created": 0, "already_committed": 0, "failed": 0,
+        "put_requests": 0, "post_requests": 0, "outcomes": [],
         "full_writer_called": False, "side_effect_stage": "none",
     }
 
@@ -162,16 +254,28 @@ def reconcile_missing_records(
 
     revalidate_plan()
     report["side_effect_stage"] = "reconciling_missing"
-    for fingerprint in before["missing_fingerprints"]:
-        current = exact_fingerprint_state(read_records(), fingerprint, run_id)
+    actions = [
+        *(dict(row, action="legacy_update") for row in before["legacy_updates"]),
+        *({"fingerprint": value, "record_id": "", "action": "create"} for value in before["create_fingerprints"]),
+    ]
+    for planned_action in actions:
+        fingerprint = planned_action["fingerprint"]
+        item = item_by_fingerprint[fingerprint]
+        current, current_record_id = exact_fingerprint_state(read_records(), item, run_id)
         if current == "committed":
             report["already_committed"] += 1
             report["outcomes"].append({"fingerprint": fingerprint, "status": "already_committed", "attempts": 0})
             continue
-        if current != "absent":
+        action = "legacy_update" if current == "legacy" else "create"
+        if current not in {"legacy", "absent"}:
             abort(f"concurrent_{current}_identity", stage="pre_create_readback_failed")
+        if planned_action["action"] == "legacy_update" and action != "legacy_update":
+            abort("legacy_record_disappeared", stage="pre_create_readback_failed")
         fields = content_sampler.item_to_content_inbox_fields(item_by_fingerprint[fingerprint], run_id, is_new=True, duplicate=False)
-        outcome = {"fingerprint": fingerprint, "status": "failed", "attempts": 0, "ambiguity_resolved": False}
+        outcome = {
+            "fingerprint": fingerprint, "record_id": current_record_id, "action": action,
+            "status": "failed", "attempts": 0, "ambiguity_resolved": False,
+        }
         for attempt in range(1, max_ambiguous_attempts + 1):
             try:
                 revalidate_plan()
@@ -181,22 +285,33 @@ def reconcile_missing_records(
             outcome["attempts"] = attempt
             acknowledged = False
             try:
-                validate_create_response(create_record(fields))
+                if action == "legacy_update":
+                    report["put_requests"] += 1
+                    validate_create_response(update_record(current_record_id, {"\u5185\u5bb9\u6307\u7eb9": fingerprint}))
+                else:
+                    report["post_requests"] += 1
+                    validate_create_response(create_record(fields))
                 acknowledged = True
             except Exception as exc:  # noqa: BLE001 - exact read-back resolves unknown commit status.
                 if not ambiguous_create_error(exc):
-                    outcome["reason"] = f"create_hard_failure:{exc.__class__.__name__}"
+                    outcome["reason"] = f"{action}_hard_failure:{exc.__class__.__name__}"
                     break
             observed = "absent"
             for _ in range(max(1, readback_polls)):
-                observed = exact_fingerprint_state(read_records(), fingerprint, run_id)
+                observed, _ = exact_fingerprint_state(read_records(), item, run_id)
                 if observed != "absent":
                     break
                 sleep(0.05)
             if observed == "committed":
-                outcome["status"] = "created" if acknowledged else "already_committed_after_ambiguous"
+                outcome["status"] = (
+                    ("legacy_updated" if action == "legacy_update" else "created")
+                    if acknowledged else "already_committed_after_ambiguous"
+                )
                 outcome["ambiguity_resolved"] = not acknowledged
-                report["created" if acknowledged else "already_committed"] += 1
+                if acknowledged:
+                    report["legacy_updates" if action == "legacy_update" else "created"] += 1
+                else:
+                    report["already_committed"] += 1
                 break
             if observed in {"duplicate", "wrong_run"}:
                 abort(f"post_create_{observed}_identity", stage="post_create_readback_failed")
@@ -212,7 +327,7 @@ def reconcile_missing_records(
             break
 
     final_records = read_records()
-    final = classify_records(fingerprints, final_records, run_id)
+    final = classify_records(items, final_records, run_id)
     if report["failed"]:
         report.update({"classification": final, "side_effect_stage": "partial_write_failed"})
         return report
@@ -297,10 +412,19 @@ def main() -> int:
             return feishu.request_json("POST", f"/bitable/v1/apps/{app_token}/tables/{table_id}/records", token=token,
                                        body={"fields": {key: fields.get(key, "") for key in content_sampler.CONTENT_INBOX_FIELDS}}, retry=False)
 
+        def update_one(record_id_value: str, fields: dict[str, str]) -> dict[str, Any]:
+            return feishu.request_json(
+                "PUT",
+                f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id_value}",
+                token=token,
+                body={"fields": fields},
+                retry=False,
+            )
+
         side_effect_stage = "write_missing" if args.write_missing else "check_only"
         report = reconcile_missing_records(items, args.run_id, closure,
             read_records=lambda: content_sampler.all_records(token, app_token, table_id), create_record=create_one,
-            revalidate_plan=revalidate, write=args.write_missing)
+            update_record=update_one, revalidate_plan=revalidate, write=args.write_missing)
         if args.write_missing:
             atomic_write_json(report_path, report)
         print(json.dumps(report, ensure_ascii=False, sort_keys=True))
