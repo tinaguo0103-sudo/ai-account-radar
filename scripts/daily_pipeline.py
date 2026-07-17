@@ -294,12 +294,40 @@ def is_douyin_account_level_partial(step: dict[str, Any], probe: dict[str, Any])
     return str(probe.get("status") or "") == "completed_with_failures"
 
 
+def is_candidate_local_partial(step: dict[str, Any], probe: dict[str, Any]) -> bool:
+    return is_douyin_account_level_partial(step, probe) or bool(step.get("candidate_local_partial"))
+
+
+def wechat_candidate_partial_checks(outcome: dict[str, Any]) -> dict[str, bool]:
+    return {
+        "wechat_candidate_lineage_complete": (
+            int(outcome.get("planned") or 0) == int(outcome.get("attempted") or -1)
+            and int(outcome.get("attempted") or 0)
+            == int(outcome.get("succeeded") or 0) + int(outcome.get("failed") or 0)
+        ),
+        "wechat_candidate_failures_isolated": bool(outcome.get("downstream_usable")),
+        "wechat_truthful_successes_nonempty": int(outcome.get("succeeded") or 0) > 0,
+    }
+
+
+def wechat_watermark_allowed(
+    *, write_feishu: bool, downstream_usable: bool,
+    freshness: dict[str, Any] | None, read_outcome: dict[str, Any] | None,
+) -> bool:
+    return bool(
+        write_feishu and downstream_usable and freshness
+        and freshness.get("state") in {"updated_with_new_items", "updated_no_new_items"}
+        and (not read_outcome or read_outcome.get("full_collection_success") is True)
+    )
+
+
 def downstream_usability_report(
     steps: list[dict[str, Any]],
     output_dir: Path,
     today_candidates: int,
     probe_result_path: Path = DOUYIN_CDP_RESULT,
     ingestion_closure: dict[str, Any] | None = None,
+    wechat_read_outcome: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     probe = read_json(probe_result_path)
     coverage = probe.get("coverage") if isinstance(probe.get("coverage"), dict) else {}
@@ -312,7 +340,7 @@ def downstream_usability_report(
     full_collection_failures = collection_failure_steps(steps)
     hard_failures = [
         step for step in full_collection_failures
-        if not is_douyin_account_level_partial(step, probe)
+        if not is_candidate_local_partial(step, probe)
     ]
     failed_artifact_leaks = [
         str(row.get("account_name") or "")
@@ -350,6 +378,9 @@ def downstream_usability_report(
             "feishu_03_planned_identity_ok": bool((feishu_identity.get("planned_identity") or {}).get("identity_sha256")),
             "feishu_03_readback_contract_ok": bool(feishu_identity.get("ok")),
         })
+    wechat_read = wechat_read_outcome if isinstance(wechat_read_outcome, dict) else {}
+    if wechat_read.get("status") == "completed_with_failures":
+        checks.update(wechat_candidate_partial_checks(wechat_read))
     blocked_reasons = [name for name, ok in checks.items() if not ok]
     downstream_usable = not blocked_reasons
     full_collection_success = not full_collection_failures
@@ -365,6 +396,7 @@ def downstream_usability_report(
         "source_failure_count": len(full_collection_failures),
         "system_failure_count": len(hard_failures),
         "isolated_failed_account_count": len(failed_accounts),
+        "isolated_failed_wechat_item_count": int(wechat_read.get("failed") or 0),
         "isolated_failed_accounts": [
             {
                 "account_name": row.get("account_name", ""),
@@ -470,6 +502,7 @@ def main() -> int:
     douyin_source_lineage: dict[str, Any] | None = None
     active_douyin_probe_result = DOUYIN_CDP_RESULT
     wechat_freshness: dict[str, Any] | None = None
+    wechat_read_outcome: dict[str, Any] | None = None
     run_id = new_run_id()
     run_started_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     step_env = os.environ.copy()
@@ -531,13 +564,20 @@ def main() -> int:
                 str(WECHAT_FULLTEXT_RESOLVED_MANUAL),
                 "--csv",
                 str(OUT / "wechat_fulltext_provider_items.csv"),
+                "--report",
+                str(OUT / "provider_health" / run_id / "wewe_current_feed_read_report.json"),
             ]
         if provider_cmd:
             steps.append(run_step("fetch refreshed WeChat fulltext provider into ContentItem rows", provider_cmd, env=step_env))
+            wechat_read_outcome = stdout_json(steps[-1])
             if steps[-1]["returncode"] != 0:
                 log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
                 print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
                 return steps[-1]["returncode"]
+            if wechat_read_outcome.get("status") == "completed_with_failures":
+                steps[-1]["optional_failed"] = True
+                steps[-1]["candidate_local_partial"] = True
+                steps[-1]["note"] = "WeChat candidate-local read failures were isolated; successful truthful rows continue."
             manual_inputs.append(WECHAT_FULLTEXT_RESOLVED_MANUAL)
 
     fetch_douyin = not args.no_fetch_douyin_cdp_source_watch or args.fetch_douyin_cdp_source_watch
@@ -694,17 +734,26 @@ def main() -> int:
     generated_count = today10_count(today10_path)
     if ingestion_lineage:
         ingestion_lineage.update({"run_id": douyin_source_lineage.get("run_id"), "manual_artifact_identity_verified": douyin_source_lineage.get("manual_artifact_identity_verified")})
-    downstream_report = downstream_usability_report(steps, output_dir, generated_count, active_douyin_probe_result, ingestion_lineage)
+    downstream_report = downstream_usability_report(
+        steps, output_dir, generated_count, active_douyin_probe_result, ingestion_lineage,
+        wechat_read_outcome=wechat_read_outcome,
+    )
     downstream_report["douyin_partial_ingestion"] = douyin_source_lineage or {}
     downstream_report["ingestion_bijection"] = ingestion_lineage or {}
     downstream_report["wechat_freshness"] = wechat_freshness or {}
+    downstream_report["wechat_read_outcome"] = wechat_read_outcome or {}
     watermark_closure = ingestion_lineage or {
             "feishu_03_identity": {
                 "ok": bool(((sampler_result.get("feishu_content_ledger") or {}).get("read_back_identity") or {}).get("ok")),
                 "mode": "write",
             }
         }
-    watermark_pending = bool(args.write_feishu and downstream_report.get("downstream_usable") and wechat_freshness and wechat_freshness.get("state") in {"updated_with_new_items", "updated_no_new_items"})
+    watermark_pending = wechat_watermark_allowed(
+        write_feishu=args.write_feishu,
+        downstream_usable=bool(downstream_report.get("downstream_usable")),
+        freshness=wechat_freshness,
+        read_outcome=wechat_read_outcome,
+    )
     if generated_count == 0:
         failures = collection_failure_steps(steps)
         log_path = write_run_log(
