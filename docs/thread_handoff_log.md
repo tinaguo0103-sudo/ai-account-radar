@@ -3664,3 +3664,10 @@
 - PM独立等价入口：RC4 validator输入87 planned canonical +19 WeChat +56 AIHOT，返回`full_ledger_count=162`、`source_projection_count=87`、projection exact=true；三项named regression全部通过。完整writer read-back仍要求run/count/list/global uniqueness，投影仍严格拒绝missing/duplicate/reorder/source-fingerprint substitution。
 - Scope：production functions仅比RC3增加`validate_feishu_readback_identity`的full-ledger schema/projection逻辑，manual/combined/canonical/prewrite接线不变；14个forbidden editorial/legacy函数保持production字节一致。
 - 决策：PM evidence gate通过，固定QA线程接收一次production-shape full QA；必须独立用public helper重放87+19+56、post-write mutation和coordinated prewrite zero-writer，再做real87与回归。QA通过也不得自行派production；不指定model/thinking，生产和三automation保持不变/PAUSED。
+
+### 2026-07-17 AR-034E RC4 QA passed / PM production plan awaiting user
+
+- QA结论：`AR-034E RC4 Production-Shape Independent Full QA Passed / Ready for PM Production Authorization`。public helper实际接收162 items，writer call=1，full read-back=162，ordered Douyin canonical projection=87；75个WeChat/AIHOT身份合法穿插通过。prewrite五类协同漂移writer calls=0，post-write missing/duplicate/reorder/wrong-run/source-fingerprint/malformed/count mismatch全部阻断。
+- L0/回归：exact parent/3-file scope/patch/manifest/apply/tree/forbidden ownership通过；real run source/canonical/mapping=87、comparison=162、shortlist=11、full ledger=162、projection=87；full Python=400、receiver=32、Douyin top-level=8、semantic=6+7，生产0动作。报告=`/private/tmp/ar034e_rc4_production_shape_qa_20260717/AR034E_RC4_PRODUCTION_SHAPE_FULL_QA_REPORT.md`。
+- PM接受：用户可见目标仍是完成同日03/04和一次个人Topic Card，不是只发布代码。生产授权计划=`/private/tmp/ar034e_rc4_production_authorization_20260717/PRODUCTION_AUTHORIZATION_PLAN.md`，SHA256=`cdb32920fa993d31d2c163c9dc6b7de453cb14075b2844c7d43496c1896b7c82`。
+- 授权边界：Git-only release后复用现有87 Douyin+19 WeChat+56 AIHOT写03并做162全量/87投影read-back；随后existing signed watermark、11-row exact current-task、04 read-back、card check-only与一次personal send。禁止重采集、第二refresh/read、stale fallback、06/callback、Skill/SCF/Chrome/provider/key和任何automation definition/status/cwd/model/prompt/schedule改变。三任务保持PAUSED，等待用户明确确认后才派production；不指定model/thinking。
