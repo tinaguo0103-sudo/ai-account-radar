@@ -3477,6 +3477,15 @@
 - 验收与续跑：登录后先执行零refresh provider check-only；仅canonical identity和account/feed/DB一致且 `ok=true/status=refresh_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false` 时，自动继续既有RC8 Phase 0授权。
 - 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
 
+### 2026-07-17 WeWe reauth与RC8发布成功，旧恢复因跨日停止
+
+- 结论：`Released / Provider Reauth Passed / Recovery Blocked by Date Boundary / Automations Paused`。证据根=`/private/tmp/ar034b_rc8_release_20260717_092520`；报告=`final/RELEASED_RECOVERY_BLOCKED_DATE_BOUNDARY.md`。
+- Reauth：fixed 9334 / PID 72440 / canonical profile一次add-account；UI polling/upsert后accounts=1/status1=1。provider check-only=`ok=true/status=refresh_required`、active_account_count=1、零refresh/secret read；QR和账号secret未读取或记录。
+- Release：production `8af0846` -> `af0e4e520cefcacb0efa770992a34a2778b9d36f` fast-forward/push，clean local=remote；28/28 scope、manifest/patch/tree和dynamic gate通过。canonical HMAC key已按owner-only 0700/0600 provision，bytes/hash未输出。
+- Stop：当前日期已为2026-07-17，原授权绑定2026-07-16 preserved Douyin + same-day AIHOT + current signed WeChat。为避免7/17 WeChat污染7/16来源，signed refresh前停止；health目录无lease/attempt/receipt/watermark，无03/04/card/collection/06。
+- Current：provider DB integrity=ok，accounts/feeds status1各1，articles=48；三automation PAUSED且配置未变。
+- PM recommendation：不再恢复7/16旧run；授权一次完整2026-07-17同日全源流程，正常取得7/17 Douyin、AIHOT、signed WeChat，再做03/current-task/04/personal card。完成后修复production cwd并status-only恢复三任务。
+
 ### 2026-07-16 WeWe admin auth通过，provider account reauth仍阻断
 
 - 结论：`Admin Auth Accepted / Provider Account Still Login Required / RC8 Not Released / Automations Paused`。证据=`/private/tmp/ar034b_wewe_9334_login_20260716_2132/LOGIN_ATTEMPT_RESULT.md`。

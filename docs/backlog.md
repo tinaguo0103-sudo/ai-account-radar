@@ -774,7 +774,7 @@
 
 - 类型：生产数据正确性 / 多来源采集闭环 / 固定认证运行时 / editorial owner contract
 - 优先级：P0
-- 状态：Provider Account Reauth Authorized / Awaiting Owner QR
+- 状态：RC8 Released / Provider Reauth Passed / 2026-07-16 Recovery Closed at Date Boundary
 - 来源：对 `run_20260716_080311` 的生产只读复核发现，抖音 probe 实际为 31 attempted、29 succeeded、2 failed，并产出 87 条有效成功账号 items；但 `daily_pipeline.py` 把 account-partial 映射为 `optional_failed=true`，随后整份 Douyin manual artifact 未进入 combined input。最终 `content_items.csv` 为 AIHOT 53、公众号 5、抖音 0；`today_10_topics.csv` 为 AIHOT 8、公众号 1、抖音 0。Feishu 03 同 run 关联记录为 AIHOT 36、公众号历史记录 5、抖音 0。因此当前 9 条不是全源比较结果，不得继续作为 04/Topic Card 恢复输入。
 - 公众号根因：唯一 active 公众号源的 provider 缓存仍是 2026-06-11 至 2026-06-16 的 5 篇旧文章；`ai-radar-wewe-rss` 自至少 2026-07-10 起反复报告 `暂无可用读书账号!`。现有 readiness 只证明 HTTP 能返回可解析缓存，没有证明账号可用、feed 刷新成功、内容新鲜或本次新增。因此旧缓存被错误记为今日采集。
 - 抖音闭环：`completed_with_failures` 必须保留所有成功账号的有效 items，只隔离失败账号；成功 artifact fingerprint 必须可审计地进入 combined input、`content_items.csv`、Feishu 03 和 shortlist universe。`downstream_usable` 必须验证逐层来源闭环，任一成功 artifact 丢失即 false；对外状态必须明确为 partial，不能称全量成功。
@@ -810,6 +810,8 @@
 - Reauth RCA：exact provider在上游返回 `WeReadError401` 时自动将account status置0，文章抓取只选择status=1账号；直接改status不是reauth。唯一受支持续期路径为fixed 9334 `/dash/accounts` 的“添加读书账号”：UI生成二维码、账号所有者扫码、UI polling后按account id upsert新token/name/status=1。未点击、未生成二维码、未调用mutation。
 - 最小授权计划：`/private/tmp/ar034b_wewe_reauth_readonly_20260716_2200/plan/PROVIDER_ACCOUNT_REAUTH_AUTHORIZATION_PLAN.md`，SHA256=`12c7641c7f3f920c8dcfa92669ef76d8554bd407de331f39282ad24b6985b7cb`。只允许fixed窗口一次add-account + owner QR；禁止手改DB/status、直接API、refresh或其他browser/profile。green门为DB/feed/article identity无漂移、active account>=1、provider check-only=`refresh_required`且零refresh。
 - 用户已明确授权公众号账号重新登录。production线程只可在fixed 9334 `/dash/accounts` 点击一次“添加读书账号”并等待owner扫码；仅允许UI自身polling和按account id upsert。二维码内容、账号身份和认证secret不得读取或记录。green后自动回fresh RC8 Phase 0；失败保持三任务PAUSED。
+- Reauth/release结果：fixed 9334一次add-account经owner扫码及UI polling/upsert成功，account status1=1；provider check-only=`ok=true/status=refresh_required`且零refresh。RC8已从production `8af0846` fast-forward/push到 `af0e4e520cefcacb0efa770992a34a2778b9d36f`，dynamic gate通过；HMAC key按0700/0600原子provision，secret未输出。
+- Date-boundary stop：当前已是2026-07-17，原授权universe绑定2026-07-16 Douyin+AIHOT+same-day WeChat。为避免把7/17 refresh混入7/16批次，production在signed refresh前停止；无refresh/03/04/card/collection/06，三任务保持PAUSED。推荐关闭7/16恢复，改为一次完整7/17同日全源运行。
 - 首次开发回传：feature=`43a7d747b8a30522e27e285ef52a620dd8efe3cc`，production-base RC=`11fab145b0efccce7ff75a458f700606a9f4e183`，21-file patch SHA=`03072f758cb28bee3a6c3e680b5ed581e2dff8aedebf13b66ed98a26ed5534de`。RC lineage/tree/remote/patch 可复核，但 PM 对抗审查发现两个 active-path 阻断，因此未派 QA。
 - 阻断一：`downstream_usability_report()` 不要求 source artifact / combined / content / 03 / comparison lineage 通过。独立探针在完全没有下游 artifact 证据、只有 probe 自报 coverage 和 9 条其他来源候选时仍返回 `downstream_usable=true`；原 Douyin 87 条丢失事故可重现。修复必须把 exact run/file hash/account+item lineage/bijection/03 read-back 变为 mandatory checks，missing/stale manual artifact typed fail，`today_candidates_nonempty` 不得替代来源闭环。
 - 阻断二：WeChat `refresh_revision == previous_success_revision` 且无新文章时仍返回 `updated_no_new_items + ok=true`。当前 watermark 未保存上次 refresh timestamp/attempt identity，不能证明本轮刷新发生；24 小时内旧缓存可被误接受。修复必须绑定 current run refresh attempt 或独立前进的 revision/timestamp，并覆盖 unchanged/old cache 集成反例。
