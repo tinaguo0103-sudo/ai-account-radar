@@ -3493,3 +3493,11 @@
 - 授权计划：`/private/tmp/ar034b_wewe_reauth_readonly_20260716_2200/plan/PROVIDER_ACCOUNT_REAUTH_AUTHORIZATION_PLAN.md`，SHA256=`12c7641c7f3f920c8dcfa92669ef76d8554bd407de331f39282ad24b6985b7cb`。只允许fixed 9334一次add-account和owner扫码；禁止手改DB/status、直接API、refresh、其他browser/profile。
 - 成功门：canonical DB integrity/feed/article identity无漂移、无重复账号歧义、active account>=1；provider check-only必须 `ok=true/status=refresh_required` 且零refresh/secret read。green后回到fresh RC8 Phase 0。
 - 当前边界：production clean `8af0846`，三任务PAUSED，key absent，RC8未发布，无refresh/Feishu/card/collection/06；未读取secret或QR内容。
+
+### 2026-07-17 用户批准 WeWe provider account QR reauth
+
+- 用户明确回复：`同意公众号账号重新登录`。
+- 执行边界：按计划SHA `12c7641c7f3f920c8dcfa92669ef76d8554bd407de331f39282ad24b6985b7cb`，只在fixed 9334 / PID 72440 / canonical profile导航 `/dash/accounts`，点击一次“添加读书账号”，由owner扫码；只允许UI自身polling和按account id upsert。
+- 禁止：直接API/DB、手改status、refresh、其他browser/profile、读取/截图/OCR/记录QR内容、账号身份、cookie/token/localStorage。
+- 成功门：DB/feed/article identity无漂移、无重复账号歧义、active account>=1；provider check-only=`ok=true/status=refresh_required`且零refresh/secret read。green后自动回fresh RC8 Phase 0；失败保持三任务PAUSED。
+- 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
