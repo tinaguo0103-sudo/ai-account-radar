@@ -3643,3 +3643,10 @@
 - 历史阻断闭合：协同wrong URL/title/source_type/account/run均typed fail；5项writer-call sentinel均为0 call；真实87行source/canonical映射、comparison 162、shortlist 11、03 canonical plan 87通过。
 - 新PM阻断：path count=3并不等于hunk scope正确。相对production，`content_sampler.py` 有165行级改动并触及`own_scenario_angle`、priority、score、recommendation、Skill review pool等非身份映射行为；`source_ingestion_lineage.py` 也带入非本需求legacy production-root identity差异。交接声明“无quality-gate change”与实际Git diff不一致。
 - 决策：RC2在PM evidence gate失败，未派QA、不得发布；这不是新增业务门禁，而是阻止未授权feature差异进入production。固定dev线程一次性重组fresh exact-parent RC，仅移植AR-034E mapping/prewrite/read-back与对应测试，排除editorial、legacy RC9及其他feature-only hunks。完成后再进行一次full independent QA；不做micro-recheck，不触碰production/Feishu/provider/automation。
+
+### 2026-07-17 AR-034E RC3 PM evidence accepted / QA dispatched
+
+- Dev回传：fresh RC3=`release/ar034e-rc3-20260717@746501b22ff9f5a36262ee39388e688460aa58ac`，direct parent=`d88d0e5eb812d3a69ef816161446d0d8f1ca05e6`，tree=`3f645cf2f5e8abd5c1bde7d6f32ca9982d5bcaf8`，patch SHA=`0849c408fe58ae9416759476539fce13b2dfeb0e79d43d972b08212af599bbb2`，manifest SHA=`300472d5debe5e614c401b0b542dcb7b41ead5d9d05205e68a03281777eac6c1`。
+- PM独立复核：Git hunk只落在`validate_source_ingestion_manifest`、`write_content_ledger_with_source_gate`、`main`接线、identity helpers、bijection、canonical 03/read-back和对应AR-034E测试；RC2曾污染的11个editorial/selection函数及3个legacy validator函数全部与production字节一致，forbidden count=0。
+- Manifest 3/3 exact-byte SHA已从Git object重算匹配；patch、manifest、real87 evidence哈希匹配。协同wrong URL/title/source_type/account/run均typed fail且writer call=0；真实87 source/87 canonical、comparison 162、shortlist 11、03 plan 87保持。
+- 决策：PM evidence gate通过，固定QA线程=`019f4714-3f76-7bb1-b71f-08a41d9f8860`已确认idle并接收一次fresh full QA；不拆micro-recheck、不指定model/thinking、不触发production/Feishu/provider/automation。通过仅可进入PM Production Authorization。
