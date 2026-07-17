@@ -3657,3 +3657,10 @@
 - PM acceptance阻断：实际`write_content_ledger_to_feishu(items, run_id)`对本次162 items返回全部162个`ordered_fingerprints`；AR-034E closure只计划87个Douyin canonical fingerprints。RC3 `validate_feishu_readback_identity()`对整列表做exact equality，故真实写入后必因75个合法WeChat/AIHOT fingerprints报`feishu_03_readback_identity_mismatch`。
 - 等价证据：在RC3 worktree用87 planned +75 legitimate other-source read-back调用真实validator，typed得到`LineageError:feishu_03_readback_identity_mismatch`。完整说明=`/private/tmp/ar034e_rc3_pm_acceptance_20260717/PM_ACCEPTANCE_BLOCKER.md`，SHA256=`77c953fcc0bb38f155b5fff5ce94a614ead7e25cadf2fa06fff87ecd68519443`。
 - 决策：QA绿色不等于PM接受；RC3降级为Development Rework、不得发布。固定dev线程只允许保留writer对162全量identity验证，再把full read-back有序投影到87个planned canonical fingerprints并严格比对；补87+19+56真实形态与read-back mutation。manual truth、coordinated drift zero-writer、scope exclusions和production base保持不变；不指定model/thinking，不触碰生产或automation。
+
+### 2026-07-17 AR-034E RC4 PM evidence accepted / production-shape QA dispatched
+
+- Dev回传：fresh RC4=`release/ar034e-rc4-20260717@07940e899e08201ee42528fbb42782ea5410acce`，direct parent=`d88d0e5eb812d3a69ef816161446d0d8f1ca05e6`，tree=`5ec3435992b176d41f3f30083403a45cf367e47d`，patch SHA=`b2549deb7ec62cedd79a1103fdcca3236c90e5ec7abef765ca2bbdbd180514ab`，manifest SHA=`e760c2b7d777f0d241e1a0effe4aad518a39de9ecea2364e19415521f147bb18`。
+- PM独立等价入口：RC4 validator输入87 planned canonical +19 WeChat +56 AIHOT，返回`full_ledger_count=162`、`source_projection_count=87`、projection exact=true；三项named regression全部通过。完整writer read-back仍要求run/count/list/global uniqueness，投影仍严格拒绝missing/duplicate/reorder/source-fingerprint substitution。
+- Scope：production functions仅比RC3增加`validate_feishu_readback_identity`的full-ledger schema/projection逻辑，manual/combined/canonical/prewrite接线不变；14个forbidden editorial/legacy函数保持production字节一致。
+- 决策：PM evidence gate通过，固定QA线程接收一次production-shape full QA；必须独立用public helper重放87+19+56、post-write mutation和coordinated prewrite zero-writer，再做real87与回归。QA通过也不得自行派production；不指定model/thinking，生产和三automation保持不变/PAUSED。
