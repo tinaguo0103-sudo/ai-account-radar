@@ -16,6 +16,8 @@
 
 PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于运行规则，不作为 AR 需求进入发布候选。详见 `docs/pm_operating_rules.md`、`docs/pm_dispatch_queue.md` 和 `docs/thread_handoff_log.md`。
 
+- `AR-035`：`Production Incident Diagnosed / Development Running / 06 Recovery Pending`。Topic Card 点击与 queue 正常，阻塞为 watcher 使用已不存在的 Codex.app CLI 路径；当前 06 零产物、零飞书写入。固定开发线程正在准备最小 production-base RC，尚未进入独立 QA 或生产授权。
+
 当前固定线程：
 
 - PM / 发布控制线程：`019f2649-423f-7812-8efc-af6dd02eb511`

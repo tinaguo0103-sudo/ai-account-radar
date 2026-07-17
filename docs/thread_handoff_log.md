@@ -3789,3 +3789,12 @@
 - 用户已在三条prompt正文开头加入生产目录切换指令；read-back确认三条均为ACTIVE、projectless，并在任何相对`python3 scripts/...`入口前明确切换到`/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar`。
 - 09:15任务保留英文AR-020E协议，中文目录指令位于协议正文之前；混合语言不改变命令语义或执行顺序。三条schedule/model/reasoning保持用户当前配置，未由PM覆盖。
 - 定时任务入口已完成恢复，不手工补跑旧run；等待下一次正常08:00/09:15/10:00 schedule做业务观察。
+
+### 2026-07-17 AR-035 watcher path incident / PM overreach stopped / dev dispatched
+
+- 用户点击第二张 Topic Card 后，exact Feishu 04 record=`recvpBSLojkI8f`、标题=`你的知识库不会自动成长，它只会自动堆满垃圾`。receiver challenge 与 04 read-back 均正常；queue dry-run 精确识别 1 个 ready topic，说明点击和入队链路成功。
+- Production LaunchAgent `com.austin.ai-account-radar.script-package-watcher` 正在按 5 分钟周期运行，但每次在调用 Codex CLI 前失败：`FileNotFoundError: /Applications/Codex.app/Contents/Resources/codex`。当前实际可执行文件为 `/Applications/ChatGPT.app/Contents/Resources/codex`；旧路径不存在。
+- 当前未生成本地 06 package，Feishu 06 也没有业务写入。生产仓库保持 clean `207060c1877afd3a96a27a85a4268de6c82043e9`；runtime、LaunchAgent、Feishu、Skill/SCF 均未修改。
+- PM 在用户纠正前误建隔离 scratch worktree `ai_account_radar_ar035_codex_bin_hotfix` 并产生未提交代码/测试改动；没有 commit、push、release、runtime install、LaunchAgent 变更或外部写入。用户要求 PM 不越权后已立即停止，scratch 原样保留，不作为候选、不继续处理。
+- 固定开发线程 `019f1de3-f3f2-71d2-ae63-a74cd38f8474` 已接收 `AR-035 Script Package Watcher Codex CLI Path Repair`：只修 runner/installer 共用的 CLI 解析，兼容当前 ChatGPT.app、旧 Codex.app 及有效 `CODEX_BIN/PATH`，并从 exact production base 形成一个窄 RC。未指定 model/thinking；开发不得改 production/runtime/LaunchAgent/Feishu，也不得自行派 QA。
+- 下一门：开发自验回传后由 PM 核验证据，再派固定 QA 做一次独立验证；QA 通过后另行申请生产发布与 exact queued record 的一次恢复授权。
