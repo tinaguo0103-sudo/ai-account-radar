@@ -3798,3 +3798,10 @@
 - PM 在用户纠正前误建隔离 scratch worktree `ai_account_radar_ar035_codex_bin_hotfix` 并产生未提交代码/测试改动；没有 commit、push、release、runtime install、LaunchAgent 变更或外部写入。用户要求 PM 不越权后已立即停止，scratch 原样保留，不作为候选、不继续处理。
 - 固定开发线程 `019f1de3-f3f2-71d2-ae63-a74cd38f8474` 已接收 `AR-035 Script Package Watcher Codex CLI Path Repair`：只修 runner/installer 共用的 CLI 解析，兼容当前 ChatGPT.app、旧 Codex.app 及有效 `CODEX_BIN/PATH`，并从 exact production base 形成一个窄 RC。未指定 model/thinking；开发不得改 production/runtime/LaunchAgent/Feishu，也不得自行派 QA。
 - 下一门：开发自验回传后由 PM 核验证据，再派固定 QA 做一次独立验证；QA 通过后另行申请生产发布与 exact queued record 的一次恢复授权。
+
+### 2026-07-17 AR-035 dev evidence accepted / independent QA dispatched
+
+- Dev结论：`Dev Self-Validation Passed / Ready for Independent QA`。feature product commit=`18fa686eb8ec7cc7b392c0a57bcb8149a7890dc8`；fresh RC=`release/ar034-ar035-watcher-path-20260717@3bfb11bc468676d4ceb0cfd2b29ff4f5c524320e`，direct parent=`207060c1877afd3a96a27a85a4268de6c82043e9`，tree=`2bee2daf6425e791f4d03f7facc0079a69a99837`，exact 4 files。
+- PM只读证据复核通过：Git parent/tree/scope与manifest一致；patch SHA=`93b727ffbdbae60c7c41878f70482ac7ee2b3d5861f700208a42e752c9708e9e`、manifest SHA=`f6d5bd6f1e72b3ffefd66e6aea9df987e82a40364565f89c4fc60e368757fd2e`精确；installer dry-run明确输出current ChatGPT.app `CODEX_BIN`并将其父目录置于PATH首位。
+- 固定QA线程 `019f4714-3f76-7bb1-b71f-08a41d9f8860` 已接收一次完整独立QA：fresh scope/parity、resolver对抗矩阵、installer dry-run、现有script-package回归及只读production incident shape。禁止installer非dry-run、runtime/plist/LaunchAgent修改、Codex生成、队列处理、Feishu/card/06或production Git动作；不指定model/thinking。
+- 通过门只到`Ready for PM Production Authorization`，不等于发布或06恢复。exact queued record仍不得处理，直到QA通过且用户另行确认生产发布/恢复计划。
