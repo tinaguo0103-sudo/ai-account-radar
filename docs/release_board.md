@@ -300,3 +300,4 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - PM recalibration：确认返工部分由过严指令造成。AR-034D开发已暂停；不再把内容长度/单篇失败/只读retry升级为system blocker，不再每个单点出micro-RC。后续仅保留真实性、身份、外部写入与system drift硬门；item/account partial保留成功项并显性partial。先完成收敛版单RC定义后再恢复开发。
 - AR-034D resumed：用户确认继续后，已以收敛版单RC合同恢复固定dev线程；当前仅开发，不派QA/不生产。项目PM规则与global multi-agent Skill同步升级，派发工具继续默认省略model/thinking。
 - AR-034D RC：`d88d0e5...` / parent `b7530452...` / exact 3 files / patch `6797475f...`，dev self-validation与PM evidence review通过。唯一一次 independent full QA 已派；禁止provider page/refresh、Feishu/card、automation和production Git。通过也只进入production authorization。
+- AR-034D QA：Passed / Ready for PM Production Authorization。唯一合并QA无blocking finding；19-item partial、all-short、system drift、telemetry与full regression均通过。授权计划SHA=`4e7a9ab7...`；三automation保持PAUSED，本次明确不改其definition/status。
