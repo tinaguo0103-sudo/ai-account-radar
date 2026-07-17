@@ -158,6 +158,11 @@ class AR034SourceRecoveryTests(unittest.TestCase):
             closure = lineage.validate_ingestion_bijection(report, combined, content)
             self.assertEqual(len(closure["source_to_canonical_mapping"]), 87)
             self.assertNotEqual(closure["source_to_canonical_mapping"][0]["source_fingerprint"], closure["source_to_canonical_mapping"][0]["canonical_fingerprint"])
+            original_manual = manual.read_bytes()
+            manual.write_bytes(original_manual + b"\n")
+            with self.assertRaisesRegex(lineage.LineageError, "prewrite_identity_drift"):
+                lineage.validate_ingestion_bijection(report, combined, content)
+            manual.write_bytes(original_manual)
             mutations = {
                 "missing": good[1:],
                 "extra": good + [{**good[0], "内容链接": "https://www.douyin.com/video/extra", "内容指纹": "extra-canonical"}],
