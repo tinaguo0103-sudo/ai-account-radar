@@ -3692,3 +3692,10 @@
 - 根因修复：production writer对matched existing row的empty fingerprint始终写入planned canonical fingerprint，不再依赖fulltext；非空冲突typed fail。reconcile把gap分为unique strong legacy、truly absent、ambiguous/conflict；legacy仅PUT fingerprint到exact record ID，absent才POST，既有canonical不动且不调用full writer。
 - PM复核：supported `PYTHONPATH=scripts` focused 24/24；production fixture为162 planned/136 exact/26 strong legacy，check-only 26 update/0 create，first 26 PUT/0 POST且record count 162不变，second 0 write；mixed absent与PUT ambiguity/conflict矩阵齐全。RC1 create-only缺陷已关闭。
 - 当前脱敏package不含26条旧记录完整字段，不能预称production实际为26 PUT。固定QA线程获准做一次current Feishu 03 GET-only classification，必须报告exact/legacy/absent/conflict/duplicate/wrong-run与精确PUT/POST split；除auth/GET外method=0，任何conflict均不得进入生产授权。QA不改代码、不派production、不指定model/thinking；三automation保持PAUSED。
+
+### 2026-07-17 AR-034F RC2 QA failed / optional identity matcher rework
+
+- QA结论：`AR-034F RC2 Independent Full QA Failed / Production Recovery Not Authorized`。L0、writer root fix、independent 136+26 fixture、24 focused、424 Python及相邻回归均通过，但fresh production GET-only classification为planned=162、exact=136、legacy PUT=0、true absence POST=0、conflict=26、duplicate=0、wrong-run=0、writes=0。报告=`/private/tmp/ar034f_rc2_independent_qa_20260717/AR034F_RC2_INDEPENDENT_FULL_QA_REPORT.md`。
+- PM根因：`is_legacy_compatible`把`发布时间`列为无条件nonempty required；planned published_at为空时任何candidate都不可能通过。`is_potential_legacy_identity`在planned URL存在时仍回退title，same-title/different-URL历史行也会制造假冲突。这是identity matcher过严，而非live 26条已被证明歧义。
+- 决策：RC2不得生产恢复；固定dev线程只做同根因calibration。planned URL非空时candidate仅exact URL；title/source/account/platform等planned非空字段继续exact；planned published_at为空时忽略该可选字段，非空时仍exact。URL为空时禁止title-only，需唯一title+source+account+platform composite，发布时间有值才纳入。两个exact URL、多候选、非空冲突fingerprint、wrong run仍阻断。
+- 其余writer root fix、unique legacy PUT、truly absent POST、ambiguous read-back、record-count preservation、162+87与second-run 0 write合同不变。fresh production-base RC3后再做一次完整QA；不新增架构、不请求用户重复确认、不指定model/thinking，production/automation保持clean/PAUSED。
