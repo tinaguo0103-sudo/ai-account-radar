@@ -24,6 +24,24 @@ READY_RECORD = {
 
 
 class ScriptPackageSharedTableResolutionTest(unittest.TestCase):
+    def test_fields_by_name_reads_all_metadata_pages(self) -> None:
+        responses = [
+            {"data": {"items": [{"field_name": "飞书文档", "type": 1}], "has_more": True, "page_token": "next"}},
+            {"data": {"items": [{"field_name": "飞书文档链接", "type": 15}], "has_more": False}},
+        ]
+        with patch.object(shared.feishu, "request_json", side_effect=responses) as request_json:
+            fields = shared.fields_by_name("tenant_token", "app_token", "table_id")
+
+        self.assertEqual(fields["飞书文档链接"]["type"], 15)
+        self.assertIn("page_size=100", request_json.call_args_list[0].args[1])
+        self.assertIn("page_token=next", request_json.call_args_list[1].args[1])
+
+    def test_fields_by_name_rejects_missing_pagination_token(self) -> None:
+        response = {"data": {"items": [], "has_more": True, "page_token": ""}}
+        with patch.object(shared.feishu, "request_json", return_value=response):
+            with self.assertRaisesRegex(RuntimeError, "missing page_token"):
+                shared.fields_by_name("tenant_token", "app_token", "table_id")
+
     def test_ready_topics_prefers_explicit_staging_topic_table_id(self) -> None:
         with patch.dict(
             os.environ,

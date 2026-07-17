@@ -109,8 +109,25 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
 
 
 def fields_by_name(token: str, app_token: str, table_id: str) -> dict[str, dict[str, Any]]:
-    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields", token=token)
-    return {field["field_name"]: field for field in payload.get("data", {}).get("items", [])}
+    fields: dict[str, dict[str, Any]] = {}
+    page_token = ""
+    while True:
+        suffix = f"?page_size=100{('&page_token=' + page_token) if page_token else ''}"
+        payload = feishu.request_json(
+            "GET",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields{suffix}",
+            token=token,
+        )
+        data = payload.get("data", {})
+        for field in data.get("items", []):
+            name = field.get("field_name")
+            if name:
+                fields[str(name)] = field
+        if not data.get("has_more"):
+            return fields
+        page_token = str(data.get("page_token") or "")
+        if not page_token:
+            raise RuntimeError("Feishu field metadata pagination is missing page_token")
 
 
 def ensure_text_fields(token: str, app_token: str, table_id: str, field_names: list[str]) -> list[str]:
@@ -131,15 +148,7 @@ def ensure_text_fields(token: str, app_token: str, table_id: str, field_names: l
 
 
 def feishu_ready_topics(token: str, app_token: str) -> tuple[dict[str, str], list[dict[str, Any]]]:
-    by_name = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
-    table_ids = {
-        "topic_decision": first_env_table_id("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE_ID")
-        or resolve_table_id(by_name, "topic_decision"),
-        "script_package": env_table_id("FEISHU_SCRIPT_PACKAGE_TABLE_ID") or resolve_table_id(by_name, "script_package"),
-    }
-    missing = [TABLES[key] for key, table_id in table_ids.items() if not table_id]
-    if missing:
-        raise SystemExit(f"Missing required Feishu tables: {missing}")
+    table_ids = resolve_script_package_table_ids(token, app_token)
     records = all_records(token, app_token, table_ids["topic_decision"])
     ready = []
     for record in records:
@@ -149,6 +158,19 @@ def feishu_ready_topics(token: str, app_token: str) -> tuple[dict[str, str], lis
         if ready_status(fields.get("状态")) and not already_generated and production_direction_submitted(fields):
             ready.append(record)
     return table_ids, ready
+
+
+def resolve_script_package_table_ids(token: str, app_token: str) -> dict[str, str]:
+    by_name = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
+    table_ids = {
+        "topic_decision": first_env_table_id("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE_ID")
+        or resolve_table_id(by_name, "topic_decision"),
+        "script_package": env_table_id("FEISHU_SCRIPT_PACKAGE_TABLE_ID") or resolve_table_id(by_name, "script_package"),
+    }
+    missing = [TABLES[key] for key, table_id in table_ids.items() if not table_id]
+    if missing:
+        raise SystemExit(f"Missing required Feishu tables: {missing}")
+    return table_ids
 
 
 def filter_topics(topics: list[dict[str, Any]], record_id: str = "", limit: int = 0) -> list[dict[str, Any]]:
