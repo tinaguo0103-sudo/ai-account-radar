@@ -2755,25 +2755,22 @@ def write_content_ledger_to_feishu(
 def verify_content_ledger_readback(
     items: list[ContentItem], read_back: list[dict[str, Any]], run_id: str
 ) -> dict[str, Any]:
-    read_back_by_fingerprint = {
-        str(record.get("fields", {}).get("内容指纹") or ""): record
-        for record in read_back
-        if str(record.get("fields", {}).get("内容指纹") or "")
-    }
     planned_fingerprints = [item.fingerprint for item in items]
-    missing_fingerprints = [value for value in planned_fingerprints if value not in read_back_by_fingerprint]
+    fingerprint_records: dict[str, list[dict[str, Any]]] = {}
+    for record in read_back:
+        value = str(record.get("fields", {}).get("内容指纹") or "")
+        if value:
+            fingerprint_records.setdefault(value, []).append(record)
+    missing_fingerprints = [value for value in planned_fingerprints if not fingerprint_records.get(value)]
     wrong_run_fingerprints = [
         value for value in planned_fingerprints
-        if value in read_back_by_fingerprint
+        if len(fingerprint_records.get(value, [])) == 1
         and run_id not in {
-            str(read_back_by_fingerprint[value].get("fields", {}).get("运行批次") or ""),
-            str(read_back_by_fingerprint[value].get("fields", {}).get("最近参与运行批次") or ""),
+            str(fingerprint_records[value][0].get("fields", {}).get("运行批次") or ""),
+            str(fingerprint_records[value][0].get("fields", {}).get("最近参与运行批次") or ""),
         }
     ]
-    duplicate_fingerprints = [
-        value for value in planned_fingerprints
-        if sum(1 for record in read_back if str(record.get("fields", {}).get("内容指纹") or "") == value) != 1
-    ]
+    duplicate_fingerprints = [value for value in planned_fingerprints if len(fingerprint_records.get(value, [])) > 1]
     if missing_fingerprints or wrong_run_fingerprints or duplicate_fingerprints:
         raise RuntimeError(
             "content_inbox_readback_identity_failed:"
@@ -2782,8 +2779,12 @@ def verify_content_ledger_readback(
         )
     return {
         "ok": True,
+        "run_id": run_id,
         "planned_count": len(planned_fingerprints),
         "matched_count": len(planned_fingerprints),
+        "missing_count": 0,
+        "duplicate_count": 0,
+        "wrong_run_count": 0,
         "ordered_fingerprints": planned_fingerprints,
     }
 
