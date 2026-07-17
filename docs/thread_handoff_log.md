@@ -3501,6 +3501,13 @@
 - Global Skill：源码仓库 `.runtime/github-publish/multi-agent-pm-orchestrator-skill` 更新 `SKILL.md` 与thread/dispatch/QA/release/production references；默认不覆盖model/thinking，候选级失败不得自动升级整批，禁止micro-RC循环。Skill Creator `quick_validate.py` 验证通过后提交、push并同步global install。
 - Production boundary：production仍clean `b7530452...`，三automation PAUSED，existing signed refresh/receipt/DB/baseline不变；本轮无provider/Feishu/card/06/automation动作。
 
+### 2026-07-17 AR-034D单一RC自验通过，派唯一一次Independent QA
+
+- Dev handoff：feature product=`c01b13703c3729fddff2d5191b4cd5eaa778ae22`；single RC=`release/ar034d-rc-20260717@d88d0e5eb812d3a69ef816161446d0d8f1ca05e6`，parent/production base=`b7530452f5059dd02c274b32e5adb73d7dc68e72`。仅 `wewe_current_feed_reader.py`、`daily_pipeline.py`、对应test；patch SHA=`6797475ff5378cc703cf73d23075a171b1be52cb96b528b3c92e09fd0a29f879`。
+- PM evidence review：scope/manifest/apply/tree闭合；代码抽查确认truth/quality分离、item-local failure零artifact、成功项保留、partial不推进watermark、system post-read drift零committed output。未新增attestation/key/provider/retry/授权层。
+- QA dispatch：固定QA线程已收到唯一一次合并QA；省略model/thinking。要求独立L0、19-item mixed、all-short、item/system mutation、安全telemetry、full regression，一次性汇总findings；禁止production provider/refresh/Feishu/card/automation/production Git。
+- Production boundary：production clean `b7530452...`，三automation PAUSED；existing signed refresh/receipt/DB/baseline不变，无生产动作。
+
 ### 2026-07-17 WeChat全文巨型JSON截断，派发AR-034C窄修复
 
 - 结论：`Retry Executed Once / Truthful Current Result Unavailable / Full-Source Flow Blocked / Automations Paused`。报告=`/private/tmp/ar034b_same_day_20260717_093048/final/BOUNDED_WECHAT_READ_RETRY_FAILED.md`。
