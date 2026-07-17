@@ -3477,6 +3477,14 @@
 - 验收与续跑：登录后先执行零refresh provider check-only；仅canonical identity和account/feed/DB一致且 `ok=true/status=refresh_required`、`refresh_requested=false`、`secret_material_read=false`、`secrets_exposed=false` 时，自动继续既有RC8 Phase 0授权。
 - 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
 
+### 2026-07-17 watermark repair通过，允许一次bounded全文只读重试
+
+- Repair结果：canonical `health/last_success.json` 从absent变为approved baseline，source/target SHA=`83fd50f15f8985b9d64a1f790b626e79701908ed91078d5920393c5236d90d4d`；existing signed receipt验证 `ok=true/state=updated_with_new_items/new_item_count=19/article_count=67`，零第二次refresh。
+- 新阻断：同run post-refresh WeChat fulltext probe首次返回 `failed:timeout:timed out`、items=0/fulltext_items=0；不是updated_no_new，不允许旧cache/DB/其他来源补位。Douyin/AIHOT尚未启动，无03/04/card/06，三任务PAUSED。
+- PM决策：一次同provider revision=`1784251868`、pre-refresh watermark=`1781575635`、同signed receipt的read-only retry属于用户已授权full same-day run范围，无需再次确认。仅允许一次；retry前后identity/DB/baseline/receipt只读一致，明确禁止第二次refresh。
+- Stop：retry仍timeout、0 truthful current result或任何drift，则不再重试，保持PAUSED；不写03/04、不发卡。
+- 执行线程：production `019f2bc4-079e-7530-903e-484707590482`；未指定model/thinking，PM不轮询。
+
 ### 2026-07-17 同日流程在首次 watermark 基线门停止
 
 - 结论：`Released / Provider Reauth Passed / Signed Refresh Passed / Collection Blocked at Canonical Watermark Gate / Automations Paused`。证据根=`/private/tmp/ar034b_same_day_20260717_093048`。
