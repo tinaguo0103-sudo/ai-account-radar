@@ -3495,6 +3495,15 @@
 - QA派发：fixed QA `019f4714-3f76-7bb1-b71f-08a41d9f8860`，要求fresh L0、whole-feed unreachable、limit=1/page identity和post-read closure、adversarial mutations、production receipt check-only零请求、full regression。禁止production fulltext/refresh/collection/Feishu/card/automation动作。
 - 当前边界：production clean `af0e4e5`，三任务PAUSED；existing signed refresh/receipt/DB/baseline保留，未再refresh，未改03/04/card/06。PM不轮询且未指定model/thinking。
 
+### 2026-07-17 AR-034C 独立QA通过，等待生产授权
+
+- QA结论：`AR-034C RC QA Passed / Ready for PM Production Authorization`。报告=`/private/tmp/ar034c_independent_qa_20260717/AR034C_INDEPENDENT_FULL_QA_REPORT.md`。
+- Exact target：RC=`b7530452f5059dd02c274b32e5adb73d7dc68e72`，base=`af0e4e520cefcacb0efa770992a34a2778b9d36f`，tree=`1314a57a6da22e476d72458246b0f00577ca7b79`，5 paths，patch SHA=`b4cb2a2ab8959aac2f29870881faa65608af380a6bbb23a94da4fedfeeed0403`。
+- QA closure：5/5 scope/byte/apply/tree、forbidden=0；active path无whole-feed，actual read严格 `limit=1&page=N&mode=fulltext`；receipt/SQLite plan与post-read重验证；19/19 mutations和full regressions通过。production check-only planned=19、provider_requests=0、所有artifacts不变。
+- Authorization plan：`/private/tmp/ar034c_independent_qa_20260717/AR034C_PRODUCTION_AUTHORIZATION_PLAN.md`，SHA256=`e6567babbd94ccb684b2b677e9b513818980b4dfd3a8b17904306ebd600255bc`。
+- 计划边界：release exact RC -> check-only -> 一次19-page bounded read，无update/refresh -> 19/19 closure -> 同run Douyin/AIHOT/03/current-task/04/一次personal card -> official cwd repair/status-only resume。禁止第二次refresh、whole-feed、旧cache、7/16数据、card click/callback/06。
+- 当前：production仍clean `af0e4e5`，三任务PAUSED；QA零provider page/refresh/Feishu/card/automation动作。未指定model/thinking。
+
 ### 2026-07-17 watermark repair通过，允许一次bounded全文只读重试
 
 - Repair结果：canonical `health/last_success.json` 从absent变为approved baseline，source/target SHA=`83fd50f15f8985b9d64a1f790b626e79701908ed91078d5920393c5236d90d4d`；existing signed receipt验证 `ok=true/state=updated_with_new_items/new_item_count=19/article_count=67`，零第二次refresh。
