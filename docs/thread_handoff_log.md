@@ -3763,9 +3763,17 @@
 - Card check-only已`fresh/would_send=true/candidate_count=4`。标准sender单次调用在API前被`Original title and post caption must not duplicate`阻断，sent=0、无message_id、decision-card artifacts无变化；三automation按门禁保持PAUSED。
 - PM只读定位唯一命中项：fingerprint=`38cf0a7c4bb24668`的Codex+Obsidian抖音候选，`原始来源标题`与`原始发布文案`是同一段完整caption；其他3条无重复。上游`content_items`也只有caption式`内容标题`，项目测试/renderer明确支持“平台未提供独立标题”占位表达。
 - 决策：不改代码、不弱化validator。固定production线程获准只将该exact local/Feishu04 row的`原始来源标题`规范为“平台未提供独立标题”，保留caption/source URL/title/angle/recommendation及其他字段；4/4 consistency和card build green后，check-only fresh才发送一次personal card，随后official status-only resume三automation并验证无catch-up。
-### 2026-07-17 AR-034G card sent / official projectless cwd resume dispatched
+### 2026-07-17 AR-034G card sent / automation manual resume pending
 
 - Exact source-display normalization通过：fingerprint=`38cf0a7c4bb24668`唯一定位Feishu04 record=`recvpBSLojkI8f`，仅将`原始来源标题`改为“平台未提供独立标题”，caption及其余业务字段不变，created=0。CSV SHA=`8a91f24b...` -> `e7d9a43c27c2f089a6534e5b9022e5431cc52f6cc92f76445561306d97686620`，canonical/latest/latest_write byte-identical；04 validator保持4/4 green。
 - Strict card build为4 records/1 page/bijection green；standard sender单次成功，message_id=`om_x100b6aa90ea9d480de2d14483d9b0e9`，page/latest card SHA=`b32fbdf697eb9f4abed4e593054aea18addefa8b127e48da74c76f72f8c3a18e`。无click/callback/06。
 - 发送后check-only仍`would_send=true`，PM代码复核确认guard未检查succeeded ledger；sender message UUID由same run/target/page deterministic生成，Feishu transport具备同UUID幂等。当前任务禁止二次sender；将应用层“already sent”显示列为后续改进，不为此扩展本次恢复。
-- Production首次official automation update失败是参数形状错误：误传projectId/错误cron shape。PM已核对当前`codex_app__automation_update` schema并回派：保持projectless，不传projectId/target；完整保留现有definition，仅将status改为ACTIVE、cwds改为production repo，使用camelCase`reasoningEffort/executionEnvironment`。逐条official update/view/read-back；失败即停，禁止raw TOML。三任务在执行前仍PAUSED。
+- Production official automation update在首次状态变化前失败。当前已安装 App 的live runtime要求`projectId`且拒绝`cwds`，与派发工具暴露的projectless cwd schema不一致，无法安全表达“projectless + production cwd”；三任务因此保持PAUSED且TOML byte-identical，无catch-up或业务副作用。
+- 用户选择手工恢复：三任务继续保持“不在项目中工作”，工作目录改为`/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar`，再启用ACTIVE；schedule/prompt/model/reasoning保持不变。若UI没有工作目录字段，则保持PAUSED并报告，不只切ACTIVE，不绑定项目，不raw-edit TOML。
+
+### 2026-07-17 Multi-agent PM Skill guardrail sync
+
+- 项目`docs/pm_operating_rules.md`已补充业务影响优先、三轮QA收敛、用户接受残余风险后停止扩张、业务完成与hardening分离、projectless target保留，以及派发默认不指定model/thinking。
+- `multi-agent-pm-orchestrator` Skill源仓库提交并push：`60cc7a4721ca5d1b752e64d2b78880b1c6549654`（`docs: align PM guardrails with business impact`）。更新`SKILL.md`及5个reference文件。
+- Git source、`.runtime/skill-build`镜像与global install `~/.codex/skills/multi-agent-pm-orchestrator` payload逐文件SHA256一致；source/global均通过official skill validator。
+- 本次Skill与PM文档同步没有修改production业务代码、Feishu、Topic Card、automation状态或运行产物。

@@ -35,6 +35,7 @@
 - 固定线程负责长期交付；子 Agent 只用于临时并行脑力。
 - PM 是唯一派发者；开发、测试、生产线程之间不得互相下达新任务。
 - PM 使用线程派发工具时默认必须省略 `model` 和 `thinking` / `reasoning effort` 参数，保留目标线程当前由用户选择的模型与推理设置。只有用户在当前任务中明确指定目标模型或推理强度时，才允许覆盖；不得因任务复杂、发布风险或 PM 自己的判断擅自切换模型。
+- 用户选择 projectless / “不在项目中工作”时，线程和 automation 必须保持 projectless；不得为了获得 cwd 而擅自重新绑定项目。若 official control 不能同时表达 projectless 与所需生产目录，应明确报告产品限制，并仅使用用户确认的 UI 修改或显式生产入口；不得 raw-edit App 隐藏配置。
 - PM 派发前必须读取目标线程状态。
 - 目标线程 idle 时才发送任务卡。
 - 目标线程 active 时，不发送消息，改写入 `docs/pm_dispatch_queue.md`。
@@ -51,7 +52,10 @@
 - 内容长度、表达风格、质量分、样例偏好等质量信号默认不是数据真实性证明。除非用户明确把某项质量阈值定义为业务硬门，否则只能作为质量标注、排序信号或候选级拒绝理由，不能据此丢弃整批真实数据。
 - 在用户已授权的同一目标和影响边界内，可逆、只读、无外部写入的诊断与 read-back 默认自动推进，不应对每个 retry、GET-only 或本地证据检查重复索要授权。涉及 secret、账号所有者交互、不可逆动作、真实写入、通知或新增成本边界时仍须停线确认。
 - 新门禁设计前先观察真实 payload、失败 telemetry 和真实运行环境，再构造等价 fixture；不得只根据理想 mock 推导生产合同。缺少定位信息时先补 observability，不先叠加新的身份层、签名层或授权层。
+- 每个 hard gate 必须能指出已确认的业务需求、真实失败和用户可见损害。内部 provenance 更完整、证据更漂亮或架构更严谨本身不是业务需求；现有 canonical record、稳定业务键和 exact read-back 足以证明外部结果时，不得继续新增 fingerprint、identity、signature、attestation、manifest 或授权层。
 - 同一根因只形成一个收敛修复包、一个 production-base 窄 RC 和一次独立 QA。QA 的多个发现应一次性汇总返修，不得把每个字段、边缘输入或报告差异拆成独立 micro-RC / micro-recheck。若根因或产品目标实质变化，PM 先重新校准方案再决定是否开启新一轮。
+- 用户明确接受残余风险、把事故降级为 non-blocking、要求恢复正常运行或要求“不再修改直接发布”后，PM 必须记录残余风险并停止扩张安全工程；只有出现新的真实业务影响证据或用户主动要求 hardening 时才能重开。
+- 业务完成与 hardening 完成必须分开。只影响 observability、诊断完整性或 defense-in-depth 的问题进入 backlog，不得继续阻断已完成的业务链路；仅当它仍可能造成错批次、stale 替换、重复/错误外部写入、secret 泄漏或不可逆污染时才保持 hard stop。
 
 - 开发线程完成后主动回传 PM；PM 自验后再派测试线程。
 - 测试线程默认不改功能代码，只做独立验证、对抗性审查、staging/test 验证和证据整理。
