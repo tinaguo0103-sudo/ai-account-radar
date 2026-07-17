@@ -3671,3 +3671,10 @@
 - L0/回归：exact parent/3-file scope/patch/manifest/apply/tree/forbidden ownership通过；real run source/canonical/mapping=87、comparison=162、shortlist=11、full ledger=162、projection=87；full Python=400、receiver=32、Douyin top-level=8、semantic=6+7，生产0动作。报告=`/private/tmp/ar034e_rc4_production_shape_qa_20260717/AR034E_RC4_PRODUCTION_SHAPE_FULL_QA_REPORT.md`。
 - PM接受：用户可见目标仍是完成同日03/04和一次个人Topic Card，不是只发布代码。生产授权计划=`/private/tmp/ar034e_rc4_production_authorization_20260717/PRODUCTION_AUTHORIZATION_PLAN.md`，SHA256=`cdb32920fa993d31d2c163c9dc6b7de453cb14075b2844c7d43496c1896b7c82`。
 - 授权边界：Git-only release后复用现有87 Douyin+19 WeChat+56 AIHOT写03并做162全量/87投影read-back；随后existing signed watermark、11-row exact current-task、04 read-back、card check-only与一次personal send。禁止重采集、第二refresh/read、stale fallback、06/callback、Skill/SCF/Chrome/provider/key和任何automation definition/status/cwd/model/prompt/schedule改变。三任务保持PAUSED，等待用户明确确认后才派production；不指定model/thinking。
+
+### 2026-07-17 AR-034E RC4 released / Feishu 03 partial write
+
+- 用户确认后，固定production线程发布RC4至`main@07940e899e08201ee42528fbb42782ea5410acce`并push，tree=`5ec3435992b176d41f3f30083403a45cf367e47d`，dynamic gate通过。全过程未重采、未请求provider，复用87 Douyin +19 WeChat +56 AIHOT与11-row候选。
+- 唯一一次正式03 writer接收162 items；写后read-back为unique matched=136、missing=26、wrong_run=0、run-related records=140。独立只读确认实际multi-record fingerprint=0；旧`duplicate=26`来自同一missing集合的`count != 1`分类，不是26组真实重复。记录IDs和缺失fingerprints见`/private/tmp/ar034e_production_20260717_121830/feishu03/post_failure_readonly.json`。
+- 硬门生效：未提交watermark，未运行主编、04、card/callback/06；三automation保持PAUSED且定义未变。不得盲目重跑162 writer。
+- PM派发AR-034F到固定dev线程：基于脱敏证据查明26条共同特征，提供exact-run、check-only、only-missing、ambiguous-create read-back、bounded retry、second-run no-op及完整162+87验证的幂等reconcile窄RC。开发阶段0 Feishu/外部调用，不自行派QA，不指定model/thinking。
