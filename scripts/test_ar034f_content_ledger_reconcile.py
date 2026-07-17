@@ -3,6 +3,7 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from dataclasses import replace
 from pathlib import Path
 from unittest import mock
 
@@ -28,9 +29,8 @@ def item(index: int) -> content_sampler.ContentItem:
     )
 
 
-def record(value: str, run_id: str = RUN_ID, suffix: str = "", *, legacy: bool = False) -> dict:
-    index = int(value.rsplit("-", 1)[-1])
-    planned = item(index)
+def record_for_item(planned: content_sampler.ContentItem, run_id: str = RUN_ID, suffix: str = "", *, legacy: bool = False) -> dict:
+    value = planned.fingerprint
     return {
         "record_id": f"rec-{value}{suffix}",
         "fields": {
@@ -46,6 +46,10 @@ def record(value: str, run_id: str = RUN_ID, suffix: str = "", *, legacy: bool =
             "发布时间": planned.published_at,
         },
     }
+
+
+def record(value: str, run_id: str = RUN_ID, suffix: str = "", *, legacy: bool = False) -> dict:
+    return record_for_item(item(int(value.rsplit("-", 1)[-1])), run_id, suffix, legacy=legacy)
 
 
 class FakeLedger:
@@ -282,7 +286,6 @@ class AR034FContentLedgerReconcileTests(unittest.TestCase):
         mutations = []
         mutations.append([*self.existing, record(self.items[136].fingerprint, suffix="-two", legacy=True)])
         for field, value in [
-            ("链接", "https://wrong.example/item"),
             ("标题", "wrong title"),
             ("来源类型", "wrong source"),
             ("作者/账号", "wrong account"),
@@ -303,6 +306,94 @@ class AR034FContentLedgerReconcileTests(unittest.TestCase):
             with self.subTest(), self.assertRaises(reconcile.ReconcileError):
                 self.run_reconcile(store, write=True)
             self.assertEqual(store.calls, 0)
+
+    def test_optional_published_time_and_url_anchor_calibration(self) -> None:
+        planned = replace(self.items[0], published_at="")
+        candidate = record_for_item(planned, legacy=True)
+        candidate["fields"]["发布时间"] = "2026-07-01"
+        state = reconcile.classify_records([planned], [candidate], RUN_ID)
+        self.assertEqual((state["legacy_update_count"], state["conflict_count"]), (1, 0))
+
+        candidate["fields"]["发布时间"] = ""
+        state = reconcile.classify_records([planned], [candidate], RUN_ID)
+        self.assertEqual(state["legacy_update_count"], 1)
+
+        known_time = replace(planned, published_at="2026-07-17")
+        candidate["fields"]["发布时间"] = "2026-07-16"
+        state = reconcile.classify_records([known_time], [candidate], RUN_ID)
+        self.assertEqual(state["conflict_count"], 1)
+
+        compatible = record_for_item(planned, legacy=True)
+        title_collision = record_for_item(replace(planned, fingerprint="other-fp", url="https://other.example/item"), legacy=True)
+        state = reconcile.classify_records([planned], [compatible, title_collision], RUN_ID)
+        self.assertEqual((state["legacy_update_count"], state["conflict_count"]), (1, 0))
+
+    def test_url_anchor_ambiguity_and_required_identity_drift_block(self) -> None:
+        planned = replace(self.items[0], published_at="")
+        compatible = record_for_item(planned, legacy=True)
+        duplicate_url = record_for_item(replace(planned, fingerprint="other-fp"), suffix="-two", legacy=True)
+        state = reconcile.classify_records([planned], [compatible, duplicate_url], RUN_ID)
+        self.assertEqual(state["conflict_count"], 1)
+
+        for field, value in [
+            ("标题", "wrong title"),
+            ("来源类型", "wrong source"),
+            ("作者/账号", "wrong account"),
+            ("平台", "wrong platform"),
+        ]:
+            changed = record_for_item(planned, legacy=True)
+            changed["fields"][field] = value
+            with self.subTest(field=field):
+                state = reconcile.classify_records([planned], [changed], RUN_ID)
+                self.assertEqual(state["conflict_count"], 1)
+
+    def test_url_empty_requires_unique_full_composite(self) -> None:
+        planned = replace(self.items[0], url="", published_at="")
+        title_only = record_for_item(planned, legacy=True)
+        for field in ("来源类型", "来源名称", "作者/账号", "平台"):
+            title_only["fields"][field] = ""
+        state = reconcile.classify_records([planned], [title_only], RUN_ID)
+        self.assertEqual(state["conflict_count"], 1)
+
+        composite = record_for_item(planned, legacy=True)
+        composite["fields"]["发布时间"] = "2026-01-01"
+        state = reconcile.classify_records([planned], [composite], RUN_ID)
+        self.assertEqual(state["legacy_update_count"], 1)
+
+        collision = record_for_item(replace(planned, fingerprint="other-fp"), suffix="-two", legacy=True)
+        state = reconcile.classify_records([planned], [composite, collision], RUN_ID)
+        self.assertEqual(state["conflict_count"], 1)
+
+    def test_current_shape_21_aihot_2_wechat_3_douyin_with_unknown_dates(self) -> None:
+        gap_indexes = [*range(0, 3), *range(87, 89), *range(106, 127)]
+        planned = [
+            replace(row, published_at="") if index in gap_indexes else row
+            for index, row in enumerate(self.items)
+        ]
+        records = [
+            record_for_item(
+                row,
+                legacy=index in gap_indexes,
+            )
+            for index, row in enumerate(planned)
+        ]
+        for index in gap_indexes:
+            records[index]["fields"]["发布时间"] = "2026-07-17"
+        state = reconcile.classify_records(planned, records, RUN_ID)
+        sources = {
+            row.source_type: sum(1 for action in state["legacy_updates"] if action["fingerprint"] == row.fingerprint)
+            for row in planned
+        }
+        self.assertEqual((state["existing_unique_count"], state["legacy_update_count"], state["conflict_count"]), (136, 26, 0))
+        self.assertEqual(
+            {
+                source: sum(1 for row in planned if row.source_type == source and row.fingerprint in {
+                    action["fingerprint"] for action in state["legacy_updates"]
+                })
+                for source in {"AIHOT热点", "公众号文章", "对标视频"}
+            },
+            {"AIHOT热点": 21, "公众号文章": 2, "对标视频": 3},
+        )
 
     def test_future_writer_short_legacy_record_gets_fingerprint(self) -> None:
         planned = self.items[136]

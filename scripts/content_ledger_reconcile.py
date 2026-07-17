@@ -81,9 +81,11 @@ def is_legacy_compatible(item: content_sampler.ContentItem, fields: dict[str, An
     expected = legacy_identity_values(item)
     if str(fields.get("\u5185\u5bb9\u6307\u7eb9") or ""):
         return False
-    required = ["\u6807\u9898", "\u6765\u6e90\u7c7b\u578b", "\u5e73\u53f0", "\u53d1\u5e03\u65f6\u95f4"]
+    required = ["\u6807\u9898", "\u6765\u6e90\u7c7b\u578b", "\u5e73\u53f0"]
     if expected["\u94fe\u63a5"]:
         required.append("\u94fe\u63a5")
+    if expected["\u53d1\u5e03\u65f6\u95f4"]:
+        required.append("\u53d1\u5e03\u65f6\u95f4")
     if any(not normalized(fields.get(name)) or normalized(fields.get(name)) != expected[name] for name in required):
         return False
     account_values = [
@@ -95,8 +97,8 @@ def is_legacy_compatible(item: content_sampler.ContentItem, fields: dict[str, An
 
 
 def is_potential_legacy_identity(item: content_sampler.ContentItem, fields: dict[str, Any]) -> bool:
-    if normalized(item.url) and normalized(fields.get("\u94fe\u63a5")) == normalized(item.url):
-        return True
+    if normalized(item.url):
+        return normalized(fields.get("\u94fe\u63a5")) == normalized(item.url)
     return bool(normalized(item.title) and normalized(fields.get("\u6807\u9898")) == normalized(item.title))
 
 
