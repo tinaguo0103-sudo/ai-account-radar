@@ -3722,3 +3722,10 @@
 - Owner规则：URL非空时exact normalized URL可作为same-run unique owner dedupe key；URL空时仍需唯一完整title+source+account/platform composite。元数据差异只记录diagnostic，不覆盖owner。multiple owners、wrong run、missing ID或duplicate owner仍硬阻断。现有owner fingerprint/fields不PUT/POST/PATCH/DELETE。
 - Downstream规则：构建140 unique owner universe及planned->owner provenance manifest；direct planned owner优先，4个owner-not-in-planned场景保留当前local content但使用existing owner identity。旧11候选不得盲目复用，须在140 owners上按现有评分/主编逻辑重新计算或去重映射；最终候选必须属于owner set。Douyin仍保持29/31 partial事实。
 - 开发边界：fresh production `07940e8...`单RC，零Feishu/provider/collection/03/04/card/06/automation/Chrome/DB/Skill/SCF动作；不新增安全架构、不改评分/质量/标题/主编。完成只回PM、不派QA、不指定model/thinking；三automation继续PAUSED。
+
+### 2026-07-17 AR-034G RC1 PM evidence review failed
+
+- Dev RC1=`release/ar034g-rc-20260717@0981500e705f8401d29c81bf5d5e4c751a51e465`，direct parent=`07940e899e08201ee42528fbb42782ea5410acce`，tree=`3b72e96f4b2e1b4d70cad7a7f27ba26fe7bc7874`，5 files，patch SHA=`af08c4edb56698aca2b9107a4b46559efc03a6837df5016f565fbd61abc48a98`。当前production-shaped fixture为162 raw、136 direct、26 aliases、22 shared、4 additional、140 owners，owner分布87 Douyin/18 WeChat/35 AIHOT；recovery writer=0、owner immutable、candidate重算与全回归通过。
+- PM接受当前恢复合同与scope，但发现future writer根因未闭合：`resolve_owner_projection(..., allow_new=True)`只从existing records找owner。两个raw planned同URL、fingerprint a/b、existing=[]时，exact RC1返回`unique_owner_count=2`、`new_owner_count=2`、owners=[a,b]，writer会排队两次create。也就是说今天可恢复，但下一次仍可能重新制造重复03记录。
+- 决策：RC1在PM evidence gate失败，未派QA、不得发布；这是直接业务去重缺陷，不是新增identity/security门。固定dev线程须fresh RC2：先按normalized URL或URL-empty完整composite分组raw planned；同key无existing owner且allow_new时只选首个确定性new owner，剩余全部alias，future writer每owner key最多create一次。same-title/different-URL保持独立，multiple existing owners/wrong run等原边界不变。
+- RC2须保留current 162->140、26 aliases、0 new/0 Feishu write、140 read-back和candidate owner projection；新增2/3 same-URL new items ->1 owner/1 create、URL-empty composite group、writer payload sentinel及second-run no-op。fresh production-base单提交，RC1历史保留；不指定model/thinking、不触碰生产或三条PAUSED automation。
