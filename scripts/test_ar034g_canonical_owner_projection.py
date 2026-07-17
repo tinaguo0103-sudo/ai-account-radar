@@ -80,6 +80,85 @@ def production_shape() -> tuple[list[content_sampler.ContentItem], list[dict]]:
 
 
 class CanonicalOwnerProjectionTests(unittest.TestCase):
+    def test_new_same_url_group_selects_one_owner_for_two_or_three_rows(self) -> None:
+        first = item(1, "抖音视频", fingerprint="a", url="https://example.test/same")
+        second = item(2, "抖音视频", fingerprint="b", url=first.url)
+        third = item(3, "抖音视频", fingerprint="c", url=first.url)
+        for planned in ([first, second], [first, second, third]):
+            with self.subTest(count=len(planned)):
+                projection = owners.resolve_owner_projection(planned, [], RUN_ID, allow_new=True)
+                self.assertEqual(1, projection.manifest["unique_owner_count"])
+                self.assertEqual(1, projection.manifest["new_owner_count"])
+                self.assertEqual(len(planned) - 1, projection.manifest["new_owner_alias_count"])
+                self.assertEqual(["a"], projection.manifest["ordered_owner_fingerprints"])
+
+    def test_new_url_empty_complete_composite_deduplicates_but_incomplete_blocks(self) -> None:
+        first = item(1, "公众号文章", fingerprint="a", url="")
+        second = copy.deepcopy(first)
+        second.fingerprint = "b"
+        projection = owners.resolve_owner_projection([first, second], [], RUN_ID, allow_new=True)
+        self.assertEqual(1, projection.manifest["unique_owner_count"])
+        self.assertEqual(1, projection.manifest["new_owner_alias_count"])
+        incomplete = copy.deepcopy(first)
+        incomplete.title = ""
+        with self.assertRaisesRegex(owners.OwnerProjectionError, "url_empty_owner_composite_incomplete"):
+            owners.resolve_owner_projection([incomplete], [], RUN_ID, allow_new=True)
+
+    def test_same_title_with_different_urls_remains_distinct(self) -> None:
+        first = item(1, "抖音视频", fingerprint="a")
+        second = item(2, "抖音视频", fingerprint="b")
+        second.title = first.title
+        projection = owners.resolve_owner_projection([first, second], [], RUN_ID, allow_new=True)
+        self.assertEqual(2, projection.manifest["unique_owner_count"])
+        self.assertEqual(2, projection.manifest["new_owner_count"])
+
+    def test_existing_owner_maps_multiple_planned_rows_without_create(self) -> None:
+        direct = item(1, "抖音视频", fingerprint="owner", url="https://example.test/same")
+        alias_a = item(2, "抖音视频", fingerprint="a", url=direct.url)
+        alias_b = item(3, "抖音视频", fingerprint="b", url=direct.url)
+        projection = owners.resolve_owner_projection([alias_a, direct, alias_b], [record(direct)], RUN_ID, allow_new=True)
+        self.assertEqual(1, projection.manifest["unique_owner_count"])
+        self.assertEqual(0, projection.manifest["new_owner_count"])
+        self.assertEqual("owner", projection.projected_items[0].fingerprint)
+        self.assertEqual("direct", projection.manifest["owners"][0]["representative_kind"])
+
+    def test_second_run_reuses_new_owner_deterministically(self) -> None:
+        first = item(1, "抖音视频", fingerprint="a", url="https://example.test/same")
+        second = item(2, "抖音视频", fingerprint="b", url=first.url)
+        initial = owners.resolve_owner_projection([first, second], [], RUN_ID, allow_new=True)
+        subsequent = owners.resolve_owner_projection([first, second], [record(first)], RUN_ID, allow_new=True)
+        self.assertEqual(initial.manifest["ordered_owner_fingerprints"], subsequent.manifest["ordered_owner_fingerprints"])
+        self.assertEqual(0, subsequent.manifest["new_owner_count"])
+
+    def test_writer_queues_one_create_for_one_new_owner_key(self) -> None:
+        first = item(1, "抖音视频", fingerprint="a", url="https://example.test/same")
+        second = item(2, "抖音视频", fingerprint="b", url=first.url)
+        stored: list[dict] = []
+        create_payloads: list[list[dict]] = []
+
+        def create(_token: str, _app: str, _table: str, rows: list[dict]) -> int:
+            create_payloads.append(copy.deepcopy(rows))
+            for index, fields in enumerate(rows):
+                stored.append({"record_id": f"created-{index}", "fields": dict(fields)})
+            return len(rows)
+
+        with mock.patch.object(content_sampler, "require_feishu_env", return_value="app"), \
+             mock.patch.object(content_sampler.feishu, "tenant_token", return_value="token"), \
+             mock.patch.object(content_sampler, "list_tables", return_value=[]), \
+             mock.patch.object(content_sampler, "resolve_table_id", return_value="table"), \
+             mock.patch.object(content_sampler, "ensure_content_inbox_fields", return_value=[]), \
+             mock.patch.object(content_sampler, "all_records", side_effect=lambda *_: copy.deepcopy(stored)), \
+             mock.patch.object(content_sampler, "update_record_fields") as update, \
+             mock.patch.object(content_sampler, "batch_create_records", side_effect=create), \
+             mock.patch.object(content_sampler, "ensure_content_inbox_today_view", return_value={}), \
+             mock.patch.object(content_sampler.time, "sleep"):
+            result = content_sampler.write_content_ledger_to_feishu([first, second], RUN_ID)
+        self.assertEqual(1, result["created_records"])
+        self.assertEqual(1, len(create_payloads))
+        self.assertEqual(1, len(create_payloads[0]))
+        self.assertEqual("a", create_payloads[0][0]["内容指纹"])
+        update.assert_not_called()
+
     def test_production_shape_projects_162_to_140(self) -> None:
         items, records = production_shape()
         projection = owners.resolve_owner_projection(items, records, RUN_ID)

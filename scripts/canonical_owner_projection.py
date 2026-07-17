@@ -65,6 +65,21 @@ def composite_matches(item: content_sampler.ContentItem, fields: dict[str, Any])
     return bool(expected_account and accounts) and all(value == expected_account for value in accounts)
 
 
+def owner_key(item: content_sampler.ContentItem) -> tuple[str, ...]:
+    url = normalized(item.url)
+    if url:
+        return ("url", url)
+    composite = (
+        normalized(item.title),
+        normalized(item.source_type),
+        normalized(item.account_name or item.platform),
+        normalized(item.platform),
+    )
+    if any(not value for value in composite):
+        raise OwnerProjectionError("url_empty_owner_composite_incomplete")
+    return ("composite", *composite)
+
+
 def metadata_drift(item: content_sampler.ContentItem, fields: dict[str, Any]) -> list[str]:
     comparisons = {
         "title": (item.title or item.url, fields.get("标题")),
@@ -129,31 +144,28 @@ def resolve_owner_projection(
     planned_fingerprints = [item.fingerprint for item in items]
     if any(not value for value in planned_fingerprints) or len(planned_fingerprints) != len(set(planned_fingerprints)):
         raise OwnerProjectionError("owner_plan_fingerprint_invalid")
-    by_fingerprint, by_url = validate_records(records)
+    _, by_url = validate_records(records)
     mappings: list[dict[str, Any]] = []
-
+    grouped: dict[tuple[str, ...], list[tuple[int, content_sampler.ContentItem]]] = defaultdict(list)
     for order, item in enumerate(items):
-        direct = by_fingerprint.get(item.fingerprint, [])
-        if len(direct) == 1:
-            url_candidates = owner_candidates(item, records, by_url) if normalized(item.url) else direct
-            if len(url_candidates) != 1 or record_id(url_candidates[0]) != record_id(direct[0]):
-                raise OwnerProjectionError("canonical_owner_ambiguous")
-            candidates = direct
-            resolution = "direct"
-        else:
-            candidates = owner_candidates(item, records, by_url)
-            resolution = "alias"
+        grouped[owner_key(item)].append((order, item))
+
+    for group in grouped.values():
+        representative = group[0][1]
+        candidates = owner_candidates(representative, records, by_url)
         if not candidates:
             if not allow_new:
                 raise OwnerProjectionError("canonical_owner_missing")
-            mappings.append({
-                "order": order,
-                "planned_fingerprint": item.fingerprint,
-                "owner_fingerprint": item.fingerprint,
-                "record_id": "",
-                "resolution": "new",
-                "metadata_drift": [],
-            })
+            owner_fingerprint = representative.fingerprint
+            for position, (order, item) in enumerate(group):
+                mappings.append({
+                    "order": order,
+                    "planned_fingerprint": item.fingerprint,
+                    "owner_fingerprint": owner_fingerprint,
+                    "record_id": "",
+                    "resolution": "new" if position == 0 else "new_alias",
+                    "metadata_drift": [],
+                })
             continue
         if len(candidates) != 1:
             raise OwnerProjectionError("canonical_owner_ambiguous")
@@ -167,16 +179,19 @@ def resolve_owner_projection(
             raise OwnerProjectionError("canonical_owner_record_id_missing")
         if not run_matches(fields, run_id):
             raise OwnerProjectionError("canonical_owner_wrong_run")
-        if resolution == "alias" and not normalized(item.url) and not composite_matches(item, fields):
-            raise OwnerProjectionError("url_empty_composite_owner_mismatch")
-        mappings.append({
-            "order": order,
-            "planned_fingerprint": item.fingerprint,
-            "owner_fingerprint": owner_fingerprint,
-            "record_id": owner_record_id,
-            "resolution": resolution,
-            "metadata_drift": metadata_drift(item, fields),
-        })
+        for order, item in group:
+            if not normalized(item.url) and not composite_matches(item, fields):
+                raise OwnerProjectionError("url_empty_composite_owner_mismatch")
+            mappings.append({
+                "order": order,
+                "planned_fingerprint": item.fingerprint,
+                "owner_fingerprint": owner_fingerprint,
+                "record_id": owner_record_id,
+                "resolution": "direct" if item.fingerprint == owner_fingerprint else "alias",
+                "metadata_drift": metadata_drift(item, fields),
+            })
+
+    mappings.sort(key=lambda row: row["order"])
 
     direct_items = {item.fingerprint: item for item in items}
     mapping_by_planned = {row["planned_fingerprint"]: row for row in mappings}
@@ -184,7 +199,7 @@ def resolve_owner_projection(
     aliases_by_owner: dict[str, list[str]] = defaultdict(list)
     for row in mappings:
         first_owner_order.setdefault(row["owner_fingerprint"], row["order"])
-        if row["resolution"] == "alias":
+        if row["resolution"] in {"alias", "new_alias"}:
             aliases_by_owner[row["owner_fingerprint"]].append(row["planned_fingerprint"])
 
     projected_items: list[content_sampler.ContentItem] = []
@@ -216,7 +231,7 @@ def resolve_owner_projection(
         )
 
     direct_count = sum(row["resolution"] == "direct" for row in mappings)
-    alias_count = sum(row["resolution"] == "alias" for row in mappings)
+    alias_count = sum(row["resolution"] in {"alias", "new_alias"} for row in mappings)
     additional_owner_count = sum(
         1 for owner in ordered_owners if owner not in direct_items and owner in aliases_by_owner
     )
@@ -230,6 +245,8 @@ def resolve_owner_projection(
         "unique_owner_count": len(projected_items),
         "direct_count": direct_count,
         "alias_count": alias_count,
+        "existing_alias_count": sum(row["resolution"] == "alias" for row in mappings),
+        "new_owner_alias_count": sum(row["resolution"] == "new_alias" for row in mappings),
         "shared_alias_count": shared_alias_count,
         "additional_owner_count": additional_owner_count,
         "new_owner_count": sum(row["resolution"] == "new" for row in mappings),
