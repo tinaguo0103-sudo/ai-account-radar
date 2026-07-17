@@ -3483,6 +3483,7 @@
 - 03前阻塞：旧 `validate_ingestion_bijection()` 把上游 `douyin_cdp_*` provenance fingerprint和sampler 16位canonical fingerprint视为同一身份。PM只读复核87 source rows与87 downstream rows：URL intersection=87，missing/extra=0，account/title mismatch=0，source/canonical/pair uniqueness均=87。
 - PM判定：这是正常归一化边界缺少显式映射，不是采集失败、候选级失败或真实数据污染；不能绕过03 read-back，但也不应继续扩展签名/attestation体系。
 - 待用户确认方案：AR-034E只建立source fingerprint -> canonical fingerprint双向唯一映射，canonical identity进入comparison/03/read-back，source identity保留provenance；复用现有local artifacts，不重采集、不第二refresh/read。一个窄RC、一次独立QA。计划SHA=`c23fe579c1153e13f85aa7bbd5c85fa7cf302f823fbb501c2a4b5f68bced684b`。
+- 用户确认：已明确批准AR-034E按上述计划进入开发。固定dev线程=`019f1de3-f3f2-71d2-ae63-a74cd38f8474`，状态派发前idle；任务省略model/thinking。开发只交付feature commit、production-base narrow RC、测试和PM交接，不派QA、不触碰production或外部系统。
 
 ### 2026-07-17 AR-034C生产读取被800字硬门阻断，派AR-034D语义修复
 
