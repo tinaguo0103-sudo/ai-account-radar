@@ -293,3 +293,4 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - Watermark repair authorization：用户已同意计划SHA=`97e2fc503a...`。仅允许atomic install exact baseline SHA=`83fd50f1...`，用existing receipt验证updated_with_new_items=19并继续同run；禁止第二次refresh。后续仍受full-source/03/04/card/cwd gates约束，失败保持PAUSED。
 - Watermark/read continuation：baseline repair与receipt验证已通过；首次WeChat fulltext read probe仅因timeout失败、0 items。PM按既有same-day run授权允许一次bounded read-only retry，固定现有revision/watermark/receipt，禁止第二次refresh、无限重试、旧cache或其他来源补位。
 - Bounded retry final：唯一retry在约49MB provider JSON处被截断并parse failed，0 truthful items；不再重试。AR-034C narrow hotfix已派dev，目标为signed-receipt-bound bounded current-feed read path，production与三automation保持PAUSED，现有refresh/receipt/DB/watermark保留。
+- AR-034C RC：dev self-validation passed，RC=`b7530452...`、base=`af0e4e5`、5 paths、patch SHA=`b4cb2a2a...`。active signed-refresh path改为19条bounded `limit=1` reads，legacy whole-feed JSON不可用作fallback。Independent full QA已派，production recovery仍blocked，三任务PAUSED。

@@ -3486,6 +3486,15 @@
 - Dev任务：AR-034C，要求receipt、canonical DB identity、feed set、after revision、before watermark和19条aggregate绑定的bounded读取；优先read-only SQLite精确区间或正式分页接口，截断/partial/duplicate/stale/drift均typed fail。发布后继续同 `run_20260717_093104`，禁止第二次refresh。
 - 执行线程：dev `019f1de3-f3f2-71d2-ae63-a74cd38f8474`；只在隔离worktree开发、fresh production-base RC、full regression，完成后不自行派QA。PM不轮询且未指定model/thinking。
 
+### 2026-07-17 AR-034C RC完成并派独立QA
+
+- Dev结论：`Dev Self-Validation Passed / Ready for Independent QA`。feature=`5a983699aadd3a159673f31bdc6caa392503f217`；RC branch=`release/ar034c-rc-20260717`、HEAD=`b7530452f5059dd02c274b32e5adb73d7dc68e72`、base=`af0e4e520cefcacb0efa770992a34a2778b9d36f`。
+- Scope：5 files；combined patch SHA=`b4cb2a2ab8959aac2f29870881faa65608af380a6bbb23a94da4fedfeeed0403`；RC/apply tree=`1314a57a6da22e476d72458246b0f00577ca7b79`，clean-base parity通过。
+- Behavior：新增receipt/HMAC/canonical DB live parity reader，按before/after watermark和19条计划逐页 `limit=1&page=N&mode=fulltext`，核对article ID/title，单页8MB；完成后再次验证receipt/DB/order。check-only零provider请求；signed-refresh active path不再使用whole-feed约49MB JSON。
+- Dev tests：feature Python427、RC393、AR-034 focused57/AR-034C6、receiver32、Douyin39、semantic7；compile/node/diff/pre_merge全过。production check-only计划19且零请求，所有相关artifact不变。
+- QA派发：fixed QA `019f4714-3f76-7bb1-b71f-08a41d9f8860`，要求fresh L0、whole-feed unreachable、limit=1/page identity和post-read closure、adversarial mutations、production receipt check-only零请求、full regression。禁止production fulltext/refresh/collection/Feishu/card/automation动作。
+- 当前边界：production clean `af0e4e5`，三任务PAUSED；existing signed refresh/receipt/DB/baseline保留，未再refresh，未改03/04/card/06。PM不轮询且未指定model/thinking。
+
 ### 2026-07-17 watermark repair通过，允许一次bounded全文只读重试
 
 - Repair结果：canonical `health/last_success.json` 从absent变为approved baseline，source/target SHA=`83fd50f15f8985b9d64a1f790b626e79701908ed91078d5920393c5236d90d4d`；existing signed receipt验证 `ok=true/state=updated_with_new_items/new_item_count=19/article_count=67`，零第二次refresh。
