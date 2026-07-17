@@ -35,16 +35,23 @@ class AR034SourceRecoveryTests(unittest.TestCase):
         return payload
 
     def write_manual(self, path: Path) -> None:
-        rows = [{"账号名/公众号名": f"ok-{i}", "内容指纹": f"fp-{i}-{j}", "运行批次": "run_20260716_080311"} for i in range(29) for j in range(3)]
+        rows = [{
+            "来源类型": "对标视频", "账号名/公众号名": f"ok-{i}", "内容标题": f"title-{i}-{j}",
+            "内容链接": f"https://www.douyin.com/video/{i:02d}{j}", "内容指纹": f"source-{i}-{j}",
+            "运行批次": "run_20260716_080311",
+        } for i in range(29) for j in range(3)]
         path.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + "\n", encoding="utf-8")
+
+    def canonical_rows(self, rows: list[dict]) -> list[dict]:
+        return [{**row, "内容指纹": f"{index:016x}", "运行批次": ""} for index, row in enumerate(rows, 1)]
 
     def test_29_of_31_retains_all_87_and_bijection(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); manual = root / "manual.jsonl"; combined = root / "combined.jsonl"; csv_path = root / "content.csv"
             self.write_manual(manual); combined.write_bytes(manual.read_bytes())
-            rows = [json.loads(line) for line in manual.read_text().splitlines()]
+            rows = self.canonical_rows([json.loads(line) for line in manual.read_text().splitlines()])
             with csv_path.open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=["账号名/公众号名", "内容指纹", "运行批次"]); writer.writeheader(); writer.writerows(rows)
+                writer = csv.DictWriter(handle, fieldnames=["来源类型", "账号名/公众号名", "内容标题", "内容链接", "内容指纹", "运行批次"]); writer.writeheader(); writer.writerows(rows)
             report = lineage.validate_partial_source_artifact(self.probe(manual=manual), manual, expected_run_id="run_20260716_080311")
             self.assertEqual(report["successful_item_count"], 87)
             self.assertEqual(lineage.validate_ingestion_bijection(report, combined, csv_path)["source_to_survivor_count"], 87)
@@ -69,28 +76,119 @@ class AR034SourceRecoveryTests(unittest.TestCase):
             root = Path(tmp); manual = root / "manual.jsonl"; combined = root / "combined.jsonl"; csv_path = root / "content.csv"
             self.write_manual(manual)
             report = lineage.validate_partial_source_artifact(self.probe(manual=manual), manual)
-            rows = [json.loads(line) for line in manual.read_text().splitlines()]
+            source_rows = [json.loads(line) for line in manual.read_text().splitlines()]
+            rows = self.canonical_rows(source_rows)
             for layer in ("combined", "content_items"):
-                combined.write_text("\n".join(json.dumps(row) for row in (rows[1:] if layer == "combined" else rows)) + "\n")
+                combined.write_text("\n".join(json.dumps(row) for row in (source_rows[1:] if layer == "combined" else source_rows)) + "\n")
                 csv_rows = rows[1:] if layer == "content_items" else rows
                 with csv_path.open("w", encoding="utf-8", newline="") as handle:
-                    writer = csv.DictWriter(handle, fieldnames=["账号名/公众号名", "内容指纹", "运行批次"]); writer.writeheader(); writer.writerows(csv_rows)
+                    writer = csv.DictWriter(handle, fieldnames=["来源类型", "账号名/公众号名", "内容标题", "内容链接", "内容指纹", "运行批次"]); writer.writeheader(); writer.writerows(csv_rows)
                 with self.subTest(layer=layer), self.assertRaises(lineage.LineageError):
                     lineage.validate_ingestion_bijection(report, combined, csv_path)
 
     def test_comparison_and_feishu03_drift_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); manual = root / "manual.jsonl"; combined = root / "combined.jsonl"; content = root / "content.csv"; comparison = root / "comparison.csv"
-            self.write_manual(manual); combined.write_bytes(manual.read_bytes()); rows = [json.loads(line) for line in manual.read_text().splitlines()]
+            self.write_manual(manual); combined.write_bytes(manual.read_bytes()); rows = self.canonical_rows([json.loads(line) for line in manual.read_text().splitlines()])
             for target, values in ((content, rows), (comparison, rows[1:])):
                 with target.open("w", encoding="utf-8", newline="") as handle:
-                    writer = csv.DictWriter(handle, fieldnames=["账号名/公众号名", "内容指纹", "运行批次"]); writer.writeheader(); writer.writerows(values)
+                    writer = csv.DictWriter(handle, fieldnames=["来源类型", "账号名/公众号名", "内容标题", "内容链接", "内容指纹", "运行批次"]); writer.writeheader(); writer.writerows(values)
             report = lineage.validate_partial_source_artifact(self.probe(manual=manual), manual)
+            closure = lineage.validate_ingestion_bijection(report, combined, content)
             with self.assertRaisesRegex(lineage.LineageError, "comparison_universe"):
                 lineage.validate_ingestion_bijection(report, combined, content, comparison)
-            for readback, reason in ((None, "missing"), ({"ok": True, "run_id": "other", "ordered_fingerprints": report["ordered_fingerprints"]}, "run"), ({"ok": True, "run_id": report["run_id"], "ordered_fingerprints": report["ordered_fingerprints"][:-1]}, "identity")):
+            canonical = closure["ordered_canonical_fingerprints"]
+            for readback, reason in ((None, "missing"), ({"ok": True, "run_id": "other", "ordered_fingerprints": canonical}, "run"), ({"ok": True, "run_id": report["run_id"], "ordered_fingerprints": canonical[:-1]}, "identity")):
                 with self.subTest(reason=reason), self.assertRaises(lineage.LineageError):
-                    lineage.validate_feishu_readback_identity(report, readback, report["run_id"], write_mode=True)
+                    lineage.validate_feishu_readback_identity(closure, readback, report["run_id"], write_mode=True)
+
+    def test_full_ledger_87_plus_75_projection_regression(self) -> None:
+        planned = [f"douyin-{index:03d}" for index in range(87)]
+        wechat = [f"wechat-{index:03d}" for index in range(19)]
+        aihot = [f"aihot-{index:03d}" for index in range(56)]
+        full_ledger = [*planned[:40], *wechat, *planned[40:], *aihot]
+        closure = {"ordered_canonical_fingerprints": planned}
+        readback = {
+            "ok": True,
+            "run_id": "run-production-shape",
+            "planned_count": 162,
+            "matched_count": 162,
+            "ordered_fingerprints": full_ledger,
+        }
+        result = lineage.validate_feishu_readback_identity(
+            closure, readback, "run-production-shape", write_mode=True,
+        )
+        self.assertEqual(result["full_ledger_count"], 162)
+        self.assertEqual(result["source_projection_count"], 87)
+        self.assertEqual(result["source_projection"], planned)
+
+    def test_full_ledger_projection_mutations_fail(self) -> None:
+        planned = [f"canonical-{index:03d}" for index in range(87)]
+        extras = [f"other-{index:03d}" for index in range(75)]
+        baseline = [*planned[:30], *extras[:25], *planned[30:60], *extras[25:50], *planned[60:], *extras[50:]]
+        closure = {"ordered_canonical_fingerprints": planned}
+
+        def readback(values: object = baseline, **updates: object) -> dict:
+            payload = {
+                "ok": True, "run_id": "run", "planned_count": 162,
+                "matched_count": 162, "ordered_fingerprints": values,
+            }
+            payload.update(updates)
+            return payload
+
+        mutations = {
+            "missing_source": readback([value for value in baseline if value != planned[0]], planned_count=161, matched_count=161),
+            "duplicate": readback([*baseline, baseline[0]], planned_count=163, matched_count=163),
+            "reordered_source": readback([planned[1], planned[0], *baseline[2:]]),
+            "wrong_run": readback(run_id="other"),
+            "source_fingerprint_substitution": readback(["source-domain-fingerprint" if value == planned[0] else value for value in baseline]),
+            "malformed_list": readback("not-a-list"),
+            "empty_fingerprint": readback([*baseline[:-1], ""]),
+            "planned_count_mismatch": readback(planned_count=87),
+            "matched_count_mismatch": readback(matched_count=87),
+        }
+        for name, payload in mutations.items():
+            with self.subTest(name=name), self.assertRaises(lineage.LineageError):
+                lineage.validate_feishu_readback_identity(closure, payload, "run", write_mode=True)
+
+    def test_public_writer_accepts_verified_full_ledger_projection(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); manual = root / "manual.jsonl"; combined = root / "combined.jsonl"; output = root / "output"; output.mkdir()
+            self.write_manual(manual); combined.write_bytes(manual.read_bytes())
+            source_rows = [json.loads(line) for line in manual.read_text().splitlines()]
+            canonical_rows = self.canonical_rows(source_rows)
+            report = lineage.validate_partial_source_artifact(self.probe(manual=manual), manual)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"run_id": report["run_id"], "source_report": report, "combined_path": str(combined)}), encoding="utf-8")
+            for filename in ("content_items.csv", "content_breakdowns.csv", "today_10_topics.csv"):
+                with (output / filename).open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=["\u6765\u6e90\u7c7b\u578b", "\u8d26\u53f7\u540d/\u516c\u4f17\u53f7\u540d", "\u5185\u5bb9\u6807\u9898", "\u5185\u5bb9\u94fe\u63a5", "\u5185\u5bb9\u6307\u7eb9", "\u8fd0\u884c\u6279\u6b21"])
+                    writer.writeheader(); writer.writerows(canonical_rows)
+            planned = [row["\u5185\u5bb9\u6307\u7eb9"] for row in canonical_rows]
+            wechat = [f"wechat-{index:03d}" for index in range(19)]
+            aihot = [f"aihot-{index:03d}" for index in range(56)]
+            full_order = [*planned[:40], *wechat, *planned[40:], *aihot]
+            items = [content_sampler.ContentItem(
+                source_type="\u5bf9\u6807\u89c6\u9891" if fingerprint in set(planned) else ("\u516c\u4f17\u53f7\u6587\u7ae0" if fingerprint in set(wechat) else "AI\u70ed\u70b9"),
+                platform="\u6296\u97f3" if fingerprint in set(planned) else ("\u5fae\u4fe1" if fingerprint in set(wechat) else "AIHOT"),
+                account_name=f"account-{index}", title=f"title-{index}", url=f"https://example.com/{index}",
+                content_shape="article", cover_text="", body_snippet="body", published_at="2026-07-17",
+                comment_questions="", ocr_text="", fetch_method="fixture", fetch_status="ok",
+                failure_reason="", fingerprint=fingerprint,
+            ) for index, fingerprint in enumerate(full_order)]
+            ledger = {"read_back_identity": {
+                "ok": True, "run_id": report["run_id"], "planned_count": 162,
+                "matched_count": 162, "ordered_fingerprints": full_order,
+            }}
+            with mock.patch.object(content_sampler, "write_content_ledger_to_feishu", return_value=ledger) as writer:
+                returned_ledger, closure = content_sampler.write_content_ledger_with_source_gate(
+                    items, report["run_id"], manifest, output,
+                )
+            writer.assert_called_once()
+            self.assertEqual(len(writer.call_args.args[0]), 162)
+            self.assertIs(returned_ledger, ledger)
+            self.assertEqual(closure["feishu_03_identity"]["full_ledger_count"], 162)
+            self.assertEqual(closure["feishu_03_identity"]["source_projection_count"], 87)
 
     def test_manual_identity_missing_stale_or_wrong_run_fails(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -117,17 +215,95 @@ class AR034SourceRecoveryTests(unittest.TestCase):
     def test_duplicate_and_cross_account_downstream_lineage_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp); manual = root / "manual.jsonl"; combined = root / "combined.jsonl"; csv_path = root / "content.csv"
-            self.write_manual(manual); rows = [json.loads(line) for line in manual.read_text().splitlines()]
+            self.write_manual(manual); source_rows = [json.loads(line) for line in manual.read_text().splitlines()]
             report = lineage.validate_partial_source_artifact(self.probe(manual=manual), manual)
             for mutation in ("duplicate", "cross_account"):
-                changed = [dict(row) for row in rows]
+                combined_rows = [dict(row) for row in source_rows]
+                changed = self.canonical_rows(source_rows)
                 if mutation == "duplicate": changed.append(dict(changed[0]))
                 else: changed[0]["账号名/公众号名"] = "ok-2"
-                combined.write_text("\n".join(json.dumps(row) for row in changed) + "\n")
+                combined.write_text("\n".join(json.dumps(row) for row in combined_rows) + "\n")
                 with csv_path.open("w", encoding="utf-8", newline="") as handle:
-                    writer = csv.DictWriter(handle, fieldnames=["账号名/公众号名", "内容指纹", "运行批次"]); writer.writeheader(); writer.writerows(changed)
+                    writer = csv.DictWriter(handle, fieldnames=["来源类型", "账号名/公众号名", "内容标题", "内容链接", "内容指纹", "运行批次"]); writer.writeheader(); writer.writerows(changed)
                 with self.subTest(mutation=mutation), self.assertRaises(lineage.LineageError):
                     lineage.validate_ingestion_bijection(report, combined, csv_path)
+
+    def test_source_to_canonical_identity_mutation_matrix(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); manual = root / "manual.jsonl"; combined = root / "combined.jsonl"; content = root / "content.csv"
+            self.write_manual(manual)
+            source_rows = [json.loads(line) for line in manual.read_text().splitlines()]
+            report = lineage.validate_partial_source_artifact(self.probe(manual=manual), manual)
+
+            def write(rows: list[dict], source: list[dict] | None = None) -> None:
+                combined.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in (source or source_rows)) + "\n", encoding="utf-8")
+                with content.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=["来源类型", "账号名/公众号名", "内容标题", "内容链接", "内容指纹", "运行批次"])
+                    writer.writeheader(); writer.writerows(rows)
+
+            good = self.canonical_rows(source_rows)
+            write(good)
+            closure = lineage.validate_ingestion_bijection(report, combined, content)
+            self.assertEqual(len(closure["source_to_canonical_mapping"]), 87)
+            self.assertNotEqual(closure["source_to_canonical_mapping"][0]["source_fingerprint"], closure["source_to_canonical_mapping"][0]["canonical_fingerprint"])
+            original_manual = manual.read_bytes()
+            manual.write_bytes(original_manual + b"\n")
+            with self.assertRaisesRegex(lineage.LineageError, "prewrite_identity_drift"):
+                lineage.validate_ingestion_bijection(report, combined, content)
+            manual.write_bytes(original_manual)
+            mutations = {
+                "missing": good[1:],
+                "extra": good + [{**good[0], "内容链接": "https://www.douyin.com/video/extra", "内容指纹": "extra-canonical"}],
+                "duplicate_url": [{**row, "内容链接": good[0]["内容链接"]} if index == 1 else row for index, row in enumerate(good)],
+                "reordered": [good[1], good[0], *good[2:]],
+                "account_drift": [{**good[0], "账号名/公众号名": "other"}, *good[1:]],
+                "source_type_drift": [{**good[0], "来源类型": "公众号文章"}, *good[1:]],
+                "url_substitution": [{**good[0], "内容链接": "https://www.douyin.com/video/substitute"}, *good[1:]],
+                "title_substitution": [{**good[0], "内容标题": "substitute"}, *good[1:]],
+                "canonical_collision": [{**good[0]}, {**good[1], "内容指纹": good[0]["内容指纹"]}, *good[2:]],
+            }
+            for name, rows in mutations.items():
+                write(rows)
+                with self.subTest(name=name), self.assertRaises(lineage.LineageError):
+                    lineage.validate_ingestion_bijection(report, combined, content)
+            cross_run = [{**source_rows[0], "运行批次": "run_20260717_000000"}, *source_rows[1:]]
+            write(good, cross_run)
+            with self.assertRaisesRegex(lineage.LineageError, "run_identity"):
+                lineage.validate_ingestion_bijection(report, combined, content)
+
+    def test_coordinated_drift_blocks_public_writer_path(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp); manual = root / "manual.jsonl"; combined = root / "combined.jsonl"; output = root / "output"; output.mkdir()
+            self.write_manual(manual)
+            source_rows = [json.loads(line) for line in manual.read_text().splitlines()]
+            report = lineage.validate_partial_source_artifact(self.probe(manual=manual), manual)
+            manifest = root / "manifest.json"
+            manifest.write_text(json.dumps({"run_id": report["run_id"], "source_report": report, "combined_path": str(combined)}), encoding="utf-8")
+
+            def write_csv(path: Path, rows: list[dict]) -> None:
+                with path.open("w", encoding="utf-8", newline="") as handle:
+                    writer = csv.DictWriter(handle, fieldnames=["来源类型", "账号名/公众号名", "内容标题", "内容链接", "内容指纹", "运行批次"])
+                    writer.writeheader(); writer.writerows(rows)
+
+            mutations = {
+                "url": ("内容链接", "https://www.douyin.com/video/coordinated-drift"),
+                "title": ("内容标题", "coordinated drift"),
+                "source_type": ("来源类型", "公众号文章"),
+                "account": ("账号名/公众号名", "other-account"),
+                "run": ("运行批次", "run_20260717_000000"),
+            }
+            for name, (field, value) in mutations.items():
+                changed_source = [dict(row) for row in source_rows]
+                changed_canonical = self.canonical_rows(source_rows)
+                changed_source[0][field] = value
+                changed_canonical[0][field] = value
+                combined.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in changed_source) + "\n", encoding="utf-8")
+                for filename in ("content_items.csv", "content_breakdowns.csv", "today_10_topics.csv"):
+                    write_csv(output / filename, changed_canonical)
+                with self.subTest(name=name), mock.patch.object(content_sampler, "write_content_ledger_to_feishu") as writer:
+                    with self.assertRaises(lineage.LineageError):
+                        content_sampler.write_content_ledger_with_source_gate([], report["run_id"], manifest, output)
+                    writer.assert_not_called()
 
     def test_wechat_typed_states(self) -> None:
         base = {"provider_reachable": True, "database_readable": True, "active_account_count": 1, "active_source_count": 1, "refresh_revision": 20, "refreshed_at_ms": 900, "new_item_count": 1}
@@ -165,8 +341,8 @@ class AR034SourceRecoveryTests(unittest.TestCase):
 
     def test_sampler_lineage_gate_precedes_feishu_write(self) -> None:
         source = Path(content_sampler.__file__).read_text(encoding="utf-8")
-        main_source = source[source.index("def main() -> int:"):]
-        self.assertLess(main_source.index("validate_ingestion_bijection("), main_source.index("write_content_ledger_to_feishu(items, run_id)"))
+        gated_writer = source[source.index("def write_content_ledger_with_source_gate("):source.index("def main() -> int:")]
+        self.assertLess(gated_writer.index("validate_source_ingestion_manifest("), gated_writer.index("write_content_ledger_to_feishu(items, run_id)"))
 
     def test_wewe_browser_identity_fail_closed(self) -> None:
         profile = Path("/tmp/wewe-profile").resolve(); version = {"webSocketDebuggerUrl": "ws://browser/one"}
