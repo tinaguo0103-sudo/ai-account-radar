@@ -305,3 +305,4 @@ PM 统筹、线程派发、队列规则、用户输出标识和 QA 门禁属于�
 - AR-034D production：Released / Bounded Read Passed / Recovery Blocked Before 03。production clean `d88d0e5...`；WeChat 19/19 green，Douyin 87与AIHOT 56本地产物保留。阻塞是source fingerprint与sampler canonical fingerprint的representation mismatch；87/87 URL+account+title映射已由PM只读证明，无内容丢失或串账号。Feishu 03/04/card均未写，三任务仍PAUSED。
 - AR-034E plan awaiting confirmation：只修source->canonical identity mapping并让comparison/03/read-back使用canonical fingerprint，source fingerprint继续作为provenance；不新增安全架构、不改fingerprint算法、不重采集。计划SHA=`c23fe579...`；确认后走单一窄RC + 单次independent QA。
 - AR-034E authorized / Development：用户已确认计划SHA=`c23fe579...`。固定dev线程从production `d88d0e5...`构建单一窄RC；当前不派QA、不生产、不改automation，三任务保持PAUSED。
+- AR-034E RC / Independent QA：RC=`ad708bea...`、base=`d88d0e5...`、3 files、patch=`2ba0e3ba...`；dev tests与PM evidence review通过。唯一一次QA已派，必须独立复算87映射、public integration/prewrite、canonical comparison/03/read-back及协同URL/title drift；不调用生产Provider/Feishu/automation。
