@@ -520,24 +520,18 @@ def main() -> int:
         else:
             provider_cmd = [
                 py,
-                str(ROOT / "scripts" / "wechat_fulltext_provider_probe.py"),
-                "--config",
-                args.wechat_fulltext_provider_config,
+                str(ROOT / "scripts" / "wewe_current_feed_reader.py"),
+                "--refresh-result",
+                str(refresh_attempt_path),
+                "--run-id",
+                run_id,
+                "--run-started-at-ms",
+                str(run_started_at_ms),
                 "--out",
                 str(WECHAT_FULLTEXT_RESOLVED_MANUAL),
                 "--csv",
                 str(OUT / "wechat_fulltext_provider_items.csv"),
-                "--dry-run",
-                "--fresh-after-epoch",
-                str(int(wechat_freshness.get("article_publish_watermark") or 0)),
-                "--refresh-revision",
-                str(int(wechat_freshness.get("refresh_revision") or 0)),
             ]
-
-        if provider_cmd and args.wechat_fulltext_provider:
-            provider_cmd.extend(["--provider-id", args.wechat_fulltext_provider])
-        if provider_cmd and args.wechat_feed_limit:
-            provider_cmd.extend(["--limit", str(args.wechat_feed_limit)])
         if provider_cmd:
             steps.append(run_step("fetch refreshed WeChat fulltext provider into ContentItem rows", provider_cmd, env=step_env))
             if steps[-1]["returncode"] != 0:
