@@ -3371,14 +3371,14 @@ def main() -> int:
             output_dir / "today_10_topics.csv",
         )
         local_closure["feishu_03_identity"] = validate_feishu_readback_identity(
-            source_report, None, run_id, write_mode=False,
+            local_closure, None, run_id, write_mode=False,
         )
         run_log["source_ingestion_closure"] = local_closure
     if args.write_feishu:
         run_log["feishu_content_ledger"] = write_content_ledger_to_feishu(items, run_id)
         if source_report is not None:
             run_log["source_ingestion_closure"]["feishu_03_identity"] = validate_feishu_readback_identity(
-                source_report,
+                run_log["source_ingestion_closure"],
                 run_log["feishu_content_ledger"].get("read_back_identity"),
                 run_id,
                 write_mode=True,
