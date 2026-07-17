@@ -176,10 +176,22 @@ class AR034SourceRecoveryTests(unittest.TestCase):
                 comment_questions="", ocr_text="", fetch_method="fixture", fetch_status="ok",
                 failure_reason="", fingerprint=fingerprint,
             ) for index, fingerprint in enumerate(full_order)]
-            ledger = {"read_back_identity": {
-                "ok": True, "run_id": report["run_id"], "planned_count": 162,
-                "matched_count": 162, "ordered_fingerprints": full_order,
-            }}
+            ledger = {
+                "owner_projection": {
+                    "raw_planned_count": 162, "unique_owner_count": 162,
+                    "direct_count": 162, "alias_count": 0, "shared_alias_count": 0,
+                    "additional_owner_count": 0,
+                    "per_source_owner_counts": {"对标视频": 87, "公众号文章": 19, "AI热点": 56},
+                    "mappings": [
+                        {"planned_fingerprint": value, "owner_fingerprint": value}
+                        for value in full_order
+                    ],
+                },
+                "read_back_identity": {
+                    "ok": True, "run_id": report["run_id"], "planned_count": 162,
+                    "matched_count": 162, "ordered_fingerprints": full_order,
+                },
+            }
             with mock.patch.object(content_sampler, "write_content_ledger_to_feishu", return_value=ledger) as writer:
                 returned_ledger, closure = content_sampler.write_content_ledger_with_source_gate(
                     items, report["run_id"], manifest, output,
