@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import argparse
 import fcntl
+import hashlib
 import json
 import os
 import re
@@ -17,7 +18,7 @@ import sys
 import tempfile
 import time
 from urllib.parse import urlsplit
-from dataclasses import dataclass
+from dataclasses import asdict, dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
@@ -31,6 +32,7 @@ import push_to_feishu as feishu
 from script_package_shared import (
     SCRIPT_PACKAGE_FIELDS,
     TOPIC_MARK_FIELD,
+    all_records,
     ensure_text_fields,
     feishu_ready_topics,
     fields_by_name,
@@ -53,6 +55,7 @@ DEFAULT_SCRIPT_PACKAGE_SKILL_NAME = "austin-no-overtime-scripting"
 DEFAULT_SCRIPT_PACKAGE_VOICE_SKILL_NAME = "austin-voice-scriptwriter"
 LOG_DIR = ROOT / "output" / "logs"
 LOCK_FILE = ROOT / ".runtime" / "codex_script_package_runner.lock"
+TRANSACTION_ROOT = ROOT / ".runtime" / "script_package_transactions"
 RUNNER_VERSION = "codex-local-script-package-runner-v0.2"
 MAX_REVISE_ATTEMPTS = 2
 BITABLE_TEXT_FIELD_TYPE = 1
@@ -133,6 +136,114 @@ def unique_path(path: Path) -> Path:
 def compact(value: Any, limit: int = 500) -> str:
     text = " ".join(str(value or "").split())
     return text if len(text) <= limit else text[:limit].rstrip() + "..."
+
+
+def topic_business_identity(record: dict[str, Any], topic: dict[str, Any]) -> dict[str, str]:
+    fields = record.get("fields") if isinstance(record.get("fields"), dict) else {}
+    identity = {
+        "source_record_id": str(record.get("record_id") or "").strip(),
+        "run_id": str(fields.get("运行批次") or fields.get("最近参与运行批次") or "").strip(),
+        "fingerprint": str(fields.get("内容指纹") or "").strip(),
+        "title": str(topic.get("topic_title") or fields.get("可发布标题") or fields.get("选题标题") or "").strip(),
+    }
+    if not identity["source_record_id"] or not identity["title"]:
+        raise RuntimeError("script_package_business_identity_incomplete")
+    return identity
+
+
+def transaction_path(identity: dict[str, str]) -> Path:
+    digest = hashlib.sha256(json.dumps(identity, ensure_ascii=False, sort_keys=True).encode("utf-8")).hexdigest()[:24]
+    return TRANSACTION_ROOT / f"{identity['source_record_id']}_{digest}.json"
+
+
+def write_transaction(path: Path, payload: dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
+    temporary.write_text(json.dumps(payload, ensure_ascii=False, indent=2, sort_keys=True), encoding="utf-8")
+    os.replace(temporary, path)
+
+
+def read_transaction(path: Path, identity: dict[str, str]) -> dict[str, Any] | None:
+    if not path.exists():
+        return None
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("script_package_recovery_state_invalid") from exc
+    if not isinstance(payload, dict) or payload.get("identity") != identity:
+        raise RuntimeError("script_package_recovery_identity_mismatch")
+    return payload
+
+
+def new_transaction(identity: dict[str, str]) -> dict[str, Any]:
+    return {
+        "schema_version": 1,
+        "identity": identity,
+        "stage": "new",
+        "post_attempt_count": 0,
+    }
+
+
+def exact_script_package_records(
+    token: str,
+    app_token: str,
+    table_id: str,
+    identity: dict[str, str],
+    transaction: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    matches: list[dict[str, Any]] = []
+    expected_path = str((transaction or {}).get("document_path") or "").strip()
+    for record in all_records(token, app_token, table_id):
+        fields = record.get("fields") if isinstance(record.get("fields"), dict) else {}
+        titles = [str(fields.get(name) or "").strip() for name in ("关联选题", "脚本标题")]
+        nonempty_titles = {value for value in titles if value}
+        if identity["title"] not in nonempty_titles:
+            continue
+        if len(nonempty_titles) > 1:
+            raise RuntimeError("script_package_identity_conflict")
+        local_path = str(fields.get("本地文档") or "").strip()
+        if expected_path and local_path and local_path != expected_path:
+            raise RuntimeError("script_package_local_artifact_conflict")
+        if not str(record.get("record_id") or "").strip():
+            raise RuntimeError("script_package_record_id_missing")
+        matches.append(record)
+    if len(matches) > 1:
+        raise RuntimeError("script_package_identity_ambiguous")
+    return matches
+
+
+def topic_marker_value(token: str, app_token: str, table_id: str, record_id: str) -> str:
+    payload = feishu.request_json(
+        "GET",
+        f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
+        token=token,
+    )
+    data = payload.get("data", {})
+    record = data.get("record", data)
+    fields = record.get("fields") if isinstance(record, dict) and isinstance(record.get("fields"), dict) else {}
+    return str(fields.get(TOPIC_MARK_FIELD) or "").strip()
+
+
+def mark_topic_generated_and_verify(
+    token: str,
+    app_token: str,
+    table_id: str,
+    record_id: str,
+    marker: str,
+) -> None:
+    try:
+        mark_topic_generated(token, app_token, table_id, record_id, marker=marker)
+    except Exception:
+        if topic_marker_value(token, app_token, table_id, record_id) == marker:
+            return
+        raise
+    if topic_marker_value(token, app_token, table_id, record_id) != marker:
+        raise RuntimeError("topic_marker_readback_mismatch")
+
+
+def post_status_unknown(exc: BaseException) -> bool:
+    message = str(exc).lower()
+    return any(token in message for token in ("status unknown", "timed out", "timeout", "connection reset", "malformed ack"))
 
 
 def inline_items(items: list[str], fallback: str = "无", limit: int = 6) -> str:
@@ -858,6 +969,147 @@ def load_ready_topics(record_id: str, limit: int) -> tuple[str, str, dict[str, s
     return token, app_token, table_ids, records, topic_cards
 
 
+def process_topic(
+    token: str,
+    app_token: str,
+    table_ids: dict[str, str],
+    record: dict[str, Any],
+    topic: dict[str, Any],
+    timeout_seconds: int,
+    write_feishu: bool,
+) -> dict[str, Any]:
+    identity = topic_business_identity(record, topic)
+    state_path = transaction_path(identity)
+    state = read_transaction(state_path, identity)
+
+    if write_feishu:
+        existing = exact_script_package_records(token, app_token, table_ids["script_package"], identity, state)
+        if existing:
+            marker = str((state or {}).get("topic_marker") or "是")
+            mark_topic_generated_and_verify(
+                token, app_token, table_ids["topic_decision"], identity["source_record_id"], marker,
+            )
+            state = state or new_transaction(identity)
+            state.update({
+                "stage": "complete",
+                "script_package_record_id": str(existing[0]["record_id"]),
+                "topic_marker": marker,
+            })
+            write_transaction(state_path, state)
+            return {
+                "record_id": identity["source_record_id"],
+                "topic_title": identity["title"],
+                "document_path": str(state.get("document_path") or ""),
+                "feishu_document_url": str((state.get("doc_sync") or {}).get("url") or ""),
+                "doc_sync_status": str((state.get("doc_sync") or {}).get("status") or ""),
+                "qa_status": str(state.get("qa_status") or "pass"),
+                "attempts": int(state.get("attempt_count") or 0),
+                "attempt_history": state.get("attempt_history") or [],
+                "created_script_package_id": str(existing[0]["record_id"]),
+                "topic_marker": marker,
+                "marked_topic": True,
+                "reconciled_existing": True,
+            }
+
+    if state is None:
+        package, attempt_count, attempt_history = generate_package_with_retry(topic, timeout_seconds)
+        document_path = write_package_markdown(topic, package)
+        qa_status = qa_status_of(package)
+        topic_marker = "是" if qa_status == "pass" else "需人工处理"
+        state = new_transaction(identity)
+        state.update({
+            "stage": "package_saved",
+            "package": package,
+            "document_path": str(document_path),
+            "qa_status": qa_status,
+            "attempt_count": attempt_count,
+            "attempt_history": attempt_history,
+            "topic_marker": topic_marker,
+        })
+        write_transaction(state_path, state)
+    else:
+        package = state.get("package")
+        if not isinstance(package, dict) or not str(state.get("document_path") or ""):
+            raise RuntimeError("script_package_recovery_state_incomplete")
+        document_path = Path(str(state["document_path"]))
+        if not document_path.is_file() or document_path.read_text(encoding="utf-8") != str(package.get("full_markdown") or "").rstrip() + "\n":
+            raise RuntimeError("script_package_local_artifact_mismatch")
+        attempt_count = int(state.get("attempt_count") or 0)
+        attempt_history = state.get("attempt_history") or []
+        qa_status = str(state.get("qa_status") or qa_status_of(package))
+        topic_marker = str(state.get("topic_marker") or ("是" if qa_status == "pass" else "需人工处理"))
+
+    if not write_feishu:
+        doc_sync = FeishuDocSyncResult(status="未写入飞书")
+        created_id = ""
+    else:
+        stored_doc_sync = state.get("doc_sync")
+        if isinstance(stored_doc_sync, dict) and str(stored_doc_sync.get("url") or ""):
+            doc_sync = FeishuDocSyncResult(**{key: str(stored_doc_sync.get(key) or "") for key in ("url", "folder_url", "status", "error")})
+        else:
+            doc_sync = try_create_feishu_document(token, identity["title"], package)
+            state.update({"stage": "document_saved", "doc_sync": asdict(doc_sync)})
+            write_transaction(state_path, state)
+
+        row = package_row(topic, package, Path(str(state["document_path"])), doc_sync, attempts=attempt_count)
+        existing = exact_script_package_records(token, app_token, table_ids["script_package"], identity, state)
+        if existing:
+            created_id = str(existing[0]["record_id"])
+        else:
+            stage = str(state.get("stage") or "")
+            post_attempt_count = int(state.get("post_attempt_count") or 0)
+            if stage == "post_unknown":
+                raise RuntimeError("script_package_post_unknown_unresolved")
+            if stage == "post_failed_before_commit" and post_attempt_count >= 2:
+                raise RuntimeError("script_package_post_retry_exhausted")
+            state.update({"stage": "posting", "post_attempt_count": post_attempt_count + 1})
+            write_transaction(state_path, state)
+            try:
+                acknowledged_id = create_script_package_record(token, app_token, table_ids["script_package"], row)
+                if not acknowledged_id:
+                    raise RuntimeError("script_package_post_malformed_ack")
+            except Exception as exc:
+                if post_status_unknown(exc):
+                    state["stage"] = "post_unknown"
+                    write_transaction(state_path, state)
+                    committed = exact_script_package_records(token, app_token, table_ids["script_package"], identity, state)
+                    if not committed:
+                        raise RuntimeError("script_package_post_unknown_unresolved") from exc
+                    created_id = str(committed[0]["record_id"])
+                else:
+                    state["stage"] = "post_failed_before_commit"
+                    write_transaction(state_path, state)
+                    raise
+            else:
+                committed = exact_script_package_records(token, app_token, table_ids["script_package"], identity, state)
+                if len(committed) != 1 or str(committed[0]["record_id"]) != acknowledged_id:
+                    raise RuntimeError("script_package_post_readback_mismatch")
+                created_id = acknowledged_id
+
+        state.update({"stage": "06_committed", "script_package_record_id": created_id})
+        write_transaction(state_path, state)
+        mark_topic_generated_and_verify(
+            token, app_token, table_ids["topic_decision"], identity["source_record_id"], topic_marker,
+        )
+        state["stage"] = "complete"
+        write_transaction(state_path, state)
+
+    return {
+        "record_id": identity["source_record_id"],
+        "topic_title": identity["title"],
+        "document_path": str(state["document_path"]),
+        "feishu_document_url": doc_sync.url,
+        "doc_sync_status": doc_sync.status,
+        "qa_status": qa_status,
+        "attempts": attempt_count,
+        "attempt_history": attempt_history,
+        "created_script_package_id": created_id,
+        "topic_marker": topic_marker if write_feishu else "",
+        "marked_topic": write_feishu,
+        "reconciled_existing": False,
+    }
+
+
 def main() -> int:
     load_local_env()
     parser = argparse.ArgumentParser()
@@ -905,34 +1157,17 @@ def main() -> int:
         ensure_text_fields(token, app_token, table_ids["script_package"], SCRIPT_PACKAGE_FIELDS)
 
     results: list[dict[str, Any]] = []
-    for record, topic in zip(records, topic_cards):
-        package, attempt_count, attempt_history = generate_package_with_retry(topic, args.timeout_seconds)
-        qa_status = qa_status_of(package)
-        document_path = write_package_markdown(topic, package)
-        title = str(topic.get("topic_title") or package.get("topic_title") or "未命名选题")
-        doc_sync = try_create_feishu_document(token, title, package) if args.write_feishu else FeishuDocSyncResult(status="未写入飞书")
-        row = package_row(topic, package, document_path, doc_sync, attempts=attempt_count)
-        created_id = ""
-        topic_marker = "是" if qa_status == "pass" else "需人工处理"
-        if args.write_feishu:
-            created_id = create_script_package_record(token, app_token, table_ids["script_package"], row)
-            mark_topic_generated(token, app_token, table_ids["topic_decision"], str(record["record_id"]), marker=topic_marker)
-        result = {
-            "record_id": record.get("record_id"),
-            "topic_title": topic.get("topic_title"),
-            "document_path": str(document_path),
-            "feishu_document_url": doc_sync.url,
-            "doc_sync_status": doc_sync.status,
-            "qa_status": qa_status,
-            "attempts": attempt_count,
-            "attempt_history": attempt_history,
-            "created_script_package_id": created_id,
-            "topic_marker": topic_marker if args.write_feishu else "",
-            "marked_topic": bool(args.write_feishu),
-        }
-        results.append(result)
-        log(json.dumps({"event": "topic_done", **result}, ensure_ascii=False))
-        time.sleep(0.2)
+    try:
+        for record, topic in zip(records, topic_cards):
+            result = process_topic(token, app_token, table_ids, record, topic, args.timeout_seconds, args.write_feishu)
+            results.append(result)
+            log(json.dumps({"event": "topic_done", **result}, ensure_ascii=False))
+            time.sleep(0.2)
+    except Exception as exc:
+        failure = {"ok": False, "error": compact(exc, 1000), "results": results}
+        log(json.dumps({"event": "transaction_stopped", **failure}, ensure_ascii=False))
+        print(json.dumps(failure, ensure_ascii=False))
+        return 4
 
     print(json.dumps({"ok": True, "version": RUNNER_VERSION, "results": results}, ensure_ascii=False, indent=2))
     return 0
