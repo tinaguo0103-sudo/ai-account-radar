@@ -146,6 +146,7 @@ def resolve_owner_projection(
         raise OwnerProjectionError("owner_plan_fingerprint_invalid")
     _, by_url = validate_records(records)
     mappings: list[dict[str, Any]] = []
+    skipped_historical_group_count = 0
     grouped: dict[tuple[str, ...], list[tuple[int, content_sampler.ContentItem]]] = defaultdict(list)
     for order, item in enumerate(items):
         grouped[owner_key(item)].append((order, item))
@@ -153,7 +154,40 @@ def resolve_owner_projection(
     for group in grouped.values():
         representative = group[0][1]
         candidates = owner_candidates(representative, records, by_url)
-        if not candidates:
+        current_candidates = [
+            record for record in candidates
+            if run_matches(record["fields"], run_id)
+        ]
+        historical_candidates = [
+            record for record in candidates
+            if not run_matches(record["fields"], run_id)
+        ]
+        if len(current_candidates) > 1:
+            raise OwnerProjectionError("canonical_owner_ambiguous")
+        if not current_candidates and historical_candidates:
+            skipped_historical_group_count += 1
+            for owner in historical_candidates:
+                fields = owner["fields"]
+                if not str(fields.get("内容指纹") or ""):
+                    raise OwnerProjectionError("canonical_owner_fingerprint_missing")
+                if not record_id(owner):
+                    raise OwnerProjectionError("canonical_owner_record_id_missing")
+            historical_fingerprints = sorted({
+                str(owner["fields"].get("内容指纹") or "")
+                for owner in historical_candidates
+            })
+            for order, item in group:
+                mappings.append({
+                    "order": order,
+                    "planned_fingerprint": item.fingerprint,
+                    "owner_fingerprint": "",
+                    "record_id": "",
+                    "resolution": "historical_duplicate_skipped",
+                    "metadata_drift": [],
+                    "historical_owner_fingerprints": historical_fingerprints,
+                })
+            continue
+        if not current_candidates:
             if not allow_new:
                 raise OwnerProjectionError("canonical_owner_missing")
             owner_fingerprint = representative.fingerprint
@@ -167,9 +201,7 @@ def resolve_owner_projection(
                     "metadata_drift": [],
                 })
             continue
-        if len(candidates) != 1:
-            raise OwnerProjectionError("canonical_owner_ambiguous")
-        owner = candidates[0]
+        owner = current_candidates[0]
         fields = owner["fields"]
         owner_fingerprint = str(fields.get("内容指纹") or "")
         owner_record_id = record_id(owner)
@@ -177,8 +209,6 @@ def resolve_owner_projection(
             raise OwnerProjectionError("canonical_owner_fingerprint_missing")
         if not owner_record_id:
             raise OwnerProjectionError("canonical_owner_record_id_missing")
-        if not run_matches(fields, run_id):
-            raise OwnerProjectionError("canonical_owner_wrong_run")
         for order, item in group:
             if not normalized(item.url) and not composite_matches(item, fields):
                 raise OwnerProjectionError("url_empty_composite_owner_mismatch")
@@ -198,6 +228,8 @@ def resolve_owner_projection(
     first_owner_order: dict[str, int] = {}
     aliases_by_owner: dict[str, list[str]] = defaultdict(list)
     for row in mappings:
+        if row["resolution"] == "historical_duplicate_skipped":
+            continue
         first_owner_order.setdefault(row["owner_fingerprint"], row["order"])
         if row["resolution"] in {"alias", "new_alias"}:
             aliases_by_owner[row["owner_fingerprint"]].append(row["planned_fingerprint"])
@@ -250,6 +282,14 @@ def resolve_owner_projection(
         "shared_alias_count": shared_alias_count,
         "additional_owner_count": additional_owner_count,
         "new_owner_count": sum(row["resolution"] == "new" for row in mappings),
+        "safe_count": len(projected_items),
+        "created_count": sum(row["resolution"] == "new" for row in mappings),
+        "skipped_historical_count": sum(
+            row["resolution"] == "historical_duplicate_skipped" for row in mappings
+        ),
+        "skipped_historical_group_count": skipped_historical_group_count,
+        "blocked_count": 0,
+        "blocked_reasons": [],
         "per_source_owner_counts": dict(Counter(item.source_type for item in projected_items)),
         "ordered_owner_fingerprints": [item.fingerprint for item in projected_items],
         "mappings": mappings,

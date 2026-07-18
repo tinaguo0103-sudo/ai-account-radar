@@ -26,6 +26,7 @@ BASE_URL = "https://my.feishu.cn/base"
 APP_TOKEN_ENV = "FEISHU_BASE_APP_TOKEN"
 
 TABLE_KEYS = list(LOGICAL_TABLES)
+OPTIONAL_TABLE_NAMES = {table_name("learning_record")}
 
 CONSOLE_FIELDS = [
     ("卡片类型", 3),
@@ -52,6 +53,14 @@ def require_env() -> str:
     if not app_token:
         raise SystemExit("FEISHU_BASE_APP_TOKEN is required")
     return app_token
+
+
+def missing_table_report(tables: dict[str, str | None]) -> dict[str, list[str]]:
+    missing = [name for name, table_id in tables.items() if not table_id]
+    return {
+        "required": [name for name in missing if name not in OPTIONAL_TABLE_NAMES],
+        "optional": [name for name in missing if name in OPTIONAL_TABLE_NAMES],
+    }
 
 
 def now_cn() -> str:
@@ -342,7 +351,11 @@ def summarize_sources(records: list[dict[str, Any]]) -> str:
 
 
 def build_console_cards(app_token: str, table_ids: dict[str, str], stats: dict[str, Any], updated_at: str) -> list[dict[str, str]]:
-    links = {name: table_url(app_token, table_id) for name, table_id in table_ids.items()}
+    links = {
+        name: table_url(app_token, table_id)
+        for name, table_id in table_ids.items()
+        if table_id
+    }
     return [
         {
             "动作": "系统地图：内容从哪里来，到哪里去",
@@ -683,9 +696,13 @@ def main() -> int:
     token = feishu.tenant_token()
     tables_by_name = {table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}
     tables = {table_name(key): resolve_table_id(tables_by_name, key) for key in TABLE_KEYS}
-    missing = [table_name(key) for key in TABLE_KEYS if not tables.get(table_name(key))]
-    if missing:
-        raise SystemExit(f"Missing required tables: {missing}")
+    missing = missing_table_report(tables)
+    if missing["required"]:
+        raise SystemExit(f"Missing required tables: {missing['required']}")
+    optional_warnings = [
+        {"code": "optional_table_missing", "table": name}
+        for name in missing["optional"]
+    ]
 
     inbox_records = all_records(token, app_token, tables["03 内容收件箱"])
     topic_records = all_records(token, app_token, tables["04 分析与选题"])
@@ -740,6 +757,7 @@ def main() -> int:
         "created_console_fields": created_fields,
         "console_sync": console_sync,
         "views": views,
+        "optional_followup_warnings": optional_warnings,
     }, ensure_ascii=False, indent=2))
     return 0
 

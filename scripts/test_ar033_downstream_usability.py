@@ -121,8 +121,33 @@ class AR033DownstreamUsabilityTests(unittest.TestCase):
             payload = json.loads(path.read_text(encoding="utf-8"))
         self.assertFalse(payload["ok"])
         self.assertEqual(payload["status"], "failed_or_partial")
+        self.assertFalse(payload["business_continuation_ok"])
         self.assertTrue(payload["downstream_usable"])
         self.assertEqual(payload["run_id"], "run_20260716_080311")
+
+    def test_outer_log_keeps_partial_truth_when_entrypoint_can_continue(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp, \
+                mock.patch.object(run_daily_collection_job, "LOG_DIR", Path(tmp)):
+            daily = Path(tmp) / "daily_pipeline_2026-07-16.json"
+            with mock.patch.object(run_daily_collection_job, "datetime") as fake_datetime:
+                fake_datetime.now.return_value.strftime.return_value = "2026-07-16"
+                fake_datetime.now.return_value.isoformat.return_value = "2026-07-16T08:08:10"
+                daily.write_text(json.dumps({
+                    "run_id": "run_20260716_080311",
+                    "full_collection_success": False,
+                    "collection_status": "completed_with_failures",
+                    "downstream_usable": True,
+                    "downstream_usable_reason": "source_failures_isolated",
+                    "today_candidates": 9,
+                }), encoding="utf-8")
+                path = run_daily_collection_job.write_job_log([
+                    {"name": "run full-source daily pipeline", "returncode": 0},
+                ])
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        self.assertFalse(payload["ok"])
+        self.assertTrue(payload["business_continuation_ok"])
+        self.assertEqual("completed_with_failures", payload["status"])
+        self.assertTrue(payload["downstream_usable"])
 
 
 if __name__ == "__main__":

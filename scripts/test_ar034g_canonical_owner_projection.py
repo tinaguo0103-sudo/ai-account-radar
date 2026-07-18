@@ -204,10 +204,6 @@ class CanonicalOwnerProjectionTests(unittest.TestCase):
         duplicate_url["record_id"] = "rec-other"
         duplicate_url["fields"]["内容指纹"] = "owner-other"
         mutations.append([base, duplicate_url])
-        wrong_run = copy.deepcopy(base)
-        wrong_run["fields"]["运行批次"] = "other"
-        wrong_run["fields"]["最近参与运行批次"] = "other"
-        mutations.append([wrong_run])
         missing_id = copy.deepcopy(base)
         missing_id["record_id"] = ""
         mutations.append([missing_id])
@@ -219,6 +215,17 @@ class CanonicalOwnerProjectionTests(unittest.TestCase):
             with self.subTest(records=records):
                 with self.assertRaises(owners.OwnerProjectionError):
                     owners.resolve_owner_projection([planned], records, RUN_ID)
+
+    def test_exact_historical_owner_is_read_only_and_skipped(self) -> None:
+        planned = item(1, "抖音视频")
+        historical = record(planned, fingerprint="historical-owner")
+        historical["fields"]["运行批次"] = "run_20260717_000001"
+        historical["fields"]["最近参与运行批次"] = "run_20260717_000001"
+        projection = owners.resolve_owner_projection([planned], [historical], RUN_ID)
+        self.assertEqual([], projection.projected_items)
+        self.assertEqual(1, projection.manifest["skipped_historical_count"])
+        self.assertEqual(1, projection.manifest["skipped_historical_group_count"])
+        self.assertEqual("historical_duplicate_skipped", projection.manifest["mappings"][0]["resolution"])
 
     def test_url_empty_requires_unique_full_composite(self) -> None:
         planned = item(1, "公众号文章", url="")

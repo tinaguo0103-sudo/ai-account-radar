@@ -55,12 +55,16 @@ def actionable_title_family_report(rows: list[dict[str, Any]]) -> dict[str, Any]
     families = Counter(editorial_title_family(row.get("选题命题") or row.get("selected_visible_title") or "") for row in actionable)
     maximum = max(families.values(), default=0)
     rate = maximum / len(actionable) if actionable else 0
+    applicable = len(actionable) >= 4
     return {
         "actionable_count": len(actionable),
         "family_counts": dict(families),
         "max_family_rate": rate,
         "threshold": 0.30,
-        "ok": rate <= 0.30,
+        "minimum_applicable_n": 4,
+        "applicable": applicable,
+        "classification": "evaluated" if applicable else "not_applicable_small_n",
+        "ok": not applicable or rate <= 0.30,
     }
 
 

@@ -1022,6 +1022,8 @@ def aggregate_replay_outputs(
             "guard_blocked_count": guard_blocked_count,
             "ranking_bijection_ok": ranking_bijection_ok,
             "actionable_title_family_ok": actionable_title_families["ok"],
+            "actionable_title_family_classification": actionable_title_families["classification"],
+            "actionable_title_family_applicable": actionable_title_families["applicable"],
             "actionable_title_max_family_rate": actionable_title_families["max_family_rate"],
             "writes_feishu": False,
             "outputs": {

@@ -64,10 +64,11 @@ def run_step(name: str, command: list[str]) -> dict[str, Any]:
 def write_job_log(steps: list[dict[str, Any]]) -> Path:
     LOG_DIR.mkdir(parents=True, exist_ok=True)
     path = LOG_DIR / f"scheduled_daily_collection_{datetime.now().strftime('%Y-%m-%d')}.json"
-    ok = all(step["returncode"] == 0 for step in steps)
+    execution_ok = all(step["returncode"] == 0 for step in steps)
     payload = {
-        "ok": ok,
-        "status": "completed" if ok else "failed_or_partial",
+        "ok": execution_ok,
+        "status": "completed" if execution_ok else "failed_or_partial",
+        "business_continuation_ok": execution_ok,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "steps": steps,
     }
@@ -89,6 +90,12 @@ def write_job_log(steps: list[dict[str, Any]]) -> Path:
         ):
             if key in daily_log:
                 payload[key] = daily_log[key]
+        full_success = daily_log.get("full_collection_success") is True
+        downstream_usable = daily_log.get("downstream_usable") is True
+        payload["ok"] = execution_ok and full_success
+        payload["business_continuation_ok"] = execution_ok and (full_success or downstream_usable)
+        if execution_ok and not full_success and downstream_usable:
+            payload["status"] = "completed_with_failures"
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
     return path
 

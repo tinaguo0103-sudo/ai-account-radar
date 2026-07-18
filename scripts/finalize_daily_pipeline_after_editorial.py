@@ -146,11 +146,18 @@ def update_pipeline_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool)
     existing_steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
     full_collection_success = bool(payload.get("full_collection_success", payload.get("ok", False)))
     overall_ok = bool(ok and full_collection_success)
+    optional_failures = [
+        str(step.get("name") or "")
+        for step in tail_steps
+        if step.get("optional_followup_failed")
+    ]
     payload.update({
         "ok": overall_ok,
         "recovered_ok": ok,
         "editorial_finalized": ok,
         "finalization_ok": ok,
+        "optional_followup_failed": bool(optional_failures),
+        "optional_followup_failures": optional_failures,
         "status": "completed" if overall_ok else ("completed_with_failures" if ok else "failed"),
         "recovered_from": "external_editorial_finalizer",
         "run_id": run_id or payload.get("run_id", ""),
@@ -184,11 +191,18 @@ def update_scheduled_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool
     existing_steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
     full_collection_success = bool(payload.get("full_collection_success", payload.get("ok", False)))
     overall_ok = bool(ok and full_collection_success)
+    optional_failures = [
+        str(step.get("name") or "")
+        for step in tail_steps
+        if step.get("optional_followup_failed")
+    ]
     payload.update({
         "ok": overall_ok,
         "recovered_ok": ok,
         "editorial_finalized": ok,
         "finalization_ok": ok,
+        "optional_followup_failed": bool(optional_failures),
+        "optional_followup_failures": optional_failures,
         "status": "completed" if overall_ok else ("completed_with_failures" if ok else "failed"),
         "recovered_from": "external_editorial_finalizer",
         "run_id": run_id or payload.get("run_id", ""),
@@ -257,8 +271,11 @@ def main() -> int:
 
         refresh_cmd = [py, str(ROOT / "scripts" / "refresh_console_daily.py")]
         steps.append(run_step("refresh Feishu 00 主控台 after external editorial", refresh_cmd))
+        if steps[-1]["returncode"] != 0:
+            steps[-1]["optional_followup_failed"] = True
+            steps[-1]["note"] = "Feishu 04 is finalized; optional console refresh failed."
 
-    ok = all(step["returncode"] == 0 for step in steps)
+    ok = daily_pipeline.business_steps_ok(steps)
     log_path = update_pipeline_log(args.run_id, steps, ok)
     scheduled_log = update_scheduled_log(args.run_id, steps, ok) if args.update_scheduled_log else ""
     print(json.dumps({
@@ -267,6 +284,7 @@ def main() -> int:
         "input": str(today_path),
         "log": str(log_path),
         "scheduled_log": str(scheduled_log) if scheduled_log else "",
+        "optional_followup_failed": any(step.get("optional_followup_failed") for step in steps),
     }, ensure_ascii=False, indent=2))
     return 0 if ok else 1
 

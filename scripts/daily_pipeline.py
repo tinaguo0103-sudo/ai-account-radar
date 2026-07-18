@@ -74,6 +74,29 @@ def run_optional_step(name: str, command: list[str], env: dict[str, str] | None 
     return result
 
 
+def isolate_source_failure(
+    step: dict[str, Any],
+    *,
+    source: str,
+    state: str,
+    reason: str = "",
+) -> dict[str, Any]:
+    original_returncode = int(step.get("returncode") or 1)
+    step.update({
+        "returncode": 0,
+        "optional_returncode": original_returncode,
+        "optional_failed": True,
+        "source_local_failure": True,
+        "source": source,
+        "source_outcome": state,
+        "source_rows": 0,
+        "note": f"{source} source failed and was isolated; unrelated sources continue.",
+    })
+    if reason:
+        step["source_failure_reason"] = reason
+    return step
+
+
 def douyin_probe_allowed(chrome_step: dict[str, Any], preflight_step: dict[str, Any] | None) -> bool:
     return chrome_step.get("returncode") == 0 and preflight_step is not None and preflight_step.get("returncode") == 0
 
@@ -87,6 +110,13 @@ def collection_failure_steps(steps: list[dict[str, Any]]) -> list[dict[str, Any]
 
 def deferred_exit_code(steps: list[dict[str, Any]]) -> int:
     return 1 if collection_failure_steps(steps) else 0
+
+
+def business_steps_ok(steps: list[dict[str, Any]]) -> bool:
+    return all(
+        step.get("returncode") == 0 or step.get("optional_followup_failed")
+        for step in steps
+    )
 
 
 def require_feishu_env() -> None:
@@ -295,7 +325,11 @@ def is_douyin_account_level_partial(step: dict[str, Any], probe: dict[str, Any])
 
 
 def is_candidate_local_partial(step: dict[str, Any], probe: dict[str, Any]) -> bool:
-    return is_douyin_account_level_partial(step, probe) or bool(step.get("candidate_local_partial"))
+    return (
+        is_douyin_account_level_partial(step, probe)
+        or bool(step.get("candidate_local_partial"))
+        or bool(step.get("source_local_failure"))
+    )
 
 
 def wechat_candidate_partial_checks(outcome: dict[str, Any]) -> dict[str, bool]:
@@ -354,17 +388,24 @@ def downstream_usability_report(
     ]
 
     checks = {
-        "canonical_profile_preflight_ok": successful_step(steps, "start/verify canonical Douyin Chrome CDP")
-        and successful_step(steps, "verify canonical Douyin profile login session"),
-        "planned_equals_attempted": bool(invariants.get("attempted_equals_planned")),
-        "success_plus_failed_equals_attempted": bool(invariants.get("success_plus_failed_equals_attempted")),
-        "account_lineage_unique_and_complete": bool(invariants.get("account_lineage_unique_and_complete")),
-        "failed_accounts_have_zero_artifacts": not failed_artifact_leaks,
-        "item_lineage_ok": bool((probe.get("item_lineage") or {}).get("ok")),
-        "successful_account_artifacts_nonempty": bool(successful_artifact_accounts),
         "today_candidates_nonempty": today_candidates > 0,
         "no_system_level_failures": not hard_failures,
     }
+    douyin_isolated = any(
+        step.get("source_local_failure") and step.get("source") == "douyin"
+        for step in steps
+    )
+    if not douyin_isolated:
+        checks.update({
+            "canonical_profile_preflight_ok": successful_step(steps, "start/verify canonical Douyin Chrome CDP")
+            and successful_step(steps, "verify canonical Douyin profile login session"),
+            "planned_equals_attempted": bool(invariants.get("attempted_equals_planned")),
+            "success_plus_failed_equals_attempted": bool(invariants.get("success_plus_failed_equals_attempted")),
+            "account_lineage_unique_and_complete": bool(invariants.get("account_lineage_unique_and_complete")),
+            "failed_accounts_have_zero_artifacts": not failed_artifact_leaks,
+            "item_lineage_ok": bool((probe.get("item_lineage") or {}).get("ok")),
+            "successful_account_artifacts_nonempty": bool(successful_artifact_accounts),
+        })
     successful_items_declared = sum(int(value or 0) for name, value in per_account_artifacts.items() if name not in failure_names)
     if successful_items_declared > 0:
         closure = ingestion_closure if isinstance(ingestion_closure, dict) else {}
@@ -395,6 +436,16 @@ def downstream_usability_report(
         "downstream_blocked_reasons": blocked_reasons,
         "source_failure_count": len(full_collection_failures),
         "system_failure_count": len(hard_failures),
+        "isolated_source_failures": [
+            {
+                "source": str(step.get("source") or ""),
+                "state": str(step.get("source_outcome") or ""),
+                "reason": str(step.get("source_failure_reason") or ""),
+                "rows": int(step.get("source_rows") or 0),
+            }
+            for step in full_collection_failures
+            if step.get("source_local_failure")
+        ],
         "isolated_failed_account_count": len(failed_accounts),
         "isolated_failed_wechat_item_count": int(wechat_read.get("failed") or 0),
         "isolated_failed_accounts": [
@@ -521,10 +572,15 @@ def main() -> int:
             resolver_cmd.append("--write-feishu")
         steps.append(run_step("resolve URL intake into ContentItem rows", resolver_cmd, env=step_env))
         if steps[-1]["returncode"] != 0:
-            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
-            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
-            return steps[-1]["returncode"]
-        manual_inputs = [URL_RESOLVED_MANUAL]
+            isolate_source_failure(
+                steps[-1],
+                source="url_intake",
+                state="resolver_failed",
+                reason=str(steps[-1].get("stderr") or "url_intake_failed"),
+            )
+            manual_inputs = []
+        else:
+            manual_inputs = [URL_RESOLVED_MANUAL]
 
     if args.fetch_wechat_fulltext_provider or args.wechat_fulltext_provider:
         refresh_attempt_path = OUT / "provider_health" / run_id / "wewe_refresh_attempt.json"
@@ -533,52 +589,72 @@ def main() -> int:
             refresh_cmd.append("--check-only")
         steps.append(run_step("request fixed wewe-rss provider refresh", refresh_cmd, env=step_env))
         refresh_result = stdout_json(steps[-1])
-        if refresh_result.get("status") == "refresh_required":
-            log_path = write_run_log(steps, "dry-run", run_id)
-            print(json.dumps({"ok": False, "wechat_freshness": {"state": "refresh_required", "check_only": True}, "log": str(log_path)}, ensure_ascii=False, indent=2))
-            return 4
-        if steps[-1]["returncode"] != 0:
-            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
-            print(json.dumps({"ok": False, "wechat_freshness": {"state": "provider_failed"}, "log": str(log_path)}, ensure_ascii=False, indent=2))
-            return steps[-1]["returncode"]
-        health_cmd = [py, str(ROOT / "scripts" / "wewe_provider_health.py"), "--check-only", "--run-id", run_id, "--run-started-at-ms", str(run_started_at_ms), "--refresh-result", str(refresh_attempt_path)]
-        steps.append(run_step("verify canonical wewe-rss account and refresh freshness", health_cmd, env=step_env))
-        wechat_freshness = stdout_json(steps[-1])
-        if steps[-1]["returncode"] != 0:
-            log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
-            print(json.dumps({"ok": False, "wechat_freshness": wechat_freshness, "log": str(log_path)}, ensure_ascii=False, indent=2))
-            return steps[-1]["returncode"]
-        if wechat_freshness.get("state") == "updated_no_new_items":
-            provider_cmd = []
+        provider_cmd: list[str] = []
+        if refresh_result.get("status") == "refresh_required" or steps[-1]["returncode"] != 0:
+            state = str(refresh_result.get("status") or "provider_failed")
+            isolate_source_failure(
+                steps[-1],
+                source="wechat",
+                state=state,
+                reason=str(refresh_result.get("error") or steps[-1].get("stderr") or state),
+            )
+            wechat_freshness = {
+                "ok": False,
+                "state": state,
+                "run_id": run_id,
+                "source_rows": 0,
+            }
         else:
-            provider_cmd = [
-                py,
-                str(ROOT / "scripts" / "wewe_current_feed_reader.py"),
-                "--refresh-result",
-                str(refresh_attempt_path),
-                "--run-id",
-                run_id,
-                "--run-started-at-ms",
-                str(run_started_at_ms),
-                "--out",
-                str(WECHAT_FULLTEXT_RESOLVED_MANUAL),
-                "--csv",
-                str(OUT / "wechat_fulltext_provider_items.csv"),
-                "--report",
-                str(OUT / "provider_health" / run_id / "wewe_current_feed_read_report.json"),
-            ]
+            health_cmd = [py, str(ROOT / "scripts" / "wewe_provider_health.py"), "--check-only", "--run-id", run_id, "--run-started-at-ms", str(run_started_at_ms), "--refresh-result", str(refresh_attempt_path)]
+            steps.append(run_step("verify canonical wewe-rss account and refresh freshness", health_cmd, env=step_env))
+            wechat_freshness = stdout_json(steps[-1])
+            if steps[-1]["returncode"] != 0:
+                isolate_source_failure(
+                    steps[-1],
+                    source="wechat",
+                    state=str(wechat_freshness.get("state") or "provider_failed"),
+                    reason=str(wechat_freshness.get("error") or steps[-1].get("stderr") or "wechat_health_failed"),
+                )
+            elif wechat_freshness.get("state") != "updated_no_new_items":
+                provider_cmd = [
+                    py,
+                    str(ROOT / "scripts" / "wewe_current_feed_reader.py"),
+                    "--refresh-result",
+                    str(refresh_attempt_path),
+                    "--run-id",
+                    run_id,
+                    "--run-started-at-ms",
+                    str(run_started_at_ms),
+                    "--out",
+                    str(WECHAT_FULLTEXT_RESOLVED_MANUAL),
+                    "--csv",
+                    str(OUT / "wechat_fulltext_provider_items.csv"),
+                    "--report",
+                    str(OUT / "provider_health" / run_id / "wewe_current_feed_read_report.json"),
+                ]
         if provider_cmd:
             steps.append(run_step("fetch refreshed WeChat fulltext provider into ContentItem rows", provider_cmd, env=step_env))
             wechat_read_outcome = stdout_json(steps[-1])
-            if steps[-1]["returncode"] != 0:
-                log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
-                print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
-                return steps[-1]["returncode"]
-            if wechat_read_outcome.get("status") == "completed_with_failures":
+            candidate_partial = (
+                wechat_read_outcome.get("status") == "completed_with_failures"
+                and bool(wechat_read_outcome.get("downstream_usable"))
+            )
+            if steps[-1]["returncode"] != 0 and not candidate_partial:
+                isolate_source_failure(
+                    steps[-1],
+                    source="wechat",
+                    state=str(wechat_read_outcome.get("status") or "provider_failed"),
+                    reason=str(wechat_read_outcome.get("error") or steps[-1].get("stderr") or "wechat_read_failed"),
+                )
+            else:
+                if steps[-1]["returncode"] != 0:
+                    steps[-1]["optional_returncode"] = steps[-1]["returncode"]
+                    steps[-1]["returncode"] = 0
+                manual_inputs.append(WECHAT_FULLTEXT_RESOLVED_MANUAL)
+            if candidate_partial:
                 steps[-1]["optional_failed"] = True
                 steps[-1]["candidate_local_partial"] = True
                 steps[-1]["note"] = "WeChat candidate-local read failures were isolated; successful truthful rows continue."
-            manual_inputs.append(WECHAT_FULLTEXT_RESOLVED_MANUAL)
 
     fetch_douyin = not args.no_fetch_douyin_cdp_source_watch or args.fetch_douyin_cdp_source_watch
     if fetch_douyin:
@@ -621,6 +697,17 @@ def main() -> int:
                 run_id,
                 steps,
                 note="Canonical Douyin profile identity/login preflight failed; Douyin probe and cache reuse were blocked.",
+            )
+            failed_preflight = (
+                preflight_step
+                if preflight_step is not None and preflight_step.get("returncode") != 0
+                else chrome_step
+            )
+            isolate_source_failure(
+                failed_preflight,
+                source="douyin",
+                state="profile_or_login_failed",
+                reason=str(failed_preflight.get("stderr") or "douyin_profile_or_login_failed"),
             )
         elif reuse_douyin_cache:
             cached_paths = cached_douyin_manual_paths()
@@ -688,10 +775,22 @@ def main() -> int:
                 )
             except LineageError as exc:
                 douyin_step["lineage_error"] = str(exc)
-                steps.append({"name": "verify Douyin successful-item source artifact", "command": ["lineage-check"], "started_at": datetime.now().isoformat(timespec="seconds"), "returncode": 3, "stdout": "", "stderr": str(exc)})
-                log_path = write_run_log(steps, "write-feishu" if args.write_feishu else "dry-run", run_id)
-                print(json.dumps({"ok": False, "status": "failed_or_partial", "error": str(exc), "log": str(log_path)}, ensure_ascii=False, indent=2))
-                return 3
+                lineage_step = {
+                    "name": "verify Douyin successful-item source artifact",
+                    "command": ["lineage-check"],
+                    "started_at": datetime.now().isoformat(timespec="seconds"),
+                    "returncode": 3,
+                    "stdout": "",
+                    "stderr": str(exc),
+                }
+                isolate_source_failure(
+                    lineage_step,
+                    source="douyin",
+                    state="lineage_failed",
+                    reason=str(exc),
+                )
+                steps.append(lineage_step)
+                douyin_source_lineage = None
             active_douyin_probe_result = selected_result
             if douyin_source_lineage:
                 manual_inputs.append(selected_manual)
@@ -796,7 +895,18 @@ def main() -> int:
         steps.append(defer_step)
         source_failures = collection_failure_steps(steps)
         collection_ok = not source_failures
-        downstream_report = downstream_usability_report(steps, output_dir, generated_count, active_douyin_probe_result, ingestion_lineage)
+        downstream_report = downstream_usability_report(
+            steps,
+            output_dir,
+            generated_count,
+            active_douyin_probe_result,
+            ingestion_lineage,
+            wechat_read_outcome=wechat_read_outcome,
+        )
+        downstream_report["douyin_partial_ingestion"] = douyin_source_lineage or {}
+        downstream_report["ingestion_bijection"] = ingestion_lineage or {}
+        downstream_report["wechat_freshness"] = wechat_freshness or {}
+        downstream_report["wechat_read_outcome"] = wechat_read_outcome or {}
         log_path = write_run_log(
             steps,
             "write-feishu" if args.write_feishu else "dry-run",
@@ -823,7 +933,7 @@ def main() -> int:
         }
         payload.update(downstream_report)
         print(json.dumps(payload, ensure_ascii=False, indent=2))
-        return deferred_exit_code(steps)
+        return 0 if downstream_report.get("downstream_usable") else deferred_exit_code(steps)
 
     editorial_report_path = output_dir / "editorial_skill_report.json"
     editorial_cmd = [
@@ -867,12 +977,21 @@ def main() -> int:
 
         refresh_cmd = [py, str(ROOT / "scripts" / "refresh_console_daily.py")]
         steps.append(run_step("refresh Feishu 00 主控台", refresh_cmd, env=step_env))
+        if steps[-1]["returncode"] != 0:
+            steps[-1]["optional_followup_failed"] = True
+            steps[-1]["note"] = "Feishu 04 is finalized; optional console refresh failed."
 
-    ok = all(step["returncode"] == 0 for step in steps)
+    ok = business_steps_ok(steps)
     final_report = dict(downstream_report)
     final_report.update({
         "editorial_finalized": ok,
         "finalization_ok": ok,
+        "optional_followup_failed": any(step.get("optional_followup_failed") for step in steps),
+        "optional_followup_failures": [
+            str(step.get("name") or "")
+            for step in steps
+            if step.get("optional_followup_failed")
+        ],
         "status": "completed" if ok and downstream_report.get("full_collection_success") else (
             "completed_with_failures" if ok else "failed"
         ),

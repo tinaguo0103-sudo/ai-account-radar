@@ -2720,6 +2720,11 @@ def write_content_ledger_to_feishu(
     return {
         "table": table_name("content_inbox"),
         "run_id": run_id,
+        "safe_count": owner_projection.manifest["safe_count"],
+        "created_count": created_records,
+        "skipped_historical_count": owner_projection.manifest["skipped_historical_count"],
+        "blocked_count": owner_projection.manifest["blocked_count"],
+        "blocked_reasons": owner_projection.manifest["blocked_reasons"],
         "created_fields": created_fields,
         "created_records": created_records,
         "updated_existing": updated_existing,
