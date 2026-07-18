@@ -16,12 +16,14 @@ import subprocess
 import sys
 import tempfile
 import time
+from urllib.parse import urlsplit
 from dataclasses import dataclass
 from datetime import date, datetime, timedelta
 from pathlib import Path
 from typing import Any
 from urllib.parse import quote
 
+from codex_cli_path import codex_runtime_diagnostics, resolve_codex_cli
 from local_env import load_local_env
 from feishu_user_oauth_store import preserve_latest_user_tokens, sync_user_tokens
 
@@ -90,7 +92,6 @@ USER_VISIBLE_BOUNDARY_PATTERNS = (
     "选题系统复盘",
     "沉淀资产",
 )
-DEFAULT_CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 TEST_TITLE_PREFIXES = ("【测试】", "【流程测试】", "【部署后测试】", "【模拟测试】", "[测试]", "测试：", "测试:")
 TEST_TITLE_TAG_RE = re.compile(r"^(【[^】]*(测试|测速)[^】]*】|\[[^\]]*(测试|测速)[^\]]*\])")
 DOC_SYNC_MAX_PARAGRAPHS = 180
@@ -395,7 +396,15 @@ def acquire_lock() -> Any:
 
 
 def codex_bin() -> str:
-    return os.getenv("CODEX_BIN", DEFAULT_CODEX_BIN)
+    return resolve_codex_cli(os.getenv("CODEX_BIN", ""))
+
+
+def codex_runtime_preflight() -> dict[str, Any]:
+    return codex_runtime_diagnostics(os.getenv("CODEX_BIN", ""))
+
+
+def codex_home() -> str:
+    return str(Path(os.getenv("CODEX_HOME") or (Path.home() / ".codex")).expanduser())
 
 
 def script_package_skill_name() -> str:
@@ -549,6 +558,8 @@ def run_codex_for_topic(topic: dict[str, Any], timeout_seconds: int, previous_pa
             "--skip-git-repo-check",
             "--sandbox",
             "workspace-write",
+            "--add-dir",
+            codex_home(),
             "--output-schema",
             str(SCHEMA),
             "--output-last-message",
@@ -773,10 +784,22 @@ def package_row(topic: dict[str, Any], package: dict[str, Any], document_path: P
     }
 
 
-def clickable_link_value(url: str, label: str, field_type: Any) -> Any:
-    clean_url = str(url or "").strip()
+def validated_http_link(url: Any, field_name: str) -> str:
+    if not isinstance(url, str):
+        raise ValueError(f"{field_name} must be an http(s) URL string")
+    clean_url = url.strip()
     if not clean_url:
         return ""
+    parsed = urlsplit(clean_url)
+    if parsed.scheme not in {"http", "https"} or not parsed.netloc or parsed.username or parsed.password:
+        raise ValueError(f"{field_name} must be a valid http(s) URL")
+    return clean_url
+
+
+def clickable_link_value(url: Any, label: str, field_type: Any, field_name: str = "Link field") -> Any:
+    clean_url = validated_http_link(url, field_name)
+    if not clean_url:
+        return None if int(field_type or 0) == BITABLE_URL_FIELD_TYPE else ""
     try:
         normalized_type = int(field_type or 0)
     except (TypeError, ValueError):
@@ -790,11 +813,22 @@ def format_script_package_record_fields(row: dict[str, Any], field_meta: dict[st
     fields = dict(row)
     for field_name, spec in CLICKABLE_LINK_FIELDS.items():
         label = spec["label"]
-        value = str(fields.get(field_name) or "").strip()
-        fields[field_name] = clickable_link_value(value, label, field_meta.get(field_name, {}).get("type"))
+        value = fields.get(field_name, "")
+        rendered = clickable_link_value(value, label, field_meta.get(field_name, {}).get("type"), field_name)
+        if rendered is None:
+            fields.pop(field_name, None)
+        else:
+            fields[field_name] = rendered
         mirror_field = spec["mirror_field"]
         if mirror_field in field_meta:
-            fields[mirror_field] = clickable_link_value(value, label, field_meta.get(mirror_field, {}).get("type"))
+            mirror_type = field_meta[mirror_field].get("type")
+            if int(mirror_type or 0) != BITABLE_URL_FIELD_TYPE:
+                raise ValueError(f"{mirror_field} must be a Feishu Link field (type 15)")
+            mirror_value = clickable_link_value(value, label, mirror_type, mirror_field)
+            if mirror_value is None:
+                fields.pop(mirror_field, None)
+            else:
+                fields[mirror_field] = mirror_value
     return fields
 
 
@@ -841,6 +875,11 @@ def main() -> int:
     parser.add_argument("--include-test-records", action="store_true", help="Allow obvious test-titled topics to be processed.")
     parser.add_argument("--skip-codex", action="store_true", help="Only list ready topics. Useful for scheduler health checks.")
     args = parser.parse_args()
+
+    runtime = codex_runtime_preflight()
+    if not runtime["ok"]:
+        print(json.dumps(runtime, ensure_ascii=False))
+        return 4
 
     _lock = acquire_lock()
     max_age_days = max(0, args.max_age_days)

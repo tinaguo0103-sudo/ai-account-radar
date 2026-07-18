@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import hashlib
+import json
 import os
 import plistlib
 import shutil
@@ -11,6 +12,7 @@ import subprocess
 import sys
 from pathlib import Path
 
+from codex_cli_path import codex_runtime_diagnostics, resolve_codex_cli
 from feishu_user_oauth_store import preserve_latest_user_tokens, sync_user_tokens
 
 
@@ -19,7 +21,6 @@ DEFAULT_RUNTIME_DIR = Path.home() / ".codex" / "ai-account-radar-runtime"
 LABEL = "com.austin.ai-account-radar.script-package-watcher"
 PLIST_PATH = Path.home() / "Library" / "LaunchAgents" / f"{LABEL}.plist"
 LOG_DIR = Path.home() / "Library" / "Logs" / "ai-account-radar"
-CODEX_BIN = "/Applications/Codex.app/Contents/Resources/codex"
 RUNTIME_DIRS = ("scripts", "config", "skills", "docs")
 RUNTIME_FILES = ("README.md", ".env.local", ".env")
 DEFAULT_DISPLAY_LINK_NAME = "06 完整脚本与制作包"
@@ -138,6 +139,9 @@ def runtime_sync_report(runtime_dir: Path) -> dict[str, object]:
 
 def build_plist(runtime_dir: Path, display_root: Path, interval_minutes: float, limit: int, max_age_days: int, python_bin: str) -> dict[str, object]:
     interval = max(1.0, float(interval_minutes))
+    codex_bin = resolve_codex_cli(os.getenv("CODEX_BIN", ""))
+    home = Path.home()
+    codex_home = home / ".codex"
     return {
         "Label": LABEL,
         "ProgramArguments": [
@@ -152,8 +156,10 @@ def build_plist(runtime_dir: Path, display_root: Path, interval_minutes: float, 
         ],
         "WorkingDirectory": str(runtime_dir),
         "EnvironmentVariables": {
-            "PATH": "/Applications/Codex.app/Contents/Resources:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
-            "CODEX_BIN": CODEX_BIN,
+            "PATH": f"{Path(codex_bin).parent}:/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin",
+            "CODEX_BIN": codex_bin,
+            "HOME": str(home),
+            "CODEX_HOME": str(codex_home),
             "PYTHONUNBUFFERED": "1",
             "SCRIPT_PACKAGE_OUTPUT_ROOT": str(runtime_dir / "output" / "script_execution_packages"),
             "SCRIPT_PACKAGE_DISPLAY_OUTPUT_ROOT": str(display_root),
@@ -175,9 +181,16 @@ def install(args: argparse.Namespace) -> None:
         else project_doc_root / args.display_link_name
     )
     plist = build_plist(runtime_dir, display_root, args.interval_minutes, args.limit, args.max_age_days, python_bin)
+    runtime_env = plist["EnvironmentVariables"]
+    diagnostics = codex_runtime_diagnostics(
+        str(runtime_env["CODEX_BIN"]),
+        env={str(key): str(value) for key, value in runtime_env.items()},
+    )
     if args.dry_run:
-        print(plist)
+        print(json.dumps({"ok": diagnostics["ok"], "plist": plist, "codex_runtime": diagnostics}, ensure_ascii=False, indent=2))
         return
+    if not diagnostics["ok"]:
+        raise SystemExit("codex_runtime_unavailable: " + ",".join(diagnostics["reasons"]))
     if not args.no_sync_runtime:
         sync_runtime(runtime_dir)
     if not args.no_display_link:

@@ -19,6 +19,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Any
 
+from codex_cli_path import codex_runtime_diagnostics
 from local_env import load_local_env
 
 
@@ -125,6 +126,11 @@ def main() -> int:
     args = parse_args()
     if args.dry_run:
         args.skip_codex = True
+
+    runtime = codex_runtime_diagnostics(os.getenv("CODEX_BIN", ""))
+    if not runtime["ok"]:
+        print(json.dumps(runtime, ensure_ascii=False))
+        return 4
 
     _lock = acquire_lock()
     stop = {"value": False}
