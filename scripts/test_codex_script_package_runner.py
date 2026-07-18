@@ -10,7 +10,7 @@ from codex_script_package_runner import try_create_feishu_document
 
 
 class CodexScriptPackageRunnerTest(unittest.TestCase):
-    def test_codex_exec_adds_existing_codex_home_as_writable_dir(self) -> None:
+    def test_codex_exec_does_not_expose_codex_home_as_writable_dir(self) -> None:
         package = {"full_markdown": "# fixture", "qa_status": "pass"}
 
         def run(command, **_kwargs):
@@ -25,7 +25,8 @@ class CodexScriptPackageRunnerTest(unittest.TestCase):
             result = runner.run_codex_for_topic({"topic_title": "fixture"}, timeout_seconds=1)
 
         command = subprocess_run.call_args.args[0]
-        self.assertEqual("/Users/test/.codex", command[command.index("--add-dir") + 1])
+        self.assertNotIn("--add-dir", command)
+        self.assertNotIn("/Users/test/.codex", command)
         self.assertEqual(package, result)
 
     def test_doc_sync_failure_notifies_for_permission_errors(self) -> None:

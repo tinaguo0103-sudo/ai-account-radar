@@ -403,10 +403,6 @@ def codex_runtime_preflight() -> dict[str, Any]:
     return codex_runtime_diagnostics(os.getenv("CODEX_BIN", ""))
 
 
-def codex_home() -> str:
-    return str(Path(os.getenv("CODEX_HOME") or (Path.home() / ".codex")).expanduser())
-
-
 def script_package_skill_name() -> str:
     return os.getenv("SCRIPT_PACKAGE_SKILL_NAME", DEFAULT_SCRIPT_PACKAGE_SKILL_NAME).strip() or DEFAULT_SCRIPT_PACKAGE_SKILL_NAME
 
@@ -558,8 +554,6 @@ def run_codex_for_topic(topic: dict[str, Any], timeout_seconds: int, previous_pa
             "--skip-git-repo-check",
             "--sandbox",
             "workspace-write",
-            "--add-dir",
-            codex_home(),
             "--output-schema",
             str(SCHEMA),
             "--output-last-message",
