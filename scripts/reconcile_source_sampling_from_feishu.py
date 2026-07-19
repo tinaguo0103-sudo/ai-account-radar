@@ -309,7 +309,25 @@ def reconcile(config: dict[str, Any], records: list[dict[str, Any]]) -> dict[str
 
 
 def write_config(config: dict[str, Any]) -> None:
-    CONFIG.write_text(json.dumps(config, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    payload = json.dumps(config, ensure_ascii=False, indent=2) + "\n"
+    temporary = CONFIG.with_suffix(CONFIG.suffix + ".tmp")
+    temporary.write_text(payload, encoding="utf-8")
+    temporary.replace(CONFIG)
+    if CONFIG.read_text(encoding="utf-8") != payload:
+        raise RuntimeError("source_plan_config_readback_mismatch")
+
+
+def active_source_plan(config: dict[str, Any]) -> list[dict[str, Any]]:
+    active = [
+        source for source in config.get("sources", [])
+        if text(source.get("source_role") or source.get("source_group")) in ACTIVE_ROLES
+        and bool(source.get("default_enabled", True))
+        and bool(source.get("participates_main_sampling", True))
+    ]
+    names = [text(source.get("account_name")) for source in active]
+    if not active or any(not name for name in names) or len(names) != len(set(names)):
+        raise RuntimeError("active_source_plan_invalid")
+    return active
 
 
 def main() -> int:
@@ -325,14 +343,18 @@ def main() -> int:
     table_id = resolve_table_id(list_tables(token, app_token), TABLE_KEY)
     if not table_id:
         raise SystemExit(f"Missing Feishu table: {table_name(TABLE_KEY)}")
-    ensure_fields(token, app_token, table_id)
     records = all_records(token, app_token, table_id)
     config = load_config()
     summary = reconcile(config, records)
+    active_plan = active_source_plan(config)
     output: dict[str, Any] = {
         "ok": True,
+        "plan_ready": True,
         "mode": "write" if args.write_config or args.write_feishu else "dry-run",
         "feishu_records_read": len(records),
+        "active_account_count": len(active_plan),
+        "optional_followup_failed": False,
+        "optional_followup_reason": "",
         "summary": summary,
     }
     if args.write_config:
@@ -340,9 +362,22 @@ def main() -> int:
         output["config_written"] = str(CONFIG)
     if args.write_feishu:
         rows = rows_from_sources(config)
-        output["feishu"] = sync_rows(token, app_token, rows)
-        time.sleep(0.1)
+        try:
+            ensure_fields(token, app_token, table_id)
+            output["feishu"] = sync_rows(token, app_token, rows)
+            time.sleep(0.1)
+        except Exception as exc:
+            output["optional_followup_failed"] = True
+            output["optional_followup_reason"] = f"{type(exc).__name__}: {exc}"
+            output["feishu"] = {"ok": False, "optional": True}
     print(json.dumps(output, ensure_ascii=False, indent=2))
+    print("SOURCE_PLAN_STATUS_JSON=" + json.dumps({
+        "ok": output["ok"],
+        "plan_ready": output["plan_ready"],
+        "active_account_count": output["active_account_count"],
+        "optional_followup_failed": output["optional_followup_failed"],
+        "optional_followup_reason": output["optional_followup_reason"],
+    }, ensure_ascii=False, separators=(",", ":")))
     return 0
 
 

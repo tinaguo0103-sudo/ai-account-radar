@@ -221,8 +221,12 @@ class AR034SourceRecoveryTests(unittest.TestCase):
             selected, _, report = daily_pipeline.select_and_validate_douyin_artifact("run_20260716_080311", primary_result, primary_manual, retry_result, retry_manual)
             self.assertEqual(selected, primary_result); self.assertEqual(report["successful_item_count"], 87)
             retry_result.write_text(primary_result.read_text(encoding="utf-8"), encoding="utf-8")
-            with self.assertRaises(lineage.LineageError):
-                daily_pipeline.select_and_validate_douyin_artifact("run_20260716_080311", primary_result, primary_manual, retry_result, retry_manual)
+            selected, _, report = daily_pipeline.select_and_validate_douyin_artifact(
+                "run_20260716_080311", primary_result, primary_manual, retry_result, retry_manual,
+                retry_executed=False,
+            )
+            self.assertEqual(selected, primary_result)
+            self.assertEqual(report["selected_artifact"], "primary")
 
     def test_duplicate_and_cross_account_downstream_lineage_fail(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:

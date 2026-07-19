@@ -44,6 +44,18 @@ COMBINED_MANUAL = OUT / "daily_pipeline_manual_combined.jsonl"
 DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG = ROOT / "config" / "wechat_fulltext_provider.example.yaml"
 SOURCE_CACHE_DIR = OUT / "source_collection_cache"
 
+
+def douyin_run_artifact_paths(run_id: str) -> dict[str, Path]:
+    root = OUT / "runs" / run_id / "sources" / "douyin"
+    return {
+        "primary_dir": root / "primary",
+        "primary_result": root / "primary" / "cdp_probe_results.json",
+        "primary_manual": root / "primary" / "content_items_manual.jsonl",
+        "retry_dir": root / "retry",
+        "retry_result": root / "retry" / "cdp_probe_results.json",
+        "retry_manual": root / "retry" / "content_items_manual.jsonl",
+    }
+
 def run_step(name: str, command: list[str], env: dict[str, str] | None = None) -> dict[str, Any]:
     print(f"\n== {name} ==")
     print(" ".join(command))
@@ -95,6 +107,10 @@ def isolate_source_failure(
     if reason:
         step["source_failure_reason"] = reason
     return step
+
+
+def machine_failure_reason(payload: dict[str, Any], step: dict[str, Any], fallback: str) -> str:
+    return str(payload.get("reason") or payload.get("error") or step.get("stderr") or fallback)
 
 
 def douyin_probe_allowed(chrome_step: dict[str, Any], preflight_step: dict[str, Any] | None) -> bool:
@@ -265,14 +281,24 @@ def cached_douyin_manual_paths() -> list[Path]:
     return paths
 
 
-def write_douyin_cache_manifest(status: str, run_id: str, steps: list[dict[str, Any]], note: str = "") -> None:
+def write_douyin_cache_manifest(
+    status: str,
+    run_id: str,
+    steps: list[dict[str, Any]],
+    note: str = "",
+    *,
+    selected_result: Path | None = None,
+    selected_manual: Path | None = None,
+    selected_artifact: str = "",
+) -> None:
     payload = {
         "date": today_key(),
         "status": status,
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "run_id": run_id,
-        "manual_jsonl": str(DOUYIN_CDP_RESOLVED_MANUAL) if DOUYIN_CDP_RESOLVED_MANUAL.exists() else "",
-        "retry_manual_jsonl": str(DOUYIN_CDP_RETRY_MANUAL) if DOUYIN_CDP_RETRY_MANUAL.exists() and file_modified_today(DOUYIN_CDP_RETRY_MANUAL) else "",
+        "result_json": str(selected_result) if selected_result else "",
+        "manual_jsonl": str(selected_manual) if selected_manual else "",
+        "selected_artifact": selected_artifact,
         "note": note,
         "steps": [
             {
@@ -330,6 +356,23 @@ def is_candidate_local_partial(step: dict[str, Any], probe: dict[str, Any]) -> b
         or bool(step.get("candidate_local_partial"))
         or bool(step.get("source_local_failure"))
     )
+
+
+def apply_selected_douyin_outcome(step: dict[str, Any], report: dict[str, Any]) -> None:
+    status = str(report.get("collection_status") or "")
+    step["selected_artifact"] = str(report.get("selected_artifact") or "")
+    step["selected_collection_status"] = status
+    if status == "completed_with_failures":
+        step["returncode"] = 0
+        step["optional_returncode"] = int(step.get("optional_returncode") or 3)
+        step["optional_failed"] = True
+        step["candidate_local_partial"] = True
+        step["note"] = "Selected current-run Douyin artifact has isolated account failures; truthful rows continue."
+    elif status == "completed":
+        step["returncode"] = 0
+        step.pop("optional_returncode", None)
+        step.pop("optional_failed", None)
+        step.pop("candidate_local_partial", None)
 
 
 def wechat_candidate_partial_checks(outcome: dict[str, Any]) -> dict[str, bool]:
@@ -494,15 +537,37 @@ def combine_manual_jsonl(paths: list[Path], output: Path) -> Path:
 def select_and_validate_douyin_artifact(
     run_id: str, primary_result: Path, primary_manual: Path,
     retry_result: Path, retry_manual: Path,
+    *, retry_executed: bool = False,
 ) -> tuple[Path, Path, dict[str, Any] | None]:
-    result_path, manual_path = (retry_result, retry_manual) if retry_result.exists() else (primary_result, primary_manual)
-    probe = read_json(result_path)
-    counts = ((probe.get("coverage") or {}).get("per_account_artifact_counts") or {})
-    successful_declared = sum(int(value or 0) for value in counts.values())
-    if not successful_declared:
-        return result_path, manual_path, None
-    report = validate_partial_source_artifact(probe, manual_path, expected_run_id=run_id)
-    return result_path, manual_path, report
+    candidates = []
+    if retry_executed:
+        candidates.append(("retry", retry_result, retry_manual))
+    candidates.append(("primary", primary_result, primary_manual))
+    failures: list[str] = []
+    for label, result_path, manual_path in candidates:
+        if not result_path.is_file() or not manual_path.is_file():
+            failures.append(f"{label}_artifact_unpaired_or_missing")
+            continue
+        probe = read_json(result_path)
+        counts = ((probe.get("coverage") or {}).get("per_account_artifact_counts") or {})
+        try:
+            successful_declared = sum(int(value or 0) for value in counts.values())
+        except (AttributeError, TypeError, ValueError):
+            failures.append(f"{label}_artifact_malformed")
+            continue
+        if successful_declared <= 0:
+            failures.append(f"{label}_artifact_zero_items")
+            continue
+        try:
+            report = validate_partial_source_artifact(probe, manual_path, expected_run_id=run_id)
+        except (LineageError, OSError, ValueError, TypeError, json.JSONDecodeError) as exc:
+            failures.append(f"{label}_artifact_invalid:{exc}")
+            continue
+        report["selected_artifact"] = label
+        report["selection_failures"] = failures
+        return result_path, manual_path, report
+    fallback_result, fallback_manual = primary_result, primary_manual
+    return fallback_result, fallback_manual, None
 
 
 def main() -> int:
@@ -555,6 +620,7 @@ def main() -> int:
     wechat_freshness: dict[str, Any] | None = None
     wechat_read_outcome: dict[str, Any] | None = None
     run_id = new_run_id()
+    douyin_artifacts = douyin_run_artifact_paths(run_id)
     run_started_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     step_env = os.environ.copy()
     step_env["RUN_ID"] = run_id
@@ -596,7 +662,7 @@ def main() -> int:
                 steps[-1],
                 source="wechat",
                 state=state,
-                reason=str(refresh_result.get("error") or steps[-1].get("stderr") or state),
+                reason=machine_failure_reason(refresh_result, steps[-1], state),
             )
             wechat_freshness = {
                 "ok": False,
@@ -613,7 +679,7 @@ def main() -> int:
                     steps[-1],
                     source="wechat",
                     state=str(wechat_freshness.get("state") or "provider_failed"),
-                    reason=str(wechat_freshness.get("error") or steps[-1].get("stderr") or "wechat_health_failed"),
+                    reason=machine_failure_reason(wechat_freshness, steps[-1], "wechat_health_failed"),
                 )
             elif wechat_freshness.get("state") != "updated_no_new_items":
                 provider_cmd = [
@@ -729,6 +795,8 @@ def main() -> int:
                 str(ROOT / "scripts" / "douyin_cdp_source_watch_probe.mjs"),
                 "--cdp",
                 args.douyin_cdp,
+                "--out-dir",
+                str(douyin_artifacts["primary_dir"]),
                 "--account-limit",
                 str(args.douyin_account_limit),
                 "--video-limit",
@@ -738,7 +806,8 @@ def main() -> int:
             ]
             douyin_step = run_optional_step("fetch daily Douyin homepage title/caption samples through Chrome CDP", douyin_cmd, env=step_env)
             steps.append(douyin_step)
-            verification_rows = douyin_verification_rows(OUT / "spikes" / "douyin_cdp_source_watch_probe" / "cdp_probe_results.json")
+            verification_rows = douyin_verification_rows(douyin_artifacts["primary_result"])
+            retry_executed = False
             if verification_rows and args.douyin_verification_action == "foreground":
                 first_homepage = str(verification_rows[0].get("homepage_url") or "https://www.douyin.com/")
                 foreground_cmd = [
@@ -759,7 +828,7 @@ def main() -> int:
                     "--cdp",
                     args.douyin_cdp,
                     "--out-dir",
-                    str(DOUYIN_CDP_RETRY_DIR),
+                    str(douyin_artifacts["retry_dir"]),
                     "--account-limit",
                     "0",
                     "--video-limit",
@@ -768,10 +837,12 @@ def main() -> int:
                     str(args.douyin_retries),
                 ]
                 steps.append(run_optional_step("retry full Douyin account plan after user verification", retry_cmd, env=step_env))
+                retry_executed = True
             try:
                 selected_result, selected_manual, douyin_source_lineage = select_and_validate_douyin_artifact(
-                    run_id, DOUYIN_CDP_RESULT, DOUYIN_CDP_RESOLVED_MANUAL,
-                    DOUYIN_CDP_RETRY_RESULT, DOUYIN_CDP_RETRY_MANUAL,
+                    run_id, douyin_artifacts["primary_result"], douyin_artifacts["primary_manual"],
+                    douyin_artifacts["retry_result"], douyin_artifacts["retry_manual"],
+                    retry_executed=retry_executed,
                 )
             except LineageError as exc:
                 douyin_step["lineage_error"] = str(exc)
@@ -794,10 +865,36 @@ def main() -> int:
             active_douyin_probe_result = selected_result
             if douyin_source_lineage:
                 manual_inputs.append(selected_manual)
+                apply_selected_douyin_outcome(douyin_step, douyin_source_lineage)
                 douyin_step["partial_success_ingested"] = True
                 douyin_step["successful_item_count"] = douyin_source_lineage["successful_item_count"]
-            if not douyin_step.get("optional_failed") and DOUYIN_CDP_RESOLVED_MANUAL.exists() and file_modified_today(DOUYIN_CDP_RESOLVED_MANUAL):
-                write_douyin_cache_manifest("ok", run_id, steps, note="Douyin source collection completed; later same-day runs should reuse this cache.")
+                douyin_step["selected_artifact"] = douyin_source_lineage.get("selected_artifact")
+                douyin_step["artifact_result"] = str(selected_result)
+                douyin_step["artifact_manual"] = str(selected_manual)
+            else:
+                lineage_step = {
+                    "name": "verify Douyin successful-item source artifact",
+                    "command": ["lineage-check"],
+                    "started_at": datetime.now().isoformat(timespec="seconds"),
+                    "returncode": 3,
+                    "stdout": "",
+                    "stderr": "no_valid_current_run_douyin_artifact",
+                }
+                isolate_source_failure(
+                    lineage_step,
+                    source="douyin",
+                    state="artifact_unavailable",
+                    reason="no_valid_current_run_douyin_artifact",
+                )
+                steps.append(lineage_step)
+            if douyin_source_lineage:
+                write_douyin_cache_manifest(
+                    "ok", run_id, steps,
+                    note="Douyin current-run source artifact validated; later same-day runs may reuse this exact artifact.",
+                    selected_result=selected_result,
+                    selected_manual=selected_manual,
+                    selected_artifact=str(douyin_source_lineage.get("selected_artifact") or ""),
+                )
             else:
                 write_douyin_cache_manifest("failed", run_id, steps, note="Douyin source collection did not produce a fresh manual JSONL; same-day cache will not be reused.")
 

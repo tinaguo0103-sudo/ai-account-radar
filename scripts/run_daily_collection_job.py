@@ -203,6 +203,25 @@ def main() -> int:
             notify("AI账号雷达采集失败", failure_summary(steps, log_path))
         print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return steps[-1]["returncode"]
+    source_plan_result: dict[str, Any] = {}
+    for line in reversed(str(steps[-1].get("stdout") or "").splitlines()):
+        if line.startswith("SOURCE_PLAN_STATUS_JSON="):
+            try:
+                source_plan_result = json.loads(line.split("=", 1)[1])
+            except json.JSONDecodeError:
+                source_plan_result = {}
+            break
+    if source_plan_result.get("plan_ready") is not True:
+        steps[-1]["returncode"] = 2
+        steps[-1]["stderr"] = "source_plan_not_ready"
+        log_path = write_job_log(steps)
+        if not args.no_notify:
+            notify("AI账号雷达采集失败", failure_summary(steps, log_path))
+        print(json.dumps({"ok": False, "reason": "source_plan_not_ready", "log": str(log_path)}, ensure_ascii=False, indent=2))
+        return 2
+    if source_plan_result.get("optional_followup_failed"):
+        steps[-1]["optional_followup_failed"] = True
+        steps[-1]["optional_followup_reason"] = str(source_plan_result.get("optional_followup_reason") or "feishu_01_optional_followup_failed")
 
     steps.append(run_step("run full-source daily pipeline", [
         py,
