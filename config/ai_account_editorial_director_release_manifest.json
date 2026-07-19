@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "skill_name": "ai-account-editorial-director",
-  "source_release": "AR-020E production release",
-  "source_release_commit": "5e733cd1a8120185b6c2d35b3f277a2599155fea",
+  "source_release": "AR-038 business-first candidate funnel",
+  "source_release_commit": "6d3133a8f857c65d00b3a66ae7e1cf7f9aecc0cc",
   "managed_files": [
     {
       "path": "SKILL.md",
-      "sha256": "9d364bb0fff909bd9726ebee12bb50bfe1883be15749c48cd7f4b9683a7f9dcb"
+      "sha256": "c8b6ab343e96912af7a6efc7e156718fd4d02d4bc6a5a3d7d36cbc2a89f6abbe"
     },
     {
       "path": "agents/openai.yaml",
