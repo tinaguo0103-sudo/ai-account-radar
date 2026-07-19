@@ -18,11 +18,13 @@ import urllib.parse
 import urllib.request
 from pathlib import Path
 
+import wewe_runtime_contract
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DATA_DIR = Path.home() / ".codex" / "ai-account-radar-runtime" / "providers" / "wewe-rss" / "data"
 DEFAULT_CONTAINER_NAME = "ai-radar-wewe-rss"
-DEFAULT_IMAGE = "cooderl/wewe-rss-sqlite:latest"
+DEFAULT_IMAGE = wewe_runtime_contract.IMAGE
 DEFAULT_BASE_URL = "http://127.0.0.1:4000"
 
 
@@ -88,6 +90,12 @@ def create_container(name: str, image: str, base_url: str, data_dir: Path, auth_
         "-d",
         "--name",
         name,
+        "--label",
+        "ai-account-radar.wewe-refresh-owner=project-signed-adapter-only",
+        "--label",
+        "ai-account-radar.wewe-internal-cron=disabled-at-build",
+        "--label",
+        f"ai-account-radar.wewe-upstream-commit={wewe_runtime_contract.UPSTREAM_COMMIT}",
         "-p",
         f"{host_port}:4000",
         "-e",
@@ -125,7 +133,11 @@ def main() -> int:
     args = parser.parse_args()
 
     if service_ready(args.base_url):
-        print(json.dumps({"ok": True, "status": "already_ready", "base_url": args.base_url}, ensure_ascii=False))
+        contract = wewe_runtime_contract.verify_container(args.container_name)
+        if not contract.get("ok"):
+            print(json.dumps({**contract, "base_url": args.base_url, "provider_ready": True}, ensure_ascii=False))
+            return 4
+        print(json.dumps({"ok": True, "status": "already_ready", "base_url": args.base_url, "runtime_contract": contract}, ensure_ascii=False))
         return 0
 
     if args.check_only:
@@ -137,6 +149,10 @@ def main() -> int:
         return 1
 
     if container_exists(args.container_name):
+        contract = wewe_runtime_contract.verify_container(args.container_name)
+        if not contract.get("ok"):
+            print(json.dumps(contract, ensure_ascii=False), file=sys.stderr)
+            return 4
         if not container_running(args.container_name):
             result = start_container(args.container_name)
             if result.returncode != 0:
@@ -157,6 +173,10 @@ def main() -> int:
                 file=sys.stderr,
             )
             return 1
+        contract = wewe_runtime_contract.verify_image(args.image)
+        if not contract.get("ok"):
+            print(json.dumps(contract, ensure_ascii=False), file=sys.stderr)
+            return 4
         result = create_container(args.container_name, args.image, args.base_url, Path(args.data_dir), auth_code)
         if result.returncode != 0:
             print(result.stderr or result.stdout, file=sys.stderr)

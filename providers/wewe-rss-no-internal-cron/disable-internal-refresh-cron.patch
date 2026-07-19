@@ -1,0 +1,52 @@
+diff --git a/apps/server/src/feeds/feeds.service.ts b/apps/server/src/feeds/feeds.service.ts
+index 45727cd..3ec4caa 100644
+--- a/apps/server/src/feeds/feeds.service.ts
++++ b/apps/server/src/feeds/feeds.service.ts
+@@ -1,6 +1,5 @@
+ import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
+ import { PrismaService } from '@server/prisma/prisma.service';
+-import { Cron } from '@nestjs/schedule';
+ import { TrpcService } from '@server/trpc/trpc.service';
+ import { feedMimeTypeMap, feedTypes } from '@server/constants';
+ import { ConfigService } from '@nestjs/config';
+@@ -66,40 +65,6 @@ export class FeedsService {
+     });
+   }
+ 
+-  @Cron(process.env.CRON_EXPRESSION || '35 5,17 * * *', {
+-    name: 'updateFeeds',
+-    timeZone: 'Asia/Shanghai',
+-  })
+-  async handleUpdateFeedsCron() {
+-    this.logger.debug('Called handleUpdateFeedsCron');
+-
+-    const feeds = await this.prismaService.feed.findMany({
+-      where: { status: 1 },
+-    });
+-    this.logger.debug('feeds length:' + feeds.length);
+-
+-    const updateDelayTime =
+-      this.configService.get<ConfigurationType['feed']>(
+-        'feed',
+-      )!.updateDelayTime;
+-
+-    for (const feed of feeds) {
+-      this.logger.debug('feed', feed.id);
+-      try {
+-        await this.trpcService.refreshMpArticlesAndUpdateFeed(feed.id);
+-
+-        await new Promise((resolve) =>
+-          setTimeout(resolve, updateDelayTime * 1e3),
+-        );
+-      } catch (err) {
+-        this.logger.error('handleUpdateFeedsCron error', err);
+-      } finally {
+-        // wait 30s for next feed
+-        await new Promise((resolve) => setTimeout(resolve, 30 * 1e3));
+-      }
+-    }
+-  }
+-
+   async cleanHtml(source: string) {
+     const $ = load(source, { decodeEntities: false });
+ 

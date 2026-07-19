@@ -6,6 +6,18 @@ Scheduled collection uses one provider at `127.0.0.1:4000` and one worktree-inde
 
 The scheduled path first invokes `python3 scripts/wewe_provider_refresh.py` and then runs `wewe_provider_health.py` with the resulting current-run receipt. It never starts Docker, discovers a browser, opens a login page, switches data directories, or accepts cached feed readability as login/freshness proof.
 
+## Refresh ownership
+
+The project signed adapter is the only refresh owner. Upstream `cooderl/wewe-rss-sqlite:2.6.1` registers `handleUpdateFeedsCron` unconditionally with Nest Schedule; `CRON_EXPRESSION` changes timing but has no supported disable value, and a missing value restores `35 5,17 * * *` in `Asia/Shanghai`. Invalid or impossible cron expressions are not an accepted disable mechanism.
+
+Production therefore uses the project-built image `ai-account-radar/wewe-rss-sqlite:2.6.1-ar039-no-cron`, built from upstream commit `f88b023961804b986f3f1225c52d5066928df3c1` using `providers/wewe-rss-no-internal-cron/Dockerfile`. Its only source change removes the `@Cron` registration and handler. QR login, bearer token storage, feed refresh API, SQLite schema and data directory are unchanged. The image and container labels are mandatory read-back evidence; run `python3 scripts/wewe_runtime_contract.py` after deployment. `CRON_EXPRESSION` must not be present.
+
+Official `latest` and `v2.6.1` resolve to the same archived release line; pulling `latest` or changing tags is not this repair. Do not switch to an unknown third-party image. `we-mp-rss` remains a separate future provider evaluation and is not part of this ownership change.
+
+Do not add keepalive refreshes or provider probes that mutate feed/account state. Each normal business run may invoke the existing bounded signed adapter once. A provider `401` remains a typed WeChat source-local failure; it contributes zero WeChat rows while safe Douyin/AIHOT and editorial work continue under the Business Continuity contract.
+
+Build and release are separate authorized production actions. Build the pinned Dockerfile, stop the old container normally, back up the stopped canonical data directory, recreate the same canonical container name/port/data bind with the project image, and read back the runtime contract before reauthentication. Never patch a running container or use an invalid/future cron expression. Rollback recreates the prior pinned image with the untouched stopped-data backup and keeps WeChat isolated until its ownership state is known.
+
 Typed states are `updated_with_new_items`, `updated_no_new_items`, `stale_cache`, `login_required`, and `provider_failed`. Only the first two permit WeChat to participate; no-new is valid and contributes zero new rows.
 
 The owned watermark is `~/.codex/ai-account-radar-runtime/providers/wewe-rss/health/last_success.json`. It records refresh revision, provider refresh timestamp, accepted attempt/run identity, and latest accepted article publish time. A missing/malformed watermark is `stale_cache`; the scheduled path cannot bootstrap itself from historical cache. The watermark advances atomically only after downstream write/read-back succeeds.
