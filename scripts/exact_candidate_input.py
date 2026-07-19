@@ -122,11 +122,9 @@ def load_exact_input(
     identities = [row_identity(row, index) for index, row in enumerate(rows)]
     content_fingerprints = [item["content_fingerprint"] for item in identities]
     candidate_fingerprints = [item["candidate_fingerprint"] for item in identities]
-    urls = [item["exact_url"] for item in identities if item["exact_url"]]
     for values, reason in (
         (content_fingerprints, "duplicate_exact_input_content_fingerprint"),
         (candidate_fingerprints, "duplicate_exact_input_candidate_fingerprint"),
-        (urls, "duplicate_exact_input_url"),
     ):
         if len(values) != len(set(values)):
             raise ExactInputError(reason)

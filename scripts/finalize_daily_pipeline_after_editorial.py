@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any
 
 import daily_pipeline
+import douyin_candidate_lifecycle
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -95,6 +96,11 @@ def csv_row_count(path: Path) -> int:
         return 0
     with path.open("r", encoding="utf-8-sig", newline="") as handle:
         return len(list(csv.DictReader(handle)))
+
+
+def csv_fingerprints(path: Path) -> list[str]:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return [str(row.get("内容指纹") or "").strip() for row in csv.DictReader(handle) if str(row.get("内容指纹") or "").strip()]
 
 
 def ensure_latest_sampler_log(run_id: str, today_path: Path) -> None:
@@ -268,6 +274,7 @@ def main() -> int:
             log_path = update_pipeline_log(args.run_id, steps, False)
             print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
             return steps[-1]["returncode"]
+        douyin_candidate_lifecycle.mark_written_04(csv_fingerprints(today_path), run_id=args.run_id)
 
         refresh_cmd = [py, str(ROOT / "scripts" / "refresh_console_daily.py")]
         steps.append(run_step("refresh Feishu 00 主控台 after external editorial", refresh_cmd))

@@ -28,6 +28,7 @@ export function parseArgs(args = process.argv.slice(2)) {
     videoLimit: 3,
     scanLimit: 10,
     seenLedger: path.join(ROOT, "output/state/douyin_seen_items.json"),
+    lifecycleLedger: path.join(ROOT, "output/state/douyin_candidate_lifecycle.json"),
     waitMs: 7000,
     retries: 2,
     checkOnly: false,
@@ -41,6 +42,7 @@ export function parseArgs(args = process.argv.slice(2)) {
     else if (arg === "--video-limit") options.videoLimit = Number(args[++i]);
     else if (arg === "--scan-limit") options.scanLimit = Number(args[++i]);
     else if (arg === "--seen-ledger") options.seenLedger = args[++i];
+    else if (arg === "--lifecycle-ledger") options.lifecycleLedger = args[++i];
     else if (arg === "--wait-ms") options.waitMs = Number(args[++i]);
     else if (arg === "--retries") options.retries = Number(args[++i]);
     else if (arg === "--check-only") options.checkOnly = true;
@@ -300,6 +302,91 @@ export function writeSeenVideoIds(ledgerPath, seenIds, runId) {
   fs.renameSync(temporary, target);
 }
 
+function atomicJson(pathname, payload) {
+  fs.mkdirSync(path.dirname(pathname), { recursive: true });
+  const temporary = `${pathname}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(temporary, pathname);
+}
+
+export function loadCandidateLifecycle(ledgerPath) {
+  if (!ledgerPath || !fs.existsSync(ledgerPath)) return { schema_version: 1, items: {} };
+  const payload = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
+  if (payload?.schema_version !== 1 || !payload.items || typeof payload.items !== "object" || Array.isArray(payload.items)) {
+    throw new Error("douyin_lifecycle_malformed");
+  }
+  return payload;
+}
+
+export function materializeHistoricalBacklog(lifecycle) {
+  const items = [];
+  const failures = [];
+  for (const entry of Object.values(lifecycle.items || {})) {
+    if (entry?.state !== "collected_unreviewed") continue;
+    try {
+      const artifactPath = String(entry.artifact_path || "");
+      if (!artifactPath || !fs.existsSync(artifactPath)) throw new Error("artifact_missing");
+      const bytes = fs.readFileSync(artifactPath);
+      const sha = createHash("sha256").update(bytes).digest("hex");
+      if (sha !== entry.artifact_sha256) throw new Error("artifact_hash_mismatch");
+      const artifact = JSON.parse(bytes.toString("utf8"));
+      if (artifact["内容指纹"] !== entry.fingerprint) throw new Error("artifact_identity_mismatch");
+      items.push({
+        ...artifact,
+        "候选时态": "historical_unreviewed",
+        "首次发现批次": entry.first_seen_run_id,
+        "首次发现日期": entry.first_seen_date,
+        "是否今日新增": "否",
+      });
+    } catch (error) {
+      failures.push({ fingerprint: String(entry?.fingerprint || ""), reason: error.message });
+    }
+  }
+  return { items, failures };
+}
+
+export function persistCollectedCandidates(ledgerPath, lifecycle, items, runId) {
+  const artifactDir = path.join(path.dirname(ledgerPath), "douyin_candidate_artifacts");
+  const runDate = String(runId).slice(4, 12).replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
+  for (const item of items) {
+    const fingerprintValue = String(item["内容指纹"] || "");
+    if (!fingerprintValue) continue;
+    const existing = lifecycle.items[fingerprintValue];
+    if (existing && ["reviewed", "written_04", "generated_06"].includes(existing.state)) continue;
+    const artifactPath = path.join(artifactDir, `${fingerprintValue}.json`);
+    atomicJson(artifactPath, item);
+    const bytes = fs.readFileSync(artifactPath);
+    lifecycle.items[fingerprintValue] = {
+      schema_version: 1,
+      fingerprint: fingerprintValue,
+      video_id: videoIdFromUrl(item["内容链接"]),
+      url: String(item["内容链接"] || ""),
+      source_type: String(item["来源类型"] || ""),
+      account: String(item["账号名/公众号名"] || ""),
+      title: String(item["内容标题"] || ""),
+      first_seen_run_id: existing?.first_seen_run_id || runId,
+      first_seen_date: existing?.first_seen_date || runDate,
+      state: "collected_unreviewed",
+      artifact_path: path.resolve(artifactPath),
+      artifact_sha256: createHash("sha256").update(bytes).digest("hex"),
+    };
+  }
+  atomicJson(ledgerPath, lifecycle);
+  return lifecycle;
+}
+
+export function mergeNewAndBacklog(newItems, backlogItems, runId) {
+  const dateValue = String(runId).slice(4, 12).replace(/(\d{4})(\d{2})(\d{2})/, "$1-$2-$3");
+  const newFingerprints = new Set(newItems.map((item) => item["内容指纹"]));
+  return [
+    ...newItems.map((item) => ({
+      ...item, "候选时态": "today_new", "首次发现批次": runId,
+      "首次发现日期": dateValue, "是否今日新增": "是",
+    })),
+    ...backlogItems.filter((item) => !newFingerprints.has(item["内容指纹"])),
+  ];
+}
+
 function fingerprint(input) {
   let hash = 5381;
   for (let i = 0; i < input.length; i += 1) {
@@ -364,7 +451,7 @@ export function buildHomepageCardItems(rows) {
 export function validateContentItemLineage(rows, items) {
   const allowedByAccount = new Map(
     rows
-      .filter((row) => row.status === "success")
+      .filter((row) => ["success", "updated_no_new_items"].includes(row.status))
       .map((row) => [String(row.account_name || ""), new Set(row.video_links || [])]),
   );
   const violations = [];
@@ -583,6 +670,10 @@ async function main() {
   options.accountLimit = accountGate.value;
   options.scanLimit = Math.max(10, Number(options.scanLimit) || 10);
   options.seenVideoIds = loadSeenVideoIds(options.seenLedger);
+  const lifecycle = loadCandidateLifecycle(options.lifecycleLedger);
+  for (const entry of Object.values(lifecycle.items)) {
+    if (entry?.video_id) options.seenVideoIds.add(String(entry.video_id));
+  }
   const runId = String(process.env.AI_ACCOUNT_RADAR_RUN_ID || process.env.RUN_ID || "").trim();
   if (!options.checkOnly && !/^run_\d{8}_\d{6}(?:_[A-Za-z0-9_-]+)?$/.test(runId)) {
     console.log(JSON.stringify({ ok: false, status: "run_identity_missing", collection_started: false, writes_feishu: false }));
@@ -700,7 +791,14 @@ async function main() {
   }
 
   const manualJsonl = path.join(options.outDir, "content_items_manual.jsonl");
-  const homepageCardItems = buildHomepageCardItems(rows);
+  const newlyCollectedItems = buildHomepageCardItems(rows);
+  persistCollectedCandidates(options.lifecycleLedger, lifecycle, newlyCollectedItems, runId);
+  const backlog = materializeHistoricalBacklog(lifecycle);
+  const backlogEligibleAccounts = new Set(
+    rows.filter((row) => ["success", "updated_no_new_items"].includes(row.status)).map((row) => String(row.account_name || "")),
+  );
+  backlog.items = backlog.items.filter((item) => backlogEligibleAccounts.has(String(item["账号名/公众号名"] || "")));
+  const homepageCardItems = mergeNewAndBacklog(newlyCollectedItems, backlog.items, runId);
   for (const item of homepageCardItems) item["运行批次"] = runId;
   fs.writeFileSync(
     manualJsonl,
@@ -720,8 +818,24 @@ async function main() {
   };
 
   const coverage = buildCoverage(sources, rows);
+  for (const item of homepageCardItems) {
+    const account = String(item["账号名/公众号名"] || "");
+    if (Object.hasOwn(coverage.per_account_artifact_counts, account)) {
+      coverage.per_account_artifact_counts[account] = (coverage.per_account_artifact_counts[account] || 0) +
+        (item["候选时态"] === "historical_unreviewed" ? 1 : 0);
+    }
+  }
   coverage.account_limit = options.accountLimit;
-  const itemLineage = validateContentItemLineage(rows, homepageCardItems);
+  const backlogLinks = new Map();
+  for (const item of backlog.items) {
+    const account = String(item["账号名/公众号名"] || "");
+    if (!backlogLinks.has(account)) backlogLinks.set(account, new Set());
+    backlogLinks.get(account).add(String(item["内容链接"] || ""));
+  }
+  const itemLineage = validateContentItemLineage(rows.map((row) => ({
+    ...row,
+    video_links: [...(row.video_links || []), ...(backlogLinks.get(String(row.account_name || "")) || [])],
+  })), homepageCardItems);
   if (!itemLineage.ok) coverage.ok = false;
 
   const output = {
@@ -737,6 +851,12 @@ async function main() {
     discovered_video_links: videoLinks.length,
     resolver: resolverResult,
     manual_artifact: manualArtifact,
+    candidate_lifecycle: {
+      ledger_path: path.resolve(options.lifecycleLedger),
+      today_new_count: newlyCollectedItems.length,
+      historical_unreviewed_count: homepageCardItems.length - newlyCollectedItems.length,
+      isolated_artifact_failures: backlog.failures,
+    },
     rows,
   };
   fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(output, null, 2), "utf8");

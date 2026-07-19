@@ -19,6 +19,45 @@ FIELDS = [
 
 
 class ExactCandidateInputTests(unittest.TestCase):
+    def test_distinct_candidates_may_share_source_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_id = "run_20260719_080000"
+            path = root / "output" / "runs" / run_id / "today_10_topics.csv"
+            path.parent.mkdir(parents=True)
+            rows = [
+                {"来源链接": "https://example.com/shared", "内容指纹": "fp-a", "来源类型": "对标视频", "来源内容": "first", "原始来源标题": "first", "原始来源账号": "a", "平台": "抖音"},
+                {"来源链接": "https://example.com/shared", "内容指纹": "fp-b", "来源类型": "公众号文章", "来源内容": "second", "原始来源标题": "second", "原始来源账号": "b", "平台": "微信"},
+            ]
+            with path.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
+                writer.writeheader(); writer.writerows(rows)
+            loaded, manifest = exact_input.load_exact_input(path, run_id=run_id, expected_sha256=exact_input.file_sha256(path), project_root=root)
+            self.assertEqual(len(loaded), 2)
+            self.assertEqual(len(manifest["ordered_candidate_fingerprints"]), 2)
+
+    def test_state_machine_prepares_two_candidates_with_shared_url(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_id = "run_20260719_080000"
+            path = root / "output" / "runs" / run_id / "today_10_topics.csv"
+            path.parent.mkdir(parents=True)
+            rows = [
+                {"来源链接": "https://example.com/shared", "内容指纹": "fp-a", "来源类型": "对标视频", "来源内容": "first", "原始来源标题": "first", "原始发布文案": "", "原始来源账号": "a", "平台": "抖音"},
+                {"来源链接": "https://example.com/shared", "内容指纹": "fp-b", "来源类型": "公众号文章", "来源内容": "second", "原始来源标题": "second", "原始发布文案": "", "原始来源账号": "b", "平台": "微信"},
+            ]
+            with path.open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=FIELDS); writer.writeheader(); writer.writerows(rows)
+            args = Namespace(
+                out_dir=str(root / "state"), content_csv=[], since="2026-07-19", batch_size=3,
+                max_skill_candidates=19, task_id="ar038-shared-url", persona_docx=str(root / "persona.docx"),
+                exact_input_csv=str(path), exact_input_sha256=hashlib.sha256(path.read_bytes()).hexdigest(), run_id=run_id,
+            )
+            with mock.patch.object(machine.persona_builder, "build_bundle", return_value={"authority_sha256": "a" * 64, "manifest_hash": "b" * 64}):
+                result = machine.prepare_source_open(args)
+            self.assertEqual(result["candidates"], 2)
+            self.assertEqual(len(machine.candidate_rows_from_state(machine.load_state(root / "state"))), 2)
+
     def fixture(self, count: int = 3):
         temp = tempfile.TemporaryDirectory()
         root = Path(temp.name)

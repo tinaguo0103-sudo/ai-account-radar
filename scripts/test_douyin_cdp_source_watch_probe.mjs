@@ -9,6 +9,10 @@ import {
   buildCoverage,
   buildHomepageCardItems,
   limitedPlanRejection,
+  loadCandidateLifecycle,
+  materializeHistoricalBacklog,
+  mergeNewAndBacklog,
+  persistCollectedCandidates,
   selectIncrementalWorks,
   selectedSources,
   validateFullAccountLimitArgs,
@@ -107,6 +111,36 @@ const noNew = selectIncrementalWorks([
 ], new Set(["20000000001", "20000000002", "20000000003"]));
 assert.equal(noNew.status, "updated_no_new_items");
 assert.equal(noNew.selected.length, 0);
+
+const lifecycleDir = fs.mkdtempSync(path.join(os.tmpdir(), "ar038-lifecycle-"));
+const lifecyclePath = path.join(lifecycleDir, "lifecycle.json");
+const collected = buildHomepageCardItems([{
+  account_name: "account-1", status: "success",
+  video_links: ["https://www.douyin.com/video/40000000001"],
+  video_cards: [{ video_id: "40000000001", href: "https://www.douyin.com/video/40000000001", text: "new workflow" }],
+}]);
+const lifecycle = loadCandidateLifecycle(lifecyclePath);
+persistCollectedCandidates(lifecyclePath, lifecycle, collected, "run_20260719_080000");
+const runB = materializeHistoricalBacklog(loadCandidateLifecycle(lifecyclePath));
+assert.equal(runB.items.length, 1);
+assert.equal(runB.items[0]["候选时态"], "historical_unreviewed");
+assert.equal(runB.items[0]["是否今日新增"], "否");
+assert.equal(runB.items[0]["首次发现日期"], "2026-07-19");
+assert.equal(validateContentItemLineage([{
+  account_name: "account-1", status: "updated_no_new_items", video_links: [runB.items[0]["内容链接"]],
+}], runB.items).ok, true);
+const orderedPool = mergeNewAndBacklog([{ ...collected[0], "内容指纹": "today-new" }], runB.items, "run_20260720_080000");
+assert.deepEqual(orderedPool.map((item) => item["候选时态"]), ["today_new", "historical_unreviewed"]);
+const reviewedLifecycle = loadCandidateLifecycle(lifecyclePath);
+reviewedLifecycle.items[collected[0]["内容指纹"]].state = "reviewed";
+fs.writeFileSync(lifecyclePath, JSON.stringify(reviewedLifecycle), "utf8");
+assert.equal(materializeHistoricalBacklog(loadCandidateLifecycle(lifecyclePath)).items.length, 0);
+reviewedLifecycle.items[collected[0]["内容指纹"]].state = "collected_unreviewed";
+fs.writeFileSync(lifecyclePath, JSON.stringify(reviewedLifecycle), "utf8");
+fs.writeFileSync(loadCandidateLifecycle(lifecyclePath).items[collected[0]["内容指纹"]].artifact_path, "corrupt", "utf8");
+const corrupt = materializeHistoricalBacklog(loadCandidateLifecycle(lifecyclePath));
+assert.equal(corrupt.items.length, 0);
+assert.equal(corrupt.failures.length, 1);
 
 const contaminated = selectIncrementalWorks([
   workCard("30000000001", { href: "https://www.douyin.com/search?modal_id=30000000001", text: "教材热搜聚合", in_works_grid: false }),

@@ -21,6 +21,7 @@ import topic_replay_evaluation as deterministic_replay
 import topic_skill_replay_evaluation as replay
 import topic_research_contract as research_contract
 import editorial_expression_policy as expression_policy
+import douyin_candidate_lifecycle
 import persona_reference_builder as persona_builder
 import trusted_exact_source_adapter as source_adapter
 import exact_candidate_input as exact_input
@@ -1088,6 +1089,19 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
         if not candidate_failures:
             summary["full_run_success"] = True
             summary["survivor_quality_gate_ok"] = bool(summary.get("quality_gate_ok"))
+        ranked_decisions = read_json(out_dir / "global_ranking" / "ranked_decisions.json")
+        decision_by_index = {int(item["index"]): str(item.get("locked_decision") or "") for item in ranked_decisions}
+        eligible_candidates = read_json(out_dir / "eligible_candidates.json")
+        douyin_decisions = [
+            {**candidate, "terminal_decision": decision_by_index[index]}
+            for index, candidate in enumerate(eligible_candidates)
+            if str(candidate.get("platform") or candidate.get("source_type") or "").lower() in {"douyin", "抖音", "对标视频"}
+            and index in decision_by_index
+        ]
+        if douyin_decisions:
+            summary["douyin_lifecycle"] = douyin_candidate_lifecycle.mark_reviewed_candidates(
+                douyin_decisions, run_id=str(state.get("run_id") or ""),
+            )
         complete_stage(
             record,
             hash_json(summary),
