@@ -109,6 +109,20 @@ def isolate_source_failure(
     return step
 
 
+def source_failure_diagnostic(*, name: str, source: str, reason: str) -> dict[str, Any]:
+    return {
+        "name": name,
+        "command": ["lineage-check"],
+        "started_at": datetime.now().isoformat(timespec="seconds"),
+        "returncode": 0,
+        "stdout": "",
+        "stderr": reason,
+        "source": source,
+        "source_diagnostic": True,
+        "diagnostic_reason": reason,
+    }
+
+
 def machine_failure_reason(payload: dict[str, Any], step: dict[str, Any], fallback: str) -> str:
     return str(payload.get("reason") or payload.get("error") or step.get("stderr") or fallback)
 
@@ -846,22 +860,10 @@ def main() -> int:
                 )
             except LineageError as exc:
                 douyin_step["lineage_error"] = str(exc)
-                lineage_step = {
-                    "name": "verify Douyin successful-item source artifact",
-                    "command": ["lineage-check"],
-                    "started_at": datetime.now().isoformat(timespec="seconds"),
-                    "returncode": 3,
-                    "stdout": "",
-                    "stderr": str(exc),
-                }
-                isolate_source_failure(
-                    lineage_step,
-                    source="douyin",
-                    state="lineage_failed",
-                    reason=str(exc),
-                )
-                steps.append(lineage_step)
+                douyin_failure_reason = str(exc)
                 douyin_source_lineage = None
+            else:
+                douyin_failure_reason = "no_valid_current_run_douyin_artifact"
             active_douyin_probe_result = selected_result
             if douyin_source_lineage:
                 manual_inputs.append(selected_manual)
@@ -872,21 +874,17 @@ def main() -> int:
                 douyin_step["artifact_result"] = str(selected_result)
                 douyin_step["artifact_manual"] = str(selected_manual)
             else:
-                lineage_step = {
-                    "name": "verify Douyin successful-item source artifact",
-                    "command": ["lineage-check"],
-                    "started_at": datetime.now().isoformat(timespec="seconds"),
-                    "returncode": 3,
-                    "stdout": "",
-                    "stderr": "no_valid_current_run_douyin_artifact",
-                }
                 isolate_source_failure(
-                    lineage_step,
+                    douyin_step,
                     source="douyin",
                     state="artifact_unavailable",
-                    reason="no_valid_current_run_douyin_artifact",
+                    reason=douyin_failure_reason,
                 )
-                steps.append(lineage_step)
+                steps.append(source_failure_diagnostic(
+                    name="verify Douyin successful-item source artifact",
+                    source="douyin",
+                    reason=douyin_failure_reason,
+                ))
             if douyin_source_lineage:
                 write_douyin_cache_manifest(
                     "ok", run_id, steps,

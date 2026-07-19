@@ -164,6 +164,72 @@ class AR037SourceArtifactContinuityTests(unittest.TestCase):
             self.assertFalse(downstream["full_collection_success"])
             self.assertEqual(downstream["system_failure_count"], 0)
 
+    def test_original_optional_probe_is_superseded_by_single_source_outcome(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            probe_step = {
+                "name": "fetch daily Douyin homepage title/caption samples through Chrome CDP",
+                "returncode": 0,
+                "optional_returncode": 3,
+                "optional_failed": True,
+            }
+            daily_pipeline.isolate_source_failure(
+                probe_step,
+                source="douyin",
+                state="artifact_unavailable",
+                reason="no_valid_current_run_douyin_artifact",
+            )
+            diagnostic = daily_pipeline.source_failure_diagnostic(
+                name="verify Douyin successful-item source artifact",
+                source="douyin",
+                reason="no_valid_current_run_douyin_artifact",
+            )
+            downstream = daily_pipeline.downstream_usability_report(
+                [probe_step, diagnostic], root, today_candidates=4,
+                probe_result_path=root / "missing-primary.json",
+            )
+            self.assertTrue(downstream["downstream_usable"])
+            self.assertFalse(downstream["full_collection_success"])
+            self.assertEqual(downstream["collection_status"], "completed_with_failures")
+            self.assertEqual(downstream["source_failure_count"], 1)
+            self.assertEqual(downstream["system_failure_count"], 0)
+            self.assertTrue(diagnostic["source_diagnostic"])
+            self.assertEqual(daily_pipeline.deferred_exit_code([diagnostic]), 0)
+
+    def test_wechat_and_douyin_source_failures_allow_safe_aihot_defer(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            wechat_step = daily_pipeline.isolate_source_failure(
+                {"name": "refresh fixed WeWe provider", "returncode": 4},
+                source="wechat", state="login_required", reason="login_required",
+            )
+            douyin_step = {
+                "name": "fetch daily Douyin homepage title/caption samples through Chrome CDP",
+                "returncode": 0,
+                "optional_returncode": 3,
+                "optional_failed": True,
+            }
+            daily_pipeline.isolate_source_failure(
+                douyin_step,
+                source="douyin", state="artifact_unavailable",
+                reason="no_valid_current_run_douyin_artifact",
+            )
+            diagnostic = daily_pipeline.source_failure_diagnostic(
+                name="verify Douyin successful-item source artifact",
+                source="douyin", reason="no_valid_current_run_douyin_artifact",
+            )
+            steps = [wechat_step, douyin_step, diagnostic]
+            downstream = daily_pipeline.downstream_usability_report(
+                steps, root, today_candidates=4,
+                probe_result_path=root / "missing-primary.json",
+            )
+            self.assertTrue(downstream["downstream_usable"])
+            self.assertFalse(downstream["full_collection_success"])
+            self.assertEqual(downstream["collection_status"], "completed_with_failures")
+            self.assertEqual(downstream["source_failure_count"], 2)
+            self.assertEqual(downstream["system_failure_count"], 0)
+            self.assertEqual(0 if downstream["downstream_usable"] else daily_pipeline.deferred_exit_code(steps), 0)
+
     def test_run_scoped_paths_do_not_use_global_spike_as_authority(self) -> None:
         paths = daily_pipeline.douyin_run_artifact_paths(RUN_ID)
         for path in paths.values():
