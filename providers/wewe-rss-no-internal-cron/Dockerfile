@@ -6,14 +6,17 @@ RUN git clone https://github.com/cooderl/wewe-rss.git /src \
     && test "$(git rev-parse HEAD)" = "f88b023961804b986f3f1225c52d5066928df3c1"
 COPY disable-internal-refresh-cron.patch /tmp/disable-internal-refresh-cron.patch
 RUN cd /src \
-    && git apply --check /tmp/disable-internal-refresh-cron.patch \
-    && git apply /tmp/disable-internal-refresh-cron.patch \
+    && git apply --unidiff-zero --check /tmp/disable-internal-refresh-cron.patch \
+    && git apply --unidiff-zero /tmp/disable-internal-refresh-cron.patch \
     && ! grep -R "handleUpdateFeedsCron\|@Cron" apps/server/src
 
 FROM node:20.16.0-alpine AS base
 ENV PNPM_HOME="/pnpm"
 ENV PATH="$PNPM_HOME:$PATH"
-RUN npm i -g pnpm
+ENV COREPACK_ENABLE_PROJECT_SPEC=0
+RUN corepack enable \
+    && corepack prepare pnpm@8.15.9 --activate \
+    && test "$(pnpm --version)" = "8.15.9"
 
 FROM base AS build
 COPY --from=source /src /usr/src/app

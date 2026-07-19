@@ -2,17 +2,9 @@ diff --git a/apps/server/src/feeds/feeds.service.ts b/apps/server/src/feeds/feed
 index 45727cd..3ec4caa 100644
 --- a/apps/server/src/feeds/feeds.service.ts
 +++ b/apps/server/src/feeds/feeds.service.ts
-@@ -1,6 +1,5 @@
- import { HttpException, HttpStatus, Injectable, Logger } from '@nestjs/common';
- import { PrismaService } from '@server/prisma/prisma.service';
+@@ -3 +2,0 @@ import { PrismaService } from '@server/prisma/prisma.service';
 -import { Cron } from '@nestjs/schedule';
- import { TrpcService } from '@server/trpc/trpc.service';
- import { feedMimeTypeMap, feedTypes } from '@server/constants';
- import { ConfigService } from '@nestjs/config';
-@@ -66,40 +65,6 @@ export class FeedsService {
-     });
-   }
- 
+@@ -69,34 +67,0 @@ export class FeedsService {
 -  @Cron(process.env.CRON_EXPRESSION || '35 5,17 * * *', {
 -    name: 'updateFeeds',
 -    timeZone: 'Asia/Shanghai',
@@ -47,6 +39,3 @@ index 45727cd..3ec4caa 100644
 -    }
 -  }
 -
-   async cleanHtml(source: string) {
-     const $ = load(source, { decodeEntities: false });
- 

@@ -55,7 +55,11 @@ class WeWeRefreshOwnershipTests(unittest.TestCase):
         self.assertNotIn("refreshArticles", patch)
         dockerfile = (ROOT / "providers/wewe-rss-no-internal-cron/Dockerfile").read_text(encoding="utf-8")
         self.assertIn(contract.UPSTREAM_COMMIT, dockerfile)
-        self.assertIn("git apply --check", dockerfile)
+        self.assertIn("git apply --unidiff-zero --check", dockerfile)
+        self.assertIn("corepack prepare pnpm@8.15.9 --activate", dockerfile)
+        self.assertIn('test "$(pnpm --version)" = "8.15.9"', dockerfile)
+        self.assertIn("COREPACK_ENABLE_PROJECT_SPEC=0", dockerfile)
+        self.assertNotIn("npm i -g pnpm", dockerfile)
 
     def test_daily_path_has_one_signed_refresh_and_no_keepalive(self):
         source = (ROOT / "scripts/daily_pipeline.py").read_text(encoding="utf-8")
