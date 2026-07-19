@@ -493,7 +493,8 @@ async function probeAccount(cdp, browserClient, source, options) {
     });
     const payload = JSON.parse(result.result.value || "{}");
     const worksText = payload.worksText || "";
-    const worksLoaded = worksText.replace(/\s/g, "").length >= 80;
+    const worksLoaded = (payload.videoAnchors || []).some((item) => item.in_works_grid)
+      || worksText.replace(/\s/g, "").length >= 80;
     const accountWorksFailed = /服务异常|重新刷新拉取数据/.test(payload.text || "") || !worksLoaded;
     const incremental = selectIncrementalWorks(payload.videoAnchors || [], options.seenVideoIds || new Set(), options);
     const trustedWorks = !accountWorksFailed && incremental.status === "updated_with_new_items";
