@@ -9,6 +9,7 @@ import {
   buildCoverage,
   buildHomepageCardItems,
   limitedPlanRejection,
+  selectIncrementalWorks,
   selectedSources,
   validateFullAccountLimitArgs,
   validateContentItemLineage,
@@ -76,6 +77,45 @@ assert.equal(validateContentItemLineage(rowsWithFailedLink, [{
   "账号名/公众号名": "account-2",
 }]).ok, false);
 
+const workCard = (id, extra = {}) => ({
+  href: `https://www.douyin.com/video/${id}`,
+  id,
+  text: `account work ${id}`,
+  in_works_grid: true,
+  account_identity_match: true,
+  pinned: false,
+  ...extra,
+});
+const incremental = selectIncrementalWorks([
+  workCard("10000000001", { pinned: true }),
+  workCard("10000000002"),
+  workCard("10000000003"),
+  workCard("10000000004"),
+  workCard("10000000005"),
+  workCard("10000000006"),
+  workCard("10000000007"),
+  workCard("10000000008"),
+  workCard("10000000009"),
+  workCard("10000000010"),
+], new Set(["10000000002", "10000000003"]), { scanLimit: 10, videoLimit: 2 });
+assert.deepEqual(incremental.selected.map((item) => item.id), ["10000000004", "10000000005"]);
+assert.equal(incremental.counters.pinned, 1);
+assert.equal(incremental.counters.seen, 2);
+
+const noNew = selectIncrementalWorks([
+  workCard("20000000001"), workCard("20000000002"), workCard("20000000003"),
+], new Set(["20000000001", "20000000002", "20000000003"]));
+assert.equal(noNew.status, "updated_no_new_items");
+assert.equal(noNew.selected.length, 0);
+
+const contaminated = selectIncrementalWorks([
+  workCard("30000000001", { href: "https://www.douyin.com/search?modal_id=30000000001", text: "教材热搜聚合", in_works_grid: false }),
+  workCard("30000000002", { href: "https://www.baidu.com/baiduspider/video/30000000002", text: "食品商品", in_works_grid: false }),
+  workCard("30000000003", { text: "广告商品", account_identity_match: false }),
+]);
+assert.equal(contaminated.selected.length, 0);
+assert.equal(contaminated.counters.contaminated, 3);
+
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), "ar026-check-only-"));
 const config = path.join(tmp, "sources.json");
 const out = path.join(tmp, "out");
@@ -131,6 +171,9 @@ assert.equal(sourceText.includes("127.0.0.1:9222"), false);
 assert.equal(sourceText.includes("--only-account-names"), false);
 assert.equal(sourceText.includes("onlyAccountNames"), false);
 assert.equal(sourceText.includes("rows.slice(0"), false);
+assert.equal(sourceText.includes("payload.anchors"), false);
+assert.equal(sourceText.includes("payload.htmlSnippet"), false);
+assert.equal(sourceText.includes("scanLimit: 10"), true);
 
 const outerSource = fs.readFileSync(path.resolve("scripts/run_daily_collection_job.py"), "utf8");
 assert.equal(outerSource.includes('"--force-fetch-douyin"'), true);

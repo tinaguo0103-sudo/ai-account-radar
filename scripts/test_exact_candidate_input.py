@@ -158,13 +158,20 @@ class ExactCandidateInputTests(unittest.TestCase):
                 writer = csv.DictWriter(handle, fieldnames=FIELDS)
                 writer.writeheader()
                 writer.writerows(rows)
+            loaded, _ = exact_input.load_exact_input(
+                path,
+                run_id=run_id,
+                expected_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
+                project_root=root,
+            )
+            self.assertEqual(loaded[0]["来源链接"], "")
+            rows[0]["内容指纹"] = ""
+            with path.open("w", encoding="utf-8-sig", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=FIELDS)
+                writer.writeheader()
+                writer.writerows(rows)
             with self.assertRaisesRegex(exact_input.ExactInputError, "empty_exact_input_field"):
-                exact_input.load_exact_input(
-                    path,
-                    run_id=run_id,
-                    expected_sha256=hashlib.sha256(path.read_bytes()).hexdigest(),
-                    project_root=root,
-                )
+                exact_input.load_exact_input(path, run_id=run_id, expected_sha256=hashlib.sha256(path.read_bytes()).hexdigest(), project_root=root)
         finally:
             temp.cleanup()
 

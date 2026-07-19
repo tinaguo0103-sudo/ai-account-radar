@@ -26,6 +26,8 @@ export function parseArgs(args = process.argv.slice(2)) {
     cdp: DEFAULT_CDP,
     accountLimit: "0",
     videoLimit: 3,
+    scanLimit: 10,
+    seenLedger: path.join(ROOT, "output/state/douyin_seen_items.json"),
     waitMs: 7000,
     retries: 2,
     checkOnly: false,
@@ -37,6 +39,8 @@ export function parseArgs(args = process.argv.slice(2)) {
     else if (arg === "--cdp") options.cdp = args[++i];
     else if (arg === "--account-limit") options.accountLimit = args[++i];
     else if (arg === "--video-limit") options.videoLimit = Number(args[++i]);
+    else if (arg === "--scan-limit") options.scanLimit = Number(args[++i]);
+    else if (arg === "--seen-ledger") options.seenLedger = args[++i];
     else if (arg === "--wait-ms") options.waitMs = Number(args[++i]);
     else if (arg === "--retries") options.retries = Number(args[++i]);
     else if (arg === "--check-only") options.checkOnly = true;
@@ -226,6 +230,76 @@ function extractVideoLinksFromText(text, videoLimit) {
   return { ids: ids.slice(0, videoLimit), links };
 }
 
+export function videoIdFromUrl(value) {
+  return (String(value || "").match(/(?:\/video\/|modal_id=)(\d{10,})/) || [])[1] || "";
+}
+
+export function isContaminatedWorkCard(card) {
+  const href = String(card?.href || card?.url || "");
+  const text = String(card?.text || "");
+  if (!card?.in_works_grid || !videoIdFromUrl(href)) return true;
+  if (/baiduspider|\/search(?:\/|\?|$)|hotspot|hot\/search|goods|product/i.test(href)) return true;
+  return /教材|食品|商品|热搜聚合|广告/.test(text) && !card.account_identity_match;
+}
+
+export function selectIncrementalWorks(cards, seenIds = [], { scanLimit = 10, videoLimit = 3 } = {}) {
+  const seen = new Set([...seenIds].map(String));
+  const scanned = cards.slice(0, Math.max(10, Number(scanLimit) || 10));
+  const selected = [];
+  const counters = { cards_scanned: scanned.length, new: 0, seen: 0, pinned: 0, contaminated: 0, rejected: 0 };
+  for (const card of scanned) {
+    const id = videoIdFromUrl(card.href || card.url);
+    if (isContaminatedWorkCard(card)) {
+      counters.contaminated += 1;
+      continue;
+    }
+    if (!id) {
+      counters.rejected += 1;
+      continue;
+    }
+    if (card.pinned) {
+      counters.pinned += 1;
+      continue;
+    }
+    if (seen.has(id)) {
+      counters.seen += 1;
+      continue;
+    }
+    if (!selected.some((item) => videoIdFromUrl(item.href || item.url) === id)) selected.push(card);
+    if (selected.length >= videoLimit) break;
+  }
+  counters.new = selected.length;
+  return { selected, counters, status: selected.length ? "updated_with_new_items" : "updated_no_new_items" };
+}
+
+export function loadSeenVideoIds(ledgerPath, runsRoot = path.join(ROOT, "output/runs")) {
+  const ids = new Set();
+  if (ledgerPath && fs.existsSync(ledgerPath)) {
+    const payload = JSON.parse(fs.readFileSync(ledgerPath, "utf8"));
+    for (const value of payload.video_ids || []) ids.add(String(value));
+  }
+  if (fs.existsSync(runsRoot)) {
+    for (const run of fs.readdirSync(runsRoot)) {
+      const csv = path.join(runsRoot, run, "content_items.csv");
+      if (!fs.existsSync(csv)) continue;
+      for (const match of fs.readFileSync(csv, "utf8").matchAll(/(?:\/video\/|modal_id=)(\d{10,})/g)) ids.add(match[1]);
+    }
+  }
+  return ids;
+}
+
+export function writeSeenVideoIds(ledgerPath, seenIds, runId) {
+  const target = path.resolve(ledgerPath);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const temporary = `${target}.${process.pid}.tmp`;
+  fs.writeFileSync(temporary, JSON.stringify({
+    schema_version: 1,
+    last_run_id: runId,
+    video_ids: [...new Set([...seenIds].map(String))].sort(),
+  }, null, 2), { encoding: "utf8", mode: 0o600 });
+  fs.renameSync(temporary, target);
+}
+
 function fingerprint(input) {
   let hash = 5381;
   for (let i = 0; i < input.length; i += 1) {
@@ -321,7 +395,7 @@ export function buildCoverage(sources, rows) {
     const name = String(row.account_name || "").trim();
     const artifactCount = Array.isArray(row.video_links) ? row.video_links.length : 0;
     perAccount[name] = artifactCount;
-    if (row.status === "success" && artifactCount > 0) {
+    if ((row.status === "success" && artifactCount > 0) || row.status === "updated_no_new_items") {
       successfulAccounts += 1;
     } else {
       failedAccounts.push({
@@ -394,10 +468,11 @@ async function probeAccount(cdp, browserClient, source, options) {
             node = node.parentElement;
             if (node && node.innerText) text = node.innerText;
           }
-          return { href, id, text: String(text || "").slice(0, 1000) };
+          const cardRoot = a.closest('[data-e2e*="user-post"], [data-e2e*="user-work"], [data-e2e*="works"], [class*="user-post"], [class*="work-list"], [class*="post-list"]');
+          const pinned = Boolean(a.closest('[data-e2e*="pinned"], [class*="pinned"]')) || /(^|\n)\s*置顶\s*(\n|$)/.test(text);
+          const accountIdentityMatch = Boolean(cardRoot && !cardRoot.closest('[data-e2e*="recommend"], [class*="recommend"], [class*="search"]'));
+          return { href, id, text: String(text || "").slice(0, 1000), in_works_grid: Boolean(cardRoot), pinned, account_identity_match: accountIdentityMatch };
         });
-        const anchors = Array.from(document.querySelectorAll('a[href]')).map(a => a.href).join('\\n');
-        const html = document.documentElement ? document.documentElement.outerHTML : '';
         const text = document.body ? document.body.innerText : '';
         const worksStart = text.indexOf('日期筛选');
         const worksEnd = worksStart >= 0 ? text.indexOf('广告投放', worksStart) : -1;
@@ -407,32 +482,32 @@ async function probeAccount(cdp, browserClient, source, options) {
         return JSON.stringify({
           title: document.title,
           url: location.href,
-          anchors,
           videoAnchors,
           text: text.slice(0, 5000),
           worksText: worksText.slice(0, 4000),
-          htmlSnippet: html.slice(0, 50000),
-          loginHint: /登录|验证码|验证|captcha|verify/i.test(text + html)
+          loginHint: /登录|验证码|验证|captcha|verify/i.test(text)
         });
       })()`,
       returnByValue: true,
       awaitPromise: true,
     });
     const payload = JSON.parse(result.result.value || "{}");
-    const combined = `${payload.anchors || ""}\n${payload.htmlSnippet || ""}`;
-    const extracted = extractVideoLinksFromText(combined, options.videoLimit);
     const worksText = payload.worksText || "";
     const worksLoaded = worksText.replace(/\s/g, "").length >= 80;
     const accountWorksFailed = /服务异常|重新刷新拉取数据/.test(payload.text || "") || !worksLoaded;
-    const trustedWorks = extracted.ids.length && !accountWorksFailed;
-    const status = trustedWorks ? "success" : (payload.loginHint ? "needs_login_or_verification" : "partial_untrusted");
+    const incremental = selectIncrementalWorks(payload.videoAnchors || [], options.seenVideoIds || new Set(), options);
+    const trustedWorks = !accountWorksFailed && incremental.status === "updated_with_new_items";
+    const noNew = !accountWorksFailed && incremental.status === "updated_no_new_items";
+    const status = trustedWorks ? "success" : (noNew ? "updated_no_new_items" : (payload.loginHint ? "needs_login_or_verification" : "partial_untrusted"));
     const failure = trustedWorks
       ? ""
       : (
           accountWorksFailed
             ? "主页作品区未可信加载，发现的视频 ID 可能来自热门推荐或页脚，不作为账号最近作品。"
-            : (payload.loginHint ? "页面疑似需要登录/验证后才能看到作品链接" : "页面已渲染但未发现可信作品 ID，可能仍是 JS 壳或作品列表懒加载")
+            : (noNew ? "" : (payload.loginHint ? "页面疑似需要登录/验证后才能看到作品链接" : "页面已渲染但未发现可信作品 ID，可能仍是 JS 壳或作品列表懒加载"))
         );
+    const selectedCards = trustedWorks ? incremental.selected : [];
+    const selectedIds = selectedCards.map((item) => videoIdFromUrl(item.href || item.url));
     return {
       account_name: source.account_name || source.name || "",
       homepage_url: homepage,
@@ -442,16 +517,19 @@ async function probeAccount(cdp, browserClient, source, options) {
       failure_reason: failure,
       page_title: payload.title || "",
       current_url: payload.url || "",
-      video_ids: trustedWorks ? extracted.ids : [],
-      video_links: trustedWorks ? extracted.links : [],
-      video_cards: trustedWorks ? (payload.videoAnchors || []).filter((item) => extracted.ids.includes(item.id)).map((item) => ({
+      video_ids: selectedIds,
+      video_links: selectedIds.map((id) => `https://www.douyin.com/video/${id}`),
+      video_cards: selectedCards.map((item) => ({
         video_id: item.id,
         href: item.href,
         url: `https://www.douyin.com/video/${item.id}`,
         text: item.text || "",
-      })) : [],
-      untrusted_video_ids: trustedWorks ? [] : extracted.ids,
-      untrusted_video_links: trustedWorks ? [] : extracted.links,
+        pinned: Boolean(item.pinned),
+      })),
+      discovery_counters: incremental.counters,
+      freshness_state: incremental.status,
+      untrusted_video_ids: [],
+      untrusted_video_links: [],
       text_preview: payload.text || "",
       works_preview: worksText,
       boundary: "低频只读；不导出cookie/token/profile；不抓评论；不下载视频。",
@@ -486,7 +564,7 @@ async function probeAccountWithRetry(cdp, browserClient, source, options) {
     const result = await probeAccount(cdp, browserClient, source, options);
     result.attempts = attempt;
     last = result;
-    if (result.status === "success") return result;
+    if (["success", "updated_no_new_items"].includes(result.status)) return result;
     if (attempt < attempts) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(5000, 1000 * attempt)));
     }
@@ -502,6 +580,8 @@ async function main() {
   }
   const options = parseArgs();
   options.accountLimit = accountGate.value;
+  options.scanLimit = Math.max(10, Number(options.scanLimit) || 10);
+  options.seenVideoIds = loadSeenVideoIds(options.seenLedger);
   const runId = String(process.env.AI_ACCOUNT_RADAR_RUN_ID || process.env.RUN_ID || "").trim();
   if (!options.checkOnly && !/^run_\d{8}_\d{6}(?:_[A-Za-z0-9_-]+)?$/.test(runId)) {
     console.log(JSON.stringify({ ok: false, status: "run_identity_missing", collection_started: false, writes_feishu: false }));
@@ -659,6 +739,9 @@ async function main() {
     rows,
   };
   fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(output, null, 2), "utf8");
+  const completedSeen = new Set(options.seenVideoIds);
+  for (const id of rows.flatMap((row) => row.video_ids || [])) completedSeen.add(String(id));
+  writeSeenVideoIds(options.seenLedger, completedSeen, runId);
   const csv = [
     ["account_name", "status", "homepage_url", "video_ids", "video_links", "failure_reason"].join(","),
     ...rows.map((row) => [

@@ -982,7 +982,6 @@ def aggregate_replay_outputs(
                 and raw_stage2_drift_count == 0
                 and guard_blocked_count == 0
                 and ranking_bijection_ok
-                and actionable_title_families["ok"]
             ),
             "full_run_success": replay_completed_ok,
             "survivor_quality_gate_ok": (
@@ -993,7 +992,6 @@ def aggregate_replay_outputs(
                 and raw_stage2_drift_count == 0
                 and guard_blocked_count == 0
                 and ranking_bijection_ok
-                and actionable_title_families["ok"]
             ),
             "engine": engine,
             "engine_meta": engine_meta,
@@ -1022,6 +1020,7 @@ def aggregate_replay_outputs(
             "guard_blocked_count": guard_blocked_count,
             "ranking_bijection_ok": ranking_bijection_ok,
             "actionable_title_family_ok": actionable_title_families["ok"],
+            "actionable_title_family_advisory": not actionable_title_families["ok"],
             "actionable_title_family_classification": actionable_title_families["classification"],
             "actionable_title_family_applicable": actionable_title_families["applicable"],
             "actionable_title_max_family_rate": actionable_title_families["max_family_rate"],

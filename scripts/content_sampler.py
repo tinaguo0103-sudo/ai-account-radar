@@ -1873,9 +1873,6 @@ def title_generation_rule(item: ContentItem, scene: str) -> str:
 
 
 def angle_score(item: ContentItem, scene: str) -> int:
-    angle = hotspot_angle(item, scene) if item.source_type == "AIHOT热点" else {}
-    if angle.get("角度类型") and angle.get("角度类型") != "暂存观察":
-        return 5
     text = item_text(item)
     if any(k in text for k in ["流程", "Brief", "分镜", "Agent", "清单", "模板", "复盘", "转化"]):
         return 4
@@ -1885,7 +1882,7 @@ def angle_score(item: ContentItem, scene: str) -> int:
 def score_item(item: ContentItem, scene: str) -> int:
     text = item_text(item)
     angle = hotspot_angle(item, scene) if item.source_type == "AIHOT热点" else {}
-    heat = 5 if item.source_type == "AIHOT热点" else 3
+    heat = 3
     account_angle = angle_score(item, scene)
     business = 5 if any(k in text for k in ["流程", "SOP", "清单", "Brief", "分镜", "Agent", "复盘", "模板", "产品", "工具", "团队"]) else 3
     diff = 5 if account_angle >= 4 else 3
@@ -1899,8 +1896,6 @@ def score_item(item: ContentItem, scene: str) -> int:
         + action * 15 / 5
         + cost_reverse * 10 / 5
     )
-    if angle.get("角度类型") == "暂存观察":
-        score = min(score, 64)
     return score
 
 
@@ -1937,7 +1932,7 @@ def breakdown(item: ContentItem) -> dict[str, Any]:
     entrance = commercial_entrance(item)
     score = score_item(item, scene)
     action = recommend_action(item, score, scene)
-    worth = "是" if action in {"立即蹭热点", "生成脚本包"} else "否"
+    worth = "是" if action != "不做" else "否"
     hot = hotspot_angle(item, scene) if item.source_type == "AIHOT热点" else {
         "角度类型": "对标内容拆解",
         "我的蹭热点角度": "不是热点切入，而是学习对标内容的钩子、结构、专业证明和转化方式。",
@@ -2998,21 +2993,6 @@ def write_debug_top10(
 
 
 def assign_action_quotas(topics: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    immediate = 0
-    brief = 0
-    for topic in topics:
-        if topic.get("是否建议进入制作") != "是":
-            topic["推荐动作"] = "暂存观察" if topic.get("是否建议进入制作") == "暂存观察" else "不做"
-            continue
-        desired = topic["推荐动作"]
-        if desired == "立即蹭热点":
-            immediate += 1
-            if immediate > 4:
-                topic["推荐动作"] = "暂存观察"
-        elif desired == "生成脚本包":
-            brief += 1
-            if brief > 2:
-                topic["推荐动作"] = "暂存观察"
     return topics
 
 
@@ -3074,22 +3054,17 @@ def topic_theme_key(topic: dict[str, Any]) -> tuple[str, str, str, str]:
 
 
 def merge_same_theme(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    merged: list[dict[str, Any]] = []
-    by_key: dict[tuple[str, str, str, str], dict[str, Any]] = {}
+    clusters: dict[tuple[str, str, str, str], list[dict[str, Any]]] = {}
     for topic in candidates:
-        key = topic_theme_key(topic)
-        if key not in by_key:
-            by_key[key] = topic
-            merged.append(topic)
-            continue
-        kept = by_key[key]
-        related = [part for part in kept.get("相关来源", "").split("；") if part]
-        related_source = f"{topic['来源类型']}：{topic['来源内容']}"
-        kept_source = f"{kept['来源类型']}：{kept['来源内容']}"
-        if related_source != kept_source:
-            related.append(related_source)
-        kept["相关来源"] = "；".join(dict.fromkeys(related))
-    return merged
+        clusters.setdefault(topic_theme_key(topic), []).append(topic)
+    for key, rows in clusters.items():
+        cluster_id = fingerprint(*key)
+        sources = [f"{row['来源类型']}：{row['来源内容']}" for row in rows]
+        for row in rows:
+            own = f"{row['来源类型']}：{row['来源内容']}"
+            row["主题聚类ID"] = cluster_id
+            row["相关来源"] = "；".join(source for source in sources if source != own)
+    return candidates
 
 
 def credibility_rank(topic: dict[str, Any]) -> int:
@@ -3197,47 +3172,30 @@ def select_skill_review_candidates(candidates: list[dict[str, Any]]) -> list[dic
         row["对应栏目"] = normalize_column(row["对应栏目"])
     sorted_candidates = merge_same_theme(sorted(candidates, key=editorial_sort_key, reverse=True))
 
-    selected: list[dict[str, Any]] = []
+    eligible: list[dict[str, Any]] = []
     seen_fp: set[str] = set()
-    seen_titles: set[str] = set()
-    seen_source_titles: set[str] = set()
-    template_counts: dict[str, int] = {}
-    column_counts: dict[str, int] = {}
-
-    def add(row: dict[str, Any], allow_overflow: bool = False) -> bool:
-        if row["内容指纹"] in seen_fp:
-            return False
-        if not include_in_skill_review_pool(row):
-            return False
-        visible_title = (row.get("可发布标题") or row.get("来源内容") or row.get("我的选题标题", "")).strip()
-        if visible_title and visible_title in seen_titles:
-            return False
-        source_title = re.sub(r"\s+", "", row.get("来源内容", "")).lower()
-        if source_title and source_title in seen_source_titles:
-            return False
-        if row.get("来源类型") == "AIHOT热点" and not allow_overflow:
-            if sum(1 for item in selected if item.get("来源类型") == "AIHOT热点") >= 8:
-                return False
-        template = title_structure_template(row.get("可发布标题") or row.get("我的选题标题", ""))
-        if template != "specific" and template_counts.get(template, 0) >= 2:
-            return False
-        column = normalize_column(row.get("对应栏目", ""))
-        selected.append(row)
-        seen_fp.add(row["内容指纹"])
-        if visible_title:
-            seen_titles.add(visible_title)
-        if source_title:
-            seen_source_titles.add(source_title)
-        template_counts[template] = template_counts.get(template, 0) + 1
-        column_counts[column] = column_counts.get(column, 0) + 1
-        return True
-
     for row in sorted_candidates:
-        add(row)
-        if len(selected) >= MAX_SKILL_REVIEW_CANDIDATES:
-            break
+        if row["内容指纹"] in seen_fp:
+            continue
+        if not include_in_skill_review_pool(row):
+            continue
+        eligible.append(row)
+        seen_fp.add(row["内容指纹"])
 
-    return selected
+    by_source: dict[str, list[dict[str, Any]]] = {}
+    source_order: list[str] = []
+    for row in eligible:
+        source = str(row.get("来源类型") or "unknown")
+        if source not in by_source:
+            by_source[source] = []
+            source_order.append(source)
+        by_source[source].append(row)
+    interleaved: list[dict[str, Any]] = []
+    while any(by_source.values()):
+        for source in source_order:
+            if by_source[source]:
+                interleaved.append(by_source[source].pop(0))
+    return interleaved
 
 
 def recover_content_inbox_from_run(run_dir: Path, run_id: str, write_feishu: bool) -> dict[str, Any]:

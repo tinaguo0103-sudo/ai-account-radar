@@ -17,10 +17,30 @@ VERSION = "ar020d_research_grounded_v1"
 TRACKING_KEYS = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "spm", "from"}
 ACCOUNT_PATH_MARKERS = {"user", "profile", "account", "channel", "home", "search"}
 MATERIAL_CONCEPTS = {"\u8fd4\u4fee", "\u9a8c\u6536", "\u4ea4\u4ed8", "\u5546\u4e1a\u53ef\u7528", "\u6548\u7387\u63d0\u5347", "\u66ff\u4ee3\u5c97\u4f4d"}
+HIGH_RISK_FACT_PATTERNS = (
+    r"\d+(?:\.\d+)?%", r"[$¥€]\s*\d", r"\d+(?:\.\d+)?\s*(?:万|亿|元|美元)",
+    r"融资|估值|发布日期|官方宣布|法律|医疗|金融|投资回报|直接引语|数据显示",
+)
 
 
 class ContractError(RuntimeError):
     pass
+
+
+def trusted_artifact_sufficient(candidate: dict[str, Any]) -> bool:
+    return bool(
+        str(candidate.get("content_fingerprint") or "").strip()
+        and str(candidate.get("source_type") or "").strip()
+        and str(candidate.get("source_account") or "").strip()
+        and str(candidate.get("artifact_text") or candidate.get("csv_title") or "").strip()
+    )
+
+
+def requires_external_research(candidate: dict[str, Any]) -> bool:
+    text = "\n".join(str(candidate.get(field) or "") for field in (
+        "artifact_text", "csv_title", "original_publication_copy", "hard_fact_usage",
+    ))
+    return any(re.search(pattern, text, re.I) for pattern in HIGH_RISK_FACT_PATTERNS)
 
 
 def canonical_json(value: Any) -> str:
@@ -110,6 +130,8 @@ def validate_recommendation_research_eligibility(
         decision.get("recommendation_status") or ""
     ) != "生成脚本包":
         return
+    if dossier.get("research_requirement") == "optional" and str(decision.get("hard_fact_usage") or "none").strip().lower() in {"", "none", "无"}:
+        return
     opened_ids = {
         str(item.get("evidence_id"))
         for item in dossier.get("results", [])
@@ -130,12 +152,29 @@ def validate_recommendation_research_eligibility(
 
 
 def validate_source_open(candidate: dict[str, Any], output: dict[str, Any]) -> dict[str, Any]:
+    status = str(output.get("open_status") or "")
+    if status != "opened" and trusted_artifact_sufficient(candidate):
+        artifact_text = str(candidate.get("artifact_text") or candidate.get("csv_title") or "").strip()
+        evidence_id = f"artifact:{candidate.get('content_fingerprint')}"
+        return {
+            **output,
+            "open_status": "artifact_only",
+            "eligible": True,
+            "failure_reason": "",
+            "link_unavailable": True,
+            "evidence_level": "trusted_collection_artifact",
+            "needs_verification": requires_external_research(candidate),
+            "captured_content_hash": str(candidate.get("local_trace_hash") or hash_json(candidate)),
+            "content_evidence": [{"evidence_id": evidence_id, "text": artifact_text, "source": "trusted_collection_artifact"}],
+            "exact_url": str(candidate.get("exact_url") or ""),
+            "final_url": "",
+            "source_summary": artifact_text,
+        }
     try:
         source_adapter.validate_primary_adapter(candidate, output)
     except source_adapter.AdapterContractError as exc:
         raise ContractError(str(exc)) from exc
     expected = canonical_url(candidate.get("exact_url", ""))
-    status = str(output.get("open_status") or "")
     if status != "opened":
         return {**output, "open_status": "failed", "eligible": False, "failure_reason": output.get("failure_reason") or "exact_source_not_opened"}
     exact = canonical_url(output.get("exact_url", ""))

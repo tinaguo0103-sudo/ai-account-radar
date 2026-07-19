@@ -12,9 +12,9 @@ description: 基于已打开的精确来源、网页研究证据与 Austin 私�
 真实执行协议是：
 
 ```text
-deterministic shortlist
--> exact source open
--> web research dossier
+trusted collection artifact review pool
+-> optional exact source enhancement
+-> risk-triggered web research dossier
 -> evidence-backed hook analysis
 -> persona-native editorial decision
 -> dynamic global ranking (0..N, no cap)
@@ -26,8 +26,8 @@ deterministic shortlist
 
 ## 证据边界
 
-- 精确来源必须打开成功；CSV 标题、摘要、搜索 snippet、账号主页不能替代原文。
-- 所有 shortlist 候选都先研究。优先原始/官方来源，再用可信独立来源核对实体和实质主张。
+- 已验证 run/date/source/account/fingerprint 且具有非空标题、caption 或 body 的采集 artifact 本身可进入 Skill。原链接为空或打不开时标记 `link_unavailable` 与较低置信度，不得因此删除候选。
+- 外部研究只对精确数字/日期/引语、官方功能或声明、时效新闻，以及法律、医疗、金融、名誉类硬事实强制。普通观点、结构学习和工作流判断可使用采集 artifact；无外研时必须降低置信度、软化硬事实或标记待补证据。
 - 产品名、创作者名、工具名不是天然钩子。钩子必须解释陌生受众为什么会点，并绑定 evidence IDs。
 - persona 只影响 Austin 如何注意、比较、怀疑、取舍和表达；不能改变来源事实、证据强度或 eligibility。
 - 私有案例不是候选证据。禁止输出案例名、case ID、引用、锚点或“案例证明”。
@@ -86,7 +86,7 @@ Stage 1 额外输出：
 
 Stage 1 不能为自己的内容质量签发通过结论。生成时的自我批评只属于 `model_self_critique`，不进入完成门；独立的 post-generation review 必须在 decision output 锁定后执行，并绑定整批 decision hash 与逐条 decision hash。复核需逐条说明公共钩子、点击理由、事实边界和来源身份关系，尤其不能把作者的职业、雇主或经历改写成作品、产品或事件本身的身份。重复通用评语、缺行、重复行或 hash 不匹配均 fail closed。
 
-风格片段按本候选真实需要的判断动作检索，例如公开矛盾、故事/社会证明、证据怀疑、结果承诺或取舍；不得把同一组片段当通用底稿。标题先服从来源事实和自然判断，再检查全批可生成标题的句式族。任一句式族占比超过 30% 时整批失败并重做判断，但检查器不得生成或机械改写标题。
+风格片段按本候选真实需要的判断动作检索，例如公开矛盾、故事/社会证明、证据怀疑、结果承诺或取舍；不得把同一组片段当通用底稿。标题先服从来源事实和自然判断，再检查全批可生成标题的句式族。句式族占比是排序/返修 warning，不得整批阻断或机械改写标题。
 
 ## Global Ranking
 

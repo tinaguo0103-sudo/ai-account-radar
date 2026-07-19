@@ -12,7 +12,7 @@ from typing import Any
 
 RUN_ID_RE = re.compile(r"^run_(\d{8})_(\d{6})$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
-REQUIRED_COLUMNS = ("来源链接", "内容指纹", "来源类型", "来源内容")
+REQUIRED_COLUMNS = ("内容指纹", "来源类型", "来源内容")
 IDENTITY_FIELDS = (
     "来源链接", "内容指纹", "来源类型", "来源内容", "原始来源标题",
     "原始发布文案", "原始来源账号", "平台",
@@ -122,7 +122,7 @@ def load_exact_input(
     identities = [row_identity(row, index) for index, row in enumerate(rows)]
     content_fingerprints = [item["content_fingerprint"] for item in identities]
     candidate_fingerprints = [item["candidate_fingerprint"] for item in identities]
-    urls = [item["exact_url"] for item in identities]
+    urls = [item["exact_url"] for item in identities if item["exact_url"]]
     for values, reason in (
         (content_fingerprints, "duplicate_exact_input_content_fingerprint"),
         (candidate_fingerprints, "duplicate_exact_input_candidate_fingerprint"),

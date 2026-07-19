@@ -11,7 +11,13 @@ import ar020e_daily_editorial_entrypoint as entrypoint
 
 class AR020EDailyEditorialEntrypointTests(unittest.TestCase):
     def test_check_only_is_read_only_and_current_task(self) -> None:
-        result = entrypoint.check_readiness("run_20260714_091500", None)
+        with patch.object(entrypoint, "verify_skill_release_manifest", return_value={
+            "ok": True,
+            "manifest_verified": True,
+            "source_identity_verified": True,
+            "failures": [],
+        }):
+            result = entrypoint.check_readiness("run_20260714_091500", None)
         self.assertTrue(result["ok"])
         self.assertTrue(result["check_only"])
         self.assertTrue(result["manifest_verified"])

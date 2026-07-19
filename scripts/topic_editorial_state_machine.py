@@ -312,6 +312,7 @@ def source_open_candidate(row: dict[str, Any], index: int) -> dict[str, Any]:
         "source_account": str(row.get("原始来源账号") or ""),
         "source_type": str(row.get("来源类型") or ""),
         "platform": str(row.get("平台") or ""),
+        "artifact_text": str(row.get("来源内容") or ""),
         "local_trace_hash": hash_json(row),
         "primary_adapter": source_adapter.primary_adapter_for_url(exact_url),
         "expected_page_identity": source_adapter.expected_identity(exact_url),
@@ -330,6 +331,7 @@ def exact_source_open_candidate(row: dict[str, Any], identity: dict[str, Any]) -
         "source_account": identity["source_account"],
         "source_type": identity["source_type"],
         "platform": identity["platform"],
+        "artifact_text": identity["source_content"],
         "local_trace_hash": identity["row_hash"],
         "primary_adapter": source_adapter.primary_adapter_for_url(identity["exact_url"]),
         "expected_page_identity": source_adapter.expected_identity(identity["exact_url"]),
@@ -381,14 +383,26 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
             "stage": "exact_source_open",
             "candidate": item,
             "rules": {
-                "must_open_exact_url": True,
+                "must_open_exact_url": bool(item["exact_url"]),
+                "trusted_artifact_is_candidate_evidence": True,
                 "no_csv_or_search_snippet_substitution": True,
                 "no_account_home_or_search_page": True,
                 "one_primary_adapter_only": True,
                 "no_failover_after_adapter_failure": True,
             },
         })
-        source_state[item["candidate_id"]] = stage_record("prepared", input_hash=file_hash(path / "input.json"), index=index)
+        if not item["exact_url"]:
+            validated = research_contract.validate_source_open(item, {
+                "open_status": "not_attempted",
+                "failure_reason": "source_url_unavailable",
+            })
+            write_json(path / "validated.json", validated)
+            source_state[item["candidate_id"]] = stage_record(
+                "completed", input_hash=file_hash(path / "input.json"),
+                output_hash=hash_json(validated), source_hash=validated["captured_content_hash"], index=index,
+            )
+        else:
+            source_state[item["candidate_id"]] = stage_record("prepared", input_hash=file_hash(path / "input.json"), index=index)
     write_json(out_dir / "shortlist_candidates.json", candidates)
     if exact_manifest:
         write_json(out_dir / "exact_candidate_input_manifest.json", exact_manifest)
@@ -443,7 +457,10 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
         "batch_size": args.batch_size,
         "max_skill_candidates": args.max_skill_candidates,
         "stages": {
-            "source_open": stage_record("prepared", candidates=source_state),
+            "source_open": stage_record(
+                "completed" if source_state and all(row["status"] == "completed" for row in source_state.values()) else "prepared",
+                candidates=source_state,
+            ),
             "research": stage_record("pending", candidates={}),
             "prepare_stage1": stage_record("pending"),
             "stage1": stage_record("pending", batches={}),
@@ -538,13 +555,39 @@ def prepare_research(args: argparse.Namespace) -> dict[str, Any]:
             records[cid] = stage_record("failed", error="source_open_failed", index=candidate["index"])
             continue
         source = read_json(out_dir / "source_open" / cid / "validated.json")
+        if not research_contract.requires_external_research(candidate):
+            evidence_ids = [str(item.get("evidence_id")) for item in source.get("content_evidence", []) if item.get("evidence_id")]
+            dossier = {
+                "status": "completed",
+                "eligible": True,
+                "research_requirement": "optional",
+                "research_summary": "Trusted collection artifact is sufficient for editorial review; external facts must be softened or separately verified.",
+                "results": [],
+                "conflicts": [],
+                "confidence": "low" if source.get("link_unavailable") else "medium",
+                "source": source,
+                "hook_analysis": {
+                    "audience_hook": str(candidate.get("artifact_text") or candidate.get("csv_title") or ""),
+                    "why_unfamiliar_audience_clicks": "The artifact contains a concrete workflow, viewpoint, or content structure worth editorial review.",
+                    "hook_type": ["decision_tradeoff"],
+                    "hook_evidence_ids": evidence_ids,
+                    "product_name_is_not_hook": True,
+                },
+                "claim_evidence": [],
+                "completed_at": now_iso(),
+            }
+            dossier["dossier_hash"] = hash_json(dossier)
+            write_json(out_dir / "research" / cid / "validated.json", dossier)
+            records[cid] = stage_record("completed", output_hash=dossier["dossier_hash"], dossier_hash=dossier["dossier_hash"], index=candidate["index"])
+            continue
         payload = {
             "protocol": VERSION,
             "stage": "web_research_and_hook_analysis",
             "candidate": candidate,
             "source": source,
             "rules": {
-                "research_every_opened_source": True,
+                "research_every_opened_source": False,
+                "research_required_for_high_risk_facts": True,
                 "official_then_credible_independent": True,
                 "search_snippet_is_discovery_only": True,
                 "product_name_is_not_hook": True,
