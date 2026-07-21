@@ -9,12 +9,14 @@ import {
   buildCoverage,
   buildHomepageCardItems,
   buildSourceRuntimeCoverage,
+  FixedPageSession,
   fixedDouyinTarget,
   limitedPlanRejection,
   loadCandidateLifecycle,
   materializeHistoricalBacklog,
   mergeNewAndBacklog,
   persistCollectedCandidates,
+  probeAccount,
   waitForNavigationAndWorksGrid,
   selectIncrementalWorks,
   selectedSources,
@@ -87,6 +89,59 @@ const sourceRuntimeFailure = buildSourceRuntimeCoverage(sources.slice(0, 3), [{
 assert.equal(sourceRuntimeFailure.source_runtime_failure_count, 1);
 assert.equal(sourceRuntimeFailure.failed_account_count, 0);
 assert.equal(sourceRuntimeFailure.artifact_count, 0);
+
+const transitionClients = [
+  {
+    async open() {}, close() {},
+    async send(method) {
+      if (["Runtime.enable", "Page.enable"].includes(method)) return {};
+      if (method === "Page.navigate") throw new Error("Not attached to an active page");
+      throw new Error(`unexpected first client command:${method}`);
+    },
+  },
+  {
+    evaluateCount: 0,
+    async open() {}, close() {},
+    async send(method) {
+      if (["Runtime.enable", "Page.enable"].includes(method)) return {};
+      if (method === "Page.navigate") return { frameId: "frame-fixed" };
+      if (method === "Page.getNavigationHistory") {
+        return { currentIndex: 0, entries: [{ id: 9, url: "https://www.douyin.com/user/account-1" }] };
+      }
+      if (method === "Runtime.evaluate") {
+        this.evaluateCount += 1;
+        if (this.evaluateCount === 1) {
+          return { result: { value: JSON.stringify({ title: "account-1", url: "https://www.douyin.com/user/account-1", body: "works", works_ready: true }) } };
+        }
+        return { result: { value: JSON.stringify({
+          title: "account-1", url: "https://www.douyin.com/user/account-1",
+          videoAnchors: [{
+            href: "https://www.douyin.com/video/50000000001", id: "50000000001", text: "account work",
+            in_works_grid: true, account_identity_match: true, pinned: false,
+          }], text: "account works ready", worksText: "x".repeat(100), loginHint: false,
+        }) } };
+      }
+      throw new Error(`unexpected second client command:${method}`);
+    },
+  },
+];
+let transitionClientIndex = 0;
+const transitionSession = new FixedPageSession("http://127.0.0.1:9333", {
+  id: "fixed-target-id", type: "page", url: "https://www.douyin.com/user/account-1", webSocketDebuggerUrl: "ws://first",
+}, {
+  clientFactory: () => transitionClients[transitionClientIndex++],
+  listTargets: async () => [{
+    id: "fixed-target-id", type: "page", url: "https://www.douyin.com/user/account-1", webSocketDebuggerUrl: "ws://second",
+  }],
+});
+await transitionSession.open();
+const transitioned = await probeAccount(transitionSession, source("account-1"), {
+  waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(),
+});
+assert.equal(transitioned.status, "success");
+assert.deepEqual(transitioned.video_ids, ["50000000001"]);
+assert.equal(transitionSession.reattachments, 1);
+transitionSession.close();
 
 const complete = buildCoverage(sources.slice(0, 2), [
   { account_name: "account-1", status: "success", video_links: ["one"] },

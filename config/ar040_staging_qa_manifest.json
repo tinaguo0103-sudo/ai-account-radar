@@ -15,6 +15,16 @@
   ],
   "steps": [
     {
+      "id": "staging_01_03_provision_check",
+      "command": "AI_ACCOUNT_RADAR_ENV=staging python3 scripts/provision_ar040_staging_tables.py --env-file /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_dev/.env.staging.local",
+      "expected": "only dedicated AR040 test 01/03 planned or schema-compatible; business_record_writes=0"
+    },
+    {
+      "id": "staging_01_03_provision_write",
+      "command": "AI_ACCOUNT_RADAR_ENV=staging python3 scripts/provision_ar040_staging_tables.py --env-file /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_dev/.env.staging.local --write",
+      "expected": "authorized QA only: exactly test-labeled 01/03 created or bound, owned fields/views read back, only two env table IDs atomically bound"
+    },
+    {
       "id": "isolation_preflight",
       "command": "AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/scheduled_flow_preflight.py --entrypoint editorial --check-network",
       "expected": "explicit staging resources, writable core path, DNS green, business_writes=0"
@@ -51,8 +61,8 @@
     },
     {
       "id": "production_zero_mutation",
-      "command": "compare production Git status and selected output artifact hashes before/after QA; remove only QA-owned staging records/artifacts",
-      "expected": "production diff empty; production business records unchanged"
+      "command": "compare production Git status and selected output artifact hashes before/after QA; record IDs of any tables created by the provisioner",
+      "expected": "production diff empty; production business records unchanged; cleanup is limited to exact QA-created AR040 test tables after dependent test records are removed"
     }
   ]
 }

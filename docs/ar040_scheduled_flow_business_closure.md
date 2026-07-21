@@ -3,7 +3,7 @@
 ## Runtime Contract
 
 - Douyin collection reuses one existing page target from the canonical Chrome listener on port 9333. It never creates, minimizes, starts, stops, or replaces the browser/profile.
-- Each account navigation waits for the expected account URL and works-grid DOM. A permanently blank shared target is one source-local runtime failure with zero Douyin artifacts.
+- Each account navigation waits for navigation-history commit, the expected account URL, and works-grid DOM. If Chrome rotates the renderer attachment, the probe reopens only the DevTools WebSocket for the same fixed `targetId` and continues bounded polling. It never closes or replaces the user's page. A permanently blank/lost shared target is one source-local runtime failure with zero Douyin artifacts.
 - Trusted collection artifacts are authoritative for ordinary editorial candidates. Ordinary candidates do not open their display URL. Only high-risk hard facts require source-open and external research.
 - Core output paths, environment, and Feishu DNS are checked before scheduled writes/sends. Optional telemetry path failure is a warning and cannot reverse a green exact write/read-back.
 - Staging requires explicit table IDs and explicit test card targets. Table-name fallback into production is forbidden.
@@ -34,6 +34,20 @@ Prompt changes are not required. Official configuration changes are required bef
 ## Independent QA Command Manifest
 
 Use `config/ar040_staging_qa_manifest.json`. QA must use `.env.staging.local`, explicit staging table IDs, a test app, and a personal test receive target. Dev fixture success is not Staging Verified.
+
+Before the business flow, QA runs the supported provisioner in check-only mode and then, under the staging authorization, once in write mode:
+
+```bash
+AI_ACCOUNT_RADAR_ENV=staging python3 scripts/provision_ar040_staging_tables.py \
+  --env-file /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_dev/.env.staging.local
+
+AI_ACCOUNT_RADAR_ENV=staging python3 scripts/provision_ar040_staging_tables.py \
+  --env-file /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_dev/.env.staging.local --write
+```
+
+The provisioner owns exactly `01 来源与采样__AR040_TEST` and `03 内容收件箱__AR040_TEST`. It reuses the current source/content field and view contracts, compares staging app/Base identity with the fixed production env reference in memory, never prints identities or secrets, creates no records, and atomically changes only `FEISHU_SOURCE_TABLE_ID` and `FEISHU_CONTENT_TABLE_ID`. A second successful write run is a no-op. Unknown create state is reconciled by exact test table name once and is never blindly recreated.
+
+Rollback may delete only a table whose ID was recorded as `created` by this QA run, after all QA-owned dependent records are removed. Never delete a table that was merely `bound_existing`, never delete the generic placeholder, 04, 06, or any production resource. Restore the two env lines from the QA before-snapshot atomically.
 
 ## Release And Rollback
 

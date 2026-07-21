@@ -156,6 +156,12 @@ class CdpClient {
         else resolve(payload.result);
       }
     });
+    this.ws.addEventListener("close", () => {
+      const error = new Error("cdp_page_websocket_closed");
+      error.code = "cdp_page_websocket_closed";
+      for (const pending of this.pending.values()) pending.reject(error);
+      this.pending.clear();
+    });
   }
 
   send(method, params = {}) {
@@ -178,6 +184,75 @@ class CdpClient {
     } catch {
       // ignore close failures
     }
+  }
+}
+
+export function isAttachmentTransitionError(error) {
+  const message = String(error?.message || error || "").toLowerCase();
+  return [
+    "not attached to an active page",
+    "cdp_page_websocket_closed",
+    "inspected target navigated or closed",
+    "target closed",
+    "session closed",
+  ].some((marker) => message.includes(marker));
+}
+
+export class FixedPageSession {
+  constructor(cdp, target, options = {}) {
+    this.cdp = cdp.replace(/\/$/, "");
+    this.targetId = String(target.id || "");
+    this.target = target;
+    this.listTargets = options.listTargets || getJson;
+    this.clientFactory = options.clientFactory || ((url) => new CdpClient(url));
+    this.maxReattachments = Number.isInteger(options.maxReattachments) ? options.maxReattachments : 2;
+    this.reattachments = 0;
+    if (!this.targetId || !target.webSocketDebuggerUrl) throw new Error("fixed_douyin_target_identity_missing");
+  }
+
+  async open() {
+    this.client = this.clientFactory(this.target.webSocketDebuggerUrl);
+    await this.client.open();
+    try {
+      await this.client.send("Runtime.enable");
+      await this.client.send("Page.enable");
+    } catch (error) {
+      if (!isAttachmentTransitionError(error)) throw error;
+      await this.reattach();
+    }
+  }
+
+  async reattach() {
+    if (this.reattachments >= this.maxReattachments) {
+      const error = new Error("fixed_target_attachment_recovery_exhausted");
+      error.code = "fixed_target_attachment_recovery_exhausted";
+      throw error;
+    }
+    const targets = await this.listTargets(`${this.cdp}/json/list`);
+    const current = targets.find((item) => String(item.id || "") === this.targetId);
+    if (!current || current.type !== "page" || !current.webSocketDebuggerUrl) {
+      const error = new Error("fixed_target_attachment_lost");
+      error.code = "fixed_target_attachment_lost";
+      throw error;
+    }
+    this.client?.close();
+    this.target = current;
+    this.reattachments += 1;
+    await this.open();
+  }
+
+  async send(method, params = {}) {
+    try {
+      return await this.client.send(method, params);
+    } catch (error) {
+      if (!isAttachmentTransitionError(error)) throw error;
+      await this.reattach();
+      return this.client.send(method, params);
+    }
+  }
+
+  close() {
+    this.client?.close();
   }
 }
 
@@ -573,7 +648,7 @@ export function buildSourceRuntimeCoverage(sources, rows, failure) {
   };
 }
 
-async function probeAccount(client, source, options) {
+export async function probeAccount(client, source, options) {
   const homepage = source.url || source.homepage_url || "";
   if (!homepage) {
     return {
@@ -675,7 +750,12 @@ async function probeAccount(client, source, options) {
       column: source.column || "",
       status: "failed",
       failure_reason: error.message,
-      shared_runtime_failure: error.code === "shared_fixed_target_blank" || error.code === "fixed_douyin_target_missing",
+      shared_runtime_failure: [
+        "shared_fixed_target_blank",
+        "fixed_douyin_target_missing",
+        "fixed_target_attachment_lost",
+        "fixed_target_attachment_recovery_exhausted",
+      ].includes(error.code),
       video_ids: [],
       video_links: [],
     };
@@ -776,11 +856,9 @@ async function main() {
   } catch (error) {
     sharedRuntimeFailure = { status: error.code || "fixed_douyin_target_missing", reason: error.message };
   }
-  const pageClient = fixedTarget ? new CdpClient(fixedTarget.webSocketDebuggerUrl) : null;
+  const pageClient = fixedTarget ? new FixedPageSession(options.cdp, fixedTarget) : null;
   if (pageClient) {
     await pageClient.open();
-    await pageClient.send("Runtime.enable");
-    await pageClient.send("Page.enable");
   }
   try {
     for (const source of sources) {
@@ -798,7 +876,7 @@ async function main() {
       const row = await probeAccountWithRetry(pageClient, source, options);
       rows.push(row);
       if (row.shared_runtime_failure) {
-        sharedRuntimeFailure = { status: "shared_fixed_target_blank", reason: row.failure_reason };
+        sharedRuntimeFailure = { status: "shared_fixed_target_runtime_failure", reason: row.failure_reason };
       }
     }
   } finally {
@@ -912,6 +990,8 @@ async function main() {
     cdp_browser: version.Browser || "",
     coverage,
     source_runtime_failure: sharedRuntimeFailure,
+    fixed_target_id: fixedTarget?.id || "",
+    fixed_target_reattachments: pageClient?.reattachments || 0,
     item_lineage: itemLineage,
     accounts: rows.length,
     discovered_video_links: videoLinks.length,
