@@ -6,10 +6,12 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 
 import {
+  accountWorksSnapshotExpression,
   buildCoverage,
   buildHomepageCardItems,
   buildSourceRuntimeCoverage,
   FixedPageSession,
+  decodeRuntimeEvaluation,
   fixedDouyinTarget,
   limitedPlanRejection,
   loadCandidateLifecycle,
@@ -62,6 +64,9 @@ const delayedClient = {
       url: ready ? "https://www.douyin.com/user/account-1" : "about:blank",
       body_text_length: ready ? 400 : 0,
       works_ready: ready,
+      works_root_count: ready ? 1 : 0,
+      videoAnchors: [],
+      text: ready ? "works" : "",
     }) } };
   },
 };
@@ -72,10 +77,20 @@ const delayedReady = await waitForNavigationAndWorksGrid(
 );
 assert.equal(delayedReady.works_ready, true);
 assert.equal(readinessPolls, 3);
+assert.equal(accountWorksSnapshotExpression().includes("/(^|\n)"), false);
+assert.doesNotThrow(() => new Function(`return ${accountWorksSnapshotExpression()};`));
+assert.equal(accountWorksSnapshotExpression().includes('[data-e2e*="recommend"]'), true);
+assert.equal(accountWorksSnapshotExpression().includes('[data-e2e*="hot"]'), true);
+assert.throws(
+  () => decodeRuntimeEvaluation({ exceptionDetails: { text: "SyntaxError" } }),
+  /works_snapshot_javascript_exception/,
+);
+assert.throws(() => decodeRuntimeEvaluation({ result: {} }), /works_snapshot_value_missing/);
+assert.throws(() => decodeRuntimeEvaluation({ result: { value: "{" } }), /works_snapshot_json_malformed/);
 
 const blankClient = { async send(method) {
   if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{ id: 0, url: "about:blank" }] };
-  return { result: { value: JSON.stringify({ title: "", url: "about:blank", body: "", works_ready: false }) } };
+  return { result: { value: JSON.stringify({ title: "", url: "about:blank", text: "", works_ready: false }) } };
 } };
 await assert.rejects(
   waitForNavigationAndWorksGrid(blankClient, "https://www.douyin.com/user/account-1", {
@@ -110,15 +125,13 @@ const transitionClients = [
       }
       if (method === "Runtime.evaluate") {
         this.evaluateCount += 1;
-        if (this.evaluateCount === 1) {
-          return { result: { value: JSON.stringify({ title: "account-1", url: "https://www.douyin.com/user/account-1", body: "works", works_ready: true }) } };
-        }
         return { result: { value: JSON.stringify({
           title: "account-1", url: "https://www.douyin.com/user/account-1",
+          works_ready: true, works_root_count: 1,
           videoAnchors: [{
             href: "https://www.douyin.com/video/50000000001", id: "50000000001", text: "account work",
             in_works_grid: true, account_identity_match: true, pinned: false,
-          }], text: "account works ready", worksText: "x".repeat(100), loginHint: false,
+          }], text: "account works ready", loginHint: false,
         }) } };
       }
       throw new Error(`unexpected second client command:${method}`);
@@ -142,6 +155,122 @@ assert.equal(transitioned.status, "success");
 assert.deepEqual(transitioned.video_ids, ["50000000001"]);
 assert.equal(transitionSession.reattachments, 1);
 transitionSession.close();
+
+let contextEvaluateCount = 0;
+let contextRecoveries = 0;
+const contextTransitionClient = {
+  async send(method) {
+    if (method === "Page.navigate") return { frameId: "fixed-frame" };
+    if (method === "Page.getNavigationHistory") {
+      return { currentIndex: 0, entries: [{ id: 1, url: "https://www.douyin.com/user/account-1" }] };
+    }
+    if (method === "Runtime.evaluate") {
+      contextEvaluateCount += 1;
+      if (contextEvaluateCount === 1) {
+        return { exceptionDetails: { text: "Execution context was destroyed." } };
+      }
+      return { result: { value: JSON.stringify({
+        title: "account-1", url: "https://www.douyin.com/user/account-1",
+        works_ready: true, works_root_count: 1, text: "works", loginHint: false,
+        videoAnchors: [{
+          href: "https://www.douyin.com/video/50000000002", id: "50000000002", text: "trusted work",
+          in_works_grid: true, account_identity_match: true, pinned: false,
+        }],
+      }) } };
+    }
+    throw new Error(`unexpected context transition command:${method}`);
+  },
+  async recoverExecutionContext() { contextRecoveries += 1; },
+};
+const contextRecovered = await probeAccount(contextTransitionClient, source("account-1"), {
+  waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(),
+});
+assert.equal(contextRecovered.status, "success");
+assert.deepEqual(contextRecovered.video_ids, ["50000000002"]);
+assert.equal(contextRecoveries, 1);
+assert.equal(contextRecovered.extraction_diagnostics.context_recoveries, 1);
+
+const missingValueClient = {
+  async send(method) {
+    if (method === "Page.navigate") return {};
+    if (method === "Page.getNavigationHistory") {
+      return { currentIndex: 0, entries: [{ id: 1, url: "https://www.douyin.com/user/account-1" }] };
+    }
+    if (method === "Runtime.evaluate") return { result: {} };
+    throw new Error(`unexpected missing-value command:${method}`);
+  },
+};
+const missingValue = await probeAccount(missingValueClient, source("account-1"), {
+  waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(),
+});
+assert.equal(missingValue.status, "failed");
+assert.equal(missingValue.failure_reason, "works_snapshot_value_missing");
+assert.equal(missingValue.shared_runtime_failure, true);
+assert.deepEqual(missingValue.video_ids, []);
+
+const malformedClient = {
+  async send(method) {
+    if (method === "Page.navigate") return {};
+    if (method === "Page.getNavigationHistory") {
+      return { currentIndex: 0, entries: [{ id: 1, url: "https://www.douyin.com/user/account-1" }] };
+    }
+    if (method === "Runtime.evaluate") return { result: { value: "{" } };
+    throw new Error(`unexpected malformed command:${method}`);
+  },
+};
+const malformed = await probeAccount(malformedClient, source("account-1"), {
+  waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(),
+});
+assert.equal(malformed.status, "failed");
+assert.equal(malformed.failure_reason, "works_snapshot_json_malformed");
+assert.notEqual(malformed.status, "partial_untrusted");
+assert.equal(malformed.shared_runtime_failure, true);
+
+let exhaustedRecoveries = 0;
+const exhaustedClient = {
+  async send(method) {
+    if (method === "Page.navigate") return {};
+    if (method === "Page.getNavigationHistory") {
+      return { currentIndex: 0, entries: [{ id: 1, url: "https://www.douyin.com/user/account-1" }] };
+    }
+    if (method === "Runtime.evaluate") {
+      return { exceptionDetails: { text: "Execution context was destroyed." } };
+    }
+    throw new Error(`unexpected exhausted command:${method}`);
+  },
+  async recoverExecutionContext() { exhaustedRecoveries += 1; },
+};
+const exhausted = await probeAccount(exhaustedClient, source("account-1"), {
+  waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(),
+});
+assert.equal(exhausted.status, "failed");
+assert.equal(exhausted.shared_runtime_failure, true);
+assert.equal(exhausted.failure_reason, "works_snapshot_execution_context_transition");
+assert.equal(exhaustedRecoveries, 2);
+assert.deepEqual(exhausted.video_ids, []);
+
+const seenOnlyClient = {
+  async send(method) {
+    if (method === "Page.navigate") return {};
+    if (method === "Page.getNavigationHistory") {
+      return { currentIndex: 0, entries: [{ id: 1, url: "https://www.douyin.com/user/account-1" }] };
+    }
+    if (method === "Runtime.evaluate") return { result: { value: JSON.stringify({
+      title: "account-1", url: "https://www.douyin.com/user/account-1", works_ready: true,
+      works_root_count: 1, text: "works", loginHint: false,
+      videoAnchors: [{
+        href: "https://www.douyin.com/video/50000000003", id: "50000000003", text: "seen work",
+        in_works_grid: true, account_identity_match: true, pinned: false,
+      }],
+    }) } };
+    throw new Error(`unexpected seen-only command:${method}`);
+  },
+};
+const seenOnly = await probeAccount(seenOnlyClient, source("account-1"), {
+  waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(["50000000003"]),
+});
+assert.equal(seenOnly.status, "updated_no_new_items");
+assert.deepEqual(seenOnly.video_ids, []);
 
 const complete = buildCoverage(sources.slice(0, 2), [
   { account_name: "account-1", status: "success", video_links: ["one"] },
@@ -321,4 +450,4 @@ assert.equal(sourceText.includes('windowState: "minimized"'), false);
 const outerSource = fs.readFileSync(path.resolve("scripts/run_daily_collection_job.py"), "utf8");
 assert.equal(outerSource.includes('"--force-fetch-douyin"'), true);
 
-console.log(JSON.stringify({ ok: true, tests: 48, planned_accounts: 33, rejected_limit_mutations: rejectedLimits.length }));
+console.log(JSON.stringify({ ok: true, tests: 60, planned_accounts: 33, rejected_limit_mutations: rejectedLimits.length }));

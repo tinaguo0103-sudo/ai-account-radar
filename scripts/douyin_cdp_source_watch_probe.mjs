@@ -198,6 +198,98 @@ export function isAttachmentTransitionError(error) {
   ].some((marker) => message.includes(marker));
 }
 
+function runtimeEvaluationError(code, recoverable = false) {
+  const error = new Error(code);
+  error.code = code;
+  error.recoverable_context_transition = recoverable;
+  return error;
+}
+
+export function decodeRuntimeEvaluation(evaluated, stage = "works_snapshot") {
+  if (!evaluated || typeof evaluated !== "object" || evaluated.error) {
+    throw runtimeEvaluationError(`${stage}_cdp_error`);
+  }
+  if (evaluated.exceptionDetails) {
+    const description = String(
+      evaluated.exceptionDetails?.exception?.description
+        || evaluated.exceptionDetails?.text
+        || "",
+    ).toLowerCase();
+    const contextTransition = [
+      "execution context was destroyed",
+      "cannot find context",
+      "cannot find default execution context",
+      "not attached to an active page",
+      "inspected target navigated or closed",
+    ].some((marker) => description.includes(marker));
+    throw runtimeEvaluationError(
+      contextTransition ? `${stage}_execution_context_transition` : `${stage}_javascript_exception`,
+      contextTransition,
+    );
+  }
+  if (!evaluated.result || !Object.prototype.hasOwnProperty.call(evaluated.result, "value")) {
+    throw runtimeEvaluationError(`${stage}_value_missing`, true);
+  }
+  if (typeof evaluated.result.value !== "string") {
+    throw runtimeEvaluationError(`${stage}_value_type_invalid`);
+  }
+  try {
+    const decoded = JSON.parse(evaluated.result.value);
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) {
+      throw new Error("invalid snapshot shape");
+    }
+    return decoded;
+  } catch {
+    throw runtimeEvaluationError(`${stage}_json_malformed`);
+  }
+}
+
+export function accountWorksSnapshotExpression() {
+  return `(() => {
+    const worksSelector = '[data-e2e*="user-post"], [data-e2e*="user-work"], [data-e2e*="works"], [class*="user-post"], [class*="work-list"], [class*="post-list"]';
+    const excludedSelector = '[data-e2e*="recommend"], [data-e2e*="search"], [data-e2e*="hot"], [class*="recommend"], [class*="search"], [class*="hot-list"], [class*="hotList"]';
+    const roots = Array.from(document.querySelectorAll(worksSelector));
+    const anchors = [];
+    const seen = new Set();
+    for (const root of roots) {
+      if (root.closest(excludedSelector)) continue;
+      for (const anchor of root.querySelectorAll('a[href*="/video/"], a[href*="modal_id="]')) {
+        const href = anchor.href || '';
+        const id = (href.match(/(?:\\/video\\/|modal_id=)(\\d{10,})/) || [])[1] || '';
+        if (!id || seen.has(id) || anchor.closest(excludedSelector)) continue;
+        seen.add(id);
+        let text = anchor.innerText || anchor.getAttribute('aria-label') || anchor.title || '';
+        let node = anchor;
+        for (let index = 0; index < 4 && node && text.length < 20; index += 1) {
+          node = node.parentElement;
+          if (node && node.innerText) text = node.innerText;
+        }
+        const pinnedText = String(text || '');
+        const pinned = Boolean(anchor.closest('[data-e2e*="pinned"], [class*="pinned"]'))
+          || pinnedText.split(String.fromCharCode(10)).some((line) => line.trim() === '置顶');
+        anchors.push({
+          href,
+          id,
+          text: pinnedText.slice(0, 1000),
+          in_works_grid: true,
+          pinned,
+          account_identity_match: true,
+        });
+      }
+    }
+    const bodyText = document.body ? document.body.innerText : '';
+    return JSON.stringify({
+      title: document.title || '',
+      url: location.href || '',
+      works_ready: roots.length > 0,
+      works_root_count: roots.length,
+      videoAnchors: anchors,
+      text: bodyText.slice(0, 5000),
+      loginHint: /登录|验证码|验证|captcha|verify/i.test(bodyText),
+    });
+  })()`;
+}
+
 export class FixedPageSession {
   constructor(cdp, target, options = {}) {
     this.cdp = cdp.replace(/\/$/, "");
@@ -239,6 +331,10 @@ export class FixedPageSession {
     this.target = current;
     this.reattachments += 1;
     await this.open();
+  }
+
+  async recoverExecutionContext() {
+    await this.reattach();
   }
 
   async send(method, params = {}) {
@@ -286,29 +382,40 @@ export async function waitForNavigationAndWorksGrid(client, expectedUrl, options
   const sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
   const now = options.now || (() => Date.now());
   const started = now();
-  let last = { title: "", url: "", body: "", works_ready: false };
+  const maxContextRecoveries = Number.isInteger(options.maxContextRecoveries)
+    ? options.maxContextRecoveries
+    : 2;
+  let contextRecoveries = 0;
+  let last = { title: "", url: "", text: "", works_ready: false };
   do {
     const history = await client.send("Page.getNavigationHistory");
     const committedEntry = (history.entries || [])[history.currentIndex];
     const navigationCommitted = expectedAccountUrl(committedEntry?.url || "", expectedUrl);
-    const evaluated = await client.send("Runtime.evaluate", {
-      expression: `(() => JSON.stringify({
-        title: document.title || '',
-        url: location.href || '',
-        body: (document.body?.innerText || '').slice(0, 1000),
-        works_ready: Boolean(document.querySelector('[data-e2e*="user-post"], [data-e2e*="user-work"], [data-e2e*="works"], [class*="user-post"], [class*="work-list"], [class*="post-list"]'))
-      }))()`,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-    last = JSON.parse(evaluated.result.value || "{}");
+    try {
+      const evaluated = await client.send("Runtime.evaluate", {
+        expression: accountWorksSnapshotExpression(),
+        returnByValue: true,
+        awaitPromise: true,
+      });
+      last = decodeRuntimeEvaluation(evaluated, "works_snapshot");
+    } catch (error) {
+      if (!error.recoverable_context_transition
+        || contextRecoveries >= maxContextRecoveries
+        || typeof client.recoverExecutionContext !== "function") {
+        throw error;
+      }
+      contextRecoveries += 1;
+      await client.recoverExecutionContext();
+      continue;
+    }
     last.navigation_committed = navigationCommitted;
+    last.context_recoveries = contextRecoveries;
     if (navigationCommitted && expectedAccountUrl(last.url, expectedUrl) && last.works_ready) return last;
     await sleep(pollMs);
   } while (now() - started < timeoutMs);
   const currentUrl = String(last.url || "").trim();
   const blank = !String(last.title || "").trim() && (!currentUrl || currentUrl === "about:blank")
-    && !String(last.body || "").trim();
+    && !String(last.text || "").trim();
   const error = new Error(blank ? "shared_fixed_target_blank" : "works_grid_readiness_timeout");
   error.code = blank ? "shared_fixed_target_blank" : "works_grid_readiness_timeout";
   error.last_state = last;
@@ -663,45 +770,8 @@ export async function probeAccount(client, source, options) {
   try {
     const navigation = await client.send("Page.navigate", { url: homepage });
     if (navigation.errorText) throw new Error(`navigation_failed:${navigation.errorText}`);
-    await waitForNavigationAndWorksGrid(client, homepage, { timeoutMs: options.waitMs });
-    const result = await client.send("Runtime.evaluate", {
-      expression: `(() => {
-        const videoAnchors = Array.from(document.querySelectorAll('a[href*="/video/"], a[href*="modal_id="]')).map(a => {
-          const href = a.href || "";
-          const id = (href.match(/(?:\\/video\\/|modal_id=)(\\d{10,})/) || [])[1] || "";
-          let text = a.innerText || a.getAttribute("aria-label") || a.title || "";
-          let node = a;
-          for (let i = 0; i < 4 && node && text.length < 20; i += 1) {
-            node = node.parentElement;
-            if (node && node.innerText) text = node.innerText;
-          }
-          const cardRoot = a.closest('[data-e2e*="user-post"], [data-e2e*="user-work"], [data-e2e*="works"], [class*="user-post"], [class*="work-list"], [class*="post-list"]');
-          const pinned = Boolean(a.closest('[data-e2e*="pinned"], [class*="pinned"]')) || /(^|\n)\s*置顶\s*(\n|$)/.test(text);
-          const accountIdentityMatch = Boolean(cardRoot && !cardRoot.closest('[data-e2e*="recommend"], [class*="recommend"], [class*="search"]'));
-          return { href, id, text: String(text || "").slice(0, 1000), in_works_grid: Boolean(cardRoot), pinned, account_identity_match: accountIdentityMatch };
-        });
-        const text = document.body ? document.body.innerText : '';
-        const worksStart = text.indexOf('日期筛选');
-        const worksEnd = worksStart >= 0 ? text.indexOf('广告投放', worksStart) : -1;
-        const worksText = worksStart >= 0
-          ? text.slice(worksStart, worksEnd > worksStart ? worksEnd : Math.min(text.length, worksStart + 4000))
-          : '';
-        return JSON.stringify({
-          title: document.title,
-          url: location.href,
-          videoAnchors,
-          text: text.slice(0, 5000),
-          worksText: worksText.slice(0, 4000),
-          loginHint: /登录|验证码|验证|captcha|verify/i.test(text)
-        });
-      })()`,
-      returnByValue: true,
-      awaitPromise: true,
-    });
-    const payload = JSON.parse(result.result.value || "{}");
-    const worksText = payload.worksText || "";
-    const worksLoaded = (payload.videoAnchors || []).some((item) => item.in_works_grid)
-      || worksText.replace(/\s/g, "").length >= 80;
+    const payload = await waitForNavigationAndWorksGrid(client, homepage, { timeoutMs: options.waitMs });
+    const worksLoaded = Boolean(payload.works_ready);
     const accountWorksFailed = /服务异常|重新刷新拉取数据/.test(payload.text || "") || !worksLoaded;
     const incremental = selectIncrementalWorks(payload.videoAnchors || [], options.seenVideoIds || new Set(), options);
     const trustedWorks = !accountWorksFailed && incremental.status === "updated_with_new_items";
@@ -735,11 +805,17 @@ export async function probeAccount(client, source, options) {
         pinned: Boolean(item.pinned),
       })),
       discovery_counters: incremental.counters,
+      extraction_diagnostics: {
+        works_root_count: Number(payload.works_root_count || 0),
+        card_count: Array.isArray(payload.videoAnchors) ? payload.videoAnchors.length : 0,
+        context_recoveries: Number(payload.context_recoveries || 0),
+        selector_family: "account_works_grid",
+      },
       freshness_state: incremental.status,
       untrusted_video_ids: [],
       untrusted_video_links: [],
       text_preview: payload.text || "",
-      works_preview: worksText,
+      works_preview: "",
       boundary: "低频只读；不导出cookie/token/profile；不抓评论；不下载视频。",
     };
   } catch (error) {
@@ -750,12 +826,18 @@ export async function probeAccount(client, source, options) {
       column: source.column || "",
       status: "failed",
       failure_reason: error.message,
-      shared_runtime_failure: [
+      shared_runtime_failure: String(error.code || "").startsWith("works_snapshot_") || [
         "shared_fixed_target_blank",
         "fixed_douyin_target_missing",
         "fixed_target_attachment_lost",
         "fixed_target_attachment_recovery_exhausted",
+        "works_snapshot_execution_context_transition",
+        "works_snapshot_value_missing",
       ].includes(error.code),
+      extraction_diagnostics: {
+        failure_code: String(error.code || "account_probe_failed"),
+        selector_family: "account_works_grid",
+      },
       video_ids: [],
       video_links: [],
     };
