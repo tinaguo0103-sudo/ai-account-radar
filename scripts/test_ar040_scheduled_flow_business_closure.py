@@ -10,7 +10,13 @@ from pathlib import Path
 from unittest import mock
 
 import scheduled_flow_preflight as preflight
+import content_sampler
+import daily_pipeline
+import run_daily_collection_job
 import topic_editorial_state_machine as machine
+import verify_today10_feishu_consistency as verifier
+import apply_operational_stage2_mapping as stage2_mapping
+import exact_candidate_input
 
 
 FIELDS = [
@@ -20,6 +26,150 @@ FIELDS = [
 
 
 class AR040ScheduledFlowTests(unittest.TestCase):
+    def test_owned_collection_artifact_keeps_display_url_without_network_open(self) -> None:
+        row = {
+            "来源类型": "公众号文章",
+            "平台": "Web",
+            "账号名/公众号名": "controlled",
+            "内容标题": "trusted artifact",
+            "内容链接": "https://unsupported.invalid/ordinary",
+            "正文/字幕/简介片段": "trusted collected text",
+            "抓取方式": "owned_staging_input",
+            "抓取状态": "success",
+            "内容指纹": "controlled-fingerprint",
+        }
+        with mock.patch.object(content_sampler, "load_json", return_value={"sources": []}), \
+                mock.patch.object(content_sampler, "load_manual_items", return_value=[row]), \
+                mock.patch.object(content_sampler, "extract_article") as extract_article:
+            items, _logs = content_sampler.collect_items(False, Path("/tmp/owned.jsonl"))
+        extract_article.assert_not_called()
+        self.assertEqual(len(items), 1)
+        self.assertEqual(items[0].url, row["内容链接"])
+        self.assertEqual(items[0].fetch_method, "owned_staging_input")
+        self.assertEqual(items[0].fetch_status, "success")
+
+    def test_exact_candidate_input_accepts_owned_ar040_devproof_run(self) -> None:
+        self.assertIsNotNone(
+            exact_candidate_input.RUN_ID_RE.fullmatch("run_20260721_123700_ar040_devproof")
+        )
+
+    def test_supplied_current_run_artifact_satisfies_browser_source_readiness(self) -> None:
+        probe = {
+            "run_id": "run_20260721_123700_ar040_devproof",
+            "coverage": {
+                "invariants": {
+                    "attempted_equals_planned": True,
+                    "success_plus_failed_equals_attempted": True,
+                    "account_lineage_unique_and_complete": True,
+                },
+                "failed_accounts": [],
+                "per_account_artifact_counts": {"account-hash": 1},
+            },
+            "item_lineage": {"ok": True},
+        }
+        steps = [{
+            "name": "validate supplied current-run Douyin source artifact",
+            "returncode": 0,
+        }]
+        with tempfile.TemporaryDirectory() as tmp:
+            probe_path = Path(tmp) / "probe.json"
+            probe_path.write_text(json.dumps(probe), encoding="utf-8")
+            report = daily_pipeline.downstream_usability_report(
+                steps, Path(tmp), 1, probe_path,
+                ingestion_closure={
+                    "run_id": probe["run_id"],
+                    "manual_artifact_identity_verified": True,
+                    "combined_sha256": "a",
+                    "content_items_sha256": "b",
+                    "comparison_universe_count": 1,
+                    "feishu_03_identity": {
+                        "ok": True,
+                        "planned_identity": {"identity_sha256": "c"},
+                    },
+                },
+            )
+        self.assertTrue(report["downstream_usable"])
+        self.assertTrue(report["downstream_usable_checks"]["canonical_profile_preflight_ok"])
+
+    def test_formal_wrapper_owned_input_builds_public_pipeline_command(self) -> None:
+        commands: list[list[str]] = []
+
+        def fake_step(name: str, command: list[str]):
+            commands.append(command)
+            return {"name": name, "command": command, "returncode": 0, "stdout": "", "stderr": ""}
+
+        argv = [
+            "run_daily_collection_job.py", "--allow-non-production-worktree", "--no-notify",
+            "--defer-editorial", "--owned-source-input-only",
+            "--run-id", "run_20260721_123700_ar040_devproof",
+            "--manual", "/tmp/controlled.jsonl",
+            "--douyin-artifact-result", "/tmp/result.json",
+            "--douyin-artifact-manual", "/tmp/douyin.jsonl",
+        ]
+        with mock.patch.object(Path, "is_file", return_value=True), \
+                mock.patch.object(run_daily_collection_job.sys, "argv", argv), \
+                mock.patch.object(run_daily_collection_job, "load_local_env"), \
+                mock.patch.object(run_daily_collection_job, "evaluate_preflight", return_value={"ok": True}), \
+                mock.patch.object(run_daily_collection_job, "check_automation_worktree", return_value=mock.Mock(ok=True)), \
+                mock.patch.object(run_daily_collection_job, "run_step", side_effect=fake_step), \
+                mock.patch.object(run_daily_collection_job, "write_job_log", return_value=Path("/tmp/log.json")):
+            self.assertEqual(run_daily_collection_job.main(), 0)
+        pipeline = commands[-1]
+        self.assertIn("daily_pipeline.py", " ".join(pipeline))
+        self.assertIn("--no-fetch-aihot", pipeline)
+        self.assertIn("--defer-editorial", pipeline)
+        self.assertIn("--douyin-artifact-result", pipeline)
+        self.assertNotIn("--resolve-url-intake", pipeline)
+        self.assertNotIn("--fetch-wechat-fulltext-provider", pipeline)
+
+    def test_staging_verifier_uses_explicit_topic_table_id(self) -> None:
+        source = Path(verifier.__file__).read_text(encoding="utf-8")
+        self.assertIn("configured_table_id(tables_by_name, TARGET_TABLE_KEY)", source)
+        self.assertNotIn("resolve_table_id(tables_by_name, TARGET_TABLE_KEY)", source)
+
+    def test_stage2_asset_is_candidate_specific(self) -> None:
+        fields = stage2_mapping.mapping({
+            "selected_visible_title": "真实任务标题", "locked_decision": "select",
+            "state_or_gap": "补证", "source_title_hook": "来源钩子",
+            "source_hook_usage": "改写理由", "audience_hook": "公开钩子",
+            "why_i_would_choose": "选择理由", "natural_austin_angle": "自然角度",
+            "public_decision_summary": "主编摘要", "research_evidence_ids": "artifact:1",
+            "rejected_common_take": "常见误区", "proposed_content_structure": "结构",
+            "why_i_would_not_choose": "事实边界", "research_confidence": "low",
+        }, "真实工作流改造")
+        self.assertIn("真实任务标题", fields["可沉淀资产"])
+        self.assertIn("失败样例", fields["可沉淀资产"])
+
+    def test_topic_projection_preserves_trusted_artifact_lineage(self) -> None:
+        item = content_sampler.ContentItem(
+            source_type="对标视频", platform="抖音", account_name="staging-account",
+            title="真实作品标题", url="https://www.douyin.com/video/90000000001",
+            content_shape="short_video", cover_text="", body_snippet="真实页面自有响应作品文案",
+            published_at="", comment_questions="", ocr_text="",
+            fetch_method="douyin_cdp_homepage_card", fetch_status="success",
+            failure_reason="", fingerprint="fixture-fingerprint",
+        )
+        row = content_sampler.breakdown(item)
+        topic = content_sampler.topic_from_breakdown(row, item)
+        self.assertEqual(topic["原始来源账号"], "staging-account")
+        self.assertEqual(topic["原始来源标题"], "真实作品标题")
+        self.assertEqual(topic["原始发布文案"], "真实页面自有响应作品文案")
+        self.assertEqual(topic["平台"], "抖音")
+
+    def test_content_ledger_readback_carries_verified_run_identity(self) -> None:
+        item = content_sampler.ContentItem(
+            source_type="AI热点", platform="Web", account_name="source",
+            title="title", url="https://example.com/item", content_shape="article",
+            cover_text="", body_snippet="body", published_at="", comment_questions="",
+            ocr_text="", fetch_method="owned", fetch_status="success", failure_reason="",
+            fingerprint="fp-1",
+        )
+        read_back = [{"fields": {"内容指纹": "fp-1", "运行批次": "run_20260721_123700_ar040_devproof"}}]
+        result = content_sampler.verify_content_ledger_readback(
+            [item], read_back, "run_20260721_123700_ar040_devproof",
+        )
+        self.assertEqual(result["run_id"], "run_20260721_123700_ar040_devproof")
+
     def prepare(self, rows: list[dict[str, str]], *, assert_no_open: bool = True):
         temp = tempfile.TemporaryDirectory()
         root = Path(temp.name)
@@ -50,6 +200,7 @@ class AR040ScheduledFlowTests(unittest.TestCase):
         self.addCleanup(temp.cleanup)
         self.assertEqual(result["candidates"], 2)
         self.assertEqual(result["source_open_calls"], 0)
+        self.assertNotIn("Trusted collection artifact", json.dumps(state, ensure_ascii=False))
         self.assertEqual(state["stages"]["source_open"]["status"], "completed")
         for candidate in machine.candidate_rows_from_state(state):
             validated = json.loads((root / "state" / "source_open" / candidate["candidate_id"] / "validated.json").read_text())

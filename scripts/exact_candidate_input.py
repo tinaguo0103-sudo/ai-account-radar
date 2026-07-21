@@ -10,7 +10,7 @@ from pathlib import Path
 from typing import Any
 
 
-RUN_ID_RE = re.compile(r"^run_(\d{8})_(\d{6})$")
+RUN_ID_RE = re.compile(r"^run_(\d{8})_(\d{6})(?:_ar040_devproof)?$")
 SHA256_RE = re.compile(r"^[0-9a-f]{64}$")
 REQUIRED_COLUMNS = ("内容指纹", "来源类型", "来源内容")
 IDENTITY_FIELDS = (

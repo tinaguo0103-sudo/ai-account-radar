@@ -12,7 +12,7 @@ from pathlib import Path
 from typing import Any
 
 import push_to_feishu as feishu
-from feishu_table_registry import TABLES, resolve_table_id
+from feishu_table_registry import TABLES, configured_table_id
 from local_env import load_local_env
 from push_today10_to_feishu import (
     FALLBACK_EXPERIMENT_PROMPT,
@@ -201,7 +201,7 @@ def main() -> int:
     token = feishu.tenant_token()
     tables_payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables", token=token)
     tables_by_name = {item["name"]: item["table_id"] for item in tables_payload.get("data", {}).get("items", [])}
-    table_id = resolve_table_id(tables_by_name, TARGET_TABLE_KEY)
+    table_id, _table_id_source = configured_table_id(tables_by_name, TARGET_TABLE_KEY)
     if not table_id:
         raise SystemExit(f"Missing Feishu table: {TABLES[TARGET_TABLE_KEY]}")
 

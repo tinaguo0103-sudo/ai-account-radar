@@ -454,8 +454,13 @@ def downstream_usability_report(
     )
     if not douyin_isolated:
         checks.update({
-            "canonical_profile_preflight_ok": successful_step(steps, "start/verify canonical Douyin Chrome CDP")
-            and successful_step(steps, "verify canonical Douyin profile login session"),
+            "canonical_profile_preflight_ok": (
+                successful_step(steps, "validate supplied current-run Douyin source artifact")
+                or (
+                    successful_step(steps, "start/verify canonical Douyin Chrome CDP")
+                    and successful_step(steps, "verify canonical Douyin profile login session")
+                )
+            ),
             "planned_equals_attempted": bool(invariants.get("attempted_equals_planned")),
             "success_plus_failed_equals_attempted": bool(invariants.get("success_plus_failed_equals_attempted")),
             "account_lineage_unique_and_complete": bool(invariants.get("account_lineage_unique_and_complete")),
@@ -594,6 +599,7 @@ def main() -> int:
     parser.add_argument("--write-feishu", action="store_true", help="Write Feishu changes for selected steps: URL resolver writes 03/updates 02; 今日候选池 writes 04 and refreshes 00.")
     parser.add_argument("--no-fetch-aihot", action="store_true", help="Skip AIHOT network fetch and use manual samples only.")
     parser.add_argument("--manual", default=str(DEFAULT_MANUAL), help="Path to JSONL manual content items.")
+    parser.add_argument("--run-id", default="", help="Use an explicit run id across source, 03, editorial, 04, and card state.")
     parser.add_argument("--resolve-url-intake", action="store_true", help="Resolve URLs from Feishu 02 URL投喂入口 into ContentItem rows before sampling.")
     parser.add_argument("--include-resolved-url-intake", action="store_true", help="Testing mode: reuse already parsed Feishu 02 URLs as candidates without changing default intake behavior.")
     parser.add_argument("--url-file", help="Resolve URLs from a local text file into ContentItem rows before sampling.")
@@ -610,6 +616,8 @@ def main() -> int:
     parser.add_argument("--douyin-verification-action", choices=["foreground", "log-only"], default="foreground", help="When a Douyin account needs login/verification, foreground the dedicated Chrome for user handling or only log it.")
     parser.add_argument("--douyin-verification-wait-seconds", type=float, default=60.0, help="Seconds to wait after foregrounding Chrome for Douyin login/verification before retrying affected accounts.")
     parser.add_argument("--force-fetch-douyin", action="store_true", help="Force Douyin homepage collection even if today's source cache exists. Use only when testing collection logic or after manually changing links/login.")
+    parser.add_argument("--douyin-artifact-result", default="", help="Existing current-run Douyin probe result to validate and ingest without another browser collection.")
+    parser.add_argument("--douyin-artifact-manual", default="", help="Existing current-run Douyin manual JSONL paired with --douyin-artifact-result.")
     parser.add_argument("--no-reuse-source-cache", action="store_true", help="Disable same-day source cache reuse. Normally do not use this for Douyin to avoid account risk.")
     parser.add_argument("--include-douyin-transcripts", action="store_true", help="Explicit P1 mode: include already transcribed Douyin ContentItems. Does not call ASR.")
     parser.add_argument(
@@ -633,7 +641,7 @@ def main() -> int:
     active_douyin_probe_result = DOUYIN_CDP_RESULT
     wechat_freshness: dict[str, Any] | None = None
     wechat_read_outcome: dict[str, Any] | None = None
-    run_id = new_run_id()
+    run_id = args.run_id or new_run_id()
     douyin_artifacts = douyin_run_artifact_paths(run_id)
     run_started_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     step_env = os.environ.copy()
@@ -738,7 +746,47 @@ def main() -> int:
 
     fetch_douyin = not args.no_fetch_douyin_cdp_source_watch or args.fetch_douyin_cdp_source_watch
     if fetch_douyin:
-        if not canonical_douyin_cdp(args.douyin_cdp):
+        supplied_douyin_artifact = bool(args.douyin_artifact_result or args.douyin_artifact_manual)
+        if supplied_douyin_artifact and not (args.douyin_artifact_result and args.douyin_artifact_manual):
+            raise SystemExit("--douyin-artifact-result and --douyin-artifact-manual must be supplied together")
+        if supplied_douyin_artifact:
+            selected_result = Path(args.douyin_artifact_result).expanduser().resolve()
+            selected_manual = Path(args.douyin_artifact_manual).expanduser().resolve()
+            probe = read_json(selected_result)
+            try:
+                douyin_source_lineage = validate_partial_source_artifact(
+                    probe, selected_manual, expected_run_id=run_id,
+                )
+            except LineageError as exc:
+                steps.append({
+                    "name": "validate supplied current-run Douyin source artifact",
+                    "command": ["source-artifact", str(selected_result), str(selected_manual)],
+                    "started_at": datetime.now().isoformat(timespec="seconds"),
+                    "returncode": 3,
+                    "stdout": "",
+                    "stderr": str(exc),
+                    "source_local_failure": True,
+                    "source": "douyin",
+                    "source_outcome": "artifact_invalid",
+                    "source_failure_reason": str(exc),
+                    "source_rows": 0,
+                })
+                active_douyin_probe_result = selected_result
+                douyin_source_lineage = None
+            else:
+                step = {
+                    "name": "validate supplied current-run Douyin source artifact",
+                    "command": ["source-artifact", str(selected_result), str(selected_manual)],
+                    "started_at": datetime.now().isoformat(timespec="seconds"),
+                    "returncode": 0,
+                    "stdout": "Validated current-run page-owned Douyin artifact for owned pipeline ingestion.",
+                    "stderr": "",
+                }
+                apply_selected_douyin_outcome(step, douyin_source_lineage)
+                steps.append(step)
+                active_douyin_probe_result = selected_result
+                manual_inputs.append(selected_manual)
+        elif not canonical_douyin_cdp(args.douyin_cdp):
             steps.append({
                 "name": "verify canonical Douyin CDP endpoint",
                 "command": ["canonical-cdp-check", args.douyin_cdp],
@@ -769,9 +817,11 @@ def main() -> int:
                 ], env=step_env)
                 steps.append(preflight_step)
 
-        douyin_gate_ok = douyin_probe_allowed(chrome_step, preflight_step)
-        reuse_douyin_cache = douyin_gate_ok and not args.no_reuse_source_cache and not args.force_fetch_douyin and douyin_cache_ready()
-        if not douyin_gate_ok:
+        douyin_gate_ok = supplied_douyin_artifact or douyin_probe_allowed(chrome_step, preflight_step)
+        reuse_douyin_cache = not supplied_douyin_artifact and douyin_gate_ok and not args.no_reuse_source_cache and not args.force_fetch_douyin and douyin_cache_ready()
+        if supplied_douyin_artifact:
+            pass
+        elif not douyin_gate_ok:
             write_douyin_cache_manifest(
                 "preflight_failed",
                 run_id,

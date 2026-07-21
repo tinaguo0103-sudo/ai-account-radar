@@ -85,7 +85,11 @@ class RunTopicCardIfFreshCheckOnlyTests(unittest.TestCase):
 
         def fake_run(command: list[str], **_kwargs: Any) -> subprocess.CompletedProcess[str]:
             calls.append(command)
-            return subprocess.CompletedProcess(command, 0)
+            return subprocess.CompletedProcess(
+                command, 0,
+                stdout='TOPIC_CARD_SESSION_RESULT_JSON={"ok":true,"run_id":"run_test","record_count":1,"sent_count":1,"reason":"sent_or_previewed"}\n',
+                stderr="",
+            )
 
         def fail_notify(*_args: Any, **_kwargs: Any) -> None:
             raise AssertionError("successful send path should not notify")

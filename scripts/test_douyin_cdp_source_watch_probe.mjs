@@ -10,6 +10,8 @@ import {
   buildCoverage,
   buildHomepageCardItems,
   buildSourceRuntimeCoverage,
+  classifyWorksResponse,
+  configuredAccountIdentity,
   FixedPageSession,
   decodeRuntimeEvaluation,
   fixedDouyinTarget,
@@ -19,6 +21,7 @@ import {
   mergeNewAndBacklog,
   persistCollectedCandidates,
   probeAccount,
+  parseWorksResponseBody,
   waitForNavigationAndWorksGrid,
   selectIncrementalWorks,
   selectedSources,
@@ -26,6 +29,12 @@ import {
   validateContentItemLineage,
   validateSourcePlan,
 } from "./douyin_cdp_source_watch_probe.mjs";
+
+function attachCapture(client, result) {
+  client.beginWorksCapture = () => {};
+  client.takeWorksCaptureResults = () => [result];
+  return client;
+}
 
 function source(name) {
   return {
@@ -87,6 +96,37 @@ assert.throws(
 );
 assert.throws(() => decodeRuntimeEvaluation({ result: {} }), /works_snapshot_value_missing/);
 assert.throws(() => decodeRuntimeEvaluation({ result: { value: "{" } }), /works_snapshot_json_malformed/);
+assert.equal(configuredAccountIdentity("https://www.douyin.com/user/account-1"), "account-1");
+assert.equal(classifyWorksResponse(
+  "https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id=account-1&a_bogus=redacted",
+  "XHR", "account-1", "GET",
+).accepted, true);
+assert.equal(classifyWorksResponse(
+  "https://www.douyin.com/aweme/v1/web/aweme/post/?sec_user_id=other",
+  "XHR", "account-1", "GET",
+).accepted, false);
+assert.equal(classifyWorksResponse(
+  "https://www.douyin.com/aweme/v1/web/general/search/?sec_user_id=account-1",
+  "XHR", "account-1", "GET",
+).accepted, false);
+const realShapeFixture = JSON.parse(fs.readFileSync(
+  path.resolve("scripts/fixtures/ar040_page_owned_works_sanitized.json"), "utf8",
+));
+const parsedRealShape = parseWorksResponseBody(JSON.stringify(realShapeFixture.response_shape), realShapeFixture.synthetic_account_identity);
+assert.equal(parsedRealShape.ok, true);
+assert.equal(parsedRealShape.cards.length >= 10, true);
+assert.equal(parsedRealShape.cards[0].pinned, true);
+assert.equal(parseWorksResponseBody("", "account-1").failure_code, "douyin_works_response_body_missing");
+assert.equal(parseWorksResponseBody("{", "account-1").failure_code, "douyin_works_response_json_malformed");
+assert.equal(parseWorksResponseBody("{}", "account-1").failure_code, "douyin_works_response_schema_mismatch");
+assert.equal(parseWorksResponseBody(JSON.stringify({ aweme_list: [{ aweme_id: "50000000001", author: { sec_uid: "other" } }] }), "account-1").failure_code, "douyin_works_response_account_or_item_mismatch");
+const mixedItems = parseWorksResponseBody(JSON.stringify({ aweme_list: [
+  { aweme_id: "50000000001", desc: "trusted", author: { sec_uid: "account-1" } },
+  { aweme_id: "50000000002", desc: "foreign", author: { sec_uid: "other" } },
+] }), "account-1");
+assert.equal(mixedItems.ok, true);
+assert.equal(mixedItems.cards.length, 1);
+assert.equal(mixedItems.rejected_item_count, 1);
 
 const blankClient = { async send(method) {
   if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{ id: 0, url: "about:blank" }] };
@@ -109,7 +149,7 @@ const transitionClients = [
   {
     async open() {}, close() {},
     async send(method) {
-      if (["Runtime.enable", "Page.enable"].includes(method)) return {};
+      if (["Runtime.enable", "Page.enable", "Network.enable"].includes(method)) return {};
       if (method === "Page.navigate") throw new Error("Not attached to an active page");
       throw new Error(`unexpected first client command:${method}`);
     },
@@ -118,7 +158,7 @@ const transitionClients = [
     evaluateCount: 0,
     async open() {}, close() {},
     async send(method) {
-      if (["Runtime.enable", "Page.enable"].includes(method)) return {};
+      if (["Runtime.enable", "Page.enable", "Network.enable"].includes(method)) return {};
       if (method === "Page.navigate") return { frameId: "frame-fixed" };
       if (method === "Page.getNavigationHistory") {
         return { currentIndex: 0, entries: [{ id: 9, url: "https://www.douyin.com/user/account-1" }] };
@@ -148,6 +188,10 @@ const transitionSession = new FixedPageSession("http://127.0.0.1:9333", {
   }],
 });
 await transitionSession.open();
+attachCapture(transitionSession, { ok: true, response_item_count: 1, cards: [{
+  href: "https://www.douyin.com/video/50000000001", id: "50000000001", text: "account work",
+  in_works_grid: true, account_identity_match: true, pinned: false,
+}] });
 const transitioned = await probeAccount(transitionSession, source("account-1"), {
   waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(),
 });
@@ -158,7 +202,7 @@ transitionSession.close();
 
 let contextEvaluateCount = 0;
 let contextRecoveries = 0;
-const contextTransitionClient = {
+const contextTransitionClient = attachCapture({
   async send(method) {
     if (method === "Page.navigate") return { frameId: "fixed-frame" };
     if (method === "Page.getNavigationHistory") {
@@ -181,7 +225,10 @@ const contextTransitionClient = {
     throw new Error(`unexpected context transition command:${method}`);
   },
   async recoverExecutionContext() { contextRecoveries += 1; },
-};
+}, { ok: true, response_item_count: 1, cards: [{
+  href: "https://www.douyin.com/video/50000000002", id: "50000000002", text: "trusted work",
+  in_works_grid: true, account_identity_match: true, pinned: false,
+}] });
 const contextRecovered = await probeAccount(contextTransitionClient, source("account-1"), {
   waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(),
 });
@@ -190,7 +237,7 @@ assert.deepEqual(contextRecovered.video_ids, ["50000000002"]);
 assert.equal(contextRecoveries, 1);
 assert.equal(contextRecovered.extraction_diagnostics.context_recoveries, 1);
 
-const missingValueClient = {
+const missingValueClient = attachCapture({
   async send(method) {
     if (method === "Page.navigate") return {};
     if (method === "Page.getNavigationHistory") {
@@ -199,7 +246,7 @@ const missingValueClient = {
     if (method === "Runtime.evaluate") return { result: {} };
     throw new Error(`unexpected missing-value command:${method}`);
   },
-};
+}, { ok: true, cards: [] });
 const missingValue = await probeAccount(missingValueClient, source("account-1"), {
   waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(),
 });
@@ -208,7 +255,7 @@ assert.equal(missingValue.failure_reason, "works_snapshot_value_missing");
 assert.equal(missingValue.shared_runtime_failure, true);
 assert.deepEqual(missingValue.video_ids, []);
 
-const malformedClient = {
+const malformedClient = attachCapture({
   async send(method) {
     if (method === "Page.navigate") return {};
     if (method === "Page.getNavigationHistory") {
@@ -217,7 +264,7 @@ const malformedClient = {
     if (method === "Runtime.evaluate") return { result: { value: "{" } };
     throw new Error(`unexpected malformed command:${method}`);
   },
-};
+}, { ok: true, cards: [] });
 const malformed = await probeAccount(malformedClient, source("account-1"), {
   waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(),
 });
@@ -227,7 +274,7 @@ assert.notEqual(malformed.status, "partial_untrusted");
 assert.equal(malformed.shared_runtime_failure, true);
 
 let exhaustedRecoveries = 0;
-const exhaustedClient = {
+const exhaustedClient = attachCapture({
   async send(method) {
     if (method === "Page.navigate") return {};
     if (method === "Page.getNavigationHistory") {
@@ -239,7 +286,7 @@ const exhaustedClient = {
     throw new Error(`unexpected exhausted command:${method}`);
   },
   async recoverExecutionContext() { exhaustedRecoveries += 1; },
-};
+}, { ok: true, cards: [] });
 const exhausted = await probeAccount(exhaustedClient, source("account-1"), {
   waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(),
 });
@@ -249,7 +296,7 @@ assert.equal(exhausted.failure_reason, "works_snapshot_execution_context_transit
 assert.equal(exhaustedRecoveries, 2);
 assert.deepEqual(exhausted.video_ids, []);
 
-const seenOnlyClient = {
+const seenOnlyClient = attachCapture({
   async send(method) {
     if (method === "Page.navigate") return {};
     if (method === "Page.getNavigationHistory") {
@@ -265,7 +312,10 @@ const seenOnlyClient = {
     }) } };
     throw new Error(`unexpected seen-only command:${method}`);
   },
-};
+}, { ok: true, response_item_count: 1, cards: [{
+  href: "https://www.douyin.com/video/50000000003", id: "50000000003", text: "seen work",
+  in_works_grid: true, account_identity_match: true, pinned: false,
+}] });
 const seenOnly = await probeAccount(seenOnlyClient, source("account-1"), {
   waitMs: 1000, scanLimit: 10, videoLimit: 3, seenVideoIds: new Set(["50000000003"]),
 });
@@ -446,6 +496,10 @@ assert.equal(sourceText.includes("scanLimit: 10"), true);
 assert.equal(sourceText.includes("Target.createTarget"), false);
 assert.equal(sourceText.includes("Browser.setWindowBounds"), false);
 assert.equal(sourceText.includes('windowState: "minimized"'), false);
+assert.equal(sourceText.includes("Network.getResponseBody"), true);
+assert.equal(sourceText.includes("fetch(rawUrl"), false);
+assert.equal(sourceText.includes("Network.getAllCookies"), false);
+assert.equal(sourceText.includes("Network.getCookies"), false);
 
 const outerSource = fs.readFileSync(path.resolve("scripts/run_daily_collection_job.py"), "utf8");
 assert.equal(outerSource.includes('"--force-fetch-douyin"'), true);

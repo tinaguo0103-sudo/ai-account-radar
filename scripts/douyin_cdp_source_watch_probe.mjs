@@ -132,6 +132,7 @@ class CdpClient {
     this.wsUrl = wsUrl;
     this.seq = 0;
     this.pending = new Map();
+    this.listeners = new Map();
   }
 
   async open() {
@@ -154,6 +155,8 @@ class CdpClient {
         this.pending.delete(payload.id);
         if (payload.error) reject(new Error(payload.error.message || JSON.stringify(payload.error)));
         else resolve(payload.result);
+      } else if (payload.method) {
+        for (const listener of this.listeners.get(payload.method) || []) listener(payload.params || {});
       }
     });
     this.ws.addEventListener("close", () => {
@@ -162,6 +165,12 @@ class CdpClient {
       for (const pending of this.pending.values()) pending.reject(error);
       this.pending.clear();
     });
+  }
+
+  on(method, listener) {
+    if (!this.listeners.has(method)) this.listeners.set(method, new Set());
+    this.listeners.get(method).add(listener);
+    return () => this.listeners.get(method)?.delete(listener);
   }
 
   send(method, params = {}) {
@@ -299,6 +308,8 @@ export class FixedPageSession {
     this.clientFactory = options.clientFactory || ((url) => new CdpClient(url));
     this.maxReattachments = Number.isInteger(options.maxReattachments) ? options.maxReattachments : 2;
     this.reattachments = 0;
+    this.attachmentRecoveryStreak = 0;
+    this.capture = null;
     if (!this.targetId || !target.webSocketDebuggerUrl) throw new Error("fixed_douyin_target_identity_missing");
   }
 
@@ -308,14 +319,59 @@ export class FixedPageSession {
     try {
       await this.client.send("Runtime.enable");
       await this.client.send("Page.enable");
+      await this.client.send("Network.enable");
+      this.installNetworkListeners();
     } catch (error) {
       if (!isAttachmentTransitionError(error)) throw error;
       await this.reattach();
     }
   }
 
+  installNetworkListeners() {
+    if (typeof this.client.on !== "function") return;
+    this.client.on("Network.requestWillBeSent", (params) => {
+      if (!this.capture) return;
+      const candidate = classifyWorksResponse(
+        params.request?.url,
+        "XHR",
+        this.capture.accountIdentity,
+        params.request?.method,
+      );
+      if (candidate.accepted) this.capture.requests.set(params.requestId, candidate);
+    });
+    this.client.on("Network.responseReceived", (params) => {
+      if (!this.capture) return;
+      const candidate = this.capture.requests.get(params.requestId);
+      if (!candidate) return;
+      if (String(params.type || "").toUpperCase() !== "XHR") {
+        this.capture.requests.delete(params.requestId);
+        return;
+      }
+      candidate.response_received = true;
+    });
+    this.client.on("Network.loadingFinished", async ({ requestId }) => {
+      const candidate = this.capture?.requests.get(requestId);
+      if (!candidate) return;
+      this.capture.requests.delete(requestId);
+      try {
+        const body = await this.client.send("Network.getResponseBody", { requestId });
+        this.capture.results.push(parseWorksResponseBody(body?.body, this.capture.accountIdentity));
+      } catch (error) {
+        this.capture.results.push({ ok: false, failure_code: "douyin_works_response_body_missing", detail: error.message });
+      }
+    });
+  }
+
+  beginWorksCapture(accountIdentity) {
+    this.capture = { accountIdentity, requests: new Map(), results: [] };
+  }
+
+  takeWorksCaptureResults() {
+    return this.capture?.results.splice(0) || [];
+  }
+
   async reattach() {
-    if (this.reattachments >= this.maxReattachments) {
+    if (this.attachmentRecoveryStreak >= this.maxReattachments) {
       const error = new Error("fixed_target_attachment_recovery_exhausted");
       error.code = "fixed_target_attachment_recovery_exhausted";
       throw error;
@@ -330,6 +386,7 @@ export class FixedPageSession {
     this.client?.close();
     this.target = current;
     this.reattachments += 1;
+    this.attachmentRecoveryStreak += 1;
     await this.open();
   }
 
@@ -339,11 +396,15 @@ export class FixedPageSession {
 
   async send(method, params = {}) {
     try {
-      return await this.client.send(method, params);
+      const result = await this.client.send(method, params);
+      this.attachmentRecoveryStreak = 0;
+      return result;
     } catch (error) {
       if (!isAttachmentTransitionError(error)) throw error;
       await this.reattach();
-      return this.client.send(method, params);
+      const result = await this.client.send(method, params);
+      this.attachmentRecoveryStreak = 0;
+      return result;
     }
   }
 
@@ -374,6 +435,106 @@ export function expectedAccountUrl(actual, expected) {
   } catch {
     return false;
   }
+}
+
+export function configuredAccountIdentity(homepage) {
+  try {
+    const parsed = new URL(homepage);
+    return decodeURIComponent((parsed.pathname.match(/\/user\/([^/?#]+)/) || [])[1] || "");
+  } catch {
+    return "";
+  }
+}
+
+export function classifyWorksResponse(rawUrl, resourceType, expectedAccountIdentity, method = "GET") {
+  try {
+    const parsed = new URL(rawUrl);
+    const accountIdentity = parsed.searchParams.get("sec_user_id") || "";
+    const accepted = parsed.pathname === "/aweme/v1/web/aweme/post/"
+      && String(resourceType || "").toUpperCase() === "XHR"
+      && String(method || "").toUpperCase() === "GET"
+      && Boolean(expectedAccountIdentity)
+      && accountIdentity === expectedAccountIdentity;
+    return {
+      accepted,
+      method: String(method || "").toUpperCase(),
+      resource_type: String(resourceType || ""),
+      path_pattern: parsed.pathname,
+      exact_account_bound: accountIdentity === expectedAccountIdentity && Boolean(accountIdentity),
+      query_keys: [...parsed.searchParams.keys()].sort(),
+    };
+  } catch {
+    return { accepted: false };
+  }
+}
+
+function networkWorkCard(item, expectedAccountIdentity) {
+  const id = String(item?.aweme_id || "");
+  const authorIdentity = String(item?.author?.sec_uid || item?.author?.sec_user_id || "");
+  if (!/^\d{10,}$/.test(id) || authorIdentity !== expectedAccountIdentity) return null;
+  return {
+    id,
+    video_id: id,
+    href: `https://www.douyin.com/video/${id}`,
+    url: `https://www.douyin.com/video/${id}`,
+    text: String(item?.desc || "").slice(0, 1000),
+    pinned: Boolean(item?.is_top === 1 || item?.is_top === true || item?.is_pinned === 1),
+    create_time: Number(item?.create_time || 0),
+    in_works_grid: true,
+    account_identity_match: true,
+  };
+}
+
+export function parseWorksResponseBody(rawBody, expectedAccountIdentity) {
+  if (typeof rawBody !== "string" || !rawBody.trim()) {
+    return { ok: false, failure_code: "douyin_works_response_body_missing", cards: [] };
+  }
+  let payload;
+  try {
+    payload = JSON.parse(rawBody);
+  } catch {
+    return { ok: false, failure_code: "douyin_works_response_json_malformed", cards: [] };
+  }
+  if (!Array.isArray(payload?.aweme_list)) {
+    return { ok: false, failure_code: "douyin_works_response_schema_mismatch", cards: [] };
+  }
+  const cards = payload.aweme_list.map((item) => networkWorkCard(item, expectedAccountIdentity)).filter(Boolean);
+  const rejectedItemCount = payload.aweme_list.length - cards.length;
+  if (payload.aweme_list.length && cards.length === 0) {
+    return { ok: false, failure_code: "douyin_works_response_account_or_item_mismatch", cards: [] };
+  }
+  return { ok: true, cards, response_item_count: payload.aweme_list.length, rejected_item_count: rejectedItemCount };
+}
+
+export function worksInteractionExpression() {
+  return `(() => {
+    const candidates = Array.from(document.querySelectorAll('[role="tab"], [data-e2e*="user-post"], [data-e2e*="works"]'));
+    const works = candidates.find((node) => /作品/.test(node.innerText || node.getAttribute('aria-label') || ''));
+    if (works && typeof works.click === 'function') works.click();
+    window.scrollBy(0, Math.max(500, Math.floor(window.innerHeight * 0.8)));
+    return JSON.stringify({ clicked: Boolean(works), works_surface_count: candidates.length });
+  })()`;
+}
+
+export async function waitForPageOwnedWorks(client, options = {}) {
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 15000);
+  const pollMs = Math.max(10, Number(options.pollMs) || 250);
+  const sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const now = options.now || (() => Date.now());
+  const started = now();
+  let firstFailure = null;
+  do {
+    for (const result of client.takeWorksCaptureResults()) {
+      if (result.ok) return result;
+      firstFailure ||= result;
+    }
+    await client.send("Runtime.evaluate", { expression: worksInteractionExpression(), returnByValue: true });
+    await sleep(pollMs);
+  } while (now() - started < timeoutMs);
+  const code = firstFailure?.failure_code || "douyin_works_response_timeout";
+  const error = new Error(code);
+  error.code = code;
+  throw error;
 }
 
 export async function waitForNavigationAndWorksGrid(client, expectedUrl, options = {}) {
@@ -768,12 +929,30 @@ export async function probeAccount(client, source, options) {
     };
   }
   try {
+    const accountIdentity = configuredAccountIdentity(homepage);
+    if (!accountIdentity) {
+      const error = new Error("douyin_configured_account_identity_missing");
+      error.code = "douyin_configured_account_identity_missing";
+      throw error;
+    }
+    if (typeof client.beginWorksCapture !== "function" || typeof client.takeWorksCaptureResults !== "function") {
+      const error = new Error("douyin_page_network_capture_unavailable");
+      error.code = "douyin_page_network_capture_unavailable";
+      throw error;
+    }
+    client.beginWorksCapture(accountIdentity);
     const navigation = await client.send("Page.navigate", { url: homepage });
     if (navigation.errorText) throw new Error(`navigation_failed:${navigation.errorText}`);
     const payload = await waitForNavigationAndWorksGrid(client, homepage, { timeoutMs: options.waitMs });
     const worksLoaded = Boolean(payload.works_ready);
     const accountWorksFailed = /服务异常|重新刷新拉取数据/.test(payload.text || "") || !worksLoaded;
-    const incremental = selectIncrementalWorks(payload.videoAnchors || [], options.seenVideoIds || new Set(), options);
+    if (accountWorksFailed) {
+      const error = new Error("douyin_works_surface_unavailable");
+      error.code = "douyin_works_surface_unavailable";
+      throw error;
+    }
+    const pageOwned = await waitForPageOwnedWorks(client, { timeoutMs: options.waitMs });
+    const incremental = selectIncrementalWorks(pageOwned.cards, options.seenVideoIds || new Set(), options);
     const trustedWorks = !accountWorksFailed && incremental.status === "updated_with_new_items";
     const noNew = !accountWorksFailed && incremental.status === "updated_no_new_items";
     const status = trustedWorks ? "success" : (noNew ? "updated_no_new_items" : (payload.loginHint ? "needs_login_or_verification" : "partial_untrusted"));
@@ -807,9 +986,15 @@ export async function probeAccount(client, source, options) {
       discovery_counters: incremental.counters,
       extraction_diagnostics: {
         works_root_count: Number(payload.works_root_count || 0),
-        card_count: Array.isArray(payload.videoAnchors) ? payload.videoAnchors.length : 0,
+        card_count: pageOwned.cards.length,
         context_recoveries: Number(payload.context_recoveries || 0),
-        selector_family: "account_works_grid",
+        extraction_source: "page_owned_exact_account_xhr",
+        endpoint_path: "/aweme/v1/web/aweme/post/",
+        method: "GET",
+        resource_type: "XHR",
+        exact_account_bound: true,
+        response_item_count: pageOwned.response_item_count,
+        rejected_item_count: pageOwned.rejected_item_count,
       },
       freshness_state: incremental.status,
       untrusted_video_ids: [],
@@ -833,10 +1018,11 @@ export async function probeAccount(client, source, options) {
         "fixed_target_attachment_recovery_exhausted",
         "works_snapshot_execution_context_transition",
         "works_snapshot_value_missing",
+        "douyin_page_network_capture_unavailable",
       ].includes(error.code),
       extraction_diagnostics: {
         failure_code: String(error.code || "account_probe_failed"),
-        selector_family: "account_works_grid",
+        extraction_source: "page_owned_exact_account_xhr",
       },
       video_ids: [],
       video_links: [],

@@ -1,0 +1,25 @@
+{
+  "schema_version": 1,
+  "derived_from": "ar040_architecture_recon_20260721",
+  "endpoint_path": "/aweme/v1/web/aweme/post/",
+  "method": "GET",
+  "resource_type": "XHR",
+  "query_keys_include": ["sec_user_id"],
+  "raw_identity_retained": false,
+  "raw_titles_retained": false,
+  "synthetic_account_identity": "sanitized-account",
+  "response_shape": {
+    "aweme_list": [
+      {"aweme_id":"90000000001","desc":"title_hash_01","is_top":1,"create_time":1784500001,"author":{"sec_uid":"sanitized-account"}},
+      {"aweme_id":"90000000002","desc":"title_hash_02","is_top":0,"create_time":1784500002,"author":{"sec_uid":"sanitized-account"}},
+      {"aweme_id":"90000000003","desc":"title_hash_03","is_top":0,"create_time":1784500003,"author":{"sec_uid":"sanitized-account"}},
+      {"aweme_id":"90000000004","desc":"title_hash_04","is_top":0,"create_time":1784500004,"author":{"sec_uid":"sanitized-account"}},
+      {"aweme_id":"90000000005","desc":"title_hash_05","is_top":0,"create_time":1784500005,"author":{"sec_uid":"sanitized-account"}},
+      {"aweme_id":"90000000006","desc":"title_hash_06","is_top":0,"create_time":1784500006,"author":{"sec_uid":"sanitized-account"}},
+      {"aweme_id":"90000000007","desc":"title_hash_07","is_top":0,"create_time":1784500007,"author":{"sec_uid":"sanitized-account"}},
+      {"aweme_id":"90000000008","desc":"title_hash_08","is_top":0,"create_time":1784500008,"author":{"sec_uid":"sanitized-account"}},
+      {"aweme_id":"90000000009","desc":"title_hash_09","is_top":0,"create_time":1784500009,"author":{"sec_uid":"sanitized-account"}},
+      {"aweme_id":"90000000010","desc":"title_hash_10","is_top":0,"create_time":1784500010,"author":{"sec_uid":"sanitized-account"}}
+    ]
+  }
+}

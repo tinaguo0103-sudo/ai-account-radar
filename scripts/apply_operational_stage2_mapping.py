@@ -44,7 +44,7 @@ def mapping(decision: dict, direction: str) -> dict:
         "旧流程痛点": decision["rejected_common_take"],
         "AI介入点": "仅在隔离测试中辅助整理证据和内容结构，不替代主编判断。",
         "验证方式": "检查精确来源、研究 evidence IDs、公开命题和内容结构是否一致；记录通过或阻断原因。",
-        "可沉淀资产": "来源研究 dossier、主编 decision trace 与内容结构卡",
+        "可沉淀资产": f"《{title}》真实任务输入、失败样例、人工返工与结果验收记录",
         "我的思考点": decision["why_i_would_choose"],
         "重点体现": decision["natural_austin_angle"],
         "可调用案例": "",

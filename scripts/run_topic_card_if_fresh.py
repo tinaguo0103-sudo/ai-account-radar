@@ -277,10 +277,23 @@ def main() -> int:
     ]
     if args.send_dry_run:
         command.append("--send-dry-run")
-    result = subprocess.run(command, cwd=ROOT, text=True)
+    result = subprocess.run(command, cwd=ROOT, text=True, capture_output=True)
+    session = {}
+    for line in reversed((result.stdout or "").splitlines()):
+        if line.startswith("TOPIC_CARD_SESSION_RESULT_JSON="):
+            session = json.loads(line.split("=", 1)[1])
+            break
     if result.returncode != 0 and should_notify:
         notify("AI账号雷达选题卡发送失败", send_failure_summary(run_id, result.returncode))
-    print(json.dumps({"ok": result.returncode == 0, "sent": result.returncode == 0, "run_id": run_id}, ensure_ascii=False, indent=2))
+    sent_count = int(session.get("sent_count") or 0)
+    sent = result.returncode == 0 and sent_count > 0
+    print(json.dumps({
+        "ok": result.returncode == 0,
+        "sent": sent,
+        "sent_count": sent_count,
+        "reason": str(session.get("reason") or ("sender_failed" if result.returncode else "sender_result_missing")),
+        "run_id": run_id,
+    }, ensure_ascii=False, indent=2))
     return result.returncode
 
 

@@ -1391,6 +1391,7 @@ def main() -> int:
                         write_card_candidate_ledger(page["card"], run_id, str(preview_path))
                 summary["send"] = sends
         print(json.dumps(summary, ensure_ascii=False, indent=2))
+        print("TOPIC_CARD_RESULT_JSON=" + json.dumps(summary, ensure_ascii=False, separators=(",", ":")))
         return 0
 
     if args.command == "apply":

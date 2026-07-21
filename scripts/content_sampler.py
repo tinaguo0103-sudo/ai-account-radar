@@ -543,6 +543,7 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
             "douyin_paraformer_transcript",
             "rss_atom_xml",
             "jina_reader",
+            "owned_staging_input",
         }
         if is_resolved_url_item:
             fp = raw.get("内容指纹") or fingerprint(url, raw.get("内容标题", ""), account)
@@ -2050,6 +2051,10 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "来源内容": row["内容标题"],
         "来源链接": item.url,
         "来源类型": row["来源类型"],
+        "原始来源标题": item.title,
+        "原始发布文案": item.body_snippet or item.cover_text,
+        "原始来源账号": item.account_name,
+        "平台": item.platform,
         "对应方向": normalize_column(column),
         "对应栏目": normalize_column(column),
         "热点切入方式": row["热点切入方式"],
@@ -2763,6 +2768,7 @@ def verify_content_ledger_readback(
         )
     return {
         "ok": True,
+        "run_id": run_id,
         "planned_count": len(planned_fingerprints),
         "matched_count": len(planned_fingerprints),
         "ordered_fingerprints": planned_fingerprints,

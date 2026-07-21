@@ -1,5 +1,5 @@
 {
-  "schema_version": 1,
+  "schema_version": 2,
   "task": "AR-040",
   "environment_file": ".env.staging.local",
   "production_root": "/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar",
@@ -15,6 +15,11 @@
   ],
   "steps": [
     {
+      "id": "fixed_browser_hybrid_public_proof",
+      "command": "AI_ACCOUNT_RADAR_RUN_ID=<TEST_RUN_ID> node scripts/douyin_cdp_source_watch_probe.mjs --cdp http://127.0.0.1:9333 --account-limit 0 --video-limit 3 --scan-limit 10 --out-dir /private/tmp/ar040_qa_<ts>/douyin --seen-ledger /private/tmp/ar040_qa_<ts>/seen.json --lifecycle-ledger /private/tmp/ar040_qa_<ts>/lifecycle.json",
+      "expected": "same existing page/target/profile; exact-account page-owned post XHR; at least one trusted non-pinned artifact; failed-account artifact leakage=0"
+    },
+    {
       "id": "staging_01_03_provision_check",
       "command": "AI_ACCOUNT_RADAR_ENV=staging python3 scripts/provision_ar040_staging_tables.py --env-file /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_dev/.env.staging.local",
       "expected": "only dedicated AR040 test 01/03 planned or schema-compatible; business_record_writes=0"
@@ -28,6 +33,11 @@
       "id": "isolation_preflight",
       "command": "AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/scheduled_flow_preflight.py --entrypoint editorial --check-network",
       "expected": "explicit staging resources, writable core path, DNS green, business_writes=0"
+    },
+    {
+      "id": "formal_staging_collection",
+      "command": "AI_ACCOUNT_RADAR_ENV=staging AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/run_daily_collection_job.py --run-id <TEST_RUN_ID> --douyin-artifact-result <CURRENT_RUN_RESULT_JSON> --douyin-artifact-manual <CURRENT_RUN_MANUAL_JSONL> --owned-source-input-only --manual <CONTROLLED_INPUT_JSONL> --defer-editorial --no-notify",
+      "expected": "public wrapper owns staging 03 exact read-back and same-run daily/downstream ledgers; downstream_usable is derived, not supplied"
     },
     {
       "id": "trusted_artifact_editorial",
@@ -63,6 +73,11 @@
       "id": "production_zero_mutation",
       "command": "compare production Git status and selected output artifact hashes before/after QA; record IDs of any tables created by the provisioner",
       "expected": "production diff empty; production business records unchanged; cleanup is limited to exact QA-created AR040 test tables after dependent test records are removed"
+    },
+    {
+      "id": "exact_run_cleanup",
+      "command": "AI_ACCOUNT_RADAR_ENV=staging AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/cleanup_ar040_staging_proof.py --run-id <TEST_RUN_ID> --write",
+      "expected": "only exact AR-040 run records are removed from dedicated staging 03/04; tables, env bindings and personal labeled message remain"
     }
   ]
 }

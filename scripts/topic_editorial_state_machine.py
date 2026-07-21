@@ -592,7 +592,7 @@ def prepare_research(args: argparse.Namespace) -> dict[str, Any]:
                 "status": "completed",
                 "eligible": True,
                 "research_requirement": "optional",
-                "research_summary": "Trusted collection artifact is sufficient for editorial review; external facts must be softened or separately verified.",
+                "research_summary": "可信采集产物足够进入主编判断；未经独立验证的外部事实必须弱化或另行补证。",
                 "results": [],
                 "conflicts": [],
                 "confidence": "low" if source.get("link_unavailable") else "medium",
