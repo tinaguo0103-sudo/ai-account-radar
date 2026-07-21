@@ -1618,8 +1618,16 @@ SCENE_GROUNDING_TERMS = [
 ]
 
 
+def is_trusted_collected_artifact(item: ContentItem) -> bool:
+    return (
+        item.fetch_method == "owned_staging_input"
+        and item.fetch_status in {"ok", "success"}
+        and bool((item.body_snippet or item.cover_text).strip())
+    )
+
+
 def content_credibility(item: ContentItem) -> str:
-    if item.source_type == "公众号文章":
+    if item.source_type == "公众号文章" and not is_trusted_collected_artifact(item):
         return "全文" if is_full_text_item(item) == "是" else "摘要"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
         return "抖音转写"
@@ -1734,6 +1742,8 @@ def is_news_only(topic: dict[str, Any], item: ContentItem, persona_score: int) -
 
 
 def support_level(topic: dict[str, Any], item: ContentItem) -> str:
+    if is_trusted_collected_artifact(item):
+        return "摘要可用" if item.body_snippet or item.cover_text else "不足"
     if item.source_type == "公众号文章":
         return "足够" if is_full_text_item(item) == "是" else "不足"
     if item.source_type == "对标视频" and item.fetch_method == "douyin_paraformer_transcript":
@@ -1750,7 +1760,7 @@ def editor_visible_note(topic: dict[str, Any], item: ContentItem, suggested: str
     focus = focus_point(topic, item)
     if suggested == "是":
         return f"{own_angle} {focus}"
-    if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
+    if item.source_type == "公众号文章" and not is_trusted_collected_artifact(item) and is_full_text_item(item) != "是":
         return f"只有摘要，先不深做；但可以先看方向是否贴近我的业务现场。{focus}"
     if support in {"不足", "浅层"}:
         return f"信息支撑还不够，先暂存；如果要推进，需要补一个我自己的真实场景或案例。{focus}"
@@ -1790,7 +1800,7 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
         not_recommend.append("目前更像资讯搬运，缺少我的项目现场角度")
     if support == "不足":
         not_recommend.append("解析文本支撑不足")
-    if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
+    if item.source_type == "公众号文章" and not is_trusted_collected_artifact(item) and is_full_text_item(item) != "是":
         not_recommend.append("公众号不是全文解析，不能当作深度拆解推进")
     if title_score < 65:
         not_recommend.append("标题 AI 味或抽象词偏重")
@@ -1805,7 +1815,7 @@ def editorial_judgement(topic: dict[str, Any], item: ContentItem) -> dict[str, A
     suggested = "是" if editor_score >= 78 and title_score >= 72 and persona_score >= 60 and grounding_score >= 62 and ai_risk != "高" and news_only == "否" else ("暂存观察" if editor_score >= 55 else "否")
     if topic.get("推荐动作") == "暂存观察":
         suggested = "暂存观察"
-    if item.source_type == "公众号文章" and is_full_text_item(item) != "是":
+    if item.source_type == "公众号文章" and not is_trusted_collected_artifact(item) and is_full_text_item(item) != "是":
         suggested = "暂存观察"
     if suggested != "是" and topic.get("推荐动作") in {"立即蹭热点", "生成脚本包"}:
         topic["推荐动作"] = "暂存观察"
@@ -1954,6 +1964,8 @@ def breakdown(item: ContentItem) -> dict[str, Any]:
         "内容指纹": item.fingerprint,
         "来源类型": item.source_type,
         "平台": item.platform,
+        "抓取方式": item.fetch_method,
+        "抓取状态": item.fetch_status,
         "账号名/公众号名": item.account_name,
         "内容标题": item.title,
         "内容链接": item.url,
@@ -2055,6 +2067,8 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "原始发布文案": item.body_snippet or item.cover_text,
         "原始来源账号": item.account_name,
         "平台": item.platform,
+        "抓取方式": item.fetch_method,
+        "抓取状态": item.fetch_status,
         "对应方向": normalize_column(column),
         "对应栏目": normalize_column(column),
         "热点切入方式": row["热点切入方式"],
@@ -2077,7 +2091,7 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "业务变化判断": infer_business_change(item, scene),
         "标题结构模板": title_structure_template(topic_title),
         "是否来自已解析URL复用": item.reused_url,
-        "候选来源方式": "URL投喂/复用" if item.fetch_method in {"wechat_public_html_js_content", "douyin_public_router_data", "douyin_paraformer_transcript", "rss_atom_xml", "jina_reader"} else item.source_type,
+        "候选来源方式": "可信采集产物" if is_trusted_collected_artifact(item) else ("URL投喂/复用" if item.fetch_method in {"wechat_public_html_js_content", "douyin_public_router_data", "douyin_paraformer_transcript", "rss_atom_xml", "jina_reader"} else item.source_type),
     }
 
 

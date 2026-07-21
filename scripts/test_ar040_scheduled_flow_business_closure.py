@@ -48,6 +48,59 @@ class AR040ScheduledFlowTests(unittest.TestCase):
         self.assertEqual(items[0].fetch_method, "owned_staging_input")
         self.assertEqual(items[0].fetch_status, "success")
 
+    def test_owned_ordinary_url_presence_does_not_change_skill_pool_eligibility(self) -> None:
+        base = {
+            "来源类型": "公众号文章",
+            "平台": "Web",
+            "账号名/公众号名": "controlled",
+            "正文/字幕/简介片段": "内容团队把 AI Agent 放进真实流程，包含输入、执行、复核、失败恢复和交付验收。",
+            "抓取方式": "owned_staging_input",
+            "抓取状态": "success",
+        }
+        rows = [
+            {**base, "内容标题": "paired trusted artifact A", "内容链接": "https://unsupported.invalid/ordinary", "内容指纹": "paired-nonempty"},
+            {**base, "内容标题": "paired trusted artifact B", "内容链接": "", "内容指纹": "paired-empty"},
+        ]
+        with mock.patch.object(content_sampler, "load_json", return_value={"sources": []}), \
+                mock.patch.object(content_sampler, "load_manual_items", return_value=rows), \
+                mock.patch.object(content_sampler, "extract_article") as extract_article:
+            items, _logs = content_sampler.collect_items(False, Path("/tmp/paired.jsonl"))
+        extract_article.assert_not_called()
+        run_id = "run_20260721_123700_ar040_devproof"
+        read_back = [
+            {"fields": {"内容指纹": item.fingerprint, "运行批次": run_id}}
+            for item in items
+        ]
+        ledger_identity = content_sampler.verify_content_ledger_readback(items, read_back, run_id)
+        self.assertEqual(ledger_identity["planned_count"], 2)
+        self.assertEqual(ledger_identity["matched_count"], 2)
+        self.assertEqual(ledger_identity["run_id"], run_id)
+        candidates = []
+        for item in items:
+            candidate = content_sampler.topic_from_breakdown(content_sampler.breakdown(item), item)
+            content_sampler.ensure_publish_metadata(candidate, item)
+            content_sampler.editorial_judgement(candidate, item)
+            candidates.append(candidate)
+        selected = content_sampler.select_skill_review_candidates(candidates)
+        self.assertEqual({row["内容指纹"] for row in selected}, {"paired-nonempty", "paired-empty"})
+        by_fp = {row["内容指纹"]: row for row in selected}
+        self.assertEqual(by_fp["paired-nonempty"]["来源链接"], "https://unsupported.invalid/ordinary")
+        self.assertEqual(by_fp["paired-empty"]["来源链接"], "")
+        for row in selected:
+            self.assertEqual(row["候选来源方式"], "可信采集产物")
+            self.assertEqual(row["抓取方式"], "owned_staging_input")
+            self.assertNotEqual(row["是否有足够内容支撑"], "不足")
+
+        state_rows = [
+            {field: row.get(field, "") for field in FIELDS}
+            for row in selected
+        ]
+        temp, _root, result, state = self.prepare(state_rows)
+        self.addCleanup(temp.cleanup)
+        self.assertEqual(result["candidates"], 2)
+        self.assertEqual(result["source_open_calls"], 0)
+        self.assertEqual(len(machine.candidate_rows_from_state(state)), 2)
+
     def test_exact_candidate_input_accepts_owned_ar040_devproof_run(self) -> None:
         self.assertIsNotNone(
             exact_candidate_input.RUN_ID_RE.fullmatch("run_20260721_123700_ar040_devproof")
