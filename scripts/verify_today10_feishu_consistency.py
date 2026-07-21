@@ -19,6 +19,7 @@ from push_today10_to_feishu import (
     default_today10_path,
     feishu_visible_rows,
     map_row,
+    topic_candidate_business_identity,
     today_slug,
 )
 from topic_decision_fields import DAILY_WRITE_FIELDS, DETAIL_VISIBLE_FIELDS
@@ -179,14 +180,6 @@ def asset_is_specific(text: str) -> bool:
     return any(any(key in asset for key in ["表", "清单", "规则", "Skill", "记录", "模板", "检查", "截图", "案例库", "流程图", "QA", "字段", "对比"]) for asset in concrete_assets)
 
 
-def local_key(row: dict[str, str]) -> tuple[str, str]:
-    return (row.get("原始来源标题", ""), row.get("选题标题", ""))
-
-
-def feishu_key(fields: dict[str, Any]) -> tuple[str, str]:
-    return (normalize(fields.get("原始来源标题")), normalize(fields.get("选题标题")))
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True, help="Run id that was just written to Feishu.")
@@ -208,20 +201,20 @@ def main() -> int:
     local_rows, omitted_rows = read_local(args.run_id, input_path)
     records = all_records(token, app_token, table_id)
     run_records = [record for record in records if normalize(record.get("fields", {}).get("运行批次")) == args.run_id]
-    feishu_by_key = {feishu_key(record.get("fields", {})): record for record in run_records}
+    feishu_by_key = {topic_candidate_business_identity(record.get("fields", {})): record for record in run_records}
 
     failures: list[str] = []
     warnings: list[str] = []
     if len(run_records) != len(local_rows):
         failures.append(f"Feishu run record count expected {len(local_rows)}, got {len(run_records)}")
 
-    key_counts = Counter(feishu_key(record.get("fields", {})) for record in run_records)
+    key_counts = Counter(topic_candidate_business_identity(record.get("fields", {})) for record in run_records)
     duplicates = [key for key, count in key_counts.items() if count > 1 and any(key)]
     if duplicates:
         failures.append(f"Duplicate Feishu records in run: {duplicates[:3]}")
 
     for local in local_rows:
-        key = local_key(local)
+        key = topic_candidate_business_identity(local)
         record = feishu_by_key.get(key)
         if not record:
             failures.append(f"Missing Feishu row for local key: {key}")

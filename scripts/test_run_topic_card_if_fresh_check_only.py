@@ -105,6 +105,23 @@ class RunTopicCardIfFreshCheckOnlyTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertIn("run_topic_decision_card_session.py", calls[0][1])
 
+    def test_dns_preflight_failure_stops_before_sender(self) -> None:
+        calls: list[list[str]] = []
+        run_topic_card_if_fresh.evaluate_preflight = lambda *_args, **_kwargs: {
+            "ok": False,
+            "blocking_reasons": ["dns_network_unavailable", "core_external_write_unavailable"],
+            "external_calls": 0,
+            "business_writes": 0,
+        }
+        run_topic_card_if_fresh.subprocess.run = lambda command, **_kwargs: calls.append(command)
+
+        result, payload = self.run_main(["run_topic_card_if_fresh.py", "--no-notify"])
+
+        self.assertEqual(result, 2)
+        self.assertFalse(payload["ok"])
+        self.assertEqual(payload["reason"], "scheduled_flow_preflight_failed")
+        self.assertEqual(calls, [])
+
     def test_fresh_guard_accepts_downstream_usable_after_editorial_finalize(self) -> None:
         run_topic_card_if_fresh.fresh_collection_status = self.original_fresh
         with tempfile.TemporaryDirectory() as tmp:

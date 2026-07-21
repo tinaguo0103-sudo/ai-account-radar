@@ -17,6 +17,7 @@ import topic_editorial_state_machine as machine
 import verify_today10_feishu_consistency as verifier
 import apply_operational_stage2_mapping as stage2_mapping
 import exact_candidate_input
+import push_today10_to_feishu as topic_writer
 
 
 FIELDS = [
@@ -26,6 +27,73 @@ FIELDS = [
 
 
 class AR040ScheduledFlowTests(unittest.TestCase):
+    @staticmethod
+    def topic_row(run_id: str, source_title: str, topic_title: str, url: str = "") -> dict[str, str]:
+        return {
+            "运行批次": run_id,
+            "原始来源标题": source_title,
+            "选题标题": topic_title,
+            "来源链接": url,
+            "推荐日期": "2026-07-21",
+        }
+
+    def test_topic_write_plan_is_url_independent_and_rerun_stable(self) -> None:
+        run_id = "run_20260721_160000_ar040_devproof"
+        rows = [
+            self.topic_row(run_id, "source-nonempty", "candidate-nonempty", "https://unsupported.invalid/item"),
+            self.topic_row(run_id, "source-empty", "candidate-empty"),
+            self.topic_row(run_id, "source-survivor", "candidate-survivor", "https://example.com/item"),
+        ]
+        updates, creates = topic_writer.plan_topic_writes([], rows)
+        self.assertEqual(updates, [])
+        self.assertEqual(creates, rows)
+        remote = [
+            {"record_id": f"rec-{index}", "fields": dict(row)}
+            for index, row in enumerate(rows, start=1)
+        ]
+        second_updates, second_creates = topic_writer.plan_topic_writes(remote, rows)
+        self.assertEqual(second_creates, [])
+        self.assertEqual([record["record_id"] for record, _row in second_updates], ["rec-1", "rec-2", "rec-3"])
+        empty_record = next(record for record, row in second_updates if not row["来源链接"])
+        self.assertEqual(empty_record["record_id"], "rec-2")
+        self.assertEqual(
+            [topic_writer.topic_candidate_business_identity(row) for row in rows],
+            [topic_writer.topic_candidate_business_identity(record["fields"]) for record in remote],
+        )
+
+    def test_topic_write_plan_distinguishes_empty_urls_and_exact_runs(self) -> None:
+        run_a = "run_20260721_160001_ar040_devproof"
+        run_b = "run_20260721_160002_ar040_devproof"
+        empty_a = self.topic_row(run_a, "source-a", "same title")
+        empty_b = self.topic_row(run_a, "source-b", "same title")
+        remote = [{"record_id": "rec-a", "fields": dict(empty_a)}]
+        updates, creates = topic_writer.plan_topic_writes(remote, [empty_a, empty_b])
+        self.assertEqual([record["record_id"] for record, _row in updates], ["rec-a"])
+        self.assertEqual(creates, [empty_b])
+
+        same_title_other_run = self.topic_row(run_b, "source-a", "same title")
+        same_url_other_run = self.topic_row(run_b, "source-c", "different title", "https://example.com/shared")
+        same_url_run_a = self.topic_row(run_a, "source-c", "different title", "https://example.com/shared")
+        updates, creates = topic_writer.plan_topic_writes(
+            remote + [{"record_id": "rec-url-a", "fields": dict(same_url_run_a)}],
+            [same_title_other_run, same_url_other_run],
+        )
+        self.assertEqual(updates, [])
+        self.assertEqual(creates, [same_title_other_run, same_url_other_run])
+
+    def test_topic_write_plan_stops_on_duplicate_remote_identity_before_writes(self) -> None:
+        row = self.topic_row("run_20260721_160003_ar040_devproof", "source", "candidate")
+        records = [
+            {"record_id": "rec-1", "fields": dict(row)},
+            {"record_id": "rec-2", "fields": dict(row)},
+        ]
+        with mock.patch.object(topic_writer, "update_existing_top10") as update, \
+                mock.patch.object(topic_writer, "batch_create") as create:
+            with self.assertRaisesRegex(RuntimeError, "topic_candidate_remote_identity_ambiguous"):
+                topic_writer.plan_topic_writes(records, [row])
+        update.assert_not_called()
+        create.assert_not_called()
+
     def test_owned_collection_artifact_keeps_display_url_without_network_open(self) -> None:
         row = {
             "来源类型": "公众号文章",

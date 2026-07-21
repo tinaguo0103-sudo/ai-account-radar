@@ -36,7 +36,7 @@ TOPIC_CREATE_KIND = "topic_candidate_create"
 TOPIC_CARD_SEND_KIND = "topic_card_send"
 DEFAULT_LIMIT = 0
 CARD_PAGE_SIZE = 5
-EVIDENCE_FIRST_REQUIRED_FIELDS = ("来源链接", "研究摘要", "受众钩子", "研究置信度", "内容结构", "我的切入", "需要补的证据")
+EVIDENCE_FIRST_REQUIRED_FIELDS = ("研究摘要", "受众钩子", "研究置信度", "内容结构", "我的切入", "可展示证据")
 
 
 def validate_evidence_first_record(record: dict[str, Any]) -> None:

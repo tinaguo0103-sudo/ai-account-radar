@@ -617,14 +617,55 @@ class CardPaginationTests(unittest.TestCase):
             "record_id": f"rec-{index}",
             "fields": {
                 "选题标题": f"topic-{index}", "原始来源标题": f"source-{index}",
-                "来源链接": f"https://example.com/article/{index}", "研究摘要": "summary",
+                "来源链接": f"https://example.com/article/{index}", "研究摘要": "来源事实摘要",
                 "受众钩子": "陌生观众为什么会点", "研究置信度": "中",
                 "内容结构": "1. opening 2. conflict 3. evidence", "我的切入": "Austin 自然角度",
+                "可展示证据": "公开页面中的具体流程截图",
                 "需要补的证据": "无关键缺口",
-                "推荐动作": "生成脚本包", "title_permission": "可发布标题",
+                "推荐动作": "生成脚本包", "今日建议级别": "推荐制作", "title_permission": "可发布标题",
                 "是否建议进入制作": "是", "状态": "待判断",
             },
         } for index in range(count)]
+
+    def test_recommended_card_accepts_optional_url_and_gap(self) -> None:
+        record = self.records(1)[0]
+        record["fields"]["来源链接"] = ""
+        record["fields"]["需要补的证据"] = ""
+        manifest = card.build_card_pages([record], "run-optional-evidence")
+        markdown = card.card_markdown_for_candidate(1, record["fields"])
+        self.assertEqual(manifest["candidate_count"], 1)
+        self.assertNotIn("精确来源：", markdown)
+        self.assertNotIn("缺口：", markdown)
+        self.assertIn("证据：公开页面中的具体流程截图", markdown)
+
+    def test_recommended_card_preserves_clickable_source_when_present(self) -> None:
+        record = self.records(1)[0]
+        markdown = card.card_markdown_for_candidate(1, record["fields"])
+        self.assertIn(f"]({record['fields']['来源链接']})", markdown)
+
+    def test_recommended_card_requires_each_core_evidence_field(self) -> None:
+        for field in card.EVIDENCE_FIRST_REQUIRED_FIELDS:
+            with self.subTest(field=field):
+                record = self.records(1)[0]
+                record["fields"][field] = ""
+                with self.assertRaisesRegex(ValueError, field):
+                    card.build_card_pages([record], "run-missing-core")
+
+    def test_recommended_card_requires_chinese_summary_and_hook(self) -> None:
+        for field in ("研究摘要", "受众钩子"):
+            with self.subTest(field=field):
+                record = self.records(1)[0]
+                record["fields"][field] = "English only evidence"
+                with self.assertRaisesRegex(ValueError, field):
+                    card.build_card_pages([record], "run-non-chinese")
+
+    def test_observe_candidate_contract_is_unchanged(self) -> None:
+        record = self.records(1)[0]
+        record["fields"].update({"今日建议级别": "暂存观察", "推荐动作": "观察"})
+        for field in (*card.EVIDENCE_FIRST_REQUIRED_FIELDS, "来源链接", "需要补的证据"):
+            record["fields"][field] = ""
+        manifest = card.build_card_pages([record], "run-observe")
+        self.assertEqual(manifest["candidate_count"], 1)
 
     def test_lossless_pages_for_required_sizes(self) -> None:
         for count in [0, 1, 3, 7, 12]:
@@ -777,7 +818,7 @@ class CardPaginationTests(unittest.TestCase):
         markdown = card.card_markdown_for_candidate(1, self.records(1)[0]["fields"])
         self.assertIn("[查看原始文章](https://example.com/article/0)", markdown)
         self.assertIn("原始标题：source-0", markdown)
-        self.assertIn("来源摘要：summary", markdown)
+        self.assertIn("来源摘要：来源事实摘要", markdown)
         self.assertIn("受众钩子：陌生观众为什么会点", markdown)
         self.assertIn("内容结构：", markdown)
 

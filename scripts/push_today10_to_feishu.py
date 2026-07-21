@@ -418,13 +418,41 @@ def dry_run_print(rows: list[dict[str, str]]) -> None:
             print(f"   需补证据: {row['需要补的证据'][:120]}")
 
 
+def topic_identity_value(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, list):
+        return "\n".join(topic_identity_value(item) for item in value).strip()
+    if isinstance(value, dict):
+        if "text" in value:
+            return str(value.get("text") or "").strip()
+        return json.dumps(value, ensure_ascii=False, sort_keys=True)
+    return str(value).strip()
+
+
+def topic_identity_run(row: dict[str, Any]) -> str:
+    return topic_identity_value(row.get("运行批次"))
+
+
+def topic_identity_source_title(row: dict[str, Any]) -> str:
+    return topic_identity_value(row.get("原始来源标题"))
+
+
+def topic_identity_topic_title(row: dict[str, Any]) -> str:
+    return topic_identity_value(row.get("选题标题"))
+
+
+def topic_candidate_business_identity(row: dict[str, Any]) -> tuple[str, str, str]:
+    """Return the persisted exact-run candidate identity used by every 04 path."""
+    return (
+        topic_identity_run(row),
+        topic_identity_source_title(row),
+        topic_identity_topic_title(row),
+    )
+
+
 def topic_create_business_key(row: dict[str, Any]) -> str:
-    run_id = str(row.get("运行批次") or "")
-    date = str(row.get("推荐日期") or "")
-    source_title = str(row.get("原始来源标题") or "").strip()
-    topic_title = str(row.get("选题标题") or "").strip()
-    source_part = f"source:{source_title}" if source_title else f"title:{topic_title}"
-    return "|".join([run_id, date, source_part])
+    return json.dumps(topic_candidate_business_identity(row), ensure_ascii=False, separators=(",", ":"))
 
 
 def topic_create_payload_digest(row: dict[str, str]) -> str:
@@ -479,6 +507,38 @@ def records_by_topic_create_key(records: list[dict[str, Any]]) -> dict[str, list
         if key.strip("|"):
             by_key.setdefault(key, []).append(record)
     return by_key
+
+
+def plan_topic_writes(
+    records: list[dict[str, Any]], rows: list[dict[str, str]]
+) -> tuple[list[tuple[dict[str, Any], dict[str, str]]], list[dict[str, str]]]:
+    """Build a complete non-ambiguous write plan before any external mutation."""
+    remote_by_key = records_by_topic_create_key(records)
+    local_keys: set[str] = set()
+    used_remote_ids: set[str] = set()
+    updates: list[tuple[dict[str, Any], dict[str, str]]] = []
+    creates: list[dict[str, str]] = []
+    for row in rows:
+        identity = topic_candidate_business_identity(row)
+        if not identity[0] or not identity[2]:
+            raise RuntimeError("topic_candidate_identity_missing")
+        key = topic_create_business_key(row)
+        if key in local_keys:
+            raise RuntimeError("topic_candidate_local_identity_duplicate")
+        local_keys.add(key)
+        matches = remote_by_key.get(key, [])
+        if len(matches) > 1:
+            raise RuntimeError("topic_candidate_remote_identity_ambiguous")
+        if not matches:
+            creates.append(row)
+            continue
+        record = matches[0]
+        record_id = str(record.get("record_id") or "")
+        if not record_id or record_id in used_remote_ids:
+            raise RuntimeError("topic_candidate_remote_record_ambiguous")
+        used_remote_ids.add(record_id)
+        updates.append((record, row))
+    return updates, creates
 
 
 def response_record_id(payload: dict[str, Any], index: int) -> str:
@@ -722,25 +782,15 @@ def main() -> int:
     created_fields = ensure_fields(token, app_token, table_id)
 
     existing = all_records(token, app_token, table_id)
-    existing_by_source_url = {
-        (str(record.get("fields", {}).get("推荐日期", "")), str(record.get("fields", {}).get("来源链接", ""))): record
-        for record in existing
-        if record.get("fields", {}).get("来源链接")
-    }
-    to_create = []
+    updates, to_create = plan_topic_writes(existing, mapped)
     updated_existing = 0
     updated_titles: list[str] = []
-    created_titles: list[str] = []
-    for row in mapped:
-        record = existing_by_source_url.get((row["推荐日期"], row.get("来源链接", "")))
-        if record:
-            update_existing_top10(token, app_token, table_id, record, row)
-            updated_existing += 1
-            updated_titles.append(row["选题标题"])
-            time.sleep(0.1)
-        else:
-            to_create.append(row)
-            created_titles.append(row["选题标题"])
+    created_titles = [row["选题标题"] for row in to_create]
+    for record, row in updates:
+        update_existing_top10(token, app_token, table_id, record, row)
+        updated_existing += 1
+        updated_titles.append(row["选题标题"])
+        time.sleep(0.1)
     created_records = batch_create(token, app_token, table_id, to_create, run_id) if to_create else 0
     print(json.dumps({
         "ok": True,
