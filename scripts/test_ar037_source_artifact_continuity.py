@@ -247,6 +247,7 @@ class AR037SourceArtifactContinuityTests(unittest.TestCase):
             {"name": "pipeline", "returncode": 0, "stdout": "", "stderr": ""},
         ]
         with mock.patch.object(run_daily_collection_job, "load_local_env"), \
+                mock.patch.object(run_daily_collection_job, "evaluate_preflight", return_value={"ok": True}), \
                 mock.patch.object(run_daily_collection_job, "check_automation_worktree", return_value=SimpleNamespace(ok=True)), \
                 mock.patch.object(run_daily_collection_job, "run_step", side_effect=steps) as runner, \
                 mock.patch.object(run_daily_collection_job, "write_job_log", return_value=Path("log.json")), \
@@ -262,6 +263,7 @@ class AR037SourceArtifactContinuityTests(unittest.TestCase):
             "stderr": "",
         }
         with mock.patch.object(run_daily_collection_job, "load_local_env"), \
+                mock.patch.object(run_daily_collection_job, "evaluate_preflight", return_value={"ok": True}), \
                 mock.patch.object(run_daily_collection_job, "check_automation_worktree", return_value=SimpleNamespace(ok=True)), \
                 mock.patch.object(run_daily_collection_job, "run_step", return_value=plan_step) as runner, \
                 mock.patch.object(run_daily_collection_job, "write_job_log", return_value=Path("log.json")), \

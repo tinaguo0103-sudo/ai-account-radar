@@ -27,6 +27,7 @@ from typing import Any
 
 import daily_pipeline
 import douyin_candidate_lifecycle
+from scheduled_flow_preflight import evaluate_preflight
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -235,6 +236,10 @@ def main() -> int:
     editorial_report = today_path.parent / "editorial_skill_report.json"
     daily_pipeline.sync_enriched_candidate_mirrors(today_path, editorial_report, args.write_feishu)
     if args.write_feishu:
+        preflight = evaluate_preflight("editorial", check_network=True)
+        if not preflight["ok"]:
+            print(json.dumps({"ok": False, "reason": "scheduled_flow_preflight_failed", "preflight": preflight}, ensure_ascii=False, indent=2))
+            return 2
         ensure_latest_sampler_log(args.run_id, today_path)
 
     steps: list[dict[str, Any]] = []

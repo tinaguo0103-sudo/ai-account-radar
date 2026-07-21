@@ -1,0 +1,58 @@
+{
+  "schema_version": 1,
+  "task": "AR-040",
+  "environment_file": ".env.staging.local",
+  "production_root": "/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar",
+  "staging_root": "/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_dev",
+  "required_explicit_environment": [
+    "FEISHU_APP_ID",
+    "FEISHU_APP_SECRET",
+    "FEISHU_BASE_APP_TOKEN",
+    "FEISHU_SOURCE_TABLE_ID",
+    "FEISHU_CONTENT_TABLE_ID",
+    "FEISHU_TOPIC_TABLE_ID",
+    "FEISHU_CARD_RECEIVE_TARGETS"
+  ],
+  "steps": [
+    {
+      "id": "isolation_preflight",
+      "command": "AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/scheduled_flow_preflight.py --entrypoint editorial --check-network",
+      "expected": "explicit staging resources, writable core path, DNS green, business_writes=0"
+    },
+    {
+      "id": "trusted_artifact_editorial",
+      "command": "PYTHONPATH=scripts python3 -m unittest scripts.test_ar040_scheduled_flow_business_closure",
+      "expected": "non-empty unsupported URL and empty URL survive with source_open_calls=0"
+    },
+    {
+      "id": "staging_04_write_readback",
+      "command": "AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/finalize_daily_pipeline_after_editorial.py --run-id <TEST_RUN_ID> --input <TEST_EXACT_CSV> --write-feishu --update-scheduled-log",
+      "expected": "test 04 exact write and record/run read-back green"
+    },
+    {
+      "id": "guarded_personal_card",
+      "command": "AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/run_topic_card_if_fresh.py --allow-non-production-worktree",
+      "expected": "one test message to explicit personal target; exact ledger/read-back; second run no send"
+    },
+    {
+      "id": "callback_scope",
+      "command": "not_required_by_ar040",
+      "expected": "callback code is unchanged; retain adjacent receiver regression, no live click required for this delta"
+    },
+    {
+      "id": "optional_telemetry_failure",
+      "command": "FEISHU_REQUEST_TELEMETRY_DIR=<UNWRITABLE_TEST_PATH> AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local <repeat affected staging write/send fixture>",
+      "expected": "core result and exact read-back green; optional_telemetry_unavailable warning"
+    },
+    {
+      "id": "automation_equivalent_probe",
+      "command": "cd /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar_dev && AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/scheduled_flow_preflight.py --entrypoint card --check-network",
+      "expected": "same cwd/write/network policy intended for scheduled execution"
+    },
+    {
+      "id": "production_zero_mutation",
+      "command": "compare production Git status and selected output artifact hashes before/after QA; remove only QA-owned staging records/artifacts",
+      "expected": "production diff empty; production business records unchanged"
+    }
+  ]
+}

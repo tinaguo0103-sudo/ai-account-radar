@@ -8,11 +8,14 @@ import { spawnSync } from "node:child_process";
 import {
   buildCoverage,
   buildHomepageCardItems,
+  buildSourceRuntimeCoverage,
+  fixedDouyinTarget,
   limitedPlanRejection,
   loadCandidateLifecycle,
   materializeHistoricalBacklog,
   mergeNewAndBacklog,
   persistCollectedCandidates,
+  waitForNavigationAndWorksGrid,
   selectIncrementalWorks,
   selectedSources,
   validateFullAccountLimitArgs,
@@ -36,6 +39,54 @@ assert.equal(validateFullAccountLimitArgs(["--account-limit", "0"]).ok, true);
 assert.equal(limitedPlanRejection(validateFullAccountLimitArgs(["--account-limit", "12"])).status, "limited_plan_rejected");
 assert.equal(validateSourcePlan([...sources, source("account-1")]).ok, false);
 assert.equal(validateSourcePlan([{ ...source(""), account_name: "" }]).ok, false);
+
+const fixedTarget = await fixedDouyinTarget("http://127.0.0.1:9333", async () => [
+  { type: "page", url: "about:blank", webSocketDebuggerUrl: "ws://blank" },
+  { type: "page", url: "https://www.douyin.com/user/account-1", webSocketDebuggerUrl: "ws://fixed" },
+]);
+assert.equal(fixedTarget.webSocketDebuggerUrl, "ws://fixed");
+
+let readinessPolls = 0;
+const delayedClient = {
+  async send(method) {
+    if (method === "Page.getNavigationHistory") {
+      const ready = readinessPolls >= 2;
+      return { currentIndex: 0, entries: [{ id: 0, url: ready ? "https://www.douyin.com/user/account-1" : "about:blank" }] };
+    }
+    readinessPolls += 1;
+    const ready = readinessPolls >= 3;
+    return { result: { value: JSON.stringify({
+      title: ready ? "account-1" : "",
+      url: ready ? "https://www.douyin.com/user/account-1" : "about:blank",
+      body_text_length: ready ? 400 : 0,
+      works_ready: ready,
+    }) } };
+  },
+};
+const delayedReady = await waitForNavigationAndWorksGrid(
+  delayedClient,
+  "https://www.douyin.com/user/account-1",
+  { timeoutMs: 5000, pollMs: 1, sleep: async () => {}, now: (() => { let value = 0; return () => value += 100; })() },
+);
+assert.equal(delayedReady.works_ready, true);
+assert.equal(readinessPolls, 3);
+
+const blankClient = { async send(method) {
+  if (method === "Page.getNavigationHistory") return { currentIndex: 0, entries: [{ id: 0, url: "about:blank" }] };
+  return { result: { value: JSON.stringify({ title: "", url: "about:blank", body: "", works_ready: false }) } };
+} };
+await assert.rejects(
+  waitForNavigationAndWorksGrid(blankClient, "https://www.douyin.com/user/account-1", {
+    timeoutMs: 250, pollMs: 1, sleep: async () => {}, now: (() => { let value = 0; return () => value += 100; })(),
+  }),
+  /shared_fixed_target_blank/,
+);
+const sourceRuntimeFailure = buildSourceRuntimeCoverage(sources.slice(0, 3), [{
+  account_name: "account-1", status: "source_runtime_failed", video_links: [],
+}], "shared_fixed_target_blank");
+assert.equal(sourceRuntimeFailure.source_runtime_failure_count, 1);
+assert.equal(sourceRuntimeFailure.failed_account_count, 0);
+assert.equal(sourceRuntimeFailure.artifact_count, 0);
 
 const complete = buildCoverage(sources.slice(0, 2), [
   { account_name: "account-1", status: "success", video_links: ["one"] },
@@ -208,8 +259,11 @@ assert.equal(sourceText.includes("rows.slice(0"), false);
 assert.equal(sourceText.includes("payload.anchors"), false);
 assert.equal(sourceText.includes("payload.htmlSnippet"), false);
 assert.equal(sourceText.includes("scanLimit: 10"), true);
+assert.equal(sourceText.includes("Target.createTarget"), false);
+assert.equal(sourceText.includes("Browser.setWindowBounds"), false);
+assert.equal(sourceText.includes('windowState: "minimized"'), false);
 
 const outerSource = fs.readFileSync(path.resolve("scripts/run_daily_collection_job.py"), "utf8");
 assert.equal(outerSource.includes('"--force-fetch-douyin"'), true);
 
-console.log(JSON.stringify({ ok: true, tests: 39, planned_accounts: 33, rejected_limit_mutations: rejectedLimits.length }));
+console.log(JSON.stringify({ ok: true, tests: 48, planned_accounts: 33, rejected_limit_mutations: rejectedLimits.length }));

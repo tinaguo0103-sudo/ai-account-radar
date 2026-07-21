@@ -6,6 +6,7 @@ Aliases allow the pipeline to keep working during table-name migration.
 """
 from __future__ import annotations
 
+import os
 from typing import Any
 
 
@@ -37,6 +38,12 @@ VIEW_NAMES: dict[str, list[str]] = {
 
 PROTECTED_TABLE_KEYS = {"rules_dictionary"}
 PROTECTED_TABLE_NAMES = {TABLES[key] for key in PROTECTED_TABLE_KEYS}
+EXPLICIT_TABLE_ENV_KEYS: dict[str, tuple[str, ...]] = {
+    "source_sampling": ("FEISHU_SOURCE_TABLE_ID", "FEISHU_SOURCE_SAMPLING_TABLE_ID"),
+    "content_inbox": ("FEISHU_CONTENT_TABLE_ID", "FEISHU_CONTENT_INBOX_TABLE_ID"),
+    "topic_decision": ("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE_ID"),
+    "script_package": ("FEISHU_SCRIPT_PACKAGE_TABLE_ID",),
+}
 
 
 def table_name(key: str) -> str:
@@ -56,6 +63,18 @@ def resolve_table_id(tables_by_name: dict[str, str], key: str) -> str | None:
         if name in tables_by_name:
             return tables_by_name[name]
     return None
+
+
+def configured_table_id(tables_by_name: dict[str, str], key: str) -> tuple[str | None, str]:
+    for env_key in EXPLICIT_TABLE_ENV_KEYS.get(key, ()):
+        value = os.getenv(env_key, "").strip()
+        if value:
+            return value, env_key
+    environment = os.getenv("AI_ACCOUNT_RADAR_ENV", "").strip().lower()
+    env_file = (os.getenv("AI_ACCOUNT_RADAR_ENV_FILE") or os.getenv("ENV_FILE") or "").lower()
+    if environment in {"staging", "test"} or "staging" in env_file or ".env.test" in env_file:
+        return None, "staging_explicit_table_id_required"
+    return resolve_table_id(tables_by_name, key), "table_name"
 
 
 def resolve_table_name(tables_by_name: dict[str, str], key: str) -> str | None:

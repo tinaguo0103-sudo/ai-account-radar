@@ -28,7 +28,7 @@ from urllib.request import Request, urlopen
 
 import push_to_feishu as feishu
 import topic_flow_rework as flow
-from feishu_table_registry import resolve_table_id, table_name
+from feishu_table_registry import configured_table_id, resolve_table_id, table_name
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -2616,9 +2616,12 @@ def write_content_ledger_to_feishu(
 
     app_token = require_feishu_env()
     token = feishu.tenant_token()
-    table_id = resolve_table_id(list_tables(token, app_token), "content_inbox")
+    tables = list_tables(token, app_token)
+    table_id, table_id_source = configured_table_id(tables, "content_inbox")
+    if table_id_source == "table_name":
+        table_id = resolve_table_id(tables, "content_inbox")
     if not table_id:
-        raise SystemExit(f"Missing Feishu table: {table_name('content_inbox')}")
+        raise SystemExit(f"Missing explicit Feishu table for content_inbox: {table_id_source}")
     created_fields = ensure_content_inbox_fields(token, app_token, table_id)
     existing = all_records(token, app_token, table_id)
     from canonical_owner_projection import resolve_owner_projection

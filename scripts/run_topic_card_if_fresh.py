@@ -17,9 +17,10 @@ from automation_failure_qa import qa_for_command_failure
 from automation_worktree_guard import check_automation_worktree, guard_failure_summary
 import feishu_idempotency as idempotency
 import push_to_feishu as feishu
-from feishu_table_registry import resolve_table_id
+from feishu_table_registry import configured_table_id
 from local_env import load_local_env
 from feishu_automation_notify import notify
+from scheduled_flow_preflight import evaluate_preflight
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -71,7 +72,7 @@ def feishu_topic_records_for_run(run_id: str) -> tuple[int, str]:
     token = feishu.tenant_token()
     payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables", token=token)
     tables = {item["name"]: item["table_id"] for item in payload.get("data", {}).get("items", [])}
-    table_id = resolve_table_id(tables, "topic_decision")
+    table_id, _reason = configured_table_id(tables, "topic_decision")
     if not table_id:
         return 0, "missing_topic_decision_table"
     count = 0
@@ -254,6 +255,17 @@ def main() -> int:
             "note": "Check-only mode did not invoke the card sender or write card artifacts.",
         }, ensure_ascii=False, indent=2))
         return 0
+
+    preflight = evaluate_preflight("card", check_network=True)
+    if not preflight["ok"]:
+        print(json.dumps({
+            "ok": False,
+            "sent": False,
+            "reason": "scheduled_flow_preflight_failed",
+            "run_id": run_id,
+            "preflight": preflight,
+        }, ensure_ascii=False, indent=2))
+        return 2
 
     command = [
         sys.executable,

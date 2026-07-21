@@ -302,7 +302,7 @@ def completed_candidate_ids(state: dict[str, Any], stage_name: str) -> set[str]:
 
 def source_open_candidate(row: dict[str, Any], index: int) -> dict[str, Any]:
     exact_url = str(row.get("来源链接") or "").strip()
-    return {
+    item = {
         "index": index,
         "candidate_id": candidate_id(row, index),
         "exact_url": exact_url,
@@ -315,9 +315,18 @@ def source_open_candidate(row: dict[str, Any], index: int) -> dict[str, Any]:
         "platform": str(row.get("平台") or ""),
         "artifact_text": str(row.get("来源内容") or ""),
         "local_trace_hash": hash_json(row),
-        "primary_adapter": source_adapter.primary_adapter_for_url(exact_url),
-        "expected_page_identity": source_adapter.expected_identity(exact_url),
+        "primary_adapter": "",
+        "expected_page_identity": {},
     }
+    item["research_required"] = research_contract.requires_external_research(item)
+    item["source_open_required"] = bool(exact_url and item["research_required"])
+    if item["source_open_required"]:
+        try:
+            item["primary_adapter"] = source_adapter.primary_adapter_for_url(exact_url)
+            item["expected_page_identity"] = source_adapter.expected_identity(exact_url)
+        except source_adapter.AdapterContractError as exc:
+            item["source_open_prepare_error"] = str(exc)
+    return item
 
 
 def exact_source_open_candidate(row: dict[str, Any], identity: dict[str, Any]) -> dict[str, Any]:
@@ -334,9 +343,17 @@ def exact_source_open_candidate(row: dict[str, Any], identity: dict[str, Any]) -
         "platform": identity["platform"],
         "artifact_text": identity["source_content"],
         "local_trace_hash": identity["row_hash"],
-        "primary_adapter": source_adapter.primary_adapter_for_url(identity["exact_url"]),
-        "expected_page_identity": source_adapter.expected_identity(identity["exact_url"]),
     })
+    item["research_required"] = research_contract.requires_external_research(item)
+    item["source_open_required"] = bool(item["exact_url"] and item["research_required"])
+    item["primary_adapter"] = ""
+    item["expected_page_identity"] = {}
+    if item["source_open_required"]:
+        try:
+            item["primary_adapter"] = source_adapter.primary_adapter_for_url(item["exact_url"])
+            item["expected_page_identity"] = source_adapter.expected_identity(item["exact_url"])
+        except source_adapter.AdapterContractError as exc:
+            item["source_open_prepare_error"] = str(exc)
     return item
 
 
@@ -372,6 +389,7 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
     csv_paths, items, pre, pool, exact_manifest = prepare_input_candidates(args)
     candidates: list[dict[str, Any]] = []
     source_state: dict[str, Any] = {}
+    source_open_calls = 0
     for index, row in enumerate(pool):
         item = (
             exact_source_open_candidate(row, exact_manifest["ordered_candidates"][index])
@@ -384,7 +402,7 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
             "stage": "exact_source_open",
             "candidate": item,
             "rules": {
-                "must_open_exact_url": bool(item["exact_url"]),
+                "must_open_exact_url": bool(item.get("source_open_required")),
                 "trusted_artifact_is_candidate_evidence": True,
                 "no_csv_or_search_snippet_substitution": True,
                 "no_account_home_or_search_page": True,
@@ -392,10 +410,15 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
                 "no_failover_after_adapter_failure": True,
             },
         })
-        if not item["exact_url"]:
+        if item.get("source_open_prepare_error"):
+            source_state[item["candidate_id"]] = stage_record(
+                "failed", error=item["source_open_prepare_error"],
+                input_hash=file_hash(path / "input.json"), index=index,
+            )
+        elif not item.get("source_open_required"):
             validated = research_contract.validate_source_open(item, {
                 "open_status": "not_attempted",
-                "failure_reason": "source_url_unavailable",
+                "failure_reason": "artifact_first_no_source_open_required",
             })
             write_json(path / "validated.json", validated)
             source_state[item["candidate_id"]] = stage_record(
@@ -403,6 +426,7 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
                 output_hash=hash_json(validated), source_hash=validated["captured_content_hash"], index=index,
             )
         else:
+            source_open_calls += 1
             source_state[item["candidate_id"]] = stage_record("prepared", input_hash=file_hash(path / "input.json"), index=index)
     write_json(out_dir / "shortlist_candidates.json", candidates)
     if exact_manifest:
@@ -448,6 +472,7 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
         "out_dir": str(out_dir),
         "writes_feishu": False,
         "strict_fail_closed": True,
+        "source_open_calls": source_open_calls,
         "source_manifest_hash": hash_json(source_manifest),
         "input_mode": exact_manifest["mode"] if exact_manifest else "content_items_shortlist",
         "run_id": exact_manifest["run_id"] if exact_manifest else "",
@@ -459,8 +484,12 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
         "max_skill_candidates": args.max_skill_candidates,
         "stages": {
             "source_open": stage_record(
-                "completed" if source_state and all(row["status"] == "completed" for row in source_state.values()) else "prepared",
+                (
+                    "completed" if all(row["status"] == "completed" for row in source_state.values())
+                    else "completed_with_failures"
+                ) if source_state and all(row["status"] in {"completed", "failed"} for row in source_state.values()) else "prepared",
                 candidates=source_state,
+                failure_count=sum(1 for row in source_state.values() if row["status"] == "failed"),
             ),
             "research": stage_record("pending", candidates={}),
             "prepare_stage1": stage_record("pending"),
@@ -477,6 +506,7 @@ def prepare_source_open(args: argparse.Namespace) -> dict[str, Any]:
         "input_mode": state["input_mode"],
         "run_id": state["run_id"],
         "candidates": len(candidates),
+        "source_open_calls": source_open_calls,
         "exact_candidate_input_manifest_hash": state["exact_candidate_input_manifest_hash"],
         "out_dir": str(out_dir),
     }

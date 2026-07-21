@@ -15,7 +15,7 @@ from pathlib import Path
 from typing import Any
 
 import push_to_feishu as feishu
-from feishu_table_registry import resolve_table_id, table_name
+from feishu_table_registry import configured_table_id, resolve_table_id, table_name
 from sync_source_sampling import (
     PRIORITY_ORDER,
     ensure_fields,
@@ -340,9 +340,12 @@ def main() -> int:
     if not app_token:
         raise SystemExit("Missing FEISHU_BASE_APP_TOKEN")
     token = feishu.tenant_token()
-    table_id = resolve_table_id(list_tables(token, app_token), TABLE_KEY)
+    tables = list_tables(token, app_token)
+    table_id, table_id_source = configured_table_id(tables, TABLE_KEY)
+    if table_id_source == "table_name":
+        table_id = resolve_table_id(tables, TABLE_KEY)
     if not table_id:
-        raise SystemExit(f"Missing Feishu table: {table_name(TABLE_KEY)}")
+        raise SystemExit(f"Missing explicit Feishu table for {TABLE_KEY}: {table_id_source}")
     records = all_records(token, app_token, table_id)
     config = load_config()
     summary = reconcile(config, records)

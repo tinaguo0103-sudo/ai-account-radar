@@ -400,6 +400,9 @@ def get_topic_table(token: str, app_token: str) -> str:
     explicit_table_id, _source = explicit_topic_table_id()
     if explicit_table_id:
         return explicit_table_id
+    env_file = (os.getenv("AI_ACCOUNT_RADAR_ENV_FILE") or os.getenv("ENV_FILE") or "").lower()
+    if os.getenv("AI_ACCOUNT_RADAR_ENV", "").strip().lower() in {"staging", "test"} or "staging" in env_file:
+        raise SystemExit("Staging requires explicit FEISHU_TOPIC_TABLE_ID; table-name fallback is forbidden")
     table_id = resolve_table_id({table["name"]: table["table_id"] for table in feishu.list_tables(token, app_token)}, TARGET_TABLE_KEY)
     if not table_id:
         raise SystemExit(f"Missing table: {TABLES[TARGET_TABLE_KEY]}")

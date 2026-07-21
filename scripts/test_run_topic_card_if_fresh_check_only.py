@@ -36,12 +36,14 @@ class RunTopicCardIfFreshCheckOnlyTests(unittest.TestCase):
         self.original_subprocess_run = run_topic_card_if_fresh.subprocess.run
         self.original_notify = run_topic_card_if_fresh.notify
         self.original_load_env = run_topic_card_if_fresh.load_local_env
+        self.original_preflight = run_topic_card_if_fresh.evaluate_preflight
 
         run_topic_card_if_fresh.check_automation_worktree = lambda *_args, **_kwargs: ok_worktree_guard()
         run_topic_card_if_fresh.fresh_collection_status = lambda: (True, "fresh", "run_test")
         run_topic_card_if_fresh.feishu_topic_records_for_run = lambda _run_id: (3, "ok")
         run_topic_card_if_fresh.idempotency.blocking_unknowns = lambda **_kwargs: []
         run_topic_card_if_fresh.load_local_env = lambda: None
+        run_topic_card_if_fresh.evaluate_preflight = lambda *_args, **_kwargs: {"ok": True}
 
     def tearDown(self) -> None:
         sys.argv = self.original_argv
@@ -52,6 +54,7 @@ class RunTopicCardIfFreshCheckOnlyTests(unittest.TestCase):
         run_topic_card_if_fresh.subprocess.run = self.original_subprocess_run
         run_topic_card_if_fresh.notify = self.original_notify
         run_topic_card_if_fresh.load_local_env = self.original_load_env
+        run_topic_card_if_fresh.evaluate_preflight = self.original_preflight
 
     def run_main(self, argv: list[str]) -> tuple[int, dict[str, Any]]:
         sys.argv = argv

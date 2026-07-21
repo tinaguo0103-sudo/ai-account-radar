@@ -15,6 +15,7 @@ from automation_worktree_guard import check_automation_worktree, guard_failure_s
 from full_account_collection_contract import rejection_payload, validate_account_limit_argv
 from local_env import load_local_env
 from feishu_automation_notify import notify
+from scheduled_flow_preflight import evaluate_preflight
 import topic_flow_rework as flow
 
 
@@ -173,6 +174,11 @@ def main() -> int:
     load_local_env()
     py = sys.executable
     steps: list[dict[str, Any]] = []
+
+    preflight = evaluate_preflight("collection", check_network=True)
+    if not preflight["ok"]:
+        print(json.dumps({"ok": False, "reason": "scheduled_flow_preflight_failed", "preflight": preflight}, ensure_ascii=False, indent=2))
+        return 2
 
     guard = check_automation_worktree(ROOT, allow_non_production=args.allow_non_production_worktree)
     if not guard.ok:

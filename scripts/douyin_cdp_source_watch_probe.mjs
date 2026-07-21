@@ -181,42 +181,63 @@ class CdpClient {
   }
 }
 
-async function waitForTargetWebSocket(cdp, targetId) {
-  const base = cdp.replace(/\/$/, "");
-  for (let attempt = 0; attempt < 20; attempt += 1) {
-    const targets = await getJson(`${base}/json/list`);
-    const target = targets.find((item) => item.id === targetId);
-    if (target?.webSocketDebuggerUrl) return target;
-    await new Promise((resolve) => setTimeout(resolve, 250));
+export async function fixedDouyinTarget(cdp, listTargets = getJson) {
+  const targets = await listTargets(`${cdp.replace(/\/$/, "")}/json/list`);
+  const pages = targets.filter((item) => item.type === "page"
+    && /^https?:\/\/([^/]+\.)?douyin\.com\//i.test(item.url || "")
+    && item.webSocketDebuggerUrl);
+  if (!pages.length) {
+    const error = new Error("fixed_douyin_target_missing");
+    error.code = "fixed_douyin_target_missing";
+    throw error;
   }
-  throw new Error(`Cannot find background Chrome target websocket: ${targetId}`);
+  return pages[0];
 }
 
-async function createBackgroundTab(cdp, browserClient) {
-  const result = await browserClient.send("Target.createTarget", {
-    url: "about:blank",
-    background: true,
-  });
-  const targetId = result.targetId;
-  if (!targetId) throw new Error(`Chrome did not return targetId: ${JSON.stringify(result)}`);
-  const target = await waitForTargetWebSocket(cdp, targetId);
-  await minimizeTargetWindow(browserClient, targetId);
-  return target;
-}
-
-async function minimizeTargetWindow(browserClient, targetId) {
+export function expectedAccountUrl(actual, expected) {
   try {
-    const result = await browserClient.send("Browser.getWindowForTarget", { targetId });
-    if (result.windowId) {
-      await browserClient.send("Browser.setWindowBounds", {
-        windowId: result.windowId,
-        bounds: { windowState: "minimized" },
-      });
-    }
+    const current = new URL(actual);
+    const target = new URL(expected);
+    return current.hostname.endsWith("douyin.com")
+      && current.pathname.replace(/\/$/, "") === target.pathname.replace(/\/$/, "");
   } catch {
-    // Some Chrome targets do not expose a window. Background target creation is
-    // still the main focus-avoidance mechanism, so minimizing is best-effort.
+    return false;
   }
+}
+
+export async function waitForNavigationAndWorksGrid(client, expectedUrl, options = {}) {
+  const timeoutMs = Math.max(1000, Number(options.timeoutMs) || 15000);
+  const pollMs = Math.max(10, Number(options.pollMs) || 250);
+  const sleep = options.sleep || ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+  const now = options.now || (() => Date.now());
+  const started = now();
+  let last = { title: "", url: "", body: "", works_ready: false };
+  do {
+    const history = await client.send("Page.getNavigationHistory");
+    const committedEntry = (history.entries || [])[history.currentIndex];
+    const navigationCommitted = expectedAccountUrl(committedEntry?.url || "", expectedUrl);
+    const evaluated = await client.send("Runtime.evaluate", {
+      expression: `(() => JSON.stringify({
+        title: document.title || '',
+        url: location.href || '',
+        body: (document.body?.innerText || '').slice(0, 1000),
+        works_ready: Boolean(document.querySelector('[data-e2e*="user-post"], [data-e2e*="user-work"], [data-e2e*="works"], [class*="user-post"], [class*="work-list"], [class*="post-list"]'))
+      }))()`,
+      returnByValue: true,
+      awaitPromise: true,
+    });
+    last = JSON.parse(evaluated.result.value || "{}");
+    last.navigation_committed = navigationCommitted;
+    if (navigationCommitted && expectedAccountUrl(last.url, expectedUrl) && last.works_ready) return last;
+    await sleep(pollMs);
+  } while (now() - started < timeoutMs);
+  const currentUrl = String(last.url || "").trim();
+  const blank = !String(last.title || "").trim() && (!currentUrl || currentUrl === "about:blank")
+    && !String(last.body || "").trim();
+  const error = new Error(blank ? "shared_fixed_target_blank" : "works_grid_readiness_timeout");
+  error.code = blank ? "shared_fixed_target_blank" : "works_grid_readiness_timeout";
+  error.last_state = last;
+  throw error;
 }
 
 function extractVideoLinksFromText(text, videoLimit) {
@@ -521,7 +542,38 @@ export function buildCoverage(sources, rows) {
   };
 }
 
-async function probeAccount(cdp, browserClient, source, options) {
+export function buildSourceRuntimeCoverage(sources, rows, failure) {
+  const plan = validateSourcePlan(sources);
+  const attemptedNames = new Set(rows.map((row) => String(row.account_name || "")));
+  return {
+    ok: false,
+    account_limit: 0,
+    planned_accounts: plan.planned_accounts,
+    planned_account_names: plan.account_names,
+    attempted_accounts: rows.filter((row) => row.status !== "not_attempted_source_runtime_failure").length,
+    successful_accounts: 0,
+    failed_account_count: 0,
+    failed_accounts: [],
+    source_runtime_failure_count: 1,
+    source_runtime_failure: failure,
+    artifact_count: 0,
+    not_attempted_account_names: plan.account_names.filter((name) => !attemptedNames.has(name)
+      || rows.some((row) => row.account_name === name && row.status === "not_attempted_source_runtime_failure")),
+    per_account_artifact_counts: Object.fromEntries(plan.account_names.map((name) => [name, 0])),
+    missing_account_rows: [],
+    duplicate_account_rows: [],
+    unknown_account_rows: [],
+    plan_validation: plan,
+    invariants: {
+      attempted_equals_planned: false,
+      success_plus_failed_equals_attempted: false,
+      account_lineage_unique_and_complete: true,
+      failed_source_artifacts_zero: true,
+    },
+  };
+}
+
+async function probeAccount(client, source, options) {
   const homepage = source.url || source.homepage_url || "";
   if (!homepage) {
     return {
@@ -533,17 +585,10 @@ async function probeAccount(cdp, browserClient, source, options) {
       video_links: [],
     };
   }
-  let tab;
-  let client;
   try {
-    tab = await createBackgroundTab(cdp, browserClient);
-    client = new CdpClient(tab.webSocketDebuggerUrl);
-    await client.open();
-    await client.send("Runtime.enable");
-    await client.send("Page.enable");
-    await client.send("Page.navigate", { url: homepage });
-    await minimizeTargetWindow(browserClient, tab.id);
-    await new Promise((resolve) => setTimeout(resolve, options.waitMs));
+    const navigation = await client.send("Page.navigate", { url: homepage });
+    if (navigation.errorText) throw new Error(`navigation_failed:${navigation.errorText}`);
+    await waitForNavigationAndWorksGrid(client, homepage, { timeoutMs: options.waitMs });
     const result = await client.send("Runtime.evaluate", {
       expression: `(() => {
         const videoAnchors = Array.from(document.querySelectorAll('a[href*="/video/"], a[href*="modal_id="]')).map(a => {
@@ -630,29 +675,21 @@ async function probeAccount(cdp, browserClient, source, options) {
       column: source.column || "",
       status: "failed",
       failure_reason: error.message,
+      shared_runtime_failure: error.code === "shared_fixed_target_blank" || error.code === "fixed_douyin_target_missing",
       video_ids: [],
       video_links: [],
     };
-  } finally {
-    client?.close();
-    if (tab?.id) {
-      try {
-        await browserClient.send("Target.closeTarget", { targetId: tab.id });
-      } catch {
-        // ignore close failures
-      }
-    }
   }
 }
 
-async function probeAccountWithRetry(cdp, browserClient, source, options) {
+async function probeAccountWithRetry(client, source, options) {
   let last = null;
   const attempts = Math.max(1, options.retries || 1);
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const result = await probeAccount(cdp, browserClient, source, options);
+    const result = await probeAccount(client, source, options);
     result.attempts = attempt;
     last = result;
-    if (["success", "updated_no_new_items"].includes(result.status)) return result;
+    if (["success", "updated_no_new_items"].includes(result.status) || result.shared_runtime_failure) return result;
     if (attempt < attempts) {
       await new Promise((resolve) => setTimeout(resolve, Math.min(5000, 1000 * attempt)));
     }
@@ -732,14 +769,40 @@ async function main() {
   }
 
   const rows = [];
-  const browserClient = new CdpClient(version.webSocketDebuggerUrl);
-  await browserClient.open();
+  let sharedRuntimeFailure = null;
+  let fixedTarget;
+  try {
+    fixedTarget = await fixedDouyinTarget(options.cdp);
+  } catch (error) {
+    sharedRuntimeFailure = { status: error.code || "fixed_douyin_target_missing", reason: error.message };
+  }
+  const pageClient = fixedTarget ? new CdpClient(fixedTarget.webSocketDebuggerUrl) : null;
+  if (pageClient) {
+    await pageClient.open();
+    await pageClient.send("Runtime.enable");
+    await pageClient.send("Page.enable");
+  }
   try {
     for (const source of sources) {
-      rows.push(await probeAccountWithRetry(options.cdp, browserClient, source, options));
+      if (sharedRuntimeFailure) {
+        rows.push({
+          account_name: source.account_name || source.name || "",
+          homepage_url: source.url || source.homepage_url || "",
+          status: "not_attempted_source_runtime_failure",
+          failure_reason: sharedRuntimeFailure.reason,
+          video_ids: [],
+          video_links: [],
+        });
+        continue;
+      }
+      const row = await probeAccountWithRetry(pageClient, source, options);
+      rows.push(row);
+      if (row.shared_runtime_failure) {
+        sharedRuntimeFailure = { status: "shared_fixed_target_blank", reason: row.failure_reason };
+      }
     }
   } finally {
-    browserClient.close();
+    pageClient?.close();
   }
   for (const row of rows) {
     row.artifact_count = Array.isArray(row.video_links) ? row.video_links.length : 0;
@@ -817,7 +880,9 @@ async function main() {
     row_count: homepageCardItems.length,
   };
 
-  const coverage = buildCoverage(sources, rows);
+  const coverage = sharedRuntimeFailure
+    ? buildSourceRuntimeCoverage(sources, rows, sharedRuntimeFailure)
+    : buildCoverage(sources, rows);
   for (const item of homepageCardItems) {
     const account = String(item["账号名/公众号名"] || "");
     if (Object.hasOwn(coverage.per_account_artifact_counts, account)) {
@@ -840,12 +905,13 @@ async function main() {
 
   const output = {
     ok: coverage.ok,
-    status: coverage.ok ? "completed" : "completed_with_failures",
+    status: sharedRuntimeFailure ? "source_runtime_failed" : (coverage.ok ? "completed" : "completed_with_failures"),
     check_only: false,
     writes_feishu: false,
     run_id: runId,
     cdp_browser: version.Browser || "",
     coverage,
+    source_runtime_failure: sharedRuntimeFailure,
     item_lineage: itemLineage,
     accounts: rows.length,
     discovered_video_links: videoLinks.length,

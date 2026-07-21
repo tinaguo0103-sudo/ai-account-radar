@@ -42,7 +42,7 @@ from local_env import load_local_env
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
-LOG_DIR = OUT / "logs"
+LOG_DIR = Path(os.getenv("FEISHU_REQUEST_TELEMETRY_DIR", str(OUT / "logs"))).expanduser()
 DEFAULT_API_HOST = "https://open.feishu.cn"
 SAFE_RETRY_METHODS = {"GET", "PUT", "PATCH", "DELETE"}
 TRANSIENT_HTTP_STATUS = {408, 425, 429, 500, 502, 503, 504}
