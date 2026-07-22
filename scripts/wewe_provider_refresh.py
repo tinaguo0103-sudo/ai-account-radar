@@ -19,9 +19,11 @@ from pathlib import Path
 from typing import Any, Callable
 
 PROVIDER_URL = "http://127.0.0.1:4000"
+ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DATA_DIR = Path.home() / ".codex" / "ai-account-radar-runtime" / "providers" / "wewe-rss" / "data"
 HEALTH_DIR = CANONICAL_DATA_DIR.parent / "health"
-LEASE_PATH = HEALTH_DIR / "refresh.lock"
+LEGACY_REFRESH_LOCK_PATH = HEALTH_DIR / "refresh.lock"
+PROJECT_REFRESH_LOCK_PATH = ROOT / "output" / "state" / "wewe-refresh" / "refresh.lock"
 RECEIPT_DIR = HEALTH_DIR / "receipts"
 ATTEMPT_DIR = HEALTH_DIR / "attempts"
 ATTESTATION_KEY_PATH = CANONICAL_DATA_DIR.parent / "secrets" / "wewe-refresh-attestation.key"
@@ -138,6 +140,18 @@ def owner_alive(pid: int, host: str) -> bool:
         return True
 
 
+def project_owned_lock_path(path: Path, project_root: Path | None = None) -> Path:
+    root = (project_root or ROOT).resolve()
+    resolved = path.expanduser().resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise RefreshError("refresh_lock_not_project_owned") from exc
+    if resolved == LEGACY_REFRESH_LOCK_PATH.resolve():
+        raise RefreshError("refresh_lock_legacy_runtime_path_forbidden")
+    return resolved
+
+
 def atomic_write(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     temporary = path.with_suffix(path.suffix + f".{os.getpid()}.tmp")
@@ -231,7 +245,7 @@ def run_refresh(
     snapshot_fn: Callable[[Path], dict[str, Any]] = read_snapshot,
     clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
     sleep_fn: Callable[[float], None] = time.sleep, deadline_ms: int = 120000, poll_interval_ms: int = 500,
-    signing_key: bytes | None = None,
+    signing_key: bytes | None = None, lock_path: Path | None = None, project_root: Path | None = None,
 ) -> dict[str, Any]:
     if not RUN_ID_PATTERN.fullmatch(run_id):
         raise RefreshError("refresh_run_id_invalid")
@@ -241,7 +255,7 @@ def run_refresh(
         raise RefreshError("refresh_attestation_key_invalid")
     attempt_id = uuid.uuid4().hex
     started = clock_ms()
-    lease_path = health_dir / "refresh.lock"
+    lease_path = project_owned_lock_path(lock_path or PROJECT_REFRESH_LOCK_PATH, project_root)
     lease = seal_payload({"schema_version": 1, "attempt_id": attempt_id, "run_id": run_id, "pid": os.getpid(), "host": socket.gethostname(), "started_at_ms": started, "expires_at_ms": started + LEASE_TTL_MS, "provider_url": PROVIDER_URL, "data_identity": database_identity(database)}, key)
     acquire_lease(lease_path, lease, started)
     try:
@@ -294,12 +308,56 @@ def run_refresh(
         release_lease(lease_path, attempt_id)
 
 
-def check_only_plan(data_dir: Path = CANONICAL_DATA_DIR) -> dict[str, Any]:
+def probe_project_lock(
+    lock_path: Path | None = None, *, project_root: Path | None = None,
+    clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+) -> dict[str, Any]:
+    resolved = project_owned_lock_path(lock_path or PROJECT_REFRESH_LOCK_PATH, project_root)
+    attempt_id = uuid.uuid4().hex
+    now_ms = clock_ms()
+    payload = {
+        "schema_version": 1,
+        "attempt_id": attempt_id,
+        "run_id": "check-only",
+        "pid": os.getpid(),
+        "host": socket.gethostname(),
+        "started_at_ms": now_ms,
+        "expires_at_ms": now_ms + LEASE_TTL_MS,
+        "provider_url": PROVIDER_URL,
+        "data_identity": {},
+    }
+    acquire_lease(resolved, payload, now_ms)
+    released = False
+    try:
+        acquired = resolved.is_file()
+    finally:
+        release_lease(resolved, attempt_id)
+        released = not resolved.exists()
+    if not acquired or not released:
+        raise RefreshError("refresh_lock_probe_failed")
+    return {
+        "lock_path": str(resolved),
+        "lock_path_project_owned": True,
+        "lock_acquired": acquired,
+        "lock_released": released,
+        "legacy_lock_path_written": False,
+        "provider_requests": 0,
+    }
+
+
+def check_only_plan(
+    data_dir: Path = CANONICAL_DATA_DIR, *, lock_path: Path | None = None,
+    project_root: Path | None = None,
+) -> dict[str, Any]:
+    try:
+        lock_proof = probe_project_lock(lock_path, project_root=project_root)
+    except (OSError, RefreshError) as exc:
+        return {"ok": False, "status": str(exc), "check_only": True, "refresh_requested": False, "provider_requests": 0, "secret_material_read": False, "secrets_exposed": False}
     try:
         snapshot = read_snapshot(data_dir.resolve() / "wewe-rss.db")
     except (OSError, RefreshError) as exc:
-        return {"ok": False, "status": str(exc), "check_only": True, "refresh_requested": False, "secret_material_read": False, "secrets_exposed": False}
-    return {"ok": True, "status": "refresh_required", "check_only": True, "refresh_requested": False, "provider_url": PROVIDER_URL, "feed_ids": [row["feed_id"] for row in snapshot["feeds"]], "active_account_count": snapshot["active_account_count"], "database_identity": snapshot["database_identity"], "starts_browser": False, "starts_provider": False, "secret_material_read": False, "secrets_exposed": False}
+        return {"ok": False, "status": str(exc), "check_only": True, "refresh_requested": False, **lock_proof, "secret_material_read": False, "secrets_exposed": False}
+    return {"ok": True, "status": "refresh_required", "check_only": True, "refresh_requested": False, "provider_url": PROVIDER_URL, "feed_ids": [row["feed_id"] for row in snapshot["feeds"]], "active_account_count": snapshot["active_account_count"], "database_identity": snapshot["database_identity"], "starts_browser": False, "starts_provider": False, **lock_proof, "secret_material_read": False, "secrets_exposed": False}
 
 
 def main() -> int:

@@ -34,6 +34,10 @@ class ReceiptAdapterTests(unittest.TestCase):
     def setUp(self) -> None:
         self.test_key = b"ar034-isolated-test-attestation-key" * 2
         self.real_load_attestation_key = refresh.load_attestation_key
+        original_root = refresh.ROOT
+        original_lock_path = refresh.PROJECT_REFRESH_LOCK_PATH
+        self.addCleanup(setattr, refresh, "ROOT", original_root)
+        self.addCleanup(setattr, refresh, "PROJECT_REFRESH_LOCK_PATH", original_lock_path)
         refresh_patch = mock.patch.object(refresh, "load_attestation_key", return_value=self.test_key)
         health_patch = mock.patch.object(health, "load_attestation_key", return_value=self.test_key)
         refresh_patch.start(); health_patch.start()
@@ -41,6 +45,8 @@ class ReceiptAdapterTests(unittest.TestCase):
 
     def fixture(self, feeds: tuple[str, ...] = ("feed-a",)):
         temporary = tempfile.TemporaryDirectory(); root = Path(temporary.name); data = root / "data"; health_dir = root / "health"; data.mkdir(); create_database(data / "wewe-rss.db", feeds)
+        refresh.ROOT = root / "project"
+        refresh.PROJECT_REFRESH_LOCK_PATH = refresh.ROOT / "output" / "state" / "wewe-refresh" / "refresh.lock"
         return temporary, data, health_dir
 
     def completing_request(self, database: Path, clock: Clock, *, add_article: bool = False):
