@@ -139,7 +139,7 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 
 官方 control plane 每个 thread 最多允许一条 active heartbeat，因此三条正式 schedule 必须一一绑定三个永久 fixed tasks。侧边栏长期保留并 pin：`AI账号工作流 08:00 全源采集`、`AI账号工作流 09:15 主编写回`、`AI账号工作流 10:00 选题卡`。08:00 复用现有 thread `019f87c1-17b3-7230-8a28-113386192d9d` 并在 Production 迁移时改名；09:15 与 10:00 由 Production 通过官方 `create_thread` 创建，真实返回 ID 必须立即 read-back 并写入 release evidence，不能预造或猜测 ID。
 
-三个 fixed tasks 都使用 app-owned project `local-2eaa91c9bf61570374dd9dddad48808a` 的 local execution、`gpt-5.6-luna` / `medium`，并保持 pinned、可见、不自归档。初始化只允许返回 typed `fixed_task_ready`，不得运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。
+三个 fixed tasks 都使用 app-owned project `local-2eaa91c9bf61570374dd9dddad48808a` 的 local execution、`gpt-5.6-luna` / `medium`，并保持 pinned、可见、不自归档。官方只读 task/catalog API 不暴露 pinned boolean，因此 pin 证据必须来自官方 `set_thread_pinned` 成功回执与按 task slot 记录的精确 action count，不能伪造 read-back。09/10 新 task 各需一次 acknowledged pin 操作；08 task 已有 Phase 1 pinned 证据，除非 exact identity drift，不为制造证据重复 toggle。初始化只允许返回 typed `fixed_task_ready`，不得运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。
 
 现有 08:00 task 已有 Phase 1 no-business proof；除非 identity drift，不重复 pilot。新建 09:15/10:00 task 必须各自先绑定一条临时 heartbeat，仅运行一次 no-business pilot：证明回合进入同一 task、standalone task 新增为 0、production cwd 的临时状态可 create/read/delete 且最终不存在、对应 scheduled-flow preflight 与 DNS green、`business_writes=0`、`external_calls=0`。完成后立即删除临时 heartbeat，并通过官方 read-back 证明不存在，才可迁移正式 schedule。
 

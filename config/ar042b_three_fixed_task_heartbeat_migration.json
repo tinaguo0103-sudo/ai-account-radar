@@ -77,9 +77,28 @@
     "unresolvedRepresentation": "json_null_only",
     "captureSource": "official_create_thread_return",
     "substitutionScope": "release_evidence_and_official_control_calls_only",
-    "requiredReadBack": ["thread_id", "title", "project_id", "execution_environment", "model", "reasoning_effort", "pinned", "idle_or_completed_initialization"],
+    "requiredReadBack": ["thread_id", "title", "project_id", "execution_environment", "model", "reasoning_effort", "idle_or_completed_initialization"],
     "requiredUniqueness": ["thread_ids_pairwise_distinct", "titles_pairwise_distinct", "one_formal_heartbeat_per_thread"],
-    "stopCases": ["missing_thread_id", "duplicate_thread_id", "wrong_project", "wrong_title", "wrong_execution_environment", "wrong_model_or_reasoning", "not_pinned", "formal_target_mismatch"]
+    "stopCases": ["missing_thread_id", "duplicate_thread_id", "wrong_project", "wrong_title", "wrong_execution_environment", "wrong_model_or_reasoning", "pin_operation_failed_or_not_acknowledged", "formal_target_mismatch"]
+  },
+  "pinEvidenceContract": {
+    "officialReadApiExposesPinned": false,
+    "requiredUserVisibleState": "all_three_fixed_tasks_pinned_and_permanently_visible",
+    "newTaskOperation": "official_set_thread_pinned_true",
+    "newTaskSlotsRequiringAcknowledgedOperation": ["editorial_09", "card_10"],
+    "existingCollection08": {
+      "acceptedPinnedEvidence": "/private/tmp/fixed_task_phase1_pilot_20260722_1100",
+      "reassertOnlyOnExactIdentityDrift": true,
+      "doNotToggleOnlyToManufactureReadBackEvidence": true
+    },
+    "releaseEvidence": {
+      "recordExactToolSuccess": true,
+      "recordActionCountByTaskSlot": true,
+      "expectedNewTaskPinSuccessCount": 2,
+      "expectedExistingTaskPinSuccessCountWithoutDrift": 0,
+      "inventedPinnedReadBack": false
+    },
+    "stopOn": "pin_operation_failed_or_not_acknowledged"
   },
   "pilotAcceptance": {
     "sameTaskTurnAppended": true,
@@ -204,7 +223,8 @@
   },
   "stopConditions": [
     "new_task_identity_missing_duplicate_or_unreadable",
-    "new_task_project_title_model_reasoning_pin_or_local_context_mismatch",
+    "new_task_project_title_model_reasoning_or_local_context_mismatch",
+    "pin_operation_failed_or_not_acknowledged",
     "new_task_initialization_or_no_business_pilot_not_green",
     "temporary_heartbeat_not_deleted_or_absence_not_read_back",
     "official_api_rejects_any_in_place_kind_conversion",
