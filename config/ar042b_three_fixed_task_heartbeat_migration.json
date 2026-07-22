@@ -36,15 +36,15 @@
       "releaseTitle": "AI账号工作流 09:15 主编写回",
       "createThread": true,
       "pinRequired": true,
-      "initializationPrompt": "初始化永久调度任务“AI账号工作流 09:15 主编写回”。这是 no-business initialization。仅确认当前任务绑定 app-owned project local-2eaa91c9bf61570374dd9dddad48808a、local execution、model gpt-5.6-luna、reasoning medium。禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。输出单行 FIXED_TASK_READY_JSON={\"ok\":true,\"slot\":\"editorial_09\",\"business_writes\":0,\"external_calls\":0}。",
-      "initializationPromptSha256": "92b9753df1db022a58c058c15d1843041dcad45a521967e22df616c34dcd6cf6",
+      "initializationPrompt": "只返回下面这一行字面文本，不得添加任何其他文字：\nFIXED_TASK_READY_JSON={\"ok\":true,\"slot\":\"editorial_09\",\"tool_calls\":0,\"automation_mutations\":0,\"thread_mutations\":0,\"business_writes\":0,\"external_calls\":0}\n禁止调用任何工具、shell 或命令；禁止读写文件系统或访问网络；禁止调用 automation API 或 thread API；禁止 create、update、delete、run、view 任何 automation、task 或 thread；禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06 等任何业务入口。",
+      "initializationPromptSha256": "8894b6f36bd6be875601d2a47a9b9fe8794337d7486ce7c181e0f54f4904d305",
       "pilot": {
         "required": true,
         "temporaryHeartbeatId": null,
         "temporaryHeartbeatIdResolution": "capture_official_create_return",
         "entrypoint": "editorial",
-        "prompt": "执行 AR-042B editorial_09 no-business heartbeat pilot。只在 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar 中：创建、读取并删除 output/state/ar042b-editorial_09-heartbeat-pilot.tmp，确认最终不存在；运行 python3 scripts/scheduled_flow_preflight.py --entrypoint editorial --check-network。禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。输出单行 HEARTBEAT_PILOT_JSON，包含 ok、slot、cwd、create/read/delete/final_absent、preflight_ok、dns_available、business_writes=0、external_calls=0。",
-        "promptSha256": "b2709e5bde12999d0252d57408060de583dc4ae56b6b8d9509bdb639bd152615",
+        "prompt": "执行 AR-042B editorial_09 no-business heartbeat pilot。只允许以下操作：在 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar 中创建、读取并删除 output/state/ar042b-editorial_09-heartbeat-pilot.tmp，确认最终不存在；运行 python3 scripts/scheduled_flow_preflight.py --entrypoint editorial --check-network。禁止调用 automation API 或 thread API；禁止 create、update、delete、run、view 任何 automation、task 或 thread；禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。除上述精确文件探针和 scheduled_flow_preflight 命令外，不得调用其他工具、命令、文件或网络操作。输出单行 HEARTBEAT_PILOT_JSON，包含 ok、slot、cwd、create/read/delete/final_absent、preflight_ok、dns_available、automation_mutations=0、thread_mutations=0、business_writes=0、external_calls=0。",
+        "promptSha256": "0fe9faf7f60ab713923262ffcd48b79d47cc06564e8f8653bc93c56bb55ed12c",
         "exactCompletedTurns": 1,
         "deleteImmediatelyAfterCompletion": true,
         "requireOfficialAbsenceReadBack": true
@@ -57,15 +57,15 @@
       "releaseTitle": "AI账号工作流 10:00 选题卡",
       "createThread": true,
       "pinRequired": true,
-      "initializationPrompt": "初始化永久调度任务“AI账号工作流 10:00 选题卡”。这是 no-business initialization。仅确认当前任务绑定 app-owned project local-2eaa91c9bf61570374dd9dddad48808a、local execution、model gpt-5.6-luna、reasoning medium。禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。输出单行 FIXED_TASK_READY_JSON={\"ok\":true,\"slot\":\"card_10\",\"business_writes\":0,\"external_calls\":0}。",
-      "initializationPromptSha256": "72a568f3d8fa45902fc0b25c906b014bf2b9112c9cb959138d239fd24ac28ee0",
+      "initializationPrompt": "只返回下面这一行字面文本，不得添加任何其他文字：\nFIXED_TASK_READY_JSON={\"ok\":true,\"slot\":\"card_10\",\"tool_calls\":0,\"automation_mutations\":0,\"thread_mutations\":0,\"business_writes\":0,\"external_calls\":0}\n禁止调用任何工具、shell 或命令；禁止读写文件系统或访问网络；禁止调用 automation API 或 thread API；禁止 create、update、delete、run、view 任何 automation、task 或 thread；禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06 等任何业务入口。",
+      "initializationPromptSha256": "b78ed71d780a5ea0c95a5980a5aaed98664e41fff421934a1b5b5bafc0515b5e",
       "pilot": {
         "required": true,
         "temporaryHeartbeatId": null,
         "temporaryHeartbeatIdResolution": "capture_official_create_return",
         "entrypoint": "card",
-        "prompt": "执行 AR-042B card_10 no-business heartbeat pilot。只在 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar 中：创建、读取并删除 output/state/ar042b-card_10-heartbeat-pilot.tmp，确认最终不存在；运行 python3 scripts/scheduled_flow_preflight.py --entrypoint card --check-network。禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。输出单行 HEARTBEAT_PILOT_JSON，包含 ok、slot、cwd、create/read/delete/final_absent、preflight_ok、dns_available、business_writes=0、external_calls=0。",
-        "promptSha256": "9a12a76d59bb9593c76c92d86508b45002e99bbfa47ae1b3a3c03c3315e91d2e",
+        "prompt": "执行 AR-042B card_10 no-business heartbeat pilot。只允许以下操作：在 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar 中创建、读取并删除 output/state/ar042b-card_10-heartbeat-pilot.tmp，确认最终不存在；运行 python3 scripts/scheduled_flow_preflight.py --entrypoint card --check-network。禁止调用 automation API 或 thread API；禁止 create、update、delete、run、view 任何 automation、task 或 thread；禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。除上述精确文件探针和 scheduled_flow_preflight 命令外，不得调用其他工具、命令、文件或网络操作。输出单行 HEARTBEAT_PILOT_JSON，包含 ok、slot、cwd、create/read/delete/final_absent、preflight_ok、dns_available、automation_mutations=0、thread_mutations=0、business_writes=0、external_calls=0。",
+        "promptSha256": "62f6a7e15050e98f11b722ad97a2f9a1aaebe11b5a913f3ea8aa8413880f1a43",
         "exactCompletedTurns": 1,
         "deleteImmediatelyAfterCompletion": true,
         "requireOfficialAbsenceReadBack": true
@@ -100,6 +100,36 @@
     },
     "stopOn": "pin_operation_failed_or_not_acknowledged"
   },
+  "initializationAcceptance": {
+    "requiredLiteralOutputOnly": true,
+    "requiredOutputPrefix": "FIXED_TASK_READY_JSON=",
+    "requiredCounters": {
+      "tool_calls": 0,
+      "automation_mutations": 0,
+      "thread_mutations": 0,
+      "business_writes": 0,
+      "external_calls": 0
+    },
+    "independentControlEvidence": {
+      "automationInventoryAndSemanticHashesBeforeAfterExact": true,
+      "threadInventoryBeforeAfterAllowsOnlyAuthorizedNewTaskForCurrentStep": true,
+      "unauthorizedAutomationIdsCreated": 0,
+      "automationMutations": 0,
+      "unrelatedThreadMutations": 0,
+      "taskTurnToolCallInventory": "require_zero_where_exposed",
+      "toolCallDetailUnavailableFallback": "automation_and_thread_inventory_hash_zero_drift_is_authoritative_and_limitation_must_be_disclosed"
+    },
+    "stopBeforePinPilotOrFormalMigrationOn": [
+      "initialization_commentary_or_non_literal_output",
+      "initialization_setup_create_or_configure_schedule_wording",
+      "any_tool_call",
+      "automation_inventory_or_semantic_hash_drift",
+      "unauthorized_automation_id_created",
+      "unauthorized_or_unrelated_task_or_thread_mutation",
+      "missing_or_nonzero_counter"
+    ],
+    "failureCleanup": "use_official_apis_only_to_remove_exact_authorized_new_task_and_any_unauthorized_control_plane_object_while_leaving_formal_cron_untouched"
+  },
   "pilotAcceptance": {
     "sameTaskTurnAppended": true,
     "standaloneTasksCreated": 0,
@@ -110,6 +140,9 @@
     "businessWrites": 0,
     "externalCalls": 0,
     "businessScriptsRun": 0,
+    "allowedOperationsOnly": ["exact_slot_temporary_file_create_read_delete", "exact_entrypoint_scheduled_flow_preflight_check_network"],
+    "automationMutations": 0,
+    "threadMutations": 0,
     "temporaryHeartbeatFinalAbsent": true
   },
   "formalAutomations": [
@@ -226,6 +259,7 @@
     "new_task_project_title_model_reasoning_or_local_context_mismatch",
     "pin_operation_failed_or_not_acknowledged",
     "new_task_initialization_or_no_business_pilot_not_green",
+    "initialization_output_tool_inventory_or_control_plane_zero_drift_not_green",
     "temporary_heartbeat_not_deleted_or_absence_not_read_back",
     "official_api_rejects_any_in_place_kind_conversion",
     "formal_target_thread_mismatch",
