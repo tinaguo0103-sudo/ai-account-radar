@@ -135,13 +135,29 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 - 08:00：同步 `01 来源与采样`，然后跑全源采集和选题。
 - 10:00：发送第一张选题卡。发送前会检查当天 `daily_pipeline` 是否成功、`latest_write` 是否为当天正式运行、候选 CSV 是否非空；不满足就跳过，避免误发旧候选。
 
+### Three Fixed Tasks heartbeat 发布合同
+
+官方 control plane 每个 thread 最多允许一条 active heartbeat，因此三条正式 schedule 必须一一绑定三个永久 fixed tasks。侧边栏长期保留并 pin：`AI账号工作流 08:00 全源采集`、`AI账号工作流 09:15 主编写回`、`AI账号工作流 10:00 选题卡`。08:00 复用现有 thread `019f87c1-17b3-7230-8a28-113386192d9d` 并在 Production 迁移时改名；09:15 与 10:00 由 Production 通过官方 `create_thread` 创建，真实返回 ID 必须立即 read-back 并写入 release evidence，不能预造或猜测 ID。
+
+三个 fixed tasks 都使用 app-owned project `local-2eaa91c9bf61570374dd9dddad48808a` 的 local execution、`gpt-5.6-luna` / `medium`，并保持 pinned、可见、不自归档。初始化只允许返回 typed `fixed_task_ready`，不得运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。
+
+现有 08:00 task 已有 Phase 1 no-business proof；除非 identity drift，不重复 pilot。新建 09:15/10:00 task 必须各自先绑定一条临时 heartbeat，仅运行一次 no-business pilot：证明回合进入同一 task、standalone task 新增为 0、production cwd 的临时状态可 create/read/delete 且最终不存在、对应 scheduled-flow preflight 与 DNS green、`business_writes=0`、`external_calls=0`。完成后立即删除临时 heartbeat，并通过官方 read-back 证明不存在，才可迁移正式 schedule。
+
+正式迁移只能通过官方 API 把既有 `ai-rebuild`、`ai-04-rebuild`、`ai-rebuild-2` 原位从 cron 转为 heartbeat，并分别绑定 08/09/10 task。不得创建 replacement/duplicate，不得 raw TOML edit，不得 run、preview 或 catch-up。name、ACTIVE、08:00/09:15/10:00 schedule、model/reasoning、project/local context 和全部业务 Prompt 语义保持不变；每条 Prompt 只增加一次独立回合约束。
+
+每个 heartbeat 回合只信任当前日期、当前 exact run 的 run-scoped artifacts 和 durable logs，不依赖 fixed task 历史对话结论。pipeline、scheduled-flow、write/read-back 与 idempotency logs 仍是权威状态；失败留在对应永久 task 中显性可见。固定 tasks 和 Prompts 均不得 self-archive / auto-archive。
+
+正式迁移是 all-or-nothing：每次 update 后必须 official view 回读 same ID、`kind=heartbeat`、exact assigned thread ID、name/status/schedule/model/reasoning/project/local 与 Prompt hash。若任何转换、动态 thread ID、read-back 或字段/hash 不确定，立即把所有已改正式 ID 恢复到 manifest 中的 exact prior cron/ACTIVE 定义；移除正式 heartbeat 后 archive/unpin 本次新建的 09/10 empty/test tasks，并把现有 08 task 标题恢复为 `AI账号工作流 每日运行台`。回滚状态不明确时停止，禁止 raw edit 或猜测修复。
+
+Git candidate 与 shared control docs 只在三条正式 heartbeat read-back 全绿后应用。发布过程不跑当日业务；第一次正常次日 08:00 / 09:15 / 10:00 链路才是生产业务证明，不用手工 recovery/catch-up 代替。
+
 08:00 采集任务会使用 `--defer-editorial`：仓库脚本只负责同步来源、采集素材、写入 `03 内容收件箱`、生成 raw shortlist，然后停止在“等待外层 Codex 主编判断”状态。外层 Codex automation 必须使用 Git 管理的 `skills/ai-account-editorial-director/SKILL.md` 和 `topic_editorial_state_machine.py`，依次完成精确来源打开、网页研究、主编判断、无损排序与运营字段映射；不得调用旧 one-shot runner、环境切换 Skill 或 deterministic editorial fallback。发布时才把 repo Skill 显式同步到 global private Skill 并做 hash read-back。
 
 抖音采集使用与 worktree 无关的 canonical Chrome profile。每天 `07:45` 先运行 `python3 scripts/check_douyin_session.py --port 9333`；只有 profile 进程身份精确匹配且 `login_state=logged_in` 才允许启动抖音 source probe。门禁失败会阻断抖音探针并让本次 08:00 外层日志保持 `failed_or_partial`，不会随机寻找其他浏览器、端口或 profile。迁移与回滚见 `docs/douyin_canonical_profile_runbook.md`。
 
 在外层 Codex 完成收尾前，`daily_pipeline_YYYY-MM-DD.json` 会保持 `ok=false`，所以 10:00 守卫不会误发 raw 候选卡。只有收尾脚本成功后，10:00 才会正常发卡。
 
-Codex 定时任务负责触发本仓库脚本和执行外层主编 Skill；迁移时需要重新创建同名 Codex automation，并保留这个“defer editorial -> outer Codex editorial -> finalizer”的边界。
+Codex 定时任务负责触发本仓库脚本和执行外层主编 Skill；迁移时必须原位更新既有 automation ID，并保留这个“defer editorial -> outer Codex editorial -> finalizer”的边界。
 
 `06 完整脚本与制作包` 是另一条本机生成链路：它由本机 LaunchAgent watcher 负责，只扫描飞书 `04` 中已确认且已提交制作方向的记录。空队列只做飞书 API 检查，不调用 Codex；有待生成记录时才调用本机 `codex exec` 和全局私有 Skill。
 

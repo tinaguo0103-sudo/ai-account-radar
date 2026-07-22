@@ -1,0 +1,218 @@
+{
+  "version": 1,
+  "contract": "AR-042B Three Fixed Tasks Heartbeat Scheduling Contract",
+  "controlPlaneConstraint": "one_active_heartbeat_per_thread",
+  "projectId": "local-2eaa91c9bf61570374dd9dddad48808a",
+  "destination": "local",
+  "model": "gpt-5.6-luna",
+  "reasoningEffort": "medium",
+  "independentRunLine": "本次 heartbeat 是独立运行回合；只读取当前日期、当前 exact run 的 run-scoped artifacts，不依赖固定任务中的历史对话结论。",
+  "topology": {
+    "requiredPinnedTaskCount": 3,
+    "requiredFormalAutomationCount": 3,
+    "oneToOneHeartbeatMapping": true,
+    "standaloneDailyTasks": false,
+    "selfArchive": false
+  },
+  "taskSlots": [
+    {
+      "slot": "collection_08",
+      "resolution": "reuse_existing_exact_thread",
+      "threadId": "019f87c1-17b3-7230-8a28-113386192d9d",
+      "currentTitle": "AI账号工作流 每日运行台",
+      "releaseTitle": "AI账号工作流 08:00 全源采集",
+      "createThread": false,
+      "pinRequired": true,
+      "pilot": {
+        "status": "accepted_phase1_proof",
+        "evidence": "/private/tmp/fixed_task_phase1_pilot_20260722_1100",
+        "rerunOnlyOnExactIdentityDrift": true
+      }
+    },
+    {
+      "slot": "editorial_09",
+      "resolution": "capture_official_create_thread_return",
+      "threadId": null,
+      "releaseTitle": "AI账号工作流 09:15 主编写回",
+      "createThread": true,
+      "pinRequired": true,
+      "initializationPrompt": "初始化永久调度任务“AI账号工作流 09:15 主编写回”。这是 no-business initialization。仅确认当前任务绑定 app-owned project local-2eaa91c9bf61570374dd9dddad48808a、local execution、model gpt-5.6-luna、reasoning medium。禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。输出单行 FIXED_TASK_READY_JSON={\"ok\":true,\"slot\":\"editorial_09\",\"business_writes\":0,\"external_calls\":0}。",
+      "initializationPromptSha256": "92b9753df1db022a58c058c15d1843041dcad45a521967e22df616c34dcd6cf6",
+      "pilot": {
+        "required": true,
+        "temporaryHeartbeatId": null,
+        "temporaryHeartbeatIdResolution": "capture_official_create_return",
+        "entrypoint": "editorial",
+        "prompt": "执行 AR-042B editorial_09 no-business heartbeat pilot。只在 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar 中：创建、读取并删除 output/state/ar042b-editorial_09-heartbeat-pilot.tmp，确认最终不存在；运行 python3 scripts/scheduled_flow_preflight.py --entrypoint editorial --check-network。禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。输出单行 HEARTBEAT_PILOT_JSON，包含 ok、slot、cwd、create/read/delete/final_absent、preflight_ok、dns_available、business_writes=0、external_calls=0。",
+        "promptSha256": "b2709e5bde12999d0252d57408060de583dc4ae56b6b8d9509bdb639bd152615",
+        "exactCompletedTurns": 1,
+        "deleteImmediatelyAfterCompletion": true,
+        "requireOfficialAbsenceReadBack": true
+      }
+    },
+    {
+      "slot": "card_10",
+      "resolution": "capture_official_create_thread_return",
+      "threadId": null,
+      "releaseTitle": "AI账号工作流 10:00 选题卡",
+      "createThread": true,
+      "pinRequired": true,
+      "initializationPrompt": "初始化永久调度任务“AI账号工作流 10:00 选题卡”。这是 no-business initialization。仅确认当前任务绑定 app-owned project local-2eaa91c9bf61570374dd9dddad48808a、local execution、model gpt-5.6-luna、reasoning medium。禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。输出单行 FIXED_TASK_READY_JSON={\"ok\":true,\"slot\":\"card_10\",\"business_writes\":0,\"external_calls\":0}。",
+      "initializationPromptSha256": "72a568f3d8fa45902fc0b25c906b014bf2b9112c9cb959138d239fd24ac28ee0",
+      "pilot": {
+        "required": true,
+        "temporaryHeartbeatId": null,
+        "temporaryHeartbeatIdResolution": "capture_official_create_return",
+        "entrypoint": "card",
+        "prompt": "执行 AR-042B card_10 no-business heartbeat pilot。只在 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar 中：创建、读取并删除 output/state/ar042b-card_10-heartbeat-pilot.tmp，确认最终不存在；运行 python3 scripts/scheduled_flow_preflight.py --entrypoint card --check-network。禁止运行 collection、editorial、finalizer、Feishu、card、provider、browser、callback 或 06。输出单行 HEARTBEAT_PILOT_JSON，包含 ok、slot、cwd、create/read/delete/final_absent、preflight_ok、dns_available、business_writes=0、external_calls=0。",
+        "promptSha256": "9a12a76d59bb9593c76c92d86508b45002e99bbfa47ae1b3a3c03c3315e91d2e",
+        "exactCompletedTurns": 1,
+        "deleteImmediatelyAfterCompletion": true,
+        "requireOfficialAbsenceReadBack": true
+      }
+    }
+  ],
+  "dynamicIdentityContract": {
+    "allowedUnresolvedSlotsBeforeProduction": ["editorial_09", "card_10"],
+    "unresolvedRepresentation": "json_null_only",
+    "captureSource": "official_create_thread_return",
+    "substitutionScope": "release_evidence_and_official_control_calls_only",
+    "requiredReadBack": ["thread_id", "title", "project_id", "execution_environment", "model", "reasoning_effort", "pinned", "idle_or_completed_initialization"],
+    "requiredUniqueness": ["thread_ids_pairwise_distinct", "titles_pairwise_distinct", "one_formal_heartbeat_per_thread"],
+    "stopCases": ["missing_thread_id", "duplicate_thread_id", "wrong_project", "wrong_title", "wrong_execution_environment", "wrong_model_or_reasoning", "not_pinned", "formal_target_mismatch"]
+  },
+  "pilotAcceptance": {
+    "sameTaskTurnAppended": true,
+    "standaloneTasksCreated": 0,
+    "productionCwdWritableCreateReadDelete": true,
+    "temporaryFileFinalAbsent": true,
+    "dnsAvailable": true,
+    "scheduledFlowPreflightOk": true,
+    "businessWrites": 0,
+    "externalCalls": 0,
+    "businessScriptsRun": 0,
+    "temporaryHeartbeatFinalAbsent": true
+  },
+  "formalAutomations": [
+    {
+      "id": "ai-rebuild",
+      "assignedTaskSlot": "collection_08",
+      "name": "AI账号雷达 每日全源采集",
+      "status": "ACTIVE",
+      "rrule": "FREQ=DAILY;BYHOUR=8;BYMINUTE=0;BYSECOND=0",
+      "expectedPrompt": "先切换到 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar，后续命令只在该目录运行。\n\n本次 heartbeat 是独立运行回合；只读取当前日期、当前 exact run 的 run-scoped artifacts，不依赖固定任务中的历史对话结论。\n\n在工作区只运行每日全源采集，不做主编补字段，不写最终 04，不发送选题卡。\n\n直接执行：`python3 scripts/run_daily_collection_job.py --defer-editorial --no-notify`。\n\n成功标准：命令返回 0，并且输出或 `output/logs/daily_pipeline_YYYY-MM-DD.json` 中出现 `deferred_editorial=true`、当天 `run_id` 和 `output/runs/<run_id>/today_10_topics.csv`。这表示 raw 候选已生成，等待后续 09:15 主编写回任务处理。\n\n如果命令失败，报告失败阶段、退出码、关键错误和日志路径；不要继续写 04，不要发送选题卡。不要读取或加载主编 Skill，本任务只做采集。",
+      "expectedPromptSha256": "a033ab807b8f0265814d5e732ce9b35d0232f265c208e6afa4441734b8c8c253"
+    },
+    {
+      "id": "ai-04-rebuild",
+      "assignedTaskSlot": "editorial_09",
+      "name": "AI账号雷达 每日主编写回04",
+      "status": "ACTIVE",
+      "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=15;BYSECOND=0",
+      "expectedPrompt": "# AR-038 Production Editorial Task\n\n先切换到 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar，后续命令只在该目录运行。\n\n本次 heartbeat 是独立运行回合；只读取当前日期、当前 exact run 的 run-scoped artifacts，不依赖固定任务中的历史对话结论。\n\n1. 只处理同日 exact run 和非空 run-scoped today_10_topics.csv。允许 completed_with_failures 且 downstream_usable=true；禁止旧 run 或 stale fallback。\n2. 先运行 ar020e_daily_editorial_entrypoint.py --check-only。未 ready 时停止。\n3. 当前任务直接执行 editorial state machine；不得启动 nested Codex、API、subagent 或第二模型会话。\n4. 所有合格的 select 和 observe 候选都进入 Skill。不得执行 TopN、来源配额或 4/2 quota；同主题只做关联标注，不合并删除。\n5. trusted artifact 即使 URL 为空也可以进入。source-open 是证据增强，不是普通候选的全局资格门。\n6. 外部研究只对精确数字、日期、引语、官方声明、时效新闻，以及法律、医疗、金融、名誉等高风险硬事实强制。普通观点、结构学习和工作流判断可以继续，但必须软化未证实硬事实或降低置信度。\n7. source-open、research 或候选质量失败只淘汰该候选，不得替补；其他 survivor 继续。只有 0 survivor 才停止。\n8. 使用 global ai-account-editorial-director 前必须按 release manifest 验证。Stage2 不得改写决策、标题、角度、理由、推荐或排名。\n9. finalize 成功后才运行 finalize_daily_pipeline_after_editorial.py --run-id <run_id> --write-feishu --update-scheduled-log。\n10. 04 exact read-back 失败或外部写状态 unknown 时停止。00 console、日志或 telemetry 等可选步骤失败不得推翻已经通过的 04。\n11. 保留 full_collection_success=false 和 partial truth，不把来源失败洗绿。\n12. 不手工发送 Topic Card，不触发 06。",
+      "expectedPromptSha256": "1f81ee04c677e8b27c25bba725723c102cfe2c45420f92b4a598091efc7aec4a"
+    },
+    {
+      "id": "ai-rebuild-2",
+      "assignedTaskSlot": "card_10",
+      "name": "AI账号雷达 每日选题卡发送",
+      "status": "ACTIVE",
+      "rrule": "FREQ=DAILY;BYHOUR=10;BYMINUTE=0;BYSECOND=0",
+      "expectedPrompt": "先切换到 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar，后续命令只在该目录运行。\n\n本次 heartbeat 是独立运行回合；只读取当前日期、当前 exact run 的 run-scoped artifacts，不依赖固定任务中的历史对话结论。\n\n在工作区运行每日选题卡发送守卫脚本：`python3 scripts/run_topic_card_if_fresh.py`。该脚本只有在当天正式采集成功且 latest_write 有当天候选时才发送第一张选题卡；如果脚本跳过发送，报告跳过原因即可，不要手动绕过守卫发送旧候选。",
+      "expectedPromptSha256": "14f6850c1b20e550fd9037d0805f55225a3732bb4139756df25ed6d61edfce0c"
+    }
+  ],
+  "formalMigration": {
+    "strategy": "official_in_place_all_or_nothing",
+    "targetKind": "heartbeat",
+    "preserveIds": true,
+    "createReplacementOrDuplicate": false,
+    "rawTomlEdit": false,
+    "runPreviewOrCatchUp": false,
+    "updateOrder": ["ai-rebuild", "ai-04-rebuild", "ai-rebuild-2"],
+    "readBackAfterEveryUpdate": ["same_id", "kind_heartbeat", "exact_assigned_thread_id", "name", "active_status", "rrule", "model", "reasoning_effort", "project_id", "local_execution", "prompt_sha256"],
+    "finalInventory": {
+      "exactFormalIds": ["ai-rebuild", "ai-04-rebuild", "ai-rebuild-2"],
+      "duplicateAutomations": 0,
+      "standaloneDailyTasks": 0,
+      "mixedCronHeartbeatState": false
+    }
+  },
+  "rollback": {
+    "triggerOnAnyPartialOrAmbiguousMigration": true,
+    "restoreAllChangedFormalIdsBeforeTaskCleanup": true,
+    "restoreExistingTaskTitle": "AI账号工作流 每日运行台",
+    "newTaskCleanupAfterFormalHeartbeatRemoval": "archive_and_unpin_new_empty_or_test_editorial_09_and_card_10_tasks",
+    "finalRequiredKinds": {"ai-rebuild": "cron", "ai-04-rebuild": "cron", "ai-rebuild-2": "cron"},
+    "finalRequiredStatuses": {"ai-rebuild": "ACTIVE", "ai-04-rebuild": "ACTIVE", "ai-rebuild-2": "ACTIVE"},
+    "ambiguousRollbackAction": "stop_and_report_exact_state_without_raw_edit_or_guessed_repair",
+    "priorDefinitions": [
+      {
+        "id": "ai-rebuild",
+        "kind": "cron",
+        "name": "AI账号雷达 每日全源采集",
+        "status": "ACTIVE",
+        "rrule": "FREQ=DAILY;BYHOUR=8;BYMINUTE=0;BYSECOND=0",
+        "model": "gpt-5.6-luna",
+        "reasoningEffort": "medium",
+        "executionEnvironment": "local",
+        "projectId": "local-2eaa91c9bf61570374dd9dddad48808a",
+        "cwds": ["/Users/congcong/Desktop/AI/AI项目/AI账号工作流"],
+        "prompt": "先切换到 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar，后续命令只在该目录运行。\n\n在工作区只运行每日全源采集，不做主编补字段，不写最终 04，不发送选题卡。\n\n直接执行：`python3 scripts/run_daily_collection_job.py --defer-editorial --no-notify`。\n\n成功标准：命令返回 0，并且输出或 `output/logs/daily_pipeline_YYYY-MM-DD.json` 中出现 `deferred_editorial=true`、当天 `run_id` 和 `output/runs/<run_id>/today_10_topics.csv`。这表示 raw 候选已生成，等待后续 09:15 主编写回任务处理。\n\n如果命令失败，报告失败阶段、退出码、关键错误和日志路径；不要继续写 04，不要发送选题卡。不要读取或加载主编 Skill，本任务只做采集。",
+        "promptSha256": "16b2277ac91c801bbd5fb97e150f6d6b5b1c7d69c9d3890bbaa62438d3261a92",
+        "semanticDefinitionSha256": "6ff8dce1f7801e6c9bb65fbace5ea6752048b60b0d728a198d01e8cec66f858d"
+      },
+      {
+        "id": "ai-04-rebuild",
+        "kind": "cron",
+        "name": "AI账号雷达 每日主编写回04",
+        "status": "ACTIVE",
+        "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=15;BYSECOND=0",
+        "model": "gpt-5.6-luna",
+        "reasoningEffort": "medium",
+        "executionEnvironment": "local",
+        "projectId": "local-2eaa91c9bf61570374dd9dddad48808a",
+        "cwds": ["/Users/congcong/Desktop/AI/AI项目/AI账号工作流"],
+        "prompt": "# AR-038 Production Editorial Task\n\n先切换到 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar，后续命令只在该目录运行。\n\n1. 只处理同日 exact run 和非空 run-scoped today_10_topics.csv。允许 completed_with_failures 且 downstream_usable=true；禁止旧 run 或 stale fallback。\n2. 先运行 ar020e_daily_editorial_entrypoint.py --check-only。未 ready 时停止。\n3. 当前任务直接执行 editorial state machine；不得启动 nested Codex、API、subagent 或第二模型会话。\n4. 所有合格的 select 和 observe 候选都进入 Skill。不得执行 TopN、来源配额或 4/2 quota；同主题只做关联标注，不合并删除。\n5. trusted artifact 即使 URL 为空也可以进入。source-open 是证据增强，不是普通候选的全局资格门。\n6. 外部研究只对精确数字、日期、引语、官方声明、时效新闻，以及法律、医疗、金融、名誉等高风险硬事实强制。普通观点、结构学习和工作流判断可以继续，但必须软化未证实硬事实或降低置信度。\n7. source-open、research 或候选质量失败只淘汰该候选，不得替补；其他 survivor 继续。只有 0 survivor 才停止。\n8. 使用 global ai-account-editorial-director 前必须按 release manifest 验证。Stage2 不得改写决策、标题、角度、理由、推荐或排名。\n9. finalize 成功后才运行 finalize_daily_pipeline_after_editorial.py --run-id <run_id> --write-feishu --update-scheduled-log。\n10. 04 exact read-back 失败或外部写状态 unknown 时停止。00 console、日志或 telemetry 等可选步骤失败不得推翻已经通过的 04。\n11. 保留 full_collection_success=false 和 partial truth，不把来源失败洗绿。\n12. 不手工发送 Topic Card，不触发 06。",
+        "promptSha256": "f2b1e0b604680b2e51c34a3aefe03ad03973ca7ccf1726bef2772f9662f3cd1b",
+        "semanticDefinitionSha256": "59ec1361eab84cb4eb632078e10e63ddb66e07a7b40fb1e16f897601eb927c62"
+      },
+      {
+        "id": "ai-rebuild-2",
+        "kind": "cron",
+        "name": "AI账号雷达 每日选题卡发送",
+        "status": "ACTIVE",
+        "rrule": "FREQ=DAILY;BYHOUR=10;BYMINUTE=0;BYSECOND=0",
+        "model": "gpt-5.6-luna",
+        "reasoningEffort": "medium",
+        "executionEnvironment": "local",
+        "projectId": "local-2eaa91c9bf61570374dd9dddad48808a",
+        "cwds": ["/Users/congcong/Desktop/AI/AI项目/AI账号工作流"],
+        "prompt": "先切换到 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar，后续命令只在该目录运行。\n\n在工作区运行每日选题卡发送守卫脚本：`python3 scripts/run_topic_card_if_fresh.py`。该脚本只有在当天正式采集成功且 latest_write 有当天候选时才发送第一张选题卡；如果脚本跳过发送，报告跳过原因即可，不要手动绕过守卫发送旧候选。",
+        "promptSha256": "fe912668ccccf77799479d2da156c37fc71a12d0652e8514071debf1f919a326",
+        "semanticDefinitionSha256": "3d9deab55a08107c7c6d4be9244f7eb235efbce726be33a153841e8eafb5bd37"
+      }
+    ]
+  },
+  "release": {
+    "applyGitCandidateAfterAllHeartbeatReadBackGreen": true,
+    "applySharedDocsAfterAllHeartbeatReadBackGreen": true,
+    "sameDayBusinessRun": false,
+    "manualRecoveryOrCatchUp": false,
+    "firstBusinessProof": "next_normal_08_00_09_15_10_00_flow",
+    "durableRunScopedArtifactsAndLogsAreAuthority": true
+  },
+  "stopConditions": [
+    "new_task_identity_missing_duplicate_or_unreadable",
+    "new_task_project_title_model_reasoning_pin_or_local_context_mismatch",
+    "new_task_initialization_or_no_business_pilot_not_green",
+    "temporary_heartbeat_not_deleted_or_absence_not_read_back",
+    "official_api_rejects_any_in_place_kind_conversion",
+    "formal_target_thread_mismatch",
+    "id_name_status_schedule_model_reasoning_project_prompt_hash_drift",
+    "replacement_duplicate_raw_toml_run_preview_or_catch_up_required",
+    "mixed_cron_heartbeat_state",
+    "rollback_state_ambiguous",
+    "production_git_shared_docs_or_business_state_changed_before_all_readbacks_green"
+  ]
+}
