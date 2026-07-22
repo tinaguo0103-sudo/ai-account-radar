@@ -160,6 +160,8 @@ python3 scripts/finalize_daily_pipeline_after_editorial.py \
   --update-scheduled-log
 ```
 
+正式收尾入口在 `--write-feishu` 模式下会自行通过 `local_env.load_local_env(required=True)` 加载仓库本地环境，再执行网络预检和 Feishu 04 写入。生产默认读取 `.env.local`；staging/test 必须使用 `AI_ACCOUNT_RADAR_ENV` 或 `AI_ACCOUNT_RADAR_ENV_FILE` 选择对应环境。Prompt 中的 `cd` 只确定工作目录，不能提供环境变量或扩大可写权限。
+
 恢复命令只读取指定 run 目录，不重新抓取平台数据；运行前后仍必须依赖 `03 -> 04` 同步门禁校验，不能绕过 `validate_content_inbox_synced`。
 
 反馈规则：

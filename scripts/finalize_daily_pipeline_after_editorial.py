@@ -27,6 +27,7 @@ from typing import Any
 
 import daily_pipeline
 import douyin_candidate_lifecycle
+from local_env import load_local_env
 from scheduled_flow_preflight import evaluate_preflight
 
 
@@ -232,6 +233,19 @@ def main() -> int:
     today_path = Path(args.input) if args.input else default_today_path(args.run_id)
     if not today_path.exists():
         raise SystemExit(f"Missing enriched topic CSV: {today_path}")
+
+    if args.write_feishu:
+        try:
+            load_local_env(required=True)
+        except SystemExit as exc:
+            print(json.dumps({
+                "ok": False,
+                "reason": "environment_not_loaded",
+                "detail": str(exc),
+                "external_calls": 0,
+                "business_writes": 0,
+            }, ensure_ascii=False, indent=2))
+            return 2
 
     editorial_report = today_path.parent / "editorial_skill_report.json"
     daily_pipeline.sync_enriched_candidate_mirrors(today_path, editorial_report, args.write_feishu)
