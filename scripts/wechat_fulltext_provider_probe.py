@@ -332,7 +332,6 @@ def to_manual_row(provider: Provider, item: dict[str, str], status: str, failure
         "内容指纹": fingerprint("wechat", url, title),
         "正文原始长度": str(len(body)),
         "正文是否截断": "否",
-        "是否来自已解析URL复用": "否",
         "是否全文解析": is_full,
         "解析说明": parse_note,
         "provider": provider.provider,

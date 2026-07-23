@@ -137,9 +137,9 @@ RULES: tuple[FailureRule, ...] = (
         likely_cause="专用 Chrome 登录态失效、抖音触发验证，或 CDP 探针未能读取主页数据。",
         impact="抖音对标账号浅层采样可能缺失；主链路通常应继续处理 AIHOT、公众号和 URL 投喂。",
         actions=(
-            "如果通知只是可选来源失败，先观察今日候选是否仍生成，不要急着反复重试。",
-            "需要恢复抖音采样时，运行 python3 scripts/start_douyin_cdp_chrome.py --foreground --port 9333 并处理登录/验证。",
-            "重试时使用 --force-fetch-douyin；不要在无人值守时频繁强制采样。",
+            "确认本轮抖音来源为零行，并检查其他安全来源是否正常进入候选。",
+            "需要恢复抖音采样时，检查固定浏览器登录态，再等待下一次正式采集。",
+            "不要用缓存、历史产物或其他来源替代本轮抖音结果。",
         ),
     ),
     FailureRule(
@@ -260,15 +260,6 @@ def failed_step(steps: list[dict[str, Any]]) -> dict[str, Any]:
     return next((step for step in steps if int(step.get("returncode") or 0) != 0), steps[-1] if steps else {})
 
 
-def optional_warnings(steps: list[dict[str, Any]]) -> list[str]:
-    warnings: list[str] = []
-    for step in steps:
-        if step.get("optional_failed"):
-            rule = match_rule(step_text(step))
-            warnings.append(f"{step.get('name', 'optional step')}：{rule.conclusion}")
-    return warnings[:4]
-
-
 def evidence_lines(step: dict[str, Any], log_path: str = "", extra: str = "") -> list[str]:
     lines = []
     if step.get("name"):
@@ -286,8 +277,7 @@ def evidence_lines(step: dict[str, Any], log_path: str = "", extra: str = "") ->
     return lines
 
 
-def format_qa(task_name: str, rule: FailureRule, step: dict[str, Any], *, log_path: str = "", extra: str = "", warnings: list[str] | None = None) -> str:
-    warning_lines = warnings or []
+def format_qa(task_name: str, rule: FailureRule, step: dict[str, Any], *, log_path: str = "", extra: str = "") -> str:
     lines = [
         f"任务：{task_name}",
         f"QA结论：{rule.conclusion}",
@@ -297,8 +287,6 @@ def format_qa(task_name: str, rule: FailureRule, step: dict[str, Any], *, log_pa
         "建议处理：",
     ]
     lines.extend(f"{idx}. {action}" for idx, action in enumerate(rule.actions, start=1))
-    if warning_lines:
-        lines.extend(["可选来源提醒：", *[f"- {warning}" for warning in warning_lines]])
     evidence = evidence_lines(step, log_path=log_path, extra=extra)
     if evidence:
         lines.extend(["证据：", *[f"- {line}" for line in evidence]])
@@ -309,7 +297,7 @@ def qa_for_steps(task_name: str, steps: list[dict[str, Any]], *, log_path: str =
     step = failed_step(steps)
     text = step_text(step)
     rule = match_rule(text)
-    return format_qa(task_name, rule, step, log_path=log_path, warnings=optional_warnings(steps))
+    return format_qa(task_name, rule, step, log_path=log_path)
 
 
 def qa_for_topic_skip(reason: str, run_id: str = "") -> str:

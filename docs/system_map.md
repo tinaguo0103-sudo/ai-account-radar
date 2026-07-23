@@ -32,15 +32,7 @@ flowchart LR
 
 `01 来源与采样`、`02 URL投喂入口`、`03 内容收件箱`、`99 规则与字典` 都不是日常任务入口。只有补链接、排查 URL 解析、查看原始内容/全文、检查 AIHOT 是否入账或调整规则时再打开。当前 URL 投喂只正式支持公众号文章、抖音单条视频、RSS/Atom 和普通网页。公众号按全文解析并记录正文长度；抖音 P0 只做浅层解析，口播转写/画面 OCR 属于需要 API key 的 P1 增强。
 
-规则复盘时可以复用已解析 URL，不需要每次重新找新链接：
-
-```bash
-python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-intake
-```
-
-这个参数只用于测试混合候选池，会让已解析的公众号/抖音/RSS/网页 URL 重新参与本轮候选；默认日常流程仍只处理待解析 URL。
-
-当前默认自动源是 AIHOT、官方 RSS/Atom、官方网页/普通网页/Jina Reader、URL 投喂，以及主/辅对标抖音账号主页标题/文案采样。抖音主页采样失败时只记录失败原因并跳过，不阻塞其他来源；同一天重复运行默认复用当天抖音采集缓存，不再反复打开主页。公众号历史列表不直接进入默认流程。完整自动拉取路线见 `docs/source_autofetch_plan.md`。
+当前默认自动源是 AIHOT、官方 RSS/Atom、官方网页/普通网页/Jina Reader、URL 投喂，以及主/辅对标抖音账号主页标题/文案采样。每个来源在本轮只执行一次；抖音主页采样失败时贡献零行并保留失败原因，不阻塞其他来源。公众号历史列表不直接进入默认流程。完整自动拉取路线见 `docs/source_autofetch_plan.md`。
 
 卡兹克公众号 Wechat2RSS 公共 feed 已降级为发现源说明，不再进入 `03 内容收件箱` 或 `04 分析与选题`。公众号候选以全文为准：优先用本地 `wewe-rss` 全文 provider，或者在 `02 URL投喂入口` 粘贴单篇文章 URL。
 
@@ -50,7 +42,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 当前可用的抖音主页轻量探针是 `scripts/douyin_source_watch_probe.py`，但日常默认使用的是登录态更稳定的 `scripts/douyin_cdp_source_watch_probe.mjs`。它输出本地 ContentItem 后进入 `daily_pipeline.py` 的候选输入；正式 `--write-feishu` 时会和其他来源一样写入 `03 内容收件箱` 并参与 `04 分析与选题`。
 
-`scripts/douyin_cdp_source_watch_probe.mjs` 通过 Chrome DevTools Protocol 低频打开主对标抖音主页，只在发现可信账号作品 ID 时才复用单条视频 resolver。`daily_pipeline.py` 在探针和同日缓存复用之前，先通过 `start_douyin_cdp_chrome.py` 核验 `9333` 监听进程与 canonical profile，再通过 `check_douyin_session.py` 做无秘密登录态检查。任一身份、登录或验证状态不明确都会阻断抖音探针并使整次运行保持失败/部分状态；不会复用其他 worktree profile、随机浏览器或 headless。canonical profile 和迁移规则见 `docs/douyin_canonical_profile_runbook.md`。
+`scripts/douyin_cdp_source_watch_probe.mjs` 通过 Chrome DevTools Protocol 使用既有固定页面读取页面自有作品响应。`daily_pipeline.py` 先核验 `9333` canonical profile 和登录态，再执行一次采集尝试；任一状态不明确时抖音贡献零行，其他安全来源继续。它不会读取历史缓存、其他 worktree profile、随机浏览器或 headless 结果。canonical profile 和迁移规则见 `docs/douyin_canonical_profile_runbook.md`。
 
 测试路径原则：日常正式命令写飞书；测试选题、Skill、标题质量或飞书字段时，不重新采集平台数据，只使用明确指定的 `output/runs/<run_id>/` 权威产物。
 

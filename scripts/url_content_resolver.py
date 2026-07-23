@@ -97,7 +97,6 @@ class ContentItem:
     content_fingerprint: str
     raw_text_length: int = 0
     body_truncated: str = ""
-    reused_url: str = "否"
 
 
 @dataclass
@@ -105,7 +104,6 @@ class IntakeRecord:
     record_id: str
     url: str
     status: str
-    reused: bool = False
 
 
 class BlockTextParser(HTMLParser):
@@ -580,7 +578,7 @@ def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any
         page_token = data.get("page_token", "")
 
 
-def read_feishu_intake_records(token: str, app_token: str, include_resolved: bool = False) -> tuple[str, list[IntakeRecord]]:
+def read_feishu_intake_records(token: str, app_token: str) -> tuple[str, list[IntakeRecord]]:
     tables = table_map(token, app_token)
     table_id = resolve_table_id(tables, "url_inbox")
     if not table_id:
@@ -591,73 +589,13 @@ def read_feishu_intake_records(token: str, app_token: str, include_resolved: boo
     for record in rows:
         fields = record.get("fields", {})
         status = str(fields.get("处理状态", ""))
-        resolved = status in {"已解析", "重复", "已存在", "已处理"}
-        if status in {"解析失败", "跳过"} or (resolved and not include_resolved):
+        if status in {"解析失败", "跳过", "已解析", "重复", "已存在", "已处理"}:
             continue
         url = normalize_url(fields.get("URL", ""))
         if url and url not in seen_urls:
-            records.append(IntakeRecord(record_id=record.get("record_id", ""), url=url, status=status, reused=resolved))
+            records.append(IntakeRecord(record_id=record.get("record_id", ""), url=url, status=status))
             seen_urls.add(url)
     return table_id, records
-
-
-def load_content_inbox_by_url(token: str, app_token: str) -> dict[str, dict[str, str]]:
-    tables = table_map(token, app_token)
-    table_id = resolve_table_id(tables, "content_inbox")
-    if not table_id:
-        return {}
-    rows = all_records(token, app_token, table_id)
-    by_url: dict[str, dict[str, str]] = {}
-    for record in rows:
-        fields = {name: cell_text(value) for name, value in record.get("fields", {}).items()}
-        url = normalize_url(fields.get("链接", ""))
-        if url:
-            by_url[url] = fields
-    return by_url
-
-
-def item_from_content_inbox_fields(url: str, fields: dict[str, str]) -> ContentItem | None:
-    title = fields.get("标题", "")
-    if not title:
-        return None
-    source_type = fields.get("来源类型", "手动补充")
-    platform = fields.get("平台", "")
-    body = fields.get("正文/全文") or fields.get("摘要/片段", "")
-    raw_len = fields.get("正文长度", "")
-    raw_text_length = int(raw_len) if raw_len.isdigit() else len(body)
-    if source_type == "公众号文章":
-        fetch_method = "wechat_public_html_js_content"
-        content_shape = "long_article"
-    elif platform == "抖音" or source_type == "对标视频":
-        fetch_method = "douyin_public_router_data"
-        content_shape = "short_video"
-    elif source_type == "RSS/Atom":
-        fetch_method = "rss_atom_xml"
-        content_shape = "feed_entry"
-    else:
-        fetch_method = "jina_reader"
-        content_shape = "web_page"
-    return ContentItem(
-        source_type=source_type,
-        platform=platform,
-        account_name=fields.get("作者/账号", fields.get("来源名称", "")),
-        content_title=title,
-        content_url=url,
-        content_shape=content_shape,
-        cover_text="",
-        body_or_transcript=body,
-        summary_or_description=fields.get("摘要/片段", ""),
-        published_at=fields.get("发布时间", ""),
-        comments_or_questions="",
-        raw_payload_path=fields.get("原始payload路径", ""),
-        fetch_method=fetch_method,
-        fetch_status="success",
-        failure_reason="",
-        content_fingerprint=fields.get("内容指纹") or fingerprint(url, title, fields.get("来源名称", "")),
-        raw_text_length=raw_text_length,
-        body_truncated="是" if raw_text_length > len(body) else "否",
-        reused_url="是",
-    )
 
 
 def item_to_manual_row(item: ContentItem) -> dict[str, str]:
@@ -679,7 +617,6 @@ def item_to_manual_row(item: ContentItem) -> dict[str, str]:
         "内容指纹": item.content_fingerprint,
         "正文原始长度": str(item.raw_text_length or len(item.body_or_transcript or "")),
         "正文是否截断": item.body_truncated or ("是" if len(item.body_or_transcript or "") > 20000 else "否"),
-        "是否来自已解析URL复用": item.reused_url,
     }
 
 
@@ -895,7 +832,6 @@ def main() -> int:
     parser.add_argument("--file", help="Local text file with one URL per line.")
     parser.add_argument("--url", action="append", default=[], help="URL to resolve; can be repeated.")
     parser.add_argument("--feishu-intake", action="store_true", help="Read URLs from Feishu 02 URL投喂入口.")
-    parser.add_argument("--include-resolved-url-intake", action="store_true", help="Also reuse already parsed Feishu 02 URLs for local candidate testing; does not rewrite their intake status.")
     parser.add_argument("--write-feishu", action="store_true", help="Write deduped rows to Feishu 03 内容收件箱. Default is dry-run.")
     parser.add_argument("--dry-run", action="store_true", help="Dry-run alias for clarity; dry-run is the default.")
     parser.add_argument("--out", default=str(DEFAULT_OUT), help="Output JSONL path.")
@@ -915,7 +851,7 @@ def main() -> int:
     if args.feishu_intake:
         app_token = require_feishu_env()
         token = feishu.tenant_token()
-        url_inbox_table_id, intake_records = read_feishu_intake_records(token, app_token, include_resolved=args.include_resolved_url_intake)
+        url_inbox_table_id, intake_records = read_feishu_intake_records(token, app_token)
         urls.extend(record.url for record in intake_records)
     urls = list(dict.fromkeys(urls))
     if not urls:
@@ -937,18 +873,9 @@ def main() -> int:
         return 0
 
     raw_dir = Path(args.raw_dir)
-    reused_content_by_url = load_content_inbox_by_url(token, app_token) if args.include_resolved_url_intake and token and app_token else {}
     items: list[ContentItem] = []
     for url in urls:
-        resolved_items = resolve_url(url, raw_dir, args.max_feed_items)
-        reused = any(record.url == url and record.reused for record in intake_records)
-        if reused:
-            ledger_item = item_from_content_inbox_fields(url, reused_content_by_url.get(url, {}))
-            if ledger_item and (not resolved_items or all(item.fetch_status != "success" for item in resolved_items)):
-                resolved_items = [ledger_item]
-        for item in resolved_items:
-            item.reused_url = "是" if reused else "否"
-        items.extend(resolved_items)
+        items.extend(resolve_url(url, raw_dir, args.max_feed_items))
     seen: set[str] = set()
     deduped: list[ContentItem] = []
     local_duplicates = 0
@@ -973,7 +900,6 @@ def main() -> int:
         "csv": str(out_csv),
         "manual_jsonl": str(out_jsonl.with_name(out_jsonl.stem + "_manual.jsonl")),
         "by_status": {},
-        "reused_resolved_urls": sum(1 for record in intake_records if record.reused),
     }
     for item in deduped:
         summary["by_status"][item.fetch_status] = summary["by_status"].get(item.fetch_status, 0) + 1

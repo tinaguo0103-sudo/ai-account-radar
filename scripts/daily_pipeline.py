@@ -348,11 +348,10 @@ def main() -> int:
     parser.add_argument("--wechat-fulltext-provider-config", default=str(DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG), help="Config for explicit WeChat fulltext provider intake.")
     parser.add_argument("--wechat-fulltext-provider", default="", help="Provider id/name to fetch, e.g. wewe-rss. Only used with explicit WeChat fulltext provider mode.")
     parser.add_argument("--wechat-feed-limit", type=int, default=5, help="Max articles to fetch from the explicit WeChat fulltext provider.")
-    parser.add_argument("--fetch-douyin-cdp-source-watch", action="store_true", help="Compatibility flag: Douyin homepage title/caption sampling is now attempted by default unless --no-fetch-douyin is set.")
-    parser.add_argument("--no-fetch-douyin-cdp-source-watch", "--no-fetch-douyin", dest="no_fetch_douyin_cdp_source_watch", action="store_true", help="Skip daily Douyin homepage title/caption sampling.")
+    parser.add_argument("--no-fetch-douyin", action="store_true", help="Skip the daily Douyin collection attempt.")
     parser.add_argument("--douyin-cdp", default=os.getenv("DOUYIN_CDP_URL", "http://127.0.0.1:9333"), help="Chrome DevTools endpoint for explicit Douyin homepage probe.")
     parser.add_argument("--douyin-account-limit", type=int, default=0, help="Max Douyin accounts to probe; 0 means every eligible account.")
-    parser.add_argument("--douyin-video-limit", type=int, default=3, help="Max videos per Douyin account when --fetch-douyin-cdp-source-watch is enabled.")
+    parser.add_argument("--douyin-video-limit", type=int, default=3, help="Max videos per Douyin account.")
     parser.add_argument(
         "--defer-editorial",
         action="store_true",
@@ -469,7 +468,7 @@ def main() -> int:
                 steps[-1]["candidate_local_partial"] = True
                 steps[-1]["note"] = "WeChat candidate-local read failures were isolated; successful truthful rows continue."
 
-    fetch_douyin = not args.no_fetch_douyin_cdp_source_watch or args.fetch_douyin_cdp_source_watch
+    fetch_douyin = not args.no_fetch_douyin
     if fetch_douyin:
         if not canonical_douyin_cdp(args.douyin_cdp):
             failed = {

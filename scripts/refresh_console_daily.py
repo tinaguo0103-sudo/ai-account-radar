@@ -681,10 +681,6 @@ def main() -> int:
     missing = missing_table_report(tables)
     if missing["required"]:
         raise SystemExit(f"Missing required tables: {missing['required']}")
-    optional_warnings = [
-        {"code": "optional_table_missing", "table": name}
-        for name in missing["optional"]
-    ]
 
     inbox_records = all_records(token, app_token, tables["03 内容收件箱"])
     topic_records = all_records(token, app_token, tables["04 分析与选题"])
@@ -739,7 +735,6 @@ def main() -> int:
         "created_console_fields": created_fields,
         "console_sync": console_sync,
         "views": views,
-        "optional_followup_warnings": optional_warnings,
     }, ensure_ascii=False, indent=2))
     return 0
 

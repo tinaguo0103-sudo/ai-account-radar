@@ -136,7 +136,6 @@ class ContentItem:
     convert_direction: str = ""
     raw_text_length: int = 0
     body_truncated: str = ""
-    reused_url: str = "否"
     parse_hint: str = ""
 
 
@@ -498,7 +497,6 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
                 fingerprint=fp,
                 raw_text_length=int(raw.get("正文原始长度") or len(raw.get("正文/字幕/简介片段", ""))),
                 body_truncated=raw.get("正文是否截断", ""),
-                reused_url=raw.get("是否来自已解析URL复用", "否"),
                 parse_hint=raw.get("解析说明", ""),
             )
         elif source_type == "公众号文章" and url:
@@ -523,7 +521,6 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
                 fetch_status=raw.get("抓取状态", "ok"),
                 failure_reason=raw.get("失败原因", ""),
                 fingerprint=fp,
-                reused_url=raw.get("是否来自已解析URL复用", "否"),
                 parse_hint=raw.get("解析说明", ""),
             )
         item.source_type = normalize_source_type(item.source_type)
@@ -1585,8 +1582,6 @@ def real_user_question(topic: dict[str, Any], item: ContentItem) -> str:
 def why_today(topic: dict[str, Any], item: ContentItem) -> str:
     if item.source_type == "AIHOT热点":
         return f"今天仍在热点窗口，但要落到我自己的使用场景：{own_scenario_angle(topic, item)}"
-    if item.reused_url == "是":
-        return f"这是已投喂内容复用测试，适合验证它能否进入我的内容生产链路：{focus_point(topic, item)}"
     return f"来源内容已进入本轮候选，关键不是复述它，而是判断能否改造我的具体流程：{focus_point(topic, item)}"
 
 
@@ -2021,8 +2016,7 @@ def topic_from_breakdown(row: dict[str, Any], item: ContentItem) -> dict[str, An
         "事件锚点": extract_event_anchor(item),
         "业务变化判断": infer_business_change(item, scene),
         "标题结构模板": title_structure_template(topic_title),
-        "是否来自已解析URL复用": item.reused_url,
-        "候选来源方式": "可信采集产物" if is_trusted_collected_artifact(item) else ("URL投喂/复用" if item.fetch_method in {"wechat_public_html_js_content", "douyin_public_router_data", "douyin_paraformer_transcript", "rss_atom_xml", "jina_reader"} else item.source_type),
+        "候选来源方式": "可信采集产物" if is_trusted_collected_artifact(item) else ("URL投喂" if item.fetch_method in {"wechat_public_html_js_content", "douyin_public_router_data", "douyin_paraformer_transcript", "rss_atom_xml", "jina_reader"} else item.source_type),
     }
 
 
@@ -2067,7 +2061,6 @@ def item_row(item: ContentItem) -> dict[str, Any]:
         "重点学习": item.learn_focus,
         "不能照搬": item.do_not_copy,
         "转化方向": item.convert_direction,
-        "是否来自已解析URL复用": item.reused_url,
     }
 
 
@@ -2108,7 +2101,6 @@ def content_item_from_row(row: dict[str, Any]) -> ContentItem:
         convert_direction=cell_text(row.get("转化方向")),
         raw_text_length=raw_len or len(body),
         body_truncated="否" if cell_text(row.get("是否全文解析")) == "是" else "",
-        reused_url=cell_text(row.get("是否来自已解析URL复用")) or "否",
         parse_hint=cell_text(row.get("解析说明")),
     )
 
@@ -2512,8 +2504,6 @@ def text_basis(item: ContentItem) -> str:
     if item.source_type == "公众号文章":
         if is_full_text_item(item) == "是":
             return "全文"
-        if item.reused_url == "是":
-            return "复用内容不完整：仅摘要"
         return "摘要/片段"
     if is_douyin_shallow_item(item):
         return "抖音P0浅层字段：标题/文案/作者/封面/标签/下载链接，不含口播转写"
@@ -2628,7 +2618,6 @@ def write_debug_top10(
             "是否保留真实热点词": kept_anchor,
             "是否疑似脱离原始热点": detached,
             "是否超过解析文本支撑范围": over_infer,
-            "是否来自已解析URL复用": "是" if item.reused_url == "是" or topic.get("是否来自已解析URL复用") == "是" else "否",
             "降级或改写原因": topic.get("降级原因") or (review_reason if topic.get("推荐动作") in {"暂存观察", "不做"} else ""),
             "需要人工复核原因": review_reason,
             "内容指纹": fp,
@@ -2677,7 +2666,6 @@ def write_debug_top10(
             f"- 是否结构重复：{row['是否结构重复']}",
             f"- 是否保留真实热点词：{row['是否保留真实热点词']}",
             f"- 是否超过解析文本支撑范围：{row['是否超过解析文本支撑范围']}",
-            f"- 是否来自已解析URL复用：{row['是否来自已解析URL复用']}",
             f"- 人工复核：{row['需要人工复核原因']}",
             "",
         ])
@@ -2845,7 +2833,7 @@ def include_in_skill_review_pool(row: dict[str, Any]) -> bool:
     editor_score = int(row.get("编辑判断分", 0) or 0)
     raw_score = int(row.get("推荐分", 0) or 0)
     # URL/公众号/对标视频类素材本身就可能提供人味和结构，允许更早进入 Skill 判断。
-    if row.get("候选来源方式") == "URL投喂/复用" or row.get("来源类型") in {"公众号文章", "对标视频"}:
+    if row.get("候选来源方式") == "URL投喂" or row.get("来源类型") in {"公众号文章", "对标视频"}:
         return editor_score >= 52 or raw_score >= 55
     if row.get("来源类型") == "AIHOT热点":
         return editor_score >= 55 or raw_score >= 62

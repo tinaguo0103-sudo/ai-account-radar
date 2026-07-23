@@ -2,14 +2,19 @@
 from __future__ import annotations
 
 import inspect
+import subprocess
+import sys
 import unittest
+from dataclasses import fields
 from pathlib import Path
 
+import automation_failure_qa
 import canonical_owner_projection
 import content_sampler
 import daily_pipeline
 import push_to_feishu
 import scheduled_flow_preflight
+import url_content_resolver
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -17,6 +22,11 @@ RUNTIME_FILES = (
     "scripts/run_daily_collection_job.py",
     "scripts/daily_pipeline.py",
     "scripts/content_sampler.py",
+    "scripts/url_content_resolver.py",
+    "scripts/douyin_cdp_source_watch_probe.mjs",
+    "scripts/wechat_fulltext_provider_probe.py",
+    "scripts/automation_failure_qa.py",
+    "scripts/refresh_console_daily.py",
     "scripts/canonical_owner_projection.py",
     "scripts/finalize_daily_pipeline_after_editorial.py",
     "scripts/push_to_feishu.py",
@@ -38,6 +48,15 @@ FORBIDDEN_RUNTIME_TEXT = (
     "latest_write",
     "latest_dry_run",
     "output/latest",
+    "reused_url",
+    "是否来自已解析URL复用",
+    "include-resolved-url-intake",
+    "fetch-douyin-cdp-source-watch",
+    "no-fetch-douyin-cdp-source-watch",
+    "optional_failed",
+    "optional_warnings",
+    "可选来源提醒",
+    "optional_followup_warnings",
 )
 
 
@@ -57,6 +76,11 @@ class AR043BSinglePathArchitectureTests(unittest.TestCase):
                 "recover_content_inbox_from_run",
                 "write_recovery_sampler_log",
             )),
+            (url_content_resolver, (
+                "load_content_inbox_by_url",
+                "item_from_content_inbox_fields",
+            )),
+            (automation_failure_qa, ("optional_warnings",)),
             (daily_pipeline, ("sync_enriched_candidate_mirrors",)),
             (push_to_feishu, (
                 "record_request_telemetry",
@@ -66,6 +90,36 @@ class AR043BSinglePathArchitectureTests(unittest.TestCase):
         ):
             for name in names:
                 self.assertFalse(hasattr(module, name), f"{module.__name__}.{name} remains reachable")
+
+    def test_public_models_and_help_expose_no_compatibility_surface(self) -> None:
+        self.assertNotIn("reused_url", {field.name for field in fields(content_sampler.ContentItem)})
+        self.assertNotIn("reused_url", {field.name for field in fields(url_content_resolver.ContentItem)})
+        for script, forbidden in (
+            ("scripts/daily_pipeline.py", (
+                "--fetch-douyin-cdp-source-watch",
+                "--no-fetch-douyin-cdp-source-watch",
+                "Compatibility flag",
+            )),
+            ("scripts/url_content_resolver.py", ("--include-resolved-url-intake",)),
+        ):
+            result = subprocess.run(
+                [sys.executable, str(ROOT / script), "--help"],
+                cwd=ROOT,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            for value in forbidden:
+                self.assertNotIn(value, result.stdout)
+
+    def test_failure_report_has_no_optional_warning_section(self) -> None:
+        steps = [
+            {"name": "wechat", "returncode": 3, "stderr": "provider unavailable"},
+            {"name": "douyin", "returncode": 0, "optional" + "_failed": True},
+        ]
+        output = automation_failure_qa.qa_for_steps("collection", steps)
+        self.assertNotIn("可选来源" + "提醒", output)
+        self.assertNotIn("douyin", output)
 
     def test_preflight_has_no_optional_observation_parameter(self) -> None:
         parameters = inspect.signature(scheduled_flow_preflight.evaluate_preflight).parameters

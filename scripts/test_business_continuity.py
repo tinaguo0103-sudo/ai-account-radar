@@ -92,7 +92,6 @@ class BusinessContinuityTests(unittest.TestCase):
             {
                 "name": "fetch daily Douyin homepage title/caption samples through Chrome CDP",
                 "returncode": 0,
-                "optional_failed": True,
             },
         ]
         closure = {

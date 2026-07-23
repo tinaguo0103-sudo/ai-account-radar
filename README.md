@@ -107,7 +107,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 - `scripts/content_sampler.py`：内容采样与拆解脚本，输出内容对象、内容拆解和初筛后的今日候选池。
 - `scripts/editorial_skill_runner.py`：Skill 主编层执行脚本，默认调用本机已登录的 Codex CLI，只读取本机全局私有版 `ai-account-editorial-director`；全局版缺失时直接失败，不自动使用仓库脱敏版。需要临时测试脱敏镜像时，必须用 `EDITORIAL_SKILL_DIR` 显式指定目录。它要求 Skill 先完成 `Gate` 主编门控，输出 `主编筛选 / 主编自由稿 / 我的真实矛盾 / 场景依据 / 证据强度 / title_permission`；再整理 `Workflow Experiment Card` 工作流实验命题卡，核心写入 `选题命题 / 我要做的实验 / 热点触发点 / 我的工作流痛点 / 旧流程痛点 / AI介入点 / 验证方式 / 可沉淀资产 / 我的思考点 / 重点体现 / 可展示证据 / 需要补的证据`；最后只有 `title_permission=可发布标题` 才写入 `可发布标题 / 标题备选`。`--engine deterministic` 只作为显式离线应急选项。
 - `scripts/sync_editorial_skill.py`：把仓库中的公开脱敏版 `skills/ai-account-editorial-director/` 安装到全局 Codex Skills。默认 dry-run；已有全局 Skill 时会拒绝覆盖，只有显式 `--install-public --yes --force-overwrite-existing` 才会先备份再替换。
-- `scripts/daily_pipeline.py`：日常总入口；日常使用加 `--write-feishu` 写入飞书，默认本地模式只用于开发验证。抖音主页采集默认同一天只跑一次，后续运行复用当天缓存。
+- `scripts/daily_pipeline.py`：日常总入口；日常使用加 `--write-feishu` 写入飞书，默认本地模式只用于开发验证。抖音在每个正式 run 中只执行一次页面自有采集尝试。
 - `scripts/url_content_resolver.py`：正式 URL 内容采样 adapter，把公众号文章、抖音单条视频、RSS/Atom、普通网页解析成标准 ContentItem；默认只输出本地文件，显式 `--write-feishu` 才写入 `03 内容收件箱`。
 - `scripts/push_today10_to_feishu.py`：把今日候选池写入飞书 `04 分析与选题`，不写被淘汰的调试候选。
 - `scripts/setup_topic_selection_workspace.py`：把 `04 分析与选题` 配成飞书原生挑选台，创建/修正卡片视图、看板视图、学习样本视图，以及 `选择原因标签 / 人工一句话判断 / 学习状态` 反馈字段。
@@ -152,7 +152,7 @@ python3 scripts/sync_editorial_skill.py --install-public --yes --force-overwrite
 python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 ```
 
-这条命令会处理 `02 URL投喂入口` 的新链接、复用当天抖音主页采集缓存、拉取公开热点源，并把结果写入 `03 内容收件箱`、`04 分析与选题` 和 `00 主控台`。日常不要先跑一遍 dry-run；dry-run 只在改采集、改规则或排查 bug 时使用。
+这条命令会处理 `02 URL投喂入口` 的新链接、执行本轮抖音采集尝试、拉取公开热点源，并把核心结果写入 `03 内容收件箱` 和后续 exact-run 流程。日常不要先跑一遍 dry-run；dry-run 只在改采集、改规则或排查 bug 时使用。
 
 开发验证但不访问 AIHOT：
 
@@ -168,12 +168,6 @@ python3 scripts/editorial_skill_runner.py \
   --input output/runs/<run_id>/today_10_topics.csv \
   --output output/runs/<run_id>/today_10_topics.csv \
   --report output/runs/<run_id>/editorial_skill_report.json
-```
-
-只有修改了抖音采集逻辑、主页链接、登录状态，或者明确要复验采集时，才强制重新采集抖音：
-
-```bash
-python3 scripts/daily_pipeline.py --resolve-url-intake --force-fetch-douyin --write-feishu
 ```
 
 单独排查 URL 解析时，可以只运行 resolver：
@@ -211,7 +205,7 @@ python3 scripts/url_content_resolver.py --file data/manual/urls.example.txt --dr
 - Twitter/X；
 - Reddit。
 
-主对标抖音账号主页现在支持低频标题/文案采样，并带同日缓存；它不是全量主页爬虫，不抓评论、不批量历史、不自动转写。
+主对标抖音账号主页现在支持低频标题/文案采样；每个正式 run 只尝试一次，不抓评论、不批量历史、不自动转写，也不读取历史缓存替代失败结果。
 
 解析失败会保留失败原因，不会静默丢弃。确认本地输出没问题后，显式写入飞书 `03 内容收件箱`：
 
@@ -252,24 +246,6 @@ python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-full
 
 正式 daily automation 固定读取 canonical `wewe-rss` provider/data dir，并在摄取前校验账号健康、refresh revision 和上次成功水位。本地服务、登录或刷新不可证明时，该来源 typed fail 且不进候选；不会用 `02 URL投喂入口`、公共 feed 摘要或旧缓存补齐。
 
-规则测试时，如果飞书里没有新的待处理 URL，但你想让已解析过的公众号/抖音内容重新参与本轮候选池，可以显式加复用参数：
-
-```bash
-FEISHU_APP_ID=xxx \
-FEISHU_APP_SECRET=xxx \
-FEISHU_BASE_APP_TOKEN=xxx \
-python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-intake
-```
-
-这个参数不会改变默认日常流程：默认仍只处理待解析 URL；开启后会复用 `02 URL投喂入口` 中已解析/重复/已存在的 URL，重新生成本地 ContentItem 参与候选，不重复写入 `03 内容收件箱`，也不会把 `02` 的状态改回待解析。正式写入时可加：
-
-```bash
-FEISHU_APP_ID=xxx \
-FEISHU_APP_SECRET=xxx \
-FEISHU_BASE_APP_TOKEN=xxx \
-python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-intake --write-feishu
-```
-
 飞书投喂方式：在 `02 URL投喂入口` 的 `URL` 字段粘贴公众号文章、抖音单条视频、RSS/Atom 或普通网页链接，然后运行：
 
 ```bash
@@ -279,7 +255,7 @@ FEISHU_BASE_APP_TOKEN=xxx \
 python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 ```
 
-这就是日常正式路径，不需要先 dry-run。脚本会处理新 URL，复用当天抖音主页采集缓存，写入飞书并刷新主控台。只有在改动 URL resolver、字段映射或采集逻辑时，才先去掉 `--write-feishu` 做开发验证：
+这就是日常正式路径，不需要先 dry-run。脚本会处理本轮新 URL、执行一次抖音采集尝试并写入飞书。只有在改动 URL resolver、字段映射或采集逻辑时，才先去掉 `--write-feishu` 做开发验证：
 
 ```bash
 FEISHU_APP_ID=xxx \
@@ -311,12 +287,11 @@ FEISHU_BASE_APP_TOKEN=xxx \
 python3 scripts/daily_pipeline.py --write-feishu
 ```
 
-`daily_pipeline.py` 会串起：读取内容源配置、拉取公开热点源、复用或低频采集主对标抖音主页标题文案、读取 URL 投喂/公众号全文/转写样例、生成 ContentItem、生成内容拆解、代码初筛今日候选池、通过 `editorial_skill_runner.py` 调用全局 `ai-account-editorial-director` Skill 做主编判断、按需写入飞书、刷新主控台和输出日志。日常使用应写入飞书；脚本默认本地模式只用于开发安全验证。不自动发布，不在选题阶段生成完整成稿。每次运行会生成一个 `运行批次`，用于在 `03 内容收件箱 / 今日采集` 和 `04 分析与选题 / 今日候选池` 中追踪本轮数据。
+`daily_pipeline.py` 会串起：读取内容源配置、各来源执行一次采集、读取本轮 URL 投喂/公众号全文/转写样例、生成 ContentItem、生成内容拆解、代码初筛今日候选池、通过 `editorial_skill_runner.py` 调用全局 `ai-account-editorial-director` Skill 做主编判断，并按需写入飞书。日常使用应写入飞书；脚本默认本地模式只用于开发安全验证。不自动发布，不在选题阶段生成完整成稿。每次运行会生成一个 `运行批次`，用于在 `03 内容收件箱 / 今日采集` 和 `04 分析与选题 / 今日候选池` 中追踪本轮数据。
 
 采集频率边界：
 
-- 抖音主页采集同一天默认只跑一次；当天再次运行会复用 `output/source_collection_cache/YYYY-MM-DD/` 的缓存结果。
-- 只有修改采集逻辑、主页链接、登录态或需要排查采集问题时，才加 `--force-fetch-douyin`。
+- 每次正式 run 只执行一次抖音采集尝试；失败时该来源贡献零行，不读取历史缓存或替代产物。
 - 测试 Skill、标题质量、字段写入或飞书读回时，不要重新跑平台采集；必须显式指定本次测试拥有的 exact run 目录。
 - 如需完全跳过抖音采集，可加 `--no-fetch-douyin`。
 

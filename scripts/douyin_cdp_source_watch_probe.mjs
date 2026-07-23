@@ -796,7 +796,6 @@ export function buildHomepageCardContentItem(row, link, index) {
     "内容指纹": fingerprint(`${row.account_name || ""}|${link}|${body}`),
     "正文原始长度": body.length,
     "正文是否截断": "否",
-    "是否来自已解析URL复用": "否",
     "解析说明": "从登录态主页作品区提取标题/文案卡片；未做口播转写、评论抓取或视频理解。适合标题先筛选，人工确认后再转写。",
   };
 }
