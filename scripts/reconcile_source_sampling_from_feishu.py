@@ -356,8 +356,6 @@ def main() -> int:
         "mode": "write" if args.write_config or args.write_feishu else "dry-run",
         "feishu_records_read": len(records),
         "active_account_count": len(active_plan),
-        "optional_followup_failed": False,
-        "optional_followup_reason": "",
         "summary": summary,
     }
     if args.write_config:
@@ -365,21 +363,14 @@ def main() -> int:
         output["config_written"] = str(CONFIG)
     if args.write_feishu:
         rows = rows_from_sources(config)
-        try:
-            ensure_fields(token, app_token, table_id)
-            output["feishu"] = sync_rows(token, app_token, rows)
-            time.sleep(0.1)
-        except Exception as exc:
-            output["optional_followup_failed"] = True
-            output["optional_followup_reason"] = f"{type(exc).__name__}: {exc}"
-            output["feishu"] = {"ok": False, "optional": True}
+        ensure_fields(token, app_token, table_id)
+        output["feishu"] = sync_rows(token, app_token, rows)
+        time.sleep(0.1)
     print(json.dumps(output, ensure_ascii=False, indent=2))
     print("SOURCE_PLAN_STATUS_JSON=" + json.dumps({
         "ok": output["ok"],
         "plan_ready": output["plan_ready"],
         "active_account_count": output["active_account_count"],
-        "optional_followup_failed": output["optional_followup_failed"],
-        "optional_followup_reason": output["optional_followup_reason"],
     }, ensure_ascii=False, separators=(",", ":")))
     return 0
 

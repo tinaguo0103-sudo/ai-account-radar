@@ -158,15 +158,7 @@ def main() -> int:
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu exception notifications.")
     parser.add_argument("--check-only", action="store_true", help="Print the full scheduled account plan without browser, collection, or Feishu I/O.")
     parser.add_argument("--source-config", default=str(ROOT / "config" / "content_sources.yaml"), help="Source config used by --check-only.")
-    parser.add_argument("--run-id", default="", help="Explicit run id for an owned current-run staging/source artifact.")
-    parser.add_argument("--manual", default="", help="Additional owned manual JSONL input for the formal collection pipeline.")
-    parser.add_argument("--douyin-artifact-result", default="", help="Current-run Douyin probe result already produced by the public fixed-browser source path.")
-    parser.add_argument("--douyin-artifact-manual", default="", help="Current-run Douyin manual JSONL paired with --douyin-artifact-result.")
-    parser.add_argument(
-        "--owned-source-input-only",
-        action="store_true",
-        help="Use only explicitly supplied owned inputs; skips URL intake and WeChat provider while preserving formal 03/usability/editorial state.",
-    )
+    parser.add_argument("--run-id", default="", help="Explicit exact run id.")
     parser.add_argument(
         "--allow-non-production-worktree",
         action="store_true",
@@ -206,56 +198,34 @@ def main() -> int:
         print(json.dumps({"ok": False, "reason": guard.reason, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return 2
 
-    if args.owned_source_input_only:
-        required_owned_inputs = [args.run_id, args.manual, args.douyin_artifact_result, args.douyin_artifact_manual]
-        missing_owned_inputs = not all(required_owned_inputs) or any(
-            not Path(value).expanduser().is_file() for value in required_owned_inputs[1:]
-        )
-        steps.append({
-            "name": "validate explicitly owned collection inputs",
-            "command": ["owned-source-input", "--run-id", args.run_id],
-            "started_at": datetime.now().isoformat(timespec="seconds"),
-            "returncode": 2 if missing_owned_inputs else 0,
-            "stdout": "Validated explicit run/manual/Douyin artifact inputs." if not missing_owned_inputs else "",
-            "stderr": "owned_source_inputs_missing_or_invalid" if missing_owned_inputs else "",
-        })
-        if missing_owned_inputs:
-            log_path = write_job_log(steps)
-            print(json.dumps({"ok": False, "reason": "owned_source_inputs_missing_or_invalid", "log": str(log_path)}, ensure_ascii=False, indent=2))
-            return 2
-    else:
-        steps.append(run_step("reconcile Feishu 01 source sampling into local config", [
-            py,
-            str(ROOT / "scripts" / "reconcile_source_sampling_from_feishu.py"),
-            "--write-config",
-            "--write-feishu",
-        ]))
-        if steps[-1]["returncode"] != 0:
-            log_path = write_job_log(steps)
-            if not args.no_notify:
-                notify("AI账号雷达采集失败", failure_summary(steps, log_path))
-            print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
-            return steps[-1]["returncode"]
-        source_plan_result: dict[str, Any] = {}
-        for line in reversed(str(steps[-1].get("stdout") or "").splitlines()):
-            if line.startswith("SOURCE_PLAN_STATUS_JSON="):
-                try:
-                    source_plan_result = json.loads(line.split("=", 1)[1])
-                except json.JSONDecodeError:
-                    source_plan_result = {}
-                break
-        if source_plan_result.get("plan_ready") is not True:
-            steps[-1]["returncode"] = 2
-            steps[-1]["stderr"] = "source_plan_not_ready"
-            log_path = write_job_log(steps)
-            if not args.no_notify:
-                notify("AI账号雷达采集失败", failure_summary(steps, log_path))
-            print(json.dumps({"ok": False, "reason": "source_plan_not_ready", "log": str(log_path)}, ensure_ascii=False, indent=2))
-            return 2
-        if source_plan_result.get("optional_followup_failed"):
-            steps[-1]["optional_followup_failed"] = True
-            steps[-1]["optional_followup_reason"] = str(source_plan_result.get("optional_followup_reason") or "feishu_01_optional_followup_failed")
-
+    steps.append(run_step("reconcile Feishu 01 source sampling into local config", [
+        py,
+        str(ROOT / "scripts" / "reconcile_source_sampling_from_feishu.py"),
+        "--write-config",
+        "--write-feishu",
+    ]))
+    if steps[-1]["returncode"] != 0:
+        log_path = write_job_log(steps)
+        if not args.no_notify:
+            notify("AI账号雷达采集失败", failure_summary(steps, log_path))
+        print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
+        return steps[-1]["returncode"]
+    source_plan_result: dict[str, Any] = {}
+    for line in reversed(str(steps[-1].get("stdout") or "").splitlines()):
+        if line.startswith("SOURCE_PLAN_STATUS_JSON="):
+            try:
+                source_plan_result = json.loads(line.split("=", 1)[1])
+            except json.JSONDecodeError:
+                source_plan_result = {}
+            break
+    if source_plan_result.get("plan_ready") is not True:
+        steps[-1]["returncode"] = 2
+        steps[-1]["stderr"] = "source_plan_not_ready"
+        log_path = write_job_log(steps)
+        if not args.no_notify:
+            notify("AI账号雷达采集失败", failure_summary(steps, log_path))
+        print(json.dumps({"ok": False, "reason": "source_plan_not_ready", "log": str(log_path)}, ensure_ascii=False, indent=2))
+        return 2
     pipeline_cmd = [
         py,
         str(ROOT / "scripts" / "daily_pipeline.py"),
@@ -263,30 +233,18 @@ def main() -> int:
         str(args.douyin_account_limit),
         "--douyin-video-limit",
         str(args.douyin_video_limit),
-        "--force-fetch-douyin",
-        "--douyin-verification-action",
-        "log-only",
         "--write-feishu",
     ]
-    if not args.owned_source_input_only:
-        pipeline_cmd.extend([
-            "--resolve-url-intake",
-            "--fetch-wechat-fulltext-provider",
-            "--wechat-fulltext-provider",
-            args.wechat_fulltext_provider,
-            "--wechat-feed-limit",
-            str(args.wechat_feed_limit),
-        ])
-    else:
-        pipeline_cmd.append("--no-fetch-aihot")
-    for flag, value in (
-        ("--run-id", args.run_id),
-        ("--manual", args.manual),
-        ("--douyin-artifact-result", args.douyin_artifact_result),
-        ("--douyin-artifact-manual", args.douyin_artifact_manual),
-    ):
-        if value:
-            pipeline_cmd.extend([flag, value])
+    pipeline_cmd.extend([
+        "--resolve-url-intake",
+        "--fetch-wechat-fulltext-provider",
+        "--wechat-fulltext-provider",
+        args.wechat_fulltext_provider,
+        "--wechat-feed-limit",
+        str(args.wechat_feed_limit),
+    ])
+    if args.run_id:
+        pipeline_cmd.extend(["--run-id", args.run_id])
     if args.defer_editorial:
         pipeline_cmd.append("--defer-editorial")
     steps.append(run_step("run full-source daily pipeline", pipeline_cmd))

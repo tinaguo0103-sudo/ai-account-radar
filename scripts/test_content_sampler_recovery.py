@@ -59,26 +59,25 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
         self.assertEqual(item.ocr_text, "/tmp/payload.txt")
         self.assertEqual(item.reused_url, "是")
 
-    def test_update_record_fields_retries_transient_timeout(self) -> None:
+    def test_update_record_fields_does_not_blind_retry_timeout(self) -> None:
         calls = {"count": 0}
         original_request_json = content_sampler.feishu.request_json
         original_sleep = content_sampler.time.sleep
 
         def flaky_request_json(*args, **kwargs):
             calls["count"] += 1
-            if calls["count"] == 1:
-                raise TimeoutError("The read operation timed out")
-            return {"code": 0}
+            raise TimeoutError("The read operation timed out")
 
         try:
             content_sampler.feishu.request_json = flaky_request_json
             content_sampler.time.sleep = lambda *_args, **_kwargs: None
-            content_sampler.update_record_fields("token", "app", "table", "rec", {"运行批次": "run"})
+            with self.assertRaises(TimeoutError):
+                content_sampler.update_record_fields("token", "app", "table", "rec", {"运行批次": "run"})
         finally:
             content_sampler.feishu.request_json = original_request_json
             content_sampler.time.sleep = original_sleep
 
-        self.assertEqual(calls["count"], 2)
+        self.assertEqual(calls["count"], 1)
 
     def test_recover_dry_run_reads_existing_run_without_feishu_write(self) -> None:
         with tempfile.TemporaryDirectory() as tmpdir:
@@ -145,7 +144,7 @@ class ContentSamplerRecoveryTest(unittest.TestCase):
                 content_sampler.LATEST_WRITE_DIR = original_latest_write
 
             self.assertTrue((run_dir / "content_sampler_log.json").exists())
-            self.assertTrue((tmp_root / "output" / "content_sampler_log.json").exists())
+            self.assertFalse((tmp_root / "output" / "content_sampler_log.json").exists())
             self.assertTrue((tmp_root / "output" / "latest_write" / "content_sampler_log.json").exists())
 
     def test_feishu_visible_rows_infers_missing_level_for_publishable_script_candidates(self) -> None:

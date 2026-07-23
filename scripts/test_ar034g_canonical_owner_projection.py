@@ -150,7 +150,6 @@ class CanonicalOwnerProjectionTests(unittest.TestCase):
              mock.patch.object(content_sampler, "all_records", side_effect=lambda *_: copy.deepcopy(stored)), \
              mock.patch.object(content_sampler, "update_record_fields") as update, \
              mock.patch.object(content_sampler, "batch_create_records", side_effect=create), \
-             mock.patch.object(content_sampler, "ensure_content_inbox_today_view", return_value={}), \
              mock.patch.object(content_sampler.time, "sleep"):
             result = content_sampler.write_content_ledger_to_feishu([first, second], RUN_ID)
         self.assertEqual(1, result["created_records"])
@@ -307,7 +306,6 @@ class CanonicalOwnerProjectionTests(unittest.TestCase):
              mock.patch.object(content_sampler, "all_records", side_effect=[records, records]), \
              mock.patch.object(content_sampler, "update_record_fields", side_effect=lambda _t, _a, _b, rid, fields: updates.append((rid, fields))), \
              mock.patch.object(content_sampler, "batch_create_records", side_effect=lambda _t, _a, _b, rows: posts.extend(rows) or len(rows)), \
-             mock.patch.object(content_sampler, "ensure_content_inbox_today_view", return_value={}), \
              mock.patch.object(content_sampler.time, "sleep"):
             result = content_sampler.write_content_ledger_to_feishu(items, RUN_ID)
         self.assertEqual(140, result["owner_projection"]["unique_owner_count"])

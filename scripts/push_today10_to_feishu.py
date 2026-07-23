@@ -22,9 +22,7 @@ import topic_field_contract as field_contract
 from feishu_table_registry import TABLES, resolve_table_id, table_name
 from local_env import load_local_env
 from topic_decision_fields import (
-    CORE_VISIBLE_FIELDS,
     DAILY_WRITE_FIELDS,
-    DETAIL_VISIBLE_FIELDS,
     card_summary_from_fields,
     field_create_body,
 )
@@ -32,9 +30,7 @@ from topic_decision_fields import (
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
-TODAY10 = OUT / "today_10_topics.csv"
 LATEST_WRITE_TODAY10 = OUT / "latest_write" / "today_10_topics.csv"
-LEGACY_LOG = OUT / "content_sampler_log.json"
 TARGET_TABLE_KEY = "topic_decision"
 TOPIC_TABLE_ID_ENV_KEYS = ("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE_ID")
 TOPIC_CREATE_KIND = "topic_candidate_create"
@@ -220,25 +216,9 @@ def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]
 def default_today10_path() -> Path:
     if LATEST_WRITE_TODAY10.exists():
         return LATEST_WRITE_TODAY10
-    if TODAY10.exists() and legacy_today10_is_official():
-        return TODAY10
     raise SystemExit(
         "No official today candidate CSV found. Use --input with a run-specific CSV, "
         "or run daily_pipeline.py --write-feishu to create output/latest_write/."
-    )
-
-
-def legacy_today10_is_official() -> bool:
-    if not LEGACY_LOG.exists():
-        return False
-    try:
-        data = json.loads(LEGACY_LOG.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return False
-    return (
-        data.get("mode") == "write-feishu"
-        or "feishu_content_ledger" in data
-        or bool(data.get("mirrors", {}).get("latest_write"))
     )
 
 
@@ -272,28 +252,6 @@ def list_fields(token: str, app_token: str, table_id: str) -> dict[str, dict[str
         page_token = str(data.get("page_token") or "")
         if not page_token:
             raise RuntimeError("Feishu fields pagination reported has_more without page_token")
-
-
-def list_views(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
-    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views", token=token)
-    return payload.get("data", {}).get("items", [])
-
-
-def option_filter_values(field: dict[str, Any], values: list[Any]) -> list[Any]:
-    """Feishu view filters require option ids for single/multi select fields."""
-    if field.get("type") not in {3, 4}:
-        return values
-    options = field.get("property", {}).get("options", [])
-    option_by_name = {
-        str(option.get("name", "")): (
-            option.get("id")
-            or option.get("option_id")
-            or option.get("value")
-            or option.get("name")
-        )
-        for option in options
-    }
-    return [option_by_name.get(str(value), value) for value in values]
 
 
 def ensure_fields(token: str, app_token: str, table_id: str) -> list[str]:
@@ -659,94 +617,6 @@ def update_existing_top10(token: str, app_token: str, table_id: str, record: dic
     )
 
 
-def patch_candidate_view(token: str, app_token: str, table_id: str, view_name: str, run_id: str, visible: set[str], extra_filter: dict[str, Any] | None = None) -> dict[str, Any]:
-    views = {view.get("view_name"): view for view in list_views(token, app_token, table_id)}
-    created: list[str] = []
-    if view_name not in views:
-        payload = feishu.request_json(
-            "POST",
-            f"/bitable/v1/apps/{app_token}/tables/{table_id}/views",
-            token=token,
-            body={"view_name": view_name, "view_type": "grid"},
-        )
-        views[view_name] = payload.get("data", {}).get("view", payload.get("data", {}))
-        created.append(view_name)
-        time.sleep(0.1)
-    fields = list_fields(token, app_token, table_id)
-    view = views.get(view_name, {})
-    run_field = fields.get("运行批次")
-    if not view.get("view_id") or not run_field:
-        return {"created": created, "configured": "missing_view_or_run_field"}
-    hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
-    conditions = [{
-        "field_id": run_field["field_id"],
-        "operator": "is",
-        "value": json.dumps([run_id], ensure_ascii=False),
-    }]
-    if extra_filter and extra_filter.get("field") in fields:
-        field = fields[extra_filter["field"]]
-        filter_values = option_filter_values(field, extra_filter.get("value", []))
-        conditions.append({
-            "field_id": field["field_id"],
-            "operator": extra_filter.get("operator", "is"),
-            "value": json.dumps(filter_values, ensure_ascii=False),
-        })
-    body = {
-        "view_name": view_name,
-        "property": {
-            "filter_info": {
-                "conditions": conditions,
-                "conjunction": "and",
-            },
-            "hidden_fields": hidden,
-        },
-    }
-    try:
-        feishu.request_json("PATCH", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view['view_id']}", token=token, body=body)
-        return {"created": created, "configured": "ok", "hidden_fields": len(hidden)}
-    except Exception as exc:
-        return {"created": created, "configured": f"failed:{exc}"}
-
-
-def delete_view_if_exists(token: str, app_token: str, table_id: str, view_name: str) -> dict[str, Any]:
-    views = {view.get("view_name"): view for view in list_views(token, app_token, table_id)}
-    view = views.get(view_name)
-    if not view or not view.get("view_id"):
-        return {"deleted": False, "reason": "missing"}
-    try:
-        feishu.request_json("DELETE", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view['view_id']}", token=token)
-        return {"deleted": True}
-    except Exception as exc:
-        return {"deleted": False, "reason": f"failed:{exc}"}
-
-
-def ensure_today_top10_view(token: str, app_token: str, table_id: str, run_id: str) -> dict[str, Any]:
-    core_visible = set(CORE_VISIBLE_FIELDS)
-    detail_visible = set(DETAIL_VISIBLE_FIELDS)
-    return {
-        "今日候选池": patch_candidate_view(token, app_token, table_id, "今日候选池", run_id, core_visible),
-        "推荐制作": patch_candidate_view(
-            token,
-            app_token,
-            table_id,
-            "推荐制作",
-            run_id,
-            core_visible,
-            {"field": "今日建议级别", "operator": "is", "value": ["推荐制作"]},
-        ),
-        "暂存观察": patch_candidate_view(
-            token,
-            app_token,
-            table_id,
-            "暂存观察",
-            run_id,
-            detail_visible,
-            {"field": "今日建议级别", "operator": "is", "value": ["暂存观察"]},
-        ),
-        "删除旧今日Top10视图": delete_view_if_exists(token, app_token, table_id, "今日Top10"),
-    }
-
-
 def main() -> int:
     load_local_env()
     parser = argparse.ArgumentParser()
@@ -807,7 +677,6 @@ def main() -> int:
         "omitted_rows": omitted_rows,
         "created_titles": created_titles,
         "updated_titles": updated_titles,
-        "today_view": ensure_today_top10_view(token, app_token, table_id, run_id),
     }, ensure_ascii=False, indent=2))
     return 0
 

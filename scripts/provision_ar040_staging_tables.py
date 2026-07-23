@@ -36,6 +36,31 @@ class TableSpec:
     ensure_views: Callable[[str, str, str], dict[str, Any]]
 
 
+def ensure_content_inbox_views(token: str, app_token: str, table_id: str) -> dict[str, Any]:
+    """Manual staging provisioner only; never called by the collection path."""
+    payload = feishu.request_json(
+        "GET",
+        f"/bitable/v1/apps/{app_token}/tables/{table_id}/views",
+        token=token,
+    )
+    existing = {
+        str(item.get("view_name") or "")
+        for item in payload.get("data", {}).get("items", [])
+    }
+    created: list[str] = []
+    for name in ("今日采集", "最近15天", "永久保留"):
+        if name in existing:
+            continue
+        feishu.request_json(
+            "POST",
+            f"/bitable/v1/apps/{app_token}/tables/{table_id}/views",
+            token=token,
+            body={"view_name": name, "view_type": "grid"},
+        )
+        created.append(name)
+    return {"created": created}
+
+
 TABLE_SPECS = (
     TableSpec(
         "source_sampling", "FEISHU_SOURCE_TABLE_ID", "01 来源与采样__AR040_TEST",
@@ -45,7 +70,7 @@ TABLE_SPECS = (
     TableSpec(
         "content_inbox", "FEISHU_CONTENT_TABLE_ID", "03 内容收件箱__AR040_TEST",
         tuple(content_sampler.CONTENT_INBOX_FIELDS), ("今日采集", "最近15天", "永久保留"),
-        content_sampler.ensure_content_inbox_today_view,
+        ensure_content_inbox_views,
     ),
 )
 

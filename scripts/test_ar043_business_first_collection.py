@@ -66,7 +66,7 @@ def incident_shape() -> tuple[list[content_sampler.ContentItem], list[dict], lis
 
 
 class AR043BusinessFirstCollectionTests(unittest.TestCase):
-    def writer_context(self, stored: list[dict], *, update_side_effect=None, view_side_effect=None):
+    def writer_context(self, stored: list[dict], *, update_side_effect=None):
         def update(_token, _app, _table, record_id, fields):
             row = next(value for value in stored if value["record_id"] == record_id)
             row["fields"].update(copy.deepcopy(fields))
@@ -82,7 +82,6 @@ class AR043BusinessFirstCollectionTests(unittest.TestCase):
             all_records=mock.DEFAULT,
             update_record_fields=mock.DEFAULT,
             batch_create_records=mock.DEFAULT,
-            ensure_content_inbox_today_view=mock.DEFAULT,
         ), {
             "require_feishu_env": "app",
             "list_tables": [],
@@ -91,7 +90,6 @@ class AR043BusinessFirstCollectionTests(unittest.TestCase):
             "all_records": lambda *_: copy.deepcopy(stored),
             "update_record_fields": update,
             "batch_create_records": lambda *_args: 0,
-            "ensure_content_inbox_today_view": view_side_effect or (lambda *_: {"ok": True}),
         }
 
     def run_writer(self, stored, items, candidates, **kwargs):
@@ -140,7 +138,7 @@ class AR043BusinessFirstCollectionTests(unittest.TestCase):
         self.assertEqual(50, second["candidate_projection"]["mapped_count"])
         self.assertEqual(original_ids, [row["record_id"] for row in stored])
 
-    def test_after_commit_update_loss_reconciles_and_optional_view_failure_is_warning(self) -> None:
+    def test_after_commit_update_loss_reconciles_without_follow_up(self) -> None:
         items, stored, candidates = incident_shape()
         raised = {"done": False}
 
@@ -154,23 +152,20 @@ class AR043BusinessFirstCollectionTests(unittest.TestCase):
             items,
             candidates,
             update_side_effect=lose_response,
-            view_side_effect=lambda *_: (_ for _ in ()).throw(PermissionError("optional view unavailable")),
         )
         self.assertTrue(result["core_readback_green"])
         self.assertEqual(1, result["recovered_updates"])
         self.assertEqual(0, result["created_records"])
-        self.assertIn("optional_warning", result["today_view"])
+        self.assertNotIn("today_view", result)
 
     def test_wechat_failure_is_source_local_and_zero_candidates_only_blocks_downstream(self) -> None:
         steps = [{
             "name": "refresh WeChat",
-            "returncode": 0,
-            "optional_returncode": 4,
-            "optional_failed": True,
+            "returncode": 4,
             "source_local_failure": True,
             "source": "wechat",
             "source_rows": 0,
-            "source_failure_reason": "lease unavailable",
+            "source_failure_reason": "provider unavailable",
         }]
         with mock.patch.object(daily_pipeline, "read_json", return_value={}):
             survivors = daily_pipeline.downstream_usability_report(steps, Path("/tmp/run"), 50)
@@ -179,24 +174,28 @@ class AR043BusinessFirstCollectionTests(unittest.TestCase):
         self.assertTrue(survivors["downstream_usable"])
         self.assertFalse(empty["downstream_usable"])
 
-    def test_project_state_probe_and_legacy_watermark_fallback(self) -> None:
+    def test_project_mutex_probe_has_no_provider_or_secret_access(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             project = Path(tmp)
-            state = project / "output" / "state" / "wewe-refresh"
-            proof = refresh.probe_project_state(state, project_root=project)
-            self.assertTrue(proof["probe_files_final_absent"])
-            self.assertEqual(0, proof["provider_requests"])
+            data = project / "data"
+            database = data / "wewe-rss.db"
+            data.mkdir()
+            connection = __import__("sqlite3").connect(database)
+            connection.executescript(
+                "create table accounts(status integer);"
+                "create table feeds(id text,status integer,sync_time integer,updated_at integer);"
+                "create table articles(mp_id text,publish_time integer);"
+                "insert into accounts values(1);"
+                "insert into feeds values('feed',1,1,1);"
+            )
+            connection.commit()
+            connection.close()
+            lock = project / "output" / "state" / "wewe-refresh" / "refresh.lock"
+            proof = refresh.check_only_plan(data, lock_path=lock, project_root=project)
+            self.assertTrue(proof["lock_released"])
+            self.assertEqual(0, proof["provider_request_count"])
             self.assertFalse(proof["secret_material_read"])
-            self.assertFalse((state / "refresh.lock").exists())
-
-            project_watermark = state / "last_success.json"
-            legacy = project / "legacy" / "last_success.json"
-            legacy.parent.mkdir(parents=True)
-            legacy.write_text('{"refresh_revision":7,"refreshed_at_ms":8,"article_publish_watermark":9,"refresh_attempt_id":"a","accepted_run_id":"old"}', encoding="utf-8")
-            self.assertEqual(7, health.load_success_watermark(project_watermark, legacy)["refresh_revision"])
-            project_watermark.parent.mkdir(parents=True, exist_ok=True)
-            project_watermark.write_text('{"refresh_revision":10,"refreshed_at_ms":11,"article_publish_watermark":12,"refresh_attempt_id":"b","accepted_run_id":"new"}', encoding="utf-8")
-            self.assertEqual(10, health.load_success_watermark(project_watermark, legacy)["refresh_revision"])
+            self.assertFalse(lock.exists())
 
 
 if __name__ == "__main__":

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Read only receipt-bound current WeWe articles through bounded feed pages."""
+"""Read current-run WeWe articles from the live database through bounded pages."""
 from __future__ import annotations
 
 import argparse
@@ -16,8 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from wechat_fulltext_provider_probe import Provider, html_to_text, to_manual_row
-from wewe_provider_health import CANONICAL_DATA_DIR, validate_refresh_receipt
-from wewe_provider_refresh import HEALTH_DIR, PROVIDER_URL
+from wewe_provider_refresh import CANONICAL_DATA_DIR, PROVIDER_URL
 
 
 MAX_ARTICLE_RESPONSE_BYTES = 8_000_000
@@ -45,31 +44,21 @@ def load_refresh_result(path: Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError) as exc:
         raise CurrentFeedError("refresh_result_unreadable") from exc
-    required = {"attempt_id", "feed_count", "new_item_count", "ok", "receipt_path", "receipt_sha256", "run_id", "secret_material_read", "secrets_exposed", "starts_browser", "starts_provider", "status"}
-    if not isinstance(payload, dict) or set(payload) != required:
+    required = {"before", "after", "completed_at_ms", "new_item_count", "ok", "provider_request_count", "requested_at_ms", "run_id", "run_started_at_ms", "secret_material_read", "secrets_exposed", "status"}
+    if not isinstance(payload, dict) or not required.issubset(payload):
         raise CurrentFeedError("refresh_result_schema_invalid")
     if payload["ok"] is not True or payload["status"] != "success":
         raise CurrentFeedError("refresh_result_not_success")
     return payload
 
 
-def _db_identity(database: Path) -> dict[str, Any]:
-    try:
-        info = database.stat()
-    except OSError as exc:
-        raise CurrentFeedError("current_feed_database_unreadable") from exc
-    return {"path": str(database.resolve()), "device": info.st_dev, "inode": info.st_ino}
-
-
-def receipt_bound_plan(database: Path, receipt: dict[str, Any]) -> list[dict[str, Any]]:
-    if _db_identity(database) != receipt["database_identity"]:
-        raise CurrentFeedError("current_feed_database_identity_drift")
-    before_by_feed = {row["feed_id"]: row for row in receipt["before"]["feeds"]}
-    after_by_feed = {row["feed_id"]: row for row in receipt["after"]["feeds"]}
+def current_run_plan(database: Path, result: dict[str, Any]) -> list[dict[str, Any]]:
+    before_by_feed = {row["feed_id"]: row for row in result["before"]["feeds"]}
+    after_by_feed = {row["feed_id"]: row for row in result["after"]["feeds"]}
     planned: list[dict[str, Any]] = []
     try:
         connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
-        for feed_id in receipt["feed_ids"]:
+        for feed_id in before_by_feed:
             old = before_by_feed[feed_id]
             new = after_by_feed[feed_id]
             live = connection.execute(
@@ -91,7 +80,7 @@ def receipt_bound_plan(database: Path, receipt: dict[str, Any]) -> list[dict[str
             )
             expected = new["article_count"] - old["article_count"]
             if len(current) != expected:
-                raise CurrentFeedError("current_feed_watermark_count_mismatch")
+                raise CurrentFeedError("current_feed_article_delta_mismatch")
             positions = {row[0]: index + 1 for index, row in enumerate(provider_rows)}
             for article_id, title, publish_time in current:
                 if not all(isinstance(value, str) and value for value in (article_id, title)) or type(publish_time) is not int:
@@ -103,12 +92,12 @@ def receipt_bound_plan(database: Path, receipt: dict[str, Any]) -> list[dict[str
                     "title": title,
                     "publish_time": publish_time,
                     "page": positions[article_id],
-                    "refresh_revision": receipt["refresh_revision"],
+                    "refresh_revision": new["sync_time"],
                 })
         connection.close()
     except sqlite3.Error as exc:
         raise CurrentFeedError("current_feed_database_query_failed") from exc
-    if len(planned) != receipt["new_item_count"]:
+    if len(planned) != result["new_item_count"]:
         raise CurrentFeedError("current_feed_total_count_mismatch")
     identities = [(row["feed_id"], row["article_id"]) for row in planned]
     if len(set(identities)) != len(identities):
@@ -250,12 +239,12 @@ def _atomic_bytes(path: Path, data: bytes) -> None:
 
 def write_atomic_batch(
     *, successes: list[dict[str, Any]], outcomes: list[dict[str, Any]], out: Path,
-    csv_path: Path, report_path: Path, run_id: str, attempt_id: str,
-    receipt_sha256: str, refresh_revision: int, planned_count: int,
+    csv_path: Path, report_path: Path, run_id: str,
+    refresh_revision: int, planned_count: int,
 ) -> dict[str, Any]:
     if report_path.exists():
         raise CurrentFeedError("current_feed_report_already_exists")
-    raw_dir = out.parent / "wewe_current_feed_raw" / f"{run_id}_{attempt_id}"
+    raw_dir = out.parent / "wewe_current_feed_raw" / run_id
     if raw_dir.exists():
         raise CurrentFeedError("current_feed_raw_artifact_dir_exists")
     out.parent.mkdir(parents=True, exist_ok=True)
@@ -286,7 +275,7 @@ def write_atomic_batch(
             row["是否全文解析"] = "是"
             row["失败原因"] = ""
             row["解析说明"] = (
-                "receipt-bound bounded fulltext response verified; "
+                "current-run bounded fulltext response read from live SQLite; "
                 f"content_quality={success['content_quality']}"
             )
             manual_rows.append(row)
@@ -301,8 +290,7 @@ def write_atomic_batch(
         _atomic_bytes(out, jsonl); _atomic_bytes(csv_path, csv_bytes)
         failed = [row for row in outcomes if row["status"] == "failed"]
         report = {
-            "schema_version": 1, "run_id": run_id, "attempt_id": attempt_id,
-            "receipt_sha256": receipt_sha256, "refresh_revision": refresh_revision,
+            "schema_version": 2, "run_id": run_id, "refresh_revision": refresh_revision,
             "status": "completed" if not failed else "completed_with_failures",
             "full_collection_success": not failed,
             "downstream_usable": bool(manual_rows) and len(outcomes) == planned_count and len(manual_rows) + len(failed) == planned_count and all(row["artifact_count"] == 0 for row in failed),
@@ -328,27 +316,22 @@ def write_atomic_batch(
 
 def run(
     *, refresh_result_path: Path, run_id: str, run_started_at_ms: int,
-    data_dir: Path = CANONICAL_DATA_DIR, health_dir: Path = HEALTH_DIR,
+    data_dir: Path = CANONICAL_DATA_DIR,
     check_only: bool = False, out: Path | None = None, csv_path: Path | None = None,
     report_path: Path | None = None,
     fetcher: Callable[[str], tuple[bytes, str]] = bounded_fetch,
 ) -> dict[str, Any]:
     result = load_refresh_result(refresh_result_path)
-    if result["run_id"] != run_id:
+    if result["run_id"] != run_id or result["run_started_at_ms"] != run_started_at_ms:
         raise CurrentFeedError("current_feed_run_mismatch")
-    receipt = validate_refresh_receipt(
-        Path(result["receipt_path"]), result["receipt_sha256"], run_id=run_id,
-        attempt_id=result["attempt_id"], data_dir=data_dir, health_dir=health_dir,
-        now_ms=max(_exact_int(run_started_at_ms, "current_feed_run_start_invalid"), receipt_now_ms(result, health_dir)),
-        run_started_at_ms=run_started_at_ms,
-    )
     database = data_dir.resolve() / "wewe-rss.db"
-    planned = receipt_bound_plan(database, receipt)
+    planned = current_run_plan(database, result)
+    refresh_revision = max((int(row["sync_time"]) for row in result["after"]["feeds"]), default=0)
     base = {
         "ok": True, "status": "planned" if check_only else "success", "run_id": run_id,
-        "attempt_id": result["attempt_id"], "receipt_sha256": result["receipt_sha256"],
-        "refresh_revision": receipt["refresh_revision"], "planned_items": len(planned),
-        "feed_ids": receipt["feed_ids"], "article_ids": [row["article_id"] for row in planned],
+        "refresh_revision": refresh_revision, "planned_items": len(planned),
+        "feed_ids": [row["feed_id"] for row in result["after"]["feeds"]],
+        "article_ids": [row["article_id"] for row in planned],
         "uses_full_feed_json": False, "provider_requests": 0 if check_only else len(planned),
         "refresh_requested": False, "writes_feishu": False, "sends_topic_card": False,
         "triggers_script_generation": False,
@@ -356,20 +339,13 @@ def run(
     if check_only:
         return base
     successes, outcomes = fetch_planned_fulltext(planned, fetcher=fetcher)
-    # Revalidate the signed receipt and live DB after all bounded reads.
-    validate_refresh_receipt(
-        Path(result["receipt_path"]), result["receipt_sha256"], run_id=run_id,
-        attempt_id=result["attempt_id"], data_dir=data_dir, health_dir=health_dir,
-        now_ms=receipt_now_ms(result, health_dir), run_started_at_ms=run_started_at_ms,
-    )
-    if receipt_bound_plan(database, receipt) != planned:
+    if current_run_plan(database, result) != planned:
         raise CurrentFeedError("current_feed_plan_drift")
     if out is None or csv_path is None or report_path is None:
         raise CurrentFeedError("current_feed_output_path_missing")
     report = write_atomic_batch(
         successes=successes, outcomes=outcomes, out=out, csv_path=csv_path, report_path=report_path,
-        run_id=run_id, attempt_id=result["attempt_id"], receipt_sha256=result["receipt_sha256"],
-        refresh_revision=receipt["refresh_revision"], planned_count=len(planned),
+        run_id=run_id, refresh_revision=refresh_revision, planned_count=len(planned),
     )
     return {**base, "ok": report["full_collection_success"], "status": report["status"],
             "full_collection_success": report["full_collection_success"],
@@ -379,16 +355,8 @@ def run(
             "fulltext_items": report["succeeded"]}
 
 
-def receipt_now_ms(result: dict[str, Any], health_dir: Path) -> int:
-    try:
-        receipt = json.loads((health_dir.resolve() / "receipts" / f"{result['run_id']}_{result['attempt_id']}.json").read_text(encoding="utf-8"))
-        return _exact_int(receipt["completed_at_ms"], "refresh_receipt_time_invalid") + 1
-    except (OSError, KeyError, json.JSONDecodeError, TypeError) as exc:
-        raise CurrentFeedError("refresh_receipt_time_unreadable") from exc
-
-
 def main() -> int:
-    parser = argparse.ArgumentParser(description="Read receipt-bound current WeWe articles without downloading the full feed.")
+    parser = argparse.ArgumentParser(description="Read articles from the exact run's direct WeWe refresh result.")
     parser.add_argument("--refresh-result", required=True)
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--run-started-at-ms", required=True, type=int)

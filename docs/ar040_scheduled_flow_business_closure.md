@@ -10,7 +10,9 @@
 - Core output paths, environment, and Feishu DNS are checked before scheduled writes/sends. Optional telemetry path failure is a warning and cannot reverse a green exact write/read-back.
 - Staging requires explicit table IDs and explicit test card targets. Table-name fallback into production is forbidden.
 - The formal staging collection proof uses `run_daily_collection_job.py` with an explicit run ID and a current-run Douyin artifact owned by `daily_pipeline.py`. The wrapper writes and reads back staging 03 before its normal daily/downstream ledgers can report `downstream_usable=true`; callers cannot supply or patch that state.
-- `--owned-source-input-only` is an explicit staging integration mode: it suppresses unrelated provider and staging 01 intake while preserving the production-owned collection, 03 read-back, usability, deferred-editorial and finalization contracts. It does not bypass freshness or card idempotency.
+- Staging uses the public sampler/finalizer entrypoints with explicit staging
+  environment and exact-run inputs. The scheduled collection wrapper has no
+  owned-input bypass or source substitution mode.
 
 ## Automation Audit
 

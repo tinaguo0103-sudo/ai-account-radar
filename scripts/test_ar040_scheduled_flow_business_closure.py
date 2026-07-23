@@ -195,37 +195,24 @@ class AR040ScheduledFlowTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             probe_path = Path(tmp) / "probe.json"
             probe_path.write_text(json.dumps(probe), encoding="utf-8")
-            report = daily_pipeline.downstream_usability_report(
-                steps, Path(tmp), 1, probe_path,
-                ingestion_closure={
-                    "run_id": probe["run_id"],
-                    "manual_artifact_identity_verified": True,
-                    "combined_sha256": "a",
-                    "content_items_sha256": "b",
-                    "comparison_universe_count": 1,
-                    "feishu_03_identity": {
-                        "ok": True,
-                        "planned_identity": {"identity_sha256": "c"},
-                    },
-                },
-            )
+            report = daily_pipeline.downstream_usability_report(steps, Path(tmp), 1, probe_path)
         self.assertTrue(report["downstream_usable"])
-        self.assertTrue(report["downstream_usable_checks"]["canonical_profile_preflight_ok"])
 
-    def test_formal_wrapper_owned_input_builds_public_pipeline_command(self) -> None:
+    def test_formal_wrapper_has_one_full_source_pipeline_command(self) -> None:
         commands: list[list[str]] = []
 
         def fake_step(name: str, command: list[str]):
             commands.append(command)
-            return {"name": name, "command": command, "returncode": 0, "stdout": "", "stderr": ""}
+            stdout = (
+                'SOURCE_PLAN_STATUS_JSON={"plan_ready":true}'
+                if "reconcile Feishu 01" in name else ""
+            )
+            return {"name": name, "command": command, "returncode": 0, "stdout": stdout, "stderr": ""}
 
         argv = [
             "run_daily_collection_job.py", "--allow-non-production-worktree", "--no-notify",
-            "--defer-editorial", "--owned-source-input-only",
+            "--defer-editorial",
             "--run-id", "run_20260721_123700_ar040_devproof",
-            "--manual", "/tmp/controlled.jsonl",
-            "--douyin-artifact-result", "/tmp/result.json",
-            "--douyin-artifact-manual", "/tmp/douyin.jsonl",
         ]
         with mock.patch.object(Path, "is_file", return_value=True), \
                 mock.patch.object(run_daily_collection_job.sys, "argv", argv), \
@@ -237,11 +224,11 @@ class AR040ScheduledFlowTests(unittest.TestCase):
             self.assertEqual(run_daily_collection_job.main(), 0)
         pipeline = commands[-1]
         self.assertIn("daily_pipeline.py", " ".join(pipeline))
-        self.assertIn("--no-fetch-aihot", pipeline)
         self.assertIn("--defer-editorial", pipeline)
-        self.assertIn("--douyin-artifact-result", pipeline)
-        self.assertNotIn("--resolve-url-intake", pipeline)
-        self.assertNotIn("--fetch-wechat-fulltext-provider", pipeline)
+        self.assertIn("--resolve-url-intake", pipeline)
+        self.assertIn("--fetch-wechat-fulltext-provider", pipeline)
+        self.assertNotIn("--owned-source-input-only", pipeline)
+        self.assertNotIn("--douyin-artifact-result", pipeline)
 
     def test_staging_verifier_uses_explicit_topic_table_id(self) -> None:
         source = Path(verifier.__file__).read_text(encoding="utf-8")

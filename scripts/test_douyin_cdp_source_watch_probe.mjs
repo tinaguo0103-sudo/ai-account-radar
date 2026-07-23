@@ -502,6 +502,6 @@ assert.equal(sourceText.includes("Network.getAllCookies"), false);
 assert.equal(sourceText.includes("Network.getCookies"), false);
 
 const outerSource = fs.readFileSync(path.resolve("scripts/run_daily_collection_job.py"), "utf8");
-assert.equal(outerSource.includes('"--force-fetch-douyin"'), true);
+assert.equal(outerSource.includes('"--force-fetch-douyin"'), false);
 
 console.log(JSON.stringify({ ok: true, tests: 60, planned_accounts: 33, rejected_limit_mutations: rejectedLimits.length }));

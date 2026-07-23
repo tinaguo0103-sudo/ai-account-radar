@@ -13,22 +13,19 @@ import run_daily_collection_job
 
 
 class Ar031DouyinPreflightGateTests(unittest.TestCase):
-    def test_probe_is_blocked_after_identity_or_login_failure(self) -> None:
-        self.assertFalse(daily_pipeline.douyin_probe_allowed({"returncode": 3}, None))
-        self.assertFalse(daily_pipeline.douyin_probe_allowed({"returncode": 0}, {"returncode": 4}))
-        self.assertTrue(daily_pipeline.douyin_probe_allowed({"returncode": 0}, {"returncode": 0}))
+    def test_probe_requires_only_the_canonical_existing_endpoint(self) -> None:
         self.assertTrue(daily_pipeline.canonical_douyin_cdp("http://127.0.0.1:9333"))
         self.assertFalse(daily_pipeline.canonical_douyin_cdp("http://127.0.0.1:9222"))
         self.assertFalse(daily_pipeline.canonical_douyin_cdp("http://localhost:9333"))
 
     def test_active_path_has_no_alternate_profile_or_headless_fallback(self) -> None:
         source = inspect.getsource(daily_pipeline.main)
-        self.assertIn("check_douyin_session.py", source)
+        self.assertNotIn("check_douyin_session.py", source)
         self.assertNotIn("--headless", source)
         self.assertNotIn("random", source.lower())
         launcher_source = (daily_pipeline.ROOT / "scripts" / "start_douyin_cdp_chrome.py").read_text(encoding="utf-8")
         self.assertNotIn("headless", launcher_source.lower())
-        self.assertLess(source.index("check_douyin_session.py"), source.index("douyin_cdp_source_watch_probe.mjs"))
+        self.assertEqual(source.count("douyin_cdp_source_watch_probe.mjs"), 1)
         probe_source = (daily_pipeline.ROOT / "scripts" / "douyin_cdp_source_watch_probe.mjs").read_text(encoding="utf-8")
         self.assertNotIn("127.0.0.1:9222", probe_source)
         self.assertNotIn(".local_services/douyin-chrome-profile", probe_source)
@@ -44,8 +41,9 @@ class Ar031DouyinPreflightGateTests(unittest.TestCase):
         partial = [{
             "name": "fetch daily Douyin homepage title/caption samples through Chrome CDP",
             "returncode": 0,
-            "optional_returncode": 3,
-            "optional_failed": True,
+            "source_returncode": 3,
+            "source_local_failure": True,
+            "source": "douyin",
         }]
         partial.append({"name": "defer editorial", "returncode": 75, "deferred": True})
         self.assertEqual(daily_pipeline.deferred_exit_code(partial), 1)

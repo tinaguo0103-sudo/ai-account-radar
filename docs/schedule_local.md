@@ -194,7 +194,12 @@ python3 scripts/content_sampler.py \
 
 恢复命令只读取指定 run 目录，不重新抓取平台数据；运行前后仍必须依赖 `03 -> 04` 同步门禁校验，不能绕过 `validate_content_inbox_synced`。
 
-WeWe 的 scheduled mutable state 统一位于 ignored project state：`output/state/wewe-refresh/`，包含 mutex、lease、attempt、receipt、watermark 和 stale-lease recovery journal。provider SQLite/data、key/auth 和 container identity 仍保留在 canonical owner-only runtime，只读使用。项目 watermark 首次不存在时只读 legacy `last_success.json` 作为一次兼容 baseline；首次成功后只写 project watermark，不迁移或删除 legacy history。
+WeWe 定时运行只在 ignored project state 使用
+`output/state/wewe-refresh/refresh.lock` 作为互斥锁。每次运行只请求 provider
+一次并立即读取 live SQLite；失败则 WeChat 为零行，其他成功来源继续。定时链
+不读取或写入历史成功标记、签名 lease/attempt/receipt、恢复日志或缓存替代数据。
+provider SQLite/data、auth 和 container identity 仍保留在 canonical owner-only
+runtime，只读使用。
 
 反馈规则：
 
@@ -231,18 +236,17 @@ python3 scripts/daily_pipeline.py \
   --wechat-feed-limit 5 \
   --douyin-account-limit 0 \
   --douyin-video-limit 3 \
-  --douyin-verification-action log-only \
   --write-feishu \
   --defer-editorial
 ```
 
-日常使用以飞书为准，不需要先 dry-run。第一条命令先把飞书 `01 来源与采样` 的手工修改同步回本地 `config/content_sources.yaml`。第二条命令会把 `02 URL投喂入口`、经 canonical 健康/刷新/水位校验的公众号全文、全部抖音跟踪账号和 AIHOT 纳入 comparison universe，写入 `03 内容收件箱` 并生成 raw `today_10_topics.csv`。定时路径不会启动 Docker 或登录浏览器；`login_required`、`stale_cache` 或 `provider_failed` 必须走单独授权的 reauth/migration runbook。
-
-抖音主页采集默认同一天只跑一次；当天再次运行会复用 `output/source_collection_cache/YYYY-MM-DD/` 里的采集结果，避免反复触发平台风控。只有改采集逻辑、主页链接、登录态或明确复验采集时，才加：
-
-```bash
-python3 scripts/daily_pipeline.py --resolve-url-intake --force-fetch-douyin --write-feishu
-```
+日常使用以飞书为准，不需要先 dry-run。第一条命令先把飞书 `01 来源与采样`
+的手工修改同步回本地 `config/content_sources.yaml`。第二条命令对 URL intake、
+WeWe、全部抖音跟踪账号和 AIHOT 各执行一次当前 run 采集，只把成功来源的
+当前 run 行放入统一 owner/candidate plan，再写入 `03 内容收件箱` 并生成 raw
+`today_10_topics.csv`。来源失败贡献零行，其他安全来源继续；不会读取 cache、
+历史 artifact、retry artifact 或 manual substitute。定时路径不会启动 Docker、
+启动浏览器或执行登录。
 
 ## 3. 开发验证和排障
 
@@ -252,7 +256,7 @@ dry-run 只用于改代码、改采集规则或排查字段问题，不作为日
 python3 scripts/daily_pipeline.py --resolve-url-intake
 ```
 
-只使用手动样例、不访问 AIHOT：
+隔离测试可显式跳过 AIHOT；该参数不在正式 wrapper 中使用：
 
 ```bash
 python3 scripts/daily_pipeline.py --no-fetch-aihot

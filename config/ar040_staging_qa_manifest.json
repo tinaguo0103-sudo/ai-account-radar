@@ -36,7 +36,7 @@
     },
     {
       "id": "formal_staging_collection",
-      "command": "AI_ACCOUNT_RADAR_ENV=staging AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/run_daily_collection_job.py --run-id <TEST_RUN_ID> --douyin-artifact-result <CURRENT_RUN_RESULT_JSON> --douyin-artifact-manual <CURRENT_RUN_MANUAL_JSONL> --owned-source-input-only --manual <CONTROLLED_INPUT_JSONL> --defer-editorial --no-notify",
+      "command": "AI_ACCOUNT_RADAR_ENV=staging AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/content_sampler.py --run-id <TEST_RUN_ID> --manual <CONTROLLED_CURRENT_RUN_JSONL> --no-fetch-aihot --write-feishu",
       "expected": "public wrapper owns staging 03 exact read-back and same-run daily/downstream ledgers; downstream_usable is derived, not supplied"
     },
     {

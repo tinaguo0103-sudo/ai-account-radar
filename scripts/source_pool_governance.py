@@ -214,7 +214,11 @@ def zero_fallback_audit(root: Path = ROOT) -> dict[str, Any]:
     daily = (root / "scripts" / "daily_pipeline.py").read_text(encoding="utf-8")
     outer = (root / "scripts" / "run_daily_collection_job.py").read_text(encoding="utf-8")
     checks = {
-        "scheduled_forces_fresh_douyin": '"--force-fetch-douyin"' in outer,
+        "scheduled_runs_one_current_douyin_attempt": (
+            outer.count("daily_pipeline.py") == 1
+            and daily.count("douyin_cdp_source_watch_probe.mjs") == 1
+            and "--force-fetch-douyin" not in outer + daily
+        ),
         "outer_rejects_limited_plan_before_env": "validate_account_limit_argv(sys.argv" in outer and outer.index("validate_account_limit_argv(sys.argv") < outer.index("load_local_env()"),
         "daily_rejects_limited_plan_before_env": "validate_account_limit_argv(sys.argv" in daily and daily.index("validate_account_limit_argv(sys.argv") < daily.index("load_local_env()"),
         "node_rejects_limited_plan_before_output": "validateFullAccountLimitArgs(process.argv.slice(2))" in node and node.index("validateFullAccountLimitArgs(process.argv.slice(2))") < node.index("fs.mkdirSync(options.outDir"),

@@ -2130,23 +2130,16 @@ def mirror_run_outputs(run_dir: Path, write_feishu: bool, report_path: Path) -> 
     replace_latest_dir(run_dir, LATEST_DIR)
     if write_feishu:
         replace_latest_dir(run_dir, LATEST_WRITE_DIR)
-        copy_output_file(run_dir / "content_items.csv", OUT / "content_items.csv")
-        copy_output_file(run_dir / "content_breakdowns.csv", OUT / "content_breakdowns.csv")
-        copy_output_file(run_dir / "today_10_topics.csv", OUT / "today_10_topics.csv")
-        copy_output_file(run_dir / "debug_today10_generation.csv", OUT / "debug_today10_generation.csv")
-        copy_output_file(run_dir / "debug_today10_generation.md", OUT / "debug_today10_generation.md")
-        copy_output_file(run_dir / "content_sampler_log.json", OUT / "content_sampler_log.json")
         copy_output_file(report_path, REPORT_DIR / report_path.name)
         return {
             "latest": str(LATEST_DIR),
             "latest_write": str(LATEST_WRITE_DIR),
-            "legacy_official_today_candidates": str(OUT / "today_10_topics.csv"),
         }
     replace_latest_dir(run_dir, LATEST_DRY_RUN_DIR)
     return {
         "latest": str(LATEST_DIR),
         "latest_dry_run": str(LATEST_DRY_RUN_DIR),
-        "note": "dry-run outputs do not overwrite output/today_10_topics.csv or output/latest_write/",
+        "note": "dry-run outputs do not overwrite output/latest_write/",
     }
 
 
@@ -2280,7 +2273,6 @@ def write_recovery_sampler_log(
         log["error"] = error
     log_path.write_text(json.dumps(log, ensure_ascii=False, indent=2), encoding="utf-8")
     if write_feishu:
-        copy_output_file(log_path, OUT / "content_sampler_log.json")
         copy_output_file(log_path, LATEST_WRITE_DIR / "content_sampler_log.json")
     return log_path
 
@@ -2300,11 +2292,6 @@ def list_tables(token: str, app_token: str) -> dict[str, str]:
 def fields_by_name(token: str, app_token: str, table_id: str) -> dict[str, dict[str, Any]]:
     payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/fields", token=token)
     return {field["field_name"]: field for field in payload.get("data", {}).get("items", [])}
-
-
-def list_views(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
-    payload = feishu.request_json("GET", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views", token=token)
-    return payload.get("data", {}).get("items", [])
 
 
 def all_records(token: str, app_token: str, table_id: str) -> list[dict[str, Any]]:
@@ -2477,138 +2464,14 @@ def batch_create_records(token: str, app_token: str, table_id: str, rows: list[d
     return total
 
 
-def is_transient_feishu_error(exc: BaseException) -> bool:
-    if hasattr(feishu, "is_transient_error"):
-        return bool(feishu.is_transient_error(exc))
-    text = f"{exc.__class__.__name__}: {exc}".lower()
-    return any(marker in text for marker in ["timed out", "timeout", "connection reset"])
-
-
-def request_json_with_retry(
-    method: str,
-    path: str,
-    token: str,
-    body: dict[str, Any],
-    *,
-    attempts: int = 3,
-    base_delay: float = 1.0,
-) -> dict[str, Any]:
-    last_exc: BaseException | None = None
-    for attempt in range(1, attempts + 1):
-        try:
-            return feishu.request_json(method, path, token=token, body=body, retry=False)
-        except Exception as exc:
-            last_exc = exc
-            if attempt >= attempts or not is_transient_feishu_error(exc):
-                raise
-            sleep_seconds = base_delay * attempt
-            print(
-                f"[warn] transient Feishu {method} failed "
-                f"(attempt {attempt}/{attempts}); retrying in {sleep_seconds:.1f}s: {exc}",
-                file=sys.stderr,
-            )
-            time.sleep(sleep_seconds)
-    raise RuntimeError(f"Feishu request failed after {attempts} attempts: {last_exc}")
-
-
 def update_record_fields(token: str, app_token: str, table_id: str, record_id: str, fields: dict[str, str]) -> None:
-    request_json_with_retry(
+    feishu.request_json(
         "PUT",
         f"/bitable/v1/apps/{app_token}/tables/{table_id}/records/{record_id}",
         token=token,
         body={"fields": fields},
+        retry=False,
     )
-
-
-def ensure_content_inbox_view(
-    token: str,
-    app_token: str,
-    table_id: str,
-    view_name: str,
-    visible: set[str],
-    conditions: list[dict[str, Any]] | None = None,
-    conjunction: str = "and",
-) -> dict[str, Any]:
-    views = {view.get("view_name"): view for view in list_views(token, app_token, table_id)}
-    created: list[str] = []
-    if view_name not in views:
-        payload = feishu.request_json(
-            "POST",
-            f"/bitable/v1/apps/{app_token}/tables/{table_id}/views",
-            token=token,
-            body={"view_name": view_name, "view_type": "grid"},
-        )
-        views[view_name] = payload.get("data", {}).get("view", payload.get("data", {}))
-        created.append(view_name)
-        time.sleep(0.1)
-    fields = fields_by_name(token, app_token, table_id)
-    view = views.get(view_name, {})
-    if not view.get("view_id"):
-        return {"created": created, "configured": "missing_view"}
-    hidden = [field["field_id"] for name, field in fields.items() if name not in visible]
-    body = {
-        "view_name": view_name,
-        "property": {
-            "hidden_fields": hidden,
-        },
-    }
-    if conditions is not None:
-        body["property"]["filter_info"] = {
-            "conditions": conditions,
-            "conjunction": conjunction,
-        }
-    try:
-        feishu.request_json("PATCH", f"/bitable/v1/apps/{app_token}/tables/{table_id}/views/{view['view_id']}", token=token, body=body)
-        return {"created": created, "configured": "ok", "hidden_fields": len(hidden)}
-    except Exception as exc:
-        return {"created": created, "configured": f"failed:{exc}"}
-
-
-def ensure_content_inbox_today_view(token: str, app_token: str, table_id: str) -> dict[str, Any]:
-    fields = fields_by_name(token, app_token, table_id)
-    date_field = fields.get("最近采样日期") or fields.get("运行日期")
-    keep_field = fields.get("保留策略")
-    visible = {
-        "标题",
-        "来源类型",
-        "来源名称",
-        "平台",
-        "链接",
-        "摘要/片段",
-        "正文长度",
-        "是否全文解析",
-        "解析说明",
-        "采集状态",
-        "处理状态",
-        "最近采样日期",
-        "最近参与运行批次",
-        "保留策略",
-    }
-    if not date_field:
-        return {"今日采集": {"configured": "missing_date_field"}}
-    today_condition = [{
-        "field_id": date_field["field_id"],
-        "operator": "is",
-        "value": json.dumps([today_slug()], ensure_ascii=False),
-    }]
-    recent_dates = [(datetime.now() - timedelta(days=offset)).strftime("%Y-%m-%d") for offset in range(15)]
-    recent_conditions = [{
-        "field_id": date_field["field_id"],
-        "operator": "is",
-        "value": json.dumps([date], ensure_ascii=False),
-    } for date in recent_dates]
-    permanent_conditions = []
-    if keep_field:
-        permanent_conditions = [{
-            "field_id": keep_field["field_id"],
-            "operator": "is",
-            "value": json.dumps(["永久保留"], ensure_ascii=False),
-        }]
-    return {
-        "今日采集": ensure_content_inbox_view(token, app_token, table_id, "今日采集", visible, today_condition),
-        "最近15天": ensure_content_inbox_view(token, app_token, table_id, "最近15天", visible, recent_conditions, "or"),
-        "永久保留": ensure_content_inbox_view(token, app_token, table_id, "永久保留", visible, permanent_conditions if permanent_conditions else None),
-    }
 
 
 def write_content_ledger_to_feishu(
@@ -2794,11 +2657,6 @@ def write_content_ledger_to_feishu(
     progress["created_records"] = created_records
     read_back = all_records(token, app_token, table_id)
     read_back_identity = verify_content_ledger_readback(items, read_back, run_id)
-    emit("configuring_views")
-    try:
-        view_result = ensure_content_inbox_today_view(token, app_token, table_id)
-    except Exception as exc:
-        view_result = {"optional_warning": f"view_configuration_failed:{type(exc).__name__}"}
     return {
         "table": table_name("content_inbox"),
         "run_id": run_id,
@@ -2823,7 +2681,6 @@ def write_content_ledger_to_feishu(
         "owner_projection": owner_projection.manifest,
         "read_back_identity": read_back_identity,
         "core_readback_green": True,
-        "today_view": view_result,
     }
 
 
@@ -3382,83 +3239,6 @@ def recover_content_inbox_from_run(
     return result
 
 
-def validate_source_ingestion_manifest(manifest_path: Path, output_dir: Path, run_id: str) -> tuple[dict[str, Any], dict[str, Any]]:
-    from source_ingestion_lineage import validate_ingestion_bijection
-
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if str(manifest.get("run_id") or "") != run_id:
-        raise RuntimeError("source_lineage_manifest_run_mismatch")
-    source_report = manifest.get("source_report")
-    if not isinstance(source_report, dict) or not source_report.get("ok"):
-        raise RuntimeError("source_lineage_manifest_invalid")
-    closure = validate_ingestion_bijection(
-        source_report,
-        Path(str(manifest["combined_path"])),
-        output_dir / "content_items.csv",
-        output_dir / "content_breakdowns.csv",
-        output_dir / "today_10_topics.csv",
-    )
-    return source_report, closure
-
-
-def write_content_ledger_with_source_gate(
-    items: list[ContentItem], run_id: str, manifest_path: Path, output_dir: Path,
-) -> tuple[dict[str, Any], dict[str, Any]]:
-    from source_ingestion_lineage import validate_feishu_readback_identity
-
-    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
-    if str(manifest.get("run_id") or "") != run_id:
-        raise RuntimeError("source_lineage_manifest_run_mismatch")
-    try:
-        _, closure = validate_source_ingestion_manifest(manifest_path, output_dir, run_id)
-        closure["lineage_diagnostic_ok"] = True
-    except Exception as exc:
-        reason = str(exc)
-        contamination_markers = (
-            "drift", "collision", "contamination", "run_identity", "run_mismatch",
-            "duplicate", "dropped", "replaced",
-        )
-        if any(marker in reason for marker in contamination_markers):
-            raise
-        closure = {
-            "run_id": run_id,
-            "lineage_diagnostic_ok": False,
-            "lineage_optional_warning": f"source_lineage_diagnostic_failed:{type(exc).__name__}",
-            "ordered_canonical_fingerprints": [item.fingerprint for item in items],
-        }
-    candidate_rows = []
-    candidate_path = output_dir / "today_10_topics.csv"
-    if candidate_path.exists():
-        with candidate_path.open("r", encoding="utf-8-sig", newline="") as handle:
-            candidate_rows = list(csv.DictReader(handle))
-    candidate_fingerprints = [str(row.get("内容指纹") or "") for row in candidate_rows if str(row.get("内容指纹") or "")]
-    ledger = write_content_ledger_to_feishu(items, run_id, candidate_fingerprints=candidate_fingerprints)
-    raw_source_fingerprints = list(closure.get("ordered_canonical_fingerprints") or [item.fingerprint for item in items])
-    closure["source_ordered_canonical_fingerprints"] = raw_source_fingerprints
-    owner_manifest = ledger.get("owner_projection") if isinstance(ledger.get("owner_projection"), dict) else {}
-    closure["ordered_canonical_fingerprints"] = list(owner_manifest.get("ordered_owner_fingerprints") or raw_source_fingerprints)
-    closure["candidate_projection"] = ledger.get("candidate_projection") or {}
-    closure["canonical_owner_projection"] = {
-        key: ledger["owner_projection"][key]
-        for key in (
-            "raw_planned_count", "unique_owner_count", "direct_count", "alias_count",
-            "shared_alias_count", "additional_owner_count", "per_source_owner_counts",
-        )
-    }
-    try:
-        closure["feishu_03_identity"] = validate_feishu_readback_identity(
-            closure, ledger.get("read_back_identity"), run_id, write_mode=True,
-        )
-    except Exception as exc:
-        closure["feishu_03_identity"] = {
-            "ok": True,
-            "mode": "write",
-            "core_readback_green": bool(ledger.get("core_readback_green")),
-            "optional_lineage_warning": str(exc),
-        }
-    return ledger, closure
-
-
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-fetch-aihot", action="store_true")
@@ -3466,7 +3246,6 @@ def main() -> int:
     parser.add_argument("--write-feishu", action="store_true", help="Write all analyzed ContentItems into Feishu 03 内容收件箱 as the content ledger.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
     parser.add_argument("--debug-top10", action="store_true", help="Write local candidate generation diagnostics into this run's output directory.")
-    parser.add_argument("--source-lineage-manifest", default="", help="Fail-closed source lineage contract validated before any Feishu write.")
     parser.add_argument(
         "--recover-content-inbox-from-run",
         default="",
@@ -3532,30 +3311,16 @@ def main() -> int:
             "debug_top10_markdown": str(output_dir / "debug_today10_generation.md"),
         },
     }
-    source_report = None
-    if args.source_lineage_manifest:
-        source_report, local_closure = validate_source_ingestion_manifest(
-            Path(args.source_lineage_manifest), output_dir, run_id,
-        )
-        if not args.write_feishu:
-            from source_ingestion_lineage import validate_feishu_readback_identity
-            local_closure["feishu_03_identity"] = validate_feishu_readback_identity(
-                local_closure, None, run_id, write_mode=False,
-            )
-            run_log["source_ingestion_closure"] = local_closure
     if args.write_feishu:
-        if source_report is not None:
-            run_log["feishu_content_ledger"], run_log["source_ingestion_closure"] = write_content_ledger_with_source_gate(
-                items, run_id, Path(args.source_lineage_manifest), output_dir,
-            )
-        else:
-            run_log["feishu_content_ledger"] = write_content_ledger_to_feishu(items, run_id)
+        candidate_fingerprints = [str(row.get("内容指纹") or "") for row in today10 if str(row.get("内容指纹") or "")]
+        run_log["feishu_content_ledger"] = write_content_ledger_to_feishu(
+            items, run_id, candidate_fingerprints=candidate_fingerprints,
+        )
     log_path = output_dir / "content_sampler_log.json"
     run_log["outputs"]["content_sampler_log"] = str(log_path)
     run_log["mirrors"] = mirror_run_outputs(output_dir, args.write_feishu, md_path)
     log_path.write_text(json.dumps(run_log, ensure_ascii=False, indent=2), encoding="utf-8")
     if args.write_feishu:
-        copy_output_file(log_path, OUT / "content_sampler_log.json")
         copy_output_file(log_path, LATEST_WRITE_DIR / "content_sampler_log.json")
     else:
         copy_output_file(log_path, LATEST_DRY_RUN_DIR / "content_sampler_log.json")

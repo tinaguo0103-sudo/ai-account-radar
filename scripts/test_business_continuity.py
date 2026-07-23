@@ -108,7 +108,7 @@ class BusinessContinuityTests(unittest.TestCase):
         }
         with mock.patch.object(daily_pipeline, "read_json", return_value=self.douyin_probe()):
             report = daily_pipeline.downstream_usability_report(
-                steps, daily_pipeline.OUT / "runs" / RUN_ID, 1, ingestion_closure=closure
+                steps, daily_pipeline.OUT / "runs" / RUN_ID, 1
             )
         self.assertFalse(report["full_collection_success"])
         self.assertEqual(report["collection_status"], "completed_with_failures")
@@ -174,15 +174,10 @@ class BusinessContinuityTests(unittest.TestCase):
         dominated = [{"今日建议级别": "推荐制作", "选题命题": "为什么现在要做"}] * 4
         self.assertFalse(persona_audit.actionable_title_family_report(dominated)["ok"])
 
-    def test_optional_console_failure_does_not_reverse_finalization(self) -> None:
+    def test_business_path_has_no_post_readback_console_step(self) -> None:
         steps = [
             {"name": "write Feishu 04", "returncode": 0},
             {"name": "verify Feishu 04", "returncode": 0},
-            {
-                "name": "refresh Feishu 00",
-                "returncode": 1,
-                "optional_followup_failed": True,
-            },
         ]
         self.assertTrue(daily_pipeline.business_steps_ok(steps))
         tables = {
@@ -202,7 +197,7 @@ class BusinessContinuityTests(unittest.TestCase):
         self.test_source_local_failures_leave_truthful_downstream_usable()
         self.test_historical_owner_is_reused_while_safe_and_new_continue()
         self.test_candidate_failure_has_zero_replacement_and_survivor_continues()
-        self.test_optional_console_failure_does_not_reverse_finalization()
+        self.test_business_path_has_no_post_readback_console_step()
 
 
 if __name__ == "__main__":

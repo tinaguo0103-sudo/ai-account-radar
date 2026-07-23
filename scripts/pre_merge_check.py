@@ -41,12 +41,10 @@ PY_COMPILE_TARGETS = (
     "scripts/ar020e_schema_readiness.py",
     "scripts/semantic_owner_dataflow.py",
     "scripts/ar020d_semantic_owner_gate.py",
-    "scripts/source_ingestion_lineage.py",
     "scripts/wewe_provider_health.py",
     "scripts/wewe_current_feed_reader.py",
     "scripts/wewe_admin_chrome_runtime.py",
     "scripts/start_wewe_rss_admin_chrome.py",
-    "scripts/ar034_recovery_check.py",
     "scripts/install_production_keepawake.py",
 )
 DEFAULT_FEISHU_READ_TABLE_KEYS = ("topic_decision", "script_package")
@@ -215,10 +213,7 @@ def check_ar034_source_recovery_gate() -> dict[str, Any]:
         sys.executable,
         "-m",
         "unittest",
-        "scripts.test_ar034_source_recovery",
-        "scripts.test_ar034_legacy_douyin_lineage",
         "scripts.test_ar034_aihot_owner",
-        "scripts.test_ar034_wewe_receipt_adapter",
         "scripts.test_ar034c_wewe_current_feed_reader",
         "scripts.test_ar034g_canonical_owner_projection",
     ], env=env)

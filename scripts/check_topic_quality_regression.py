@@ -10,9 +10,7 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-TODAY10 = ROOT / "output" / "today_10_topics.csv"
 DEBUG = ROOT / "output" / "debug_today10_generation.csv"
-LATEST_TODAY10 = ROOT / "output" / "latest" / "today_10_topics.csv"
 LATEST_DEBUG = ROOT / "output" / "latest" / "debug_today10_generation.csv"
 LATEST_SKILL_REPORT = ROOT / "output" / "latest" / "editorial_skill_report.json"
 LATEST_WRITE_TODAY10 = ROOT / "output" / "latest_write" / "today_10_topics.csv"
@@ -195,10 +193,10 @@ def skill_report_for(today10_path: Path) -> dict[str, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="", help="Path to today candidate CSV. Defaults to output/latest/today_10_topics.csv, then legacy output/today_10_topics.csv.")
+    parser.add_argument("--input", default="", help="Path to today candidate CSV. Defaults to output/latest_write/today_10_topics.csv.")
     parser.add_argument("--debug", default="", help="Path to debug CSV. Defaults to output/latest/debug_today10_generation.csv, then legacy output/debug_today10_generation.csv.")
     args = parser.parse_args()
-    today10_path = Path(args.input) if args.input else (LATEST_WRITE_TODAY10 if LATEST_WRITE_TODAY10.exists() else (LATEST_TODAY10 if LATEST_TODAY10.exists() else TODAY10))
+    today10_path = Path(args.input) if args.input else LATEST_WRITE_TODAY10
     debug_path = Path(args.debug) if args.debug else (LATEST_WRITE_DEBUG if LATEST_WRITE_DEBUG.exists() else (LATEST_DEBUG if LATEST_DEBUG.exists() else DEBUG))
     rows = read_csv(today10_path)
     debug_rows = read_csv(debug_path)

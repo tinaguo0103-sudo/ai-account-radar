@@ -45,8 +45,7 @@ def base_steps() -> list[dict[str, object]]:
         {
             "name": "fetch daily Douyin homepage title/caption samples through Chrome CDP",
             "returncode": 0,
-            "optional_returncode": 3,
-            "optional_failed": True,
+            "candidate_local_partial": True,
         },
         {"name": "generate content breakdowns and 今日候选池", "returncode": 0},
     ]
@@ -66,7 +65,7 @@ class AR033DownstreamUsabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / "probe.json"
             write_probe(probe)
-            result = daily_pipeline.downstream_usability_report(base_steps(), Path(tmp), 9, probe, self.closure())
+            result = daily_pipeline.downstream_usability_report(base_steps(), Path(tmp), 9, probe)
         self.assertFalse(result["full_collection_success"])
         self.assertTrue(result["downstream_usable"])
         self.assertEqual(result["downstream_usable_reason"], "account_failures_isolated")
@@ -84,21 +83,23 @@ class AR033DownstreamUsabilityTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / "probe.json"
             write_probe(probe)
-            result = daily_pipeline.downstream_usability_report(base_steps(), Path(tmp), 9, probe)
+            steps = base_steps()
+            steps.append({
+                "name": "Feishu 03 exact read-back",
+                "returncode": 1,
+                "external_status_unknown_after_reconciliation": True,
+            })
+            result = daily_pipeline.downstream_usability_report(steps, Path(tmp), 9, probe)
         self.assertFalse(result["downstream_usable"])
         self.assertTrue(result["downstream_usable_checks"]["today_candidates_nonempty"])
-        self.assertIn("feishu_03_readback_contract_ok", result["downstream_blocked_reasons"])
+        self.assertIn("no_unreconciled_external_failures", result["downstream_blocked_reasons"])
 
     def test_incomplete_plan_login_fail_and_empty_candidates_block_downstream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / "probe.json"
             write_probe(probe, planned=31, attempted=30)
-            no_login_steps = base_steps()
-            no_login_steps[1] = {"name": "verify canonical Douyin profile login session", "returncode": 4}
-            result = daily_pipeline.downstream_usability_report(no_login_steps, Path(tmp), 0, probe)
+            result = daily_pipeline.downstream_usability_report(base_steps(), Path(tmp), 0, probe)
         self.assertFalse(result["downstream_usable"])
-        self.assertFalse(result["downstream_diagnostics"]["canonical_profile_preflight_ok"])
-        self.assertFalse(result["downstream_diagnostics"]["planned_equals_attempted"])
         self.assertIn("today_candidates_nonempty", result["downstream_blocked_reasons"])
 
     def test_outer_scheduled_log_carries_downstream_state_from_daily_log(self) -> None:

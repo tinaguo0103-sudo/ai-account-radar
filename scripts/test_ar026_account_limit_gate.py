@@ -60,17 +60,14 @@ class AccountLimitContractTests(unittest.TestCase):
                 mock.patch.object(daily_pipeline, "load_local_env") as load_env, \
                 mock.patch.object(daily_pipeline, "require_feishu_env") as require_env, \
                 mock.patch.object(daily_pipeline, "run_step") as run_step, \
-                mock.patch.object(daily_pipeline, "run_optional_step") as optional_step, \
                 mock.patch.object(daily_pipeline, "write_run_log") as write_log, \
-                mock.patch.object(daily_pipeline, "write_douyin_cache_manifest") as cache_write, \
-                mock.patch.object(daily_pipeline, "douyin_cache_ready") as cache_read, \
                 contextlib.redirect_stdout(stdout):
             result = daily_pipeline.main()
         self.assertEqual(result, 2)
         payload = json.loads(stdout.getvalue())
         self.assertEqual(payload["status"], "limited_plan_rejected")
         self.assertFalse(payload["env_loaded"])
-        for sentinel in (load_env, require_env, run_step, optional_step, write_log, cache_write, cache_read):
+        for sentinel in (load_env, require_env, run_step, write_log):
             sentinel.assert_not_called()
 
     def test_outer_rejects_cap_matrix_before_every_side_effect(self) -> None:
