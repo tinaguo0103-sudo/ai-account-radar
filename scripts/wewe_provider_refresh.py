@@ -21,9 +21,11 @@ from typing import Any, Callable
 PROVIDER_URL = "http://127.0.0.1:4000"
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_DATA_DIR = Path.home() / ".codex" / "ai-account-radar-runtime" / "providers" / "wewe-rss" / "data"
-HEALTH_DIR = CANONICAL_DATA_DIR.parent / "health"
-LEGACY_REFRESH_LOCK_PATH = HEALTH_DIR / "refresh.lock"
-PROJECT_REFRESH_LOCK_PATH = ROOT / "output" / "state" / "wewe-refresh" / "refresh.lock"
+LEGACY_HEALTH_DIR = CANONICAL_DATA_DIR.parent / "health"
+PROJECT_REFRESH_STATE_DIR = ROOT / "output" / "state" / "wewe-refresh"
+HEALTH_DIR = PROJECT_REFRESH_STATE_DIR
+LEGACY_REFRESH_LOCK_PATH = LEGACY_HEALTH_DIR / "refresh.lock"
+PROJECT_REFRESH_LOCK_PATH = PROJECT_REFRESH_STATE_DIR / "refresh.lock"
 RECEIPT_DIR = HEALTH_DIR / "receipts"
 ATTEMPT_DIR = HEALTH_DIR / "attempts"
 ATTESTATION_KEY_PATH = CANONICAL_DATA_DIR.parent / "secrets" / "wewe-refresh-attestation.key"
@@ -345,19 +347,66 @@ def probe_project_lock(
     }
 
 
+def probe_project_state(
+    state_dir: Path = PROJECT_REFRESH_STATE_DIR, *, project_root: Path | None = None,
+    clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
+) -> dict[str, Any]:
+    root = (project_root or ROOT).resolve()
+    resolved = state_dir.expanduser().resolve()
+    try:
+        resolved.relative_to(root)
+    except ValueError as exc:
+        raise RefreshError("refresh_state_not_project_owned") from exc
+
+    lock_proof = probe_project_lock(resolved / "refresh.lock", project_root=root, clock_ms=clock_ms)
+    probe_id = uuid.uuid4().hex
+    probes = {
+        "lease": resolved / "leases" / f"check-only_{probe_id}.json",
+        "attempt": resolved / "attempts" / f"check-only_{probe_id}.json",
+        "receipt": resolved / "receipts" / f"check-only_{probe_id}.json",
+        "watermark": resolved / f"last_success.check-only.{probe_id}.json",
+    }
+    payload = {"check_only": True, "probe_id": probe_id}
+    created: list[Path] = []
+    try:
+        for path in probes.values():
+            atomic_write(path, payload)
+            created.append(path)
+            if json.loads(path.read_text(encoding="utf-8")) != payload:
+                raise RefreshError("refresh_state_probe_readback_failed")
+    finally:
+        for path in created:
+            path.unlink(missing_ok=True)
+    if any(path.exists() for path in probes.values()):
+        raise RefreshError("refresh_state_probe_cleanup_failed")
+    return {
+        **lock_proof,
+        "state_root": str(resolved),
+        "state_root_project_owned": True,
+        "mutable_paths_probed": ["refresh.lock", "leases", "attempts", "receipts", "last_success.json"],
+        "probe_files_final_absent": True,
+        "provider_requests": 0,
+        "secret_material_read": False,
+    }
+
+
 def check_only_plan(
     data_dir: Path = CANONICAL_DATA_DIR, *, lock_path: Path | None = None,
     project_root: Path | None = None,
 ) -> dict[str, Any]:
+    effective_root = (project_root or (data_dir.parent if data_dir != CANONICAL_DATA_DIR else ROOT)).resolve()
+    effective_state = lock_path.parent if lock_path else effective_root / "output" / "state" / "wewe-refresh"
     try:
-        lock_proof = probe_project_lock(lock_path, project_root=project_root)
+        state_proof = probe_project_state(
+            effective_state, project_root=effective_root,
+        )
     except (OSError, RefreshError) as exc:
         return {"ok": False, "status": str(exc), "check_only": True, "refresh_requested": False, "provider_requests": 0, "secret_material_read": False, "secrets_exposed": False}
     try:
         snapshot = read_snapshot(data_dir.resolve() / "wewe-rss.db")
     except (OSError, RefreshError) as exc:
-        return {"ok": False, "status": str(exc), "check_only": True, "refresh_requested": False, **lock_proof, "secret_material_read": False, "secrets_exposed": False}
-    return {"ok": True, "status": "refresh_required", "check_only": True, "refresh_requested": False, "provider_url": PROVIDER_URL, "feed_ids": [row["feed_id"] for row in snapshot["feeds"]], "active_account_count": snapshot["active_account_count"], "database_identity": snapshot["database_identity"], "starts_browser": False, "starts_provider": False, **lock_proof, "secret_material_read": False, "secrets_exposed": False}
+        return {"ok": False, "status": str(exc), "check_only": True, "refresh_requested": False, **state_proof, "secret_material_read": False, "secrets_exposed": False}
+    return {"ok": True, "status": "refresh_required", "check_only": True, "refresh_requested": False, "provider_url": PROVIDER_URL, "feed_ids": [row["feed_id"] for row in snapshot["feeds"]], "active_account_count": snapshot["active_account_count"], "database_identity": snapshot["database_identity"], "starts_browser": False, "starts_provider": False, **state_proof, "secret_material_read": False, "secrets_exposed": False}
 
 
 def main() -> int:

@@ -216,16 +216,18 @@ class CanonicalOwnerProjectionTests(unittest.TestCase):
                 with self.assertRaises(owners.OwnerProjectionError):
                     owners.resolve_owner_projection([planned], records, RUN_ID)
 
-    def test_exact_historical_owner_is_read_only_and_skipped(self) -> None:
+    def test_exact_historical_owner_is_reused_for_current_participation(self) -> None:
         planned = item(1, "抖音视频")
         historical = record(planned, fingerprint="historical-owner")
         historical["fields"]["运行批次"] = "run_20260717_000001"
         historical["fields"]["最近参与运行批次"] = "run_20260717_000001"
         projection = owners.resolve_owner_projection([planned], [historical], RUN_ID)
-        self.assertEqual([], projection.projected_items)
-        self.assertEqual(1, projection.manifest["skipped_historical_count"])
+        self.assertEqual(["historical-owner"], [row.fingerprint for row in projection.projected_items])
+        self.assertEqual(0, projection.manifest["skipped_historical_count"])
+        self.assertEqual(1, projection.manifest["historical_participation_count"])
         self.assertEqual(1, projection.manifest["skipped_historical_group_count"])
-        self.assertEqual("historical_duplicate_skipped", projection.manifest["mappings"][0]["resolution"])
+        self.assertEqual("existing_historical", projection.manifest["mappings"][0]["resolution"])
+        self.assertEqual("rec-historical-owner", projection.manifest["mappings"][0]["record_id"])
 
     def test_url_empty_requires_unique_full_composite(self) -> None:
         planned = item(1, "公众号文章", url="")

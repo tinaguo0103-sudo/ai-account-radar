@@ -116,7 +116,7 @@ class BusinessContinuityTests(unittest.TestCase):
         self.assertEqual(report["system_failure_count"], 0)
         self.assertEqual(report["isolated_source_failures"][0]["source"], "wechat")
 
-    def test_historical_owner_is_skipped_while_safe_and_new_continue(self) -> None:
+    def test_historical_owner_is_reused_while_safe_and_new_continue(self) -> None:
         planned = [
             item("planned-history", "https://example.com/history"),
             item("current-owner", "https://example.com/current"),
@@ -128,12 +128,12 @@ class BusinessContinuityTests(unittest.TestCase):
         ]
         projection = owners.resolve_owner_projection(planned, existing, RUN_ID, allow_new=True)
         manifest = projection.manifest
-        self.assertEqual([row.fingerprint for row in projection.projected_items], ["current-owner", "genuinely-new"])
-        self.assertEqual(manifest["safe_count"], 2)
+        self.assertEqual([row.fingerprint for row in projection.projected_items], ["history-owner", "current-owner", "genuinely-new"])
+        self.assertEqual(manifest["safe_count"], 3)
         self.assertEqual(manifest["created_count"], 1)
-        self.assertEqual(manifest["skipped_historical_count"], 1)
+        self.assertEqual(manifest["historical_participation_count"], 1)
         self.assertEqual(
-            manifest["mappings"][0]["resolution"], "historical_duplicate_skipped"
+            manifest["mappings"][0]["resolution"], "existing_historical"
         )
 
     def test_current_run_owner_ambiguity_remains_blocking(self) -> None:
@@ -200,7 +200,7 @@ class BusinessContinuityTests(unittest.TestCase):
 
     def test_integrated_partial_flow_reaches_safe_plan_survivor_and_finalization(self) -> None:
         self.test_source_local_failures_leave_truthful_downstream_usable()
-        self.test_historical_owner_is_skipped_while_safe_and_new_continue()
+        self.test_historical_owner_is_reused_while_safe_and_new_continue()
         self.test_candidate_failure_has_zero_replacement_and_survivor_continues()
         self.test_optional_console_failure_does_not_reverse_finalization()
 

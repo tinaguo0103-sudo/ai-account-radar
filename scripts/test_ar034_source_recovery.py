@@ -358,7 +358,7 @@ class AR034SourceRecoveryTests(unittest.TestCase):
     def test_sampler_lineage_gate_precedes_feishu_write(self) -> None:
         source = Path(content_sampler.__file__).read_text(encoding="utf-8")
         gated_writer = source[source.index("def write_content_ledger_with_source_gate("):source.index("def main() -> int:")]
-        self.assertLess(gated_writer.index("validate_source_ingestion_manifest("), gated_writer.index("write_content_ledger_to_feishu(items, run_id)"))
+        self.assertLess(gated_writer.index("validate_source_ingestion_manifest("), gated_writer.index("ledger = write_content_ledger_to_feishu("))
 
     def test_wewe_browser_identity_fail_closed(self) -> None:
         profile = Path("/tmp/wewe-profile").resolve(); version = {"webSocketDebuggerUrl": "ws://browser/one"}

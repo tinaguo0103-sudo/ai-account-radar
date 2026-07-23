@@ -80,14 +80,14 @@ class AR033DownstreamUsabilityTests(unittest.TestCase):
         self.assertFalse(result["downstream_usable"])
         self.assertIn("failed_accounts_have_zero_artifacts", result["downstream_blocked_reasons"])
 
-    def test_unrelated_candidates_cannot_replace_missing_douyin_closure(self) -> None:
+    def test_missing_feishu_readback_cannot_be_replaced_by_unrelated_candidates(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
             probe = Path(tmp) / "probe.json"
             write_probe(probe)
             result = daily_pipeline.downstream_usability_report(base_steps(), Path(tmp), 9, probe)
         self.assertFalse(result["downstream_usable"])
         self.assertTrue(result["downstream_usable_checks"]["today_candidates_nonempty"])
-        self.assertIn("manual_artifact_identity_verified", result["downstream_blocked_reasons"])
+        self.assertIn("feishu_03_readback_contract_ok", result["downstream_blocked_reasons"])
 
     def test_incomplete_plan_login_fail_and_empty_candidates_block_downstream(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -97,8 +97,8 @@ class AR033DownstreamUsabilityTests(unittest.TestCase):
             no_login_steps[1] = {"name": "verify canonical Douyin profile login session", "returncode": 4}
             result = daily_pipeline.downstream_usability_report(no_login_steps, Path(tmp), 0, probe)
         self.assertFalse(result["downstream_usable"])
-        self.assertIn("canonical_profile_preflight_ok", result["downstream_blocked_reasons"])
-        self.assertIn("planned_equals_attempted", result["downstream_blocked_reasons"])
+        self.assertFalse(result["downstream_diagnostics"]["canonical_profile_preflight_ok"])
+        self.assertFalse(result["downstream_diagnostics"]["planned_equals_attempted"])
         self.assertIn("today_candidates_nonempty", result["downstream_blocked_reasons"])
 
     def test_outer_scheduled_log_carries_downstream_state_from_daily_log(self) -> None:

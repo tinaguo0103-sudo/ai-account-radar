@@ -178,9 +178,23 @@ python3 scripts/finalize_daily_pipeline_after_editorial.py \
   --update-scheduled-log
 ```
 
+如果 03 已经成功写入一部分 current-run owner，剩余缺口全部是可唯一识别的历史 owner，只允许追加它们的本次参与状态，不得重跑全量 writer：
+
+```bash
+python3 scripts/content_sampler.py \
+  --recover-content-inbox-from-run output/runs/<run_id> \
+  --recover-historical-participation-only \
+  --run-id <run_id> \
+  --write-feishu
+```
+
+这个入口不采集 browser、WeChat 或 AIHOT，只读取 exact run 的 `content_items.csv` / `today_10_topics.csv` 和现有 03。它在第一笔 Feishu 写入前完成 owner、alias、candidate、update/create 计划；historical-only 模式要求 owner 全部已存在，`create=0`，只更新 `最近参与运行批次`、`最近采样日期`、`是否本次新增=否`、`是否重复=是`，保留原始 `运行批次`、record ID 和内容身份。写后必须 exact read-back；view、telemetry、console 或本地报告失败只能 warning，不得推翻已知绿色的 03 core result。
+
 正式收尾入口在 `--write-feishu` 模式下会自行通过 `local_env.load_local_env(required=True)` 加载仓库本地环境，再执行网络预检和 Feishu 04 写入。生产默认读取 `.env.local`；staging/test 必须使用 `AI_ACCOUNT_RADAR_ENV` 或 `AI_ACCOUNT_RADAR_ENV_FILE` 选择对应环境。Prompt 中的 `cd` 只确定工作目录，不能提供环境变量或扩大可写权限。
 
 恢复命令只读取指定 run 目录，不重新抓取平台数据；运行前后仍必须依赖 `03 -> 04` 同步门禁校验，不能绕过 `validate_content_inbox_synced`。
+
+WeWe 的 scheduled mutable state 统一位于 ignored project state：`output/state/wewe-refresh/`，包含 mutex、lease、attempt、receipt、watermark 和 stale-lease recovery journal。provider SQLite/data、key/auth 和 container identity 仍保留在 canonical owner-only runtime，只读使用。项目 watermark 首次不存在时只读 legacy `last_success.json` 作为一次兼容 baseline；首次成功后只写 project watermark，不迁移或删除 legacy history。
 
 反馈规则：
 

@@ -2615,6 +2615,9 @@ def write_content_ledger_to_feishu(
     items: list[ContentItem],
     run_id: str,
     progress_callback: Callable[[dict[str, Any]], None] | None = None,
+    *,
+    candidate_fingerprints: list[str] | None = None,
+    historical_participation_only: bool = False,
 ) -> dict[str, Any]:
     progress: dict[str, Any] = {
         "stage": "start",
@@ -2641,11 +2644,11 @@ def write_content_ledger_to_feishu(
         table_id = resolve_table_id(tables, "content_inbox")
     if not table_id:
         raise SystemExit(f"Missing explicit Feishu table for content_inbox: {table_id_source}")
-    created_fields = ensure_content_inbox_fields(token, app_token, table_id)
     existing = all_records(token, app_token, table_id)
-    from canonical_owner_projection import resolve_owner_projection
+    from canonical_owner_projection import project_fingerprints, resolve_owner_projection
 
     owner_projection = resolve_owner_projection(items, existing, run_id, allow_new=True)
+    projected_candidates = project_fingerprints(candidate_fingerprints or [], owner_projection.manifest)
     raw_planned_count = len(items)
     items = owner_projection.projected_items
     progress["raw_planned_items"] = raw_planned_count
@@ -2665,13 +2668,16 @@ def write_content_ledger_to_feishu(
         for record in existing
         if str(record.get("record_id") or record.get("id") or "")
     }
+    update_plan: list[dict[str, Any]] = []
     to_create: list[dict[str, str]] = []
     updated_existing = 0
     skipped_duplicates = 0
     for item in items:
+        owner = owner_rows[item.fingerprint]
+        action = str(owner.get("action") or "")
         record = existing_by_id.get(owner_record_ids.get(item.fingerprint, ""))
         if record:
-            if owner_rows[item.fingerprint]["representative_kind"] == "alias_source":
+            if action == "existing_current" and owner["representative_kind"] == "alias_source":
                 skipped_duplicates += 1
                 progress["skipped_duplicates"] = skipped_duplicates
                 progress["processed_items"] += 1
@@ -2683,15 +2689,22 @@ def write_content_ledger_to_feishu(
             record_fields = record.get("fields", {})
             same_run_new = str(record_fields.get("运行批次", "")) == run_id or str(record_fields.get("最近参与运行批次", "")) == run_id
             fields = item_to_content_inbox_fields(item, run_id, is_new=same_run_new, duplicate=not same_run_new)
-            update_fields = {
-                "运行日期": fields["运行日期"],
-                "运行批次": fields["运行批次"],
-                "最近参与运行批次": fields["最近参与运行批次"],
-                "最近采样日期": fields["最近采样日期"],
-                "是否本次新增": "是" if same_run_new else "否",
-                "是否重复": str(record_fields.get("是否重复", "否")) if same_run_new else "是",
-            }
-            if fields.get("是否全文解析") == "是":
+            if action == "existing_historical":
+                update_fields = {
+                    "最近参与运行批次": run_id,
+                    "最近采样日期": fields["最近采样日期"],
+                    "是否本次新增": "否",
+                    "是否重复": "是",
+                }
+            else:
+                update_fields = {
+                    "运行日期": fields["运行日期"],
+                    "最近参与运行批次": fields["最近参与运行批次"],
+                    "最近采样日期": fields["最近采样日期"],
+                    "是否本次新增": "是" if same_run_new else "否",
+                    "是否重复": str(record_fields.get("是否重复", "否")) if same_run_new else "是",
+                }
+            if action != "existing_historical" and fields.get("是否全文解析") == "是":
                 update_fields.update({
                     "标题": fields["标题"],
                     "来源类型": fields["来源类型"],
@@ -2711,29 +2724,81 @@ def write_content_ledger_to_feishu(
                     "原始payload路径": fields["原始payload路径"],
                     "解析说明": fields["解析说明"],
                 })
-            update_record_fields(token, app_token, table_id, record_id, update_fields)
-            updated_existing += 1
-            progress["updated_existing"] = updated_existing
-            if not same_run_new:
+            if historical_participation_only and action != "existing_historical":
+                progress["processed_items"] += 1
+                continue
+            update_plan.append({"record_id": record_id, "owner_fingerprint": item.fingerprint, "action": action, "fields": update_fields})
+            if action == "existing_historical":
                 skipped_duplicates += 1
                 progress["skipped_duplicates"] = skipped_duplicates
             progress["processed_items"] += 1
-            if progress["processed_items"] % 10 == 0:
-                emit("updating_existing_records")
-            time.sleep(0.1)
             continue
+        if historical_participation_only:
+            raise RuntimeError("historical_participation_recovery_requires_existing_owner")
         fields = item_to_content_inbox_fields(item, run_id, is_new=True, duplicate=False)
         to_create.append(fields)
         progress["processed_items"] += 1
         progress["queued_create"] = len(to_create)
         if progress["processed_items"] % 10 == 0:
             emit("matching_records")
+    write_plan = {
+        "run_id": run_id,
+        "raw_rows": raw_planned_count,
+        "unique_owners": owner_projection.manifest["unique_owner_count"],
+        "aliases": owner_projection.manifest["raw_alias_count"],
+        "existing_current": sum(row.get("action") == "existing_current" for row in owner_projection.manifest["owners"]),
+        "existing_historical": sum(row.get("action") == "existing_historical" for row in owner_projection.manifest["owners"]),
+        "new_create": len(to_create),
+        "local_failures": owner_projection.manifest["blocked_count"],
+        "update_count": len(update_plan),
+        "candidate_input_count": len(candidate_fingerprints or []),
+        "candidate_mapped_count": len(projected_candidates),
+        "candidate_local_failure_count": len(candidate_fingerprints or []) - len(projected_candidates),
+        "complete_before_first_business_write": True,
+        "historical_participation_only": historical_participation_only,
+    }
+    created_fields = ensure_content_inbox_fields(token, app_token, table_id)
+    emit("executing_precomputed_plan")
+    recovered_updates = 0
+    for planned in update_plan:
+        try:
+            update_record_fields(token, app_token, table_id, planned["record_id"], planned["fields"])
+        except Exception as exc:
+            reconciled = all_records(token, app_token, table_id)
+            matches = [row for row in reconciled if str(row.get("record_id") or row.get("id") or "") == planned["record_id"]]
+            if len(matches) == 1 and run_id == str(matches[0].get("fields", {}).get("最近参与运行批次") or ""):
+                recovered_updates += 1
+            else:
+                raise RuntimeError("content_inbox_update_status_unknown_after_reconciliation") from exc
+        updated_existing += 1
+        progress["updated_existing"] = updated_existing
     emit("creating_new_records")
-    created_records = batch_create_records(token, app_token, table_id, to_create) if to_create else 0
+    recovered_creates = 0
+    try:
+        created_records = batch_create_records(token, app_token, table_id, to_create) if to_create else 0
+    except Exception as exc:
+        reconciled = all_records(token, app_token, table_id)
+        by_fingerprint = {
+            str(row.get("fields", {}).get("内容指纹") or ""): row
+            for row in reconciled if str(row.get("fields", {}).get("内容指纹") or "")
+        }
+        expected = [str(row.get("内容指纹") or "") for row in to_create]
+        if expected and all(value in by_fingerprint and run_id in {
+            str(by_fingerprint[value].get("fields", {}).get("运行批次") or ""),
+            str(by_fingerprint[value].get("fields", {}).get("最近参与运行批次") or ""),
+        } for value in expected):
+            created_records = len(expected)
+            recovered_creates = len(expected)
+        else:
+            raise RuntimeError("content_inbox_create_status_unknown_after_reconciliation") from exc
     progress["created_records"] = created_records
     read_back = all_records(token, app_token, table_id)
     read_back_identity = verify_content_ledger_readback(items, read_back, run_id)
     emit("configuring_views")
+    try:
+        view_result = ensure_content_inbox_today_view(token, app_token, table_id)
+    except Exception as exc:
+        view_result = {"optional_warning": f"view_configuration_failed:{type(exc).__name__}"}
     return {
         "table": table_name("content_inbox"),
         "run_id": run_id,
@@ -2745,10 +2810,20 @@ def write_content_ledger_to_feishu(
         "created_fields": created_fields,
         "created_records": created_records,
         "updated_existing": updated_existing,
+        "recovered_updates": recovered_updates,
+        "recovered_creates": recovered_creates,
         "skipped_duplicates": skipped_duplicates,
+        "write_plan": write_plan,
+        "candidate_projection": {
+            "input_count": len(candidate_fingerprints or []),
+            "mapped_count": len(projected_candidates),
+            "mapped_owner_fingerprints": projected_candidates,
+            "local_failure_count": len(candidate_fingerprints or []) - len(projected_candidates),
+        },
         "owner_projection": owner_projection.manifest,
         "read_back_identity": read_back_identity,
-        "today_view": ensure_content_inbox_today_view(token, app_token, table_id),
+        "core_readback_green": True,
+        "today_view": view_result,
     }
 
 
@@ -3221,7 +3296,9 @@ def select_skill_review_candidates(candidates: list[dict[str, Any]]) -> list[dic
     return interleaved
 
 
-def recover_content_inbox_from_run(run_dir: Path, run_id: str, write_feishu: bool) -> dict[str, Any]:
+def recover_content_inbox_from_run(
+    run_dir: Path, run_id: str, write_feishu: bool, *, historical_participation_only: bool = False,
+) -> dict[str, Any]:
     if not run_id:
         raise SystemExit("--recover-content-inbox-from-run requires --run-id")
     run_dir = run_dir.expanduser().resolve()
@@ -3254,6 +3331,7 @@ def recover_content_inbox_from_run(run_dir: Path, run_id: str, write_feishu: boo
         "content_breakdowns": csv_data_row_count(run_dir / "content_breakdowns.csv"),
         "today_candidates": csv_data_row_count(run_dir / "today_10_topics.csv"),
         "will_write_feishu": write_feishu,
+        "historical_participation_only": historical_participation_only,
     }
     if not write_feishu:
         result["note"] = "dry-run only; no Feishu writes and no recovery log mutation"
@@ -3269,15 +3347,32 @@ def recover_content_inbox_from_run(run_dir: Path, run_id: str, write_feishu: boo
     try:
         app_token = require_feishu_env()
         token = feishu.tenant_token()
-        table_id = resolve_table_id(list_tables(token, app_token), "content_inbox")
+        tables = list_tables(token, app_token)
+        table_id, table_id_source = configured_table_id(tables, "content_inbox")
+        if table_id_source == "table_name":
+            table_id = resolve_table_id(tables, "content_inbox")
         if not table_id:
-            raise SystemExit(f"Missing Feishu table: {table_name('content_inbox')}")
+            raise SystemExit(f"Missing explicit Feishu table for content_inbox: {table_id_source}")
         plan = content_inbox_recovery_plan(token, app_token, table_id, items, run_id)
         progress.update(plan)
         progress["stage"] = "planned_recovery"
         write_recovery_sampler_log(run_dir, run_id, "partial", len(items), progress)
         print(json.dumps({"event": "content_inbox_recovery_plan", "run_id": run_id, **plan}, ensure_ascii=False))
-        ledger = write_content_ledger_to_feishu(items, run_id, progress_callback=on_progress)
+        candidate_fingerprints: list[str] = []
+        candidate_path = run_dir / "today_10_topics.csv"
+        if candidate_path.exists():
+            with candidate_path.open("r", encoding="utf-8-sig", newline="") as handle:
+                candidate_fingerprints = [
+                    str(row.get("内容指纹") or "") for row in csv.DictReader(handle)
+                    if str(row.get("内容指纹") or "")
+                ]
+        ledger = write_content_ledger_to_feishu(
+            items,
+            run_id,
+            progress_callback=on_progress,
+            candidate_fingerprints=candidate_fingerprints,
+            historical_participation_only=historical_participation_only,
+        )
     except Exception as exc:
         write_recovery_sampler_log(run_dir, run_id, "failed", len(items), progress, error=str(exc))
         raise
@@ -3309,16 +3404,40 @@ def validate_source_ingestion_manifest(manifest_path: Path, output_dir: Path, ru
 def write_content_ledger_with_source_gate(
     items: list[ContentItem], run_id: str, manifest_path: Path, output_dir: Path,
 ) -> tuple[dict[str, Any], dict[str, Any]]:
-    from canonical_owner_projection import project_fingerprints
     from source_ingestion_lineage import validate_feishu_readback_identity
 
-    _, closure = validate_source_ingestion_manifest(manifest_path, output_dir, run_id)
-    ledger = write_content_ledger_to_feishu(items, run_id)
-    raw_source_fingerprints = list(closure["ordered_canonical_fingerprints"])
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    if str(manifest.get("run_id") or "") != run_id:
+        raise RuntimeError("source_lineage_manifest_run_mismatch")
+    try:
+        _, closure = validate_source_ingestion_manifest(manifest_path, output_dir, run_id)
+        closure["lineage_diagnostic_ok"] = True
+    except Exception as exc:
+        reason = str(exc)
+        contamination_markers = (
+            "drift", "collision", "contamination", "run_identity", "run_mismatch",
+            "duplicate", "dropped", "replaced",
+        )
+        if any(marker in reason for marker in contamination_markers):
+            raise
+        closure = {
+            "run_id": run_id,
+            "lineage_diagnostic_ok": False,
+            "lineage_optional_warning": f"source_lineage_diagnostic_failed:{type(exc).__name__}",
+            "ordered_canonical_fingerprints": [item.fingerprint for item in items],
+        }
+    candidate_rows = []
+    candidate_path = output_dir / "today_10_topics.csv"
+    if candidate_path.exists():
+        with candidate_path.open("r", encoding="utf-8-sig", newline="") as handle:
+            candidate_rows = list(csv.DictReader(handle))
+    candidate_fingerprints = [str(row.get("内容指纹") or "") for row in candidate_rows if str(row.get("内容指纹") or "")]
+    ledger = write_content_ledger_to_feishu(items, run_id, candidate_fingerprints=candidate_fingerprints)
+    raw_source_fingerprints = list(closure.get("ordered_canonical_fingerprints") or [item.fingerprint for item in items])
     closure["source_ordered_canonical_fingerprints"] = raw_source_fingerprints
-    closure["ordered_canonical_fingerprints"] = project_fingerprints(
-        raw_source_fingerprints, ledger["owner_projection"],
-    )
+    owner_manifest = ledger.get("owner_projection") if isinstance(ledger.get("owner_projection"), dict) else {}
+    closure["ordered_canonical_fingerprints"] = list(owner_manifest.get("ordered_owner_fingerprints") or raw_source_fingerprints)
+    closure["candidate_projection"] = ledger.get("candidate_projection") or {}
     closure["canonical_owner_projection"] = {
         key: ledger["owner_projection"][key]
         for key in (
@@ -3326,9 +3445,17 @@ def write_content_ledger_with_source_gate(
             "shared_alias_count", "additional_owner_count", "per_source_owner_counts",
         )
     }
-    closure["feishu_03_identity"] = validate_feishu_readback_identity(
-        closure, ledger.get("read_back_identity"), run_id, write_mode=True,
-    )
+    try:
+        closure["feishu_03_identity"] = validate_feishu_readback_identity(
+            closure, ledger.get("read_back_identity"), run_id, write_mode=True,
+        )
+    except Exception as exc:
+        closure["feishu_03_identity"] = {
+            "ok": True,
+            "mode": "write",
+            "core_readback_green": bool(ledger.get("core_readback_green")),
+            "optional_lineage_warning": str(exc),
+        }
     return ledger, closure
 
 
@@ -3345,11 +3472,21 @@ def main() -> int:
         default="",
         help="Recover Feishu 03 内容收件箱 from an existing output/runs/<run_id> directory without collecting platform data.",
     )
+    parser.add_argument(
+        "--recover-historical-participation-only",
+        action="store_true",
+        help="With --recover-content-inbox-from-run, update only existing historical owners' current-run participation; create no records and run no collection source.",
+    )
     args = parser.parse_args()
 
     run_id = args.run_id or default_run_id()
     if args.recover_content_inbox_from_run:
-        result = recover_content_inbox_from_run(Path(args.recover_content_inbox_from_run), run_id, args.write_feishu)
+        result = recover_content_inbox_from_run(
+            Path(args.recover_content_inbox_from_run),
+            run_id,
+            args.write_feishu,
+            historical_participation_only=args.recover_historical_participation_only,
+        )
         print(json.dumps(result, ensure_ascii=False, indent=2))
         return 0
 

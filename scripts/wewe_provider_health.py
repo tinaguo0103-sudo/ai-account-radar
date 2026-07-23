@@ -13,10 +13,11 @@ import stat
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
-from wewe_provider_refresh import ATTEMPT_ID_PATTERN, HEALTH_DIR, PROVIDER_URL, RUN_ID_PATTERN, RefreshError, attestation_key_id, canonical_json, load_attestation_key, read_snapshot, sha256_bytes, sign_payload
+from wewe_provider_refresh import ATTEMPT_ID_PATTERN, HEALTH_DIR, LEGACY_HEALTH_DIR, PROVIDER_URL, RUN_ID_PATTERN, RefreshError, attestation_key_id, canonical_json, load_attestation_key, read_snapshot, sha256_bytes, sign_payload
 
 CANONICAL_DATA_DIR = Path.home() / ".codex" / "ai-account-radar-runtime" / "providers" / "wewe-rss" / "data"
-CANONICAL_STATE_PATH = CANONICAL_DATA_DIR.parent / "health" / "last_success.json"
+CANONICAL_STATE_PATH = HEALTH_DIR / "last_success.json"
+LEGACY_CANONICAL_STATE_PATH = LEGACY_HEALTH_DIR / "last_success.json"
 ALLOWED_STATES = {"updated_with_new_items", "updated_no_new_items", "stale_cache", "login_required", "provider_failed"}
 
 
@@ -199,9 +200,12 @@ def validate_refresh_receipt(
     return receipt
 
 
-def load_success_watermark(path: Path) -> dict[str, Any]:
+def load_success_watermark(path: Path, legacy_path: Path | None = None) -> dict[str, Any]:
+    source = path
+    if not source.exists() and legacy_path is not None and legacy_path.exists():
+        source = legacy_path
     try:
-        payload = json.loads(path.read_text(encoding="utf-8"))
+        payload = json.loads(source.read_text(encoding="utf-8"))
         return {
             "refresh_revision": int(payload["refresh_revision"]),
             "refreshed_at_ms": int(payload["refreshed_at_ms"]),
@@ -258,7 +262,9 @@ def main() -> int:
     args = parser.parse_args()
     data_dir = configured_data_dir()
     state_path = Path(args.state_path).expanduser().resolve()
-    watermark = load_success_watermark(state_path)
+    legacy_state_path = LEGACY_CANONICAL_STATE_PATH if state_path == CANONICAL_STATE_PATH.resolve() else None
+    watermark = load_success_watermark(state_path, legacy_state_path)
+    watermark_source = "project" if state_path.exists() else ("legacy_read_only" if legacy_state_path and legacy_state_path.exists() else "empty")
     if args.previous_success_revision is not None:
         watermark["refresh_revision"] = args.previous_success_revision
     article_watermark = args.article_publish_watermark if args.article_publish_watermark is not None else watermark["article_publish_watermark"]
@@ -293,6 +299,7 @@ def main() -> int:
     result["run_id"] = args.run_id
     result["article_publish_watermark"] = article_watermark
     result["state_path"] = str(state_path)
+    result["watermark_source"] = watermark_source
     result.update({
         "checked_at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "data_dir": str(data_dir),

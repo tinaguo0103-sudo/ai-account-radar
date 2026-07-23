@@ -261,6 +261,23 @@ def commit_wechat_success_watermark(
     return target
 
 
+def commit_wechat_watermark_optional(
+    report: dict[str, Any], freshness: dict[str, Any], *,
+    downstream_report: dict[str, Any], ingestion_closure: dict[str, Any], run_id: str,
+) -> None:
+    report.setdefault("wechat_freshness", dict(freshness))
+    try:
+        watermark_path = commit_wechat_success_watermark(
+            freshness, downstream_report=downstream_report,
+            ingestion_closure=ingestion_closure, run_id=run_id,
+        )
+        report["wechat_freshness"]["watermark_committed"] = True
+        report["wechat_freshness"]["watermark_path"] = str(watermark_path)
+    except Exception as exc:  # optional state cannot reverse a green 03 read-back
+        report["wechat_freshness"]["watermark_committed"] = False
+        report["wechat_freshness"]["optional_warning"] = f"watermark_commit_failed:{type(exc).__name__}"
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -432,6 +449,7 @@ def downstream_usability_report(
     hard_failures = [
         step for step in full_collection_failures
         if not is_candidate_local_partial(step, probe)
+        and step.get("external_status_unknown_after_reconciliation")
     ]
     failed_artifact_leaks = [
         str(row.get("account_name") or "")
@@ -444,16 +462,18 @@ def downstream_usability_report(
         if name not in failure_names and int(count or 0) > 0
     ]
 
-    checks = {
+    checks = {"today_candidates_nonempty": today_candidates > 0}
+    blocking_checks = {
         "today_candidates_nonempty": today_candidates > 0,
-        "no_system_level_failures": not hard_failures,
+        "no_unreconciled_external_failures": not hard_failures,
     }
+    diagnostics: dict[str, bool] = {}
     douyin_isolated = any(
         step.get("source_local_failure") and step.get("source") == "douyin"
         for step in steps
     )
     if not douyin_isolated:
-        checks.update({
+        source_checks = {
             "canonical_profile_preflight_ok": (
                 successful_step(steps, "validate supplied current-run Douyin source artifact")
                 or (
@@ -467,12 +487,15 @@ def downstream_usability_report(
             "failed_accounts_have_zero_artifacts": not failed_artifact_leaks,
             "item_lineage_ok": bool((probe.get("item_lineage") or {}).get("ok")),
             "successful_account_artifacts_nonempty": bool(successful_artifact_accounts),
-        })
+        }
+        checks.update(source_checks)
+        diagnostics.update(source_checks)
+        blocking_checks["failed_accounts_have_zero_artifacts"] = not failed_artifact_leaks
     successful_items_declared = sum(int(value or 0) for name, value in per_account_artifacts.items() if name not in failure_names)
     if successful_items_declared > 0:
         closure = ingestion_closure if isinstance(ingestion_closure, dict) else {}
         feishu_identity = closure.get("feishu_03_identity") if isinstance(closure.get("feishu_03_identity"), dict) else {}
-        checks.update({
+        closure_checks = {
             "probe_run_identity_bound": bool(closure.get("run_id") and closure.get("run_id") == probe.get("run_id")),
             "manual_artifact_identity_verified": bool(closure.get("manual_artifact_identity_verified")),
             "combined_input_bijection_ok": bool(closure.get("combined_sha256")),
@@ -480,11 +503,15 @@ def downstream_usability_report(
             "comparison_universe_inclusion_ok": int(closure.get("comparison_universe_count") or 0) > 0,
             "feishu_03_planned_identity_ok": bool((feishu_identity.get("planned_identity") or {}).get("identity_sha256")),
             "feishu_03_readback_contract_ok": bool(feishu_identity.get("ok")),
-        })
+        }
+        checks.update(closure_checks)
+        diagnostics.update(closure_checks)
+        blocking_checks["feishu_03_readback_contract_ok"] = bool(feishu_identity.get("ok"))
     wechat_read = wechat_read_outcome if isinstance(wechat_read_outcome, dict) else {}
     if wechat_read.get("status") == "completed_with_failures":
-        checks.update(wechat_candidate_partial_checks(wechat_read))
-    blocked_reasons = [name for name, ok in checks.items() if not ok]
+        diagnostics.update(wechat_candidate_partial_checks(wechat_read))
+    checks["no_unreconciled_external_failures"] = not hard_failures
+    blocked_reasons = [name for name, ok in blocking_checks.items() if not ok]
     downstream_usable = not blocked_reasons
     full_collection_success = not full_collection_failures
     return {
@@ -495,6 +522,7 @@ def downstream_usability_report(
             "account_failures_isolated" if downstream_usable else "blocked"
         ),
         "downstream_usable_checks": checks,
+        "downstream_diagnostics": diagnostics,
         "downstream_blocked_reasons": blocked_reasons,
         "source_failure_count": len(full_collection_failures),
         "system_failure_count": len(hard_failures),
@@ -1007,9 +1035,7 @@ def main() -> int:
             downstream_report=downstream_report,
         )
         if watermark_pending:
-            watermark_path = commit_wechat_success_watermark(wechat_freshness or {}, downstream_report=downstream_report, ingestion_closure=watermark_closure, run_id=run_id)
-            downstream_report["wechat_freshness"]["watermark_committed"] = True
-            downstream_report["wechat_freshness"]["watermark_path"] = str(watermark_path)
+            commit_wechat_watermark_optional(downstream_report, wechat_freshness or {}, downstream_report=downstream_report, ingestion_closure=watermark_closure, run_id=run_id)
         payload = {
             "ok": not failures,
             "status": "failed_or_partial" if failures else "completed_empty",
@@ -1059,10 +1085,7 @@ def main() -> int:
             downstream_report=downstream_report,
         )
         if watermark_pending:
-            watermark_path = commit_wechat_success_watermark(wechat_freshness or {}, downstream_report=downstream_report, ingestion_closure=watermark_closure, run_id=run_id)
-            downstream_report["wechat_freshness"] = dict(wechat_freshness or {})
-            downstream_report["wechat_freshness"]["watermark_committed"] = True
-            downstream_report["wechat_freshness"]["watermark_path"] = str(watermark_path)
+            commit_wechat_watermark_optional(downstream_report, wechat_freshness or {}, downstream_report=downstream_report, ingestion_closure=watermark_closure, run_id=run_id)
         payload = {
             "ok": False,
             "deferred_editorial": True,
@@ -1148,9 +1171,7 @@ def main() -> int:
         downstream_report=final_report,
     )
     if watermark_pending and ok:
-        watermark_path = commit_wechat_success_watermark(wechat_freshness or {}, downstream_report=downstream_report, ingestion_closure=watermark_closure, run_id=run_id)
-        final_report["wechat_freshness"]["watermark_committed"] = True
-        final_report["wechat_freshness"]["watermark_path"] = str(watermark_path)
+        commit_wechat_watermark_optional(final_report, wechat_freshness or {}, downstream_report=downstream_report, ingestion_closure=watermark_closure, run_id=run_id)
     payload = {
         "ok": ok,
         "mode": "write-feishu" if args.write_feishu else "dry-run",
