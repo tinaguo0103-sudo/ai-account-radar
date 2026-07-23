@@ -123,7 +123,7 @@ def require_app_token() -> str:
 
 
 def latest_run_id() -> str:
-    log_path = Path("output/latest_write/content_sampler_log.json")
+    log_path = Path("output/logs") / f"daily_pipeline_{datetime.now().strftime('%Y-%m-%d')}.json"
     if not log_path.exists():
         return ""
     try:

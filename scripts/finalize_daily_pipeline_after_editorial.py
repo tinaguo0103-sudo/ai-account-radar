@@ -1,15 +1,14 @@
 #!/usr/bin/env python3
-"""Finalize a daily run after an outer Codex agent enriches the topic CSV.
+"""Finalize one exact daily run after the editorial task enriches its topic CSV.
 
 The 08:00 Codex automation runs inside Codex already. Calling `codex exec`
 again from `editorial_skill_runner.py` can fail in that context, so the outer
 agent may enrich `today_10_topics.csv` directly using the global editorial
 Skill. This script only performs the mechanical tail of the pipeline:
 
-- sync enriched CSV/report into latest mirrors;
 - dry-run and write Feishu 04;
 - verify Feishu 04 consistency;
-- mark the daily pipeline log as recovered.
+- mark the exact daily pipeline log as finalized.
 
 It does not generate editorial content.
 """
@@ -104,31 +103,14 @@ def csv_fingerprints(path: Path) -> list[str]:
         return [str(row.get("内容指纹") or "").strip() for row in csv.DictReader(handle) if str(row.get("内容指纹") or "").strip()]
 
 
-def ensure_latest_sampler_log(run_id: str, today_path: Path) -> None:
+def update_run_sampler_log(run_id: str, today_path: Path) -> None:
     output_dir = OUT / "runs" / run_id
     run_log_path = output_dir / "content_sampler_log.json"
     payload = read_json(run_log_path)
     if not payload:
-        payload = {
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "run_id": run_id,
-            "mode": "write-feishu",
-            "output_dir": str(output_dir),
-            "items": csv_row_count(output_dir / "content_items.csv"),
-            "breakdowns": csv_row_count(output_dir / "content_breakdowns.csv"),
-            "today_candidates": csv_row_count(today_path),
-            "logs": ["Recovered by external editorial finalizer; original sampler log was missing."],
-            "outputs": {
-                "content_items": str(output_dir / "content_items.csv"),
-                "content_breakdowns": str(output_dir / "content_breakdowns.csv"),
-                "today_candidates": str(today_path),
-                "today_10_markdown": str(output_dir / f"today_10_topics_{datetime.now().strftime('%Y-%m-%d')}.md"),
-                "debug_top10_csv": str(output_dir / "debug_today10_generation.csv"),
-                "debug_top10_markdown": str(output_dir / "debug_today10_generation.md"),
-                "content_sampler_log": str(run_log_path),
-            },
-        }
-        write_json(run_log_path, payload)
+        raise RuntimeError("exact_run_sampler_log_missing")
+    if str(payload.get("run_id") or "") != run_id or str(payload.get("mode") or "") != "write-feishu":
+        raise RuntimeError("exact_run_sampler_log_identity_mismatch")
     payload.update({
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "run_id": run_id,
@@ -143,8 +125,6 @@ def ensure_latest_sampler_log(run_id: str, today_path: Path) -> None:
     })
     payload["outputs"] = outputs
     write_json(run_log_path, payload)
-    for directory in (OUT, OUT / "latest", OUT / "latest_write"):
-        write_json(directory / "content_sampler_log.json", payload)
 
 
 def update_pipeline_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool) -> Path:
@@ -155,11 +135,9 @@ def update_pipeline_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool)
     overall_ok = bool(ok and full_collection_success)
     payload.update({
         "ok": overall_ok,
-        "recovered_ok": ok,
         "editorial_finalized": ok,
         "finalization_ok": ok,
         "status": "completed" if overall_ok else ("completed_with_failures" if ok else "failed"),
-        "recovered_from": "external_editorial_finalizer",
         "run_id": run_id or payload.get("run_id", ""),
         "generated_at": datetime.now().isoformat(timespec="seconds"),
         "steps": existing_steps + tail_steps,
@@ -176,48 +154,20 @@ def update_pipeline_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool)
     return log_path
 
 
-def update_scheduled_log(run_id: str, tail_steps: list[dict[str, Any]], ok: bool) -> Path:
-    log_path = LOG_DIR / f"scheduled_daily_collection_{datetime.now().strftime('%Y-%m-%d')}.json"
-    payload = read_json(log_path)
-    if not payload:
-        payload = {
-            "ok": ok,
-            "run_id": run_id,
-            "generated_at": datetime.now().isoformat(timespec="seconds"),
-            "recovered_from": "external_editorial_finalizer",
-            "recovery_note": "Scheduled wrapper log was missing; created during external editorial recovery.",
-            "steps": [],
-        }
-    existing_steps = payload.get("steps") if isinstance(payload.get("steps"), list) else []
-    full_collection_success = bool(payload.get("full_collection_success", payload.get("ok", False)))
-    overall_ok = bool(ok and full_collection_success)
-    payload.update({
-        "ok": overall_ok,
-        "recovered_ok": ok,
-        "editorial_finalized": ok,
-        "finalization_ok": ok,
-        "status": "completed" if overall_ok else ("completed_with_failures" if ok else "failed"),
-        "recovered_from": "external_editorial_finalizer",
-        "run_id": run_id or payload.get("run_id", ""),
-        "generated_at": datetime.now().isoformat(timespec="seconds"),
-        "steps": existing_steps + tail_steps,
-    })
-    write_json(log_path, payload)
-    return log_path
-
-
 def main() -> int:
     parser = argparse.ArgumentParser(description="Finalize a daily run after external editorial enrichment.")
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--input", default="")
     parser.add_argument("--write-feishu", action="store_true")
-    parser.add_argument("--update-scheduled-log", action="store_true")
     args = parser.parse_args()
 
     py = sys.executable
     today_path = Path(args.input) if args.input else default_today_path(args.run_id)
     if not today_path.exists():
         raise SystemExit(f"Missing enriched topic CSV: {today_path}")
+    authoritative_path = default_today_path(args.run_id).resolve()
+    if today_path.resolve() != authoritative_path:
+        raise SystemExit(f"Finalizer input must be exact run-scoped artifact: {authoritative_path}")
 
     if args.write_feishu:
         try:
@@ -232,17 +182,27 @@ def main() -> int:
             }, ensure_ascii=False, indent=2))
             return 2
 
-    editorial_report = today_path.parent / "editorial_skill_report.json"
-    daily_pipeline.sync_enriched_candidate_mirrors(today_path, editorial_report, args.write_feishu)
     if args.write_feishu:
         preflight = evaluate_preflight("editorial", check_network=True)
         if not preflight["ok"]:
             print(json.dumps({"ok": False, "reason": "scheduled_flow_preflight_failed", "preflight": preflight}, ensure_ascii=False, indent=2))
             return 2
-        ensure_latest_sampler_log(args.run_id, today_path)
+        try:
+            update_run_sampler_log(args.run_id, today_path)
+        except RuntimeError as exc:
+            print(json.dumps({
+                "ok": False,
+                "reason": str(exc),
+                "external_calls": 0,
+                "business_writes": 0,
+            }, ensure_ascii=False, indent=2))
+            return 2
 
     steps: list[dict[str, Any]] = []
-    dry_run_cmd = [py, str(ROOT / "scripts" / "push_today10_to_feishu.py"), "--input", str(today_path)]
+    dry_run_cmd = [
+        py, str(ROOT / "scripts" / "push_today10_to_feishu.py"),
+        "--input", str(today_path), "--run-id", args.run_id,
+    ]
     steps.append(run_step("dry-run 今日候选池 Feishu write after external editorial", dry_run_cmd))
     if steps[-1]["returncode"] != 0:
         log_path = update_pipeline_log(args.run_id, steps, False)
@@ -282,13 +242,11 @@ def main() -> int:
 
     ok = daily_pipeline.business_steps_ok(steps)
     log_path = update_pipeline_log(args.run_id, steps, ok)
-    scheduled_log = update_scheduled_log(args.run_id, steps, ok) if args.update_scheduled_log else ""
     print(json.dumps({
         "ok": ok,
         "run_id": args.run_id,
         "input": str(today_path),
         "log": str(log_path),
-        "scheduled_log": str(scheduled_log) if scheduled_log else "",
     }, ensure_ascii=False, indent=2))
     return 0 if ok else 1
 

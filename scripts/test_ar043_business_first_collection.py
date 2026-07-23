@@ -103,10 +103,9 @@ class AR043BusinessFirstCollectionTests(unittest.TestCase):
                 items,
                 RUN_ID,
                 candidate_fingerprints=candidates,
-                historical_participation_only=True,
             )
 
-    def test_incident_matrix_historical_recovery_and_identical_rerun(self) -> None:
+    def test_incident_matrix_normal_owner_plan_and_identical_rerun(self) -> None:
         items, stored, candidates = incident_shape()
         original_runs = {row["record_id"]: row["fields"]["运行批次"] for row in stored}
         original_ids = [row["record_id"] for row in stored]

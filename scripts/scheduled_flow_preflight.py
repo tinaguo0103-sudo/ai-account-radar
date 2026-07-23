@@ -45,7 +45,6 @@ def evaluate_preflight(
     *,
     environ: dict[str, str] | None = None,
     core_paths: list[Path] | None = None,
-    optional_telemetry_paths: list[Path] | None = None,
     check_network: bool = False,
     resolver: Callable[..., Any] = socket.getaddrinfo,
     path_probe: Callable[[Path], bool] = writable_path,
@@ -55,9 +54,7 @@ def evaluate_preflight(
         raise ValueError(f"unknown_entrypoint:{entrypoint}")
 
     core_paths = core_paths or [ROOT / "output"]
-    optional_telemetry_paths = optional_telemetry_paths or [ROOT / "output" / "logs"]
     core_unwritable = [str(path) for path in core_paths if not path_probe(path)]
-    optional_unwritable = [str(path) for path in optional_telemetry_paths if not path_probe(path)]
     missing_env = [key for key in CORE_ENV_KEYS if not env.get(key, "").strip()]
     if is_staging_environment(env):
         missing_env.extend(key for key in ENTRYPOINT_TABLE_KEYS[entrypoint] if not env.get(key, "").strip())
@@ -88,21 +85,15 @@ def evaluate_preflight(
         classifications.append("environment_not_loaded")
     if check_network and dns_ok is False:
         classifications.extend(["dns_network_unavailable", "core_external_write_unavailable"])
-    if optional_unwritable:
-        classifications.append("optional_telemetry_unavailable")
-
-    blocking = [value for value in classifications if value != "optional_telemetry_unavailable"]
     return {
-        "ok": not blocking,
+        "ok": not classifications,
         "entrypoint": entrypoint,
-        "blocking_reasons": blocking,
+        "blocking_reasons": classifications,
         "classifications": classifications,
         "environment_loaded": not missing_env,
         "missing_environment_keys": missing_env,
         "core_paths_writable": not core_unwritable,
         "core_unwritable_paths": core_unwritable,
-        "optional_telemetry_available": not optional_unwritable,
-        "optional_telemetry_unwritable_paths": optional_unwritable,
         "dns_checked": check_network,
         "dns_available": dns_ok,
         "dns_error": dns_error,

@@ -16,7 +16,6 @@ from feishu_table_registry import TABLES, configured_table_id
 from local_env import load_local_env
 from push_today10_to_feishu import (
     FALLBACK_EXPERIMENT_PROMPT,
-    default_today10_path,
     feishu_visible_rows,
     map_row,
     topic_candidate_business_identity,
@@ -183,10 +182,13 @@ def asset_is_specific(text: str) -> bool:
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True, help="Run id that was just written to Feishu.")
-    parser.add_argument("--input", default="", help="Path to the local today candidate CSV that was written.")
+    parser.add_argument("--input", required=True, help="Exact run-scoped local candidate CSV that was written.")
     args = parser.parse_args()
     load_local_env()
-    input_path = Path(args.input) if args.input else default_today10_path()
+    input_path = Path(args.input)
+    expected_input = Path(__file__).resolve().parents[1] / "output" / "runs" / args.run_id / "today_10_topics.csv"
+    if input_path.resolve() != expected_input.resolve():
+        raise SystemExit(f"--input must be exact run-scoped artifact: {expected_input}")
 
     app_token = os.getenv("FEISHU_BASE_APP_TOKEN")
     if not app_token:

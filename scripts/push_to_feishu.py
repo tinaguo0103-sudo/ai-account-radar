@@ -22,7 +22,6 @@ Optional:
 from __future__ import annotations
 
 import csv
-from datetime import datetime
 import json
 import os
 import re
@@ -42,7 +41,6 @@ from local_env import load_local_env
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
-LOG_DIR = Path(os.getenv("FEISHU_REQUEST_TELEMETRY_DIR", str(OUT / "logs"))).expanduser()
 DEFAULT_API_HOST = "https://open.feishu.cn"
 SAFE_RETRY_METHODS = {"GET", "PUT", "PATCH", "DELETE"}
 TRANSIENT_HTTP_STATUS = {408, 425, 429, 500, 502, 503, 504}
@@ -152,100 +150,6 @@ def sanitized_path_metadata(path: str) -> dict[str, Any]:
     }
 
 
-def error_kind(exc: BaseException | None) -> str:
-    if exc is None:
-        return "none"
-    if isinstance(exc, HTTPError):
-        return "http_error"
-    if isinstance(exc, (TimeoutError, socket.timeout)):
-        return "timeout"
-    if isinstance(exc, ssl.SSLError):
-        return "ssl_error"
-    if isinstance(exc, URLError):
-        return "url_error"
-    if isinstance(exc, ConnectionResetError):
-        return "connection_reset"
-    return "other"
-
-
-def retry_decision_for(*, will_retry: bool, transient: bool, retry_enabled: bool, final_attempt: bool) -> str:
-    if will_retry:
-        return "retry"
-    if not transient:
-        return "not_transient"
-    if not retry_enabled:
-        return "retry_disabled_status_unknown"
-    if final_attempt:
-        return "max_attempts_reached"
-    return "not_retried"
-
-
-def write_feishu_request_telemetry(event: dict[str, Any]) -> Path:
-    LOG_DIR.mkdir(parents=True, exist_ok=True)
-    path = LOG_DIR / f"feishu_request_telemetry_{datetime.now().strftime('%Y-%m-%d')}.jsonl"
-    with path.open("a", encoding="utf-8") as handle:
-        handle.write(json.dumps(event, ensure_ascii=False, sort_keys=True) + "\n")
-    return path
-
-
-def safe_write_feishu_request_telemetry(event: dict[str, Any]) -> None:
-    if os.getenv("FEISHU_REQUEST_TELEMETRY", "1").strip().lower() in {"0", "false", "no"}:
-        return
-    try:
-        write_feishu_request_telemetry(event)
-    except Exception as exc:  # noqa: BLE001 - telemetry must never mask Feishu result.
-        print(
-            json.dumps(
-                {
-                    "ok": False,
-                    "event": "feishu_request_telemetry_write_failed",
-                    "error": f"{exc.__class__.__name__}: {exc}",
-                },
-                ensure_ascii=False,
-            ),
-            file=sys.stderr,
-        )
-
-
-def record_request_telemetry(
-    *,
-    method: str,
-    path: str,
-    payload_size_bytes: int,
-    attempt: int,
-    max_attempts: int,
-    duration_ms: int,
-    status_code: int | None,
-    kind: str,
-    retry_decision: str,
-    will_retry: bool,
-    status_unknown: bool,
-    feishu_code: int | None = None,
-) -> None:
-    path_metadata = sanitized_path_metadata(path)
-    now = datetime.now()
-    event = {
-        "timestamp": now.isoformat(timespec="milliseconds"),
-        "run_date": now.strftime("%Y-%m-%d"),
-        "method": method.upper(),
-        "path_template": path_metadata["path_template"],
-        "table_id": path_metadata["table_id"],
-        "record_id": path_metadata["record_id"],
-        "query_keys": path_metadata["query_keys"],
-        "payload_size_bytes": payload_size_bytes,
-        "attempt": attempt,
-        "max_attempts": max_attempts,
-        "duration_ms": duration_ms,
-        "status_code": status_code,
-        "feishu_code": feishu_code,
-        "error_kind": kind,
-        "retry_decision": retry_decision,
-        "will_retry": will_retry,
-        "status_unknown": status_unknown,
-    }
-    safe_write_feishu_request_telemetry(event)
-
-
 def request_json(
     method: str,
     path: str,
@@ -263,75 +167,25 @@ def request_json(
     req = Request(api_base_url() + path, data=data, method=method, headers=headers)
     retry_enabled = should_retry_request(method, retry)
     max_attempts = max(1, attempts)
-    payload_size_bytes = len(data or b"")
     path_template = sanitized_path_metadata(path)["path_template"]
     last_exc: BaseException | None = None
     for attempt in range(1, max_attempts + 1):
-        started = time.monotonic()
         try:
             with urlopen(req, timeout=30) as resp:
                 status_code = getattr(resp, "status", None)
                 if status_code is None and hasattr(resp, "getcode"):
                     status_code = resp.getcode()
                 payload = json.loads(resp.read().decode("utf-8"))
-            duration_ms = int((time.monotonic() - started) * 1000)
             feishu_code = int(payload.get("code", 0) or 0)
             if feishu_code != 0:
-                record_request_telemetry(
-                    method=method,
-                    path=path,
-                    payload_size_bytes=payload_size_bytes,
-                    attempt=attempt,
-                    max_attempts=max_attempts,
-                    duration_ms=duration_ms,
-                    status_code=status_code,
-                    kind="api_error",
-                    retry_decision="not_retried",
-                    will_retry=False,
-                    status_unknown=False,
-                    feishu_code=feishu_code,
-                )
                 raise RuntimeError(f"{method} {path_template} failed: {payload}")
-            record_request_telemetry(
-                method=method,
-                path=path,
-                payload_size_bytes=payload_size_bytes,
-                attempt=attempt,
-                max_attempts=max_attempts,
-                duration_ms=duration_ms,
-                status_code=status_code,
-                kind="none",
-                retry_decision="not_needed",
-                will_retry=False,
-                status_unknown=False,
-                feishu_code=feishu_code,
-            )
             return payload
         except HTTPError as exc:
             last_exc = exc
-            duration_ms = int((time.monotonic() - started) * 1000)
             detail = exc.read().decode("utf-8", errors="replace")
             transient = is_transient_error(exc)
             final_attempt = attempt >= max_attempts
             will_retry = transient and retry_enabled and not final_attempt
-            record_request_telemetry(
-                method=method,
-                path=path,
-                payload_size_bytes=payload_size_bytes,
-                attempt=attempt,
-                max_attempts=max_attempts,
-                duration_ms=duration_ms,
-                status_code=exc.code,
-                kind=error_kind(exc),
-                retry_decision=retry_decision_for(
-                    will_retry=will_retry,
-                    transient=transient,
-                    retry_enabled=retry_enabled,
-                    final_attempt=final_attempt,
-                ),
-                will_retry=will_retry,
-                status_unknown=transient,
-            )
             if not transient:
                 raise RuntimeError(f"{method} {path_template} failed: HTTP {exc.code} {detail}") from exc
             if not retry_enabled:
@@ -349,27 +203,8 @@ def request_json(
             time.sleep(sleep_seconds)
         except (TimeoutError, socket.timeout, URLError, ConnectionResetError, ssl.SSLError) as exc:
             last_exc = exc
-            duration_ms = int((time.monotonic() - started) * 1000)
             final_attempt = attempt >= max_attempts
             will_retry = retry_enabled and not final_attempt
-            record_request_telemetry(
-                method=method,
-                path=path,
-                payload_size_bytes=payload_size_bytes,
-                attempt=attempt,
-                max_attempts=max_attempts,
-                duration_ms=duration_ms,
-                status_code=None,
-                kind=error_kind(exc),
-                retry_decision=retry_decision_for(
-                    will_retry=will_retry,
-                    transient=True,
-                    retry_enabled=retry_enabled,
-                    final_attempt=final_attempt,
-                ),
-                will_retry=will_retry,
-                status_unknown=True,
-            )
             if not retry_enabled:
                 raise retry_status_unknown_error(method, path, exc) from exc
             if final_attempt:

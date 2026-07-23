@@ -161,8 +161,8 @@
       "name": "AI账号雷达 每日主编写回04",
       "status": "ACTIVE",
       "rrule": "FREQ=DAILY;BYHOUR=9;BYMINUTE=15;BYSECOND=0",
-      "expectedPrompt": "# AR-038 Production Editorial Task\n\n先切换到 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar，后续命令只在该目录运行。\n\n本次 heartbeat 是独立运行回合；只读取当前日期、当前 exact run 的 run-scoped artifacts，不依赖固定任务中的历史对话结论。\n\n1. 只处理同日 exact run 和非空 run-scoped today_10_topics.csv。允许 completed_with_failures 且 downstream_usable=true；禁止旧 run 或 stale fallback。\n2. 先运行 ar020e_daily_editorial_entrypoint.py --check-only。未 ready 时停止。\n3. 当前任务直接执行 editorial state machine；不得启动 nested Codex、API、subagent 或第二模型会话。\n4. 所有合格的 select 和 observe 候选都进入 Skill。不得执行 TopN、来源配额或 4/2 quota；同主题只做关联标注，不合并删除。\n5. trusted artifact 即使 URL 为空也可以进入。source-open 是证据增强，不是普通候选的全局资格门。\n6. 外部研究只对精确数字、日期、引语、官方声明、时效新闻，以及法律、医疗、金融、名誉等高风险硬事实强制。普通观点、结构学习和工作流判断可以继续，但必须软化未证实硬事实或降低置信度。\n7. source-open、research 或候选质量失败只淘汰该候选，不得替补；其他 survivor 继续。只有 0 survivor 才停止。\n8. 使用 global ai-account-editorial-director 前必须按 release manifest 验证。Stage2 不得改写决策、标题、角度、理由、推荐或排名。\n9. finalize 成功后才运行 finalize_daily_pipeline_after_editorial.py --run-id <run_id> --write-feishu --update-scheduled-log。\n10. 04 exact read-back 失败或外部写状态 unknown 时停止。00 console、日志或 telemetry 等可选步骤失败不得推翻已经通过的 04。\n11. 保留 full_collection_success=false 和 partial truth，不把来源失败洗绿。\n12. 不手工发送 Topic Card，不触发 06。",
-      "expectedPromptSha256": "1f81ee04c677e8b27c25bba725723c102cfe2c45420f92b4a598091efc7aec4a"
+      "expectedPrompt": "# AR-038 Production Editorial Task\n\n先切换到 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar，后续命令只在该目录运行。\n\n本次 heartbeat 是独立运行回合；只读取当前日期、当前 exact run 的 run-scoped artifacts，不依赖固定任务中的历史对话结论。\n\n1. 只处理同日 exact run 和非空 run-scoped today_10_topics.csv。允许 completed_with_failures 且 downstream_usable=true；禁止旧 run 或 stale fallback。\n2. 先运行 ar020e_daily_editorial_entrypoint.py --check-only。未 ready 时停止。\n3. 当前任务直接执行 editorial state machine；不得启动 nested Codex、API、subagent 或第二模型会话。\n4. 所有合格的 select 和 observe 候选都进入 Skill。不得执行 TopN、来源配额或 4/2 quota；同主题只做关联标注，不合并删除。\n5. trusted artifact 即使 URL 为空也可以进入。source-open 是证据增强，不是普通候选的全局资格门。\n6. 外部研究只对精确数字、日期、引语、官方声明、时效新闻，以及法律、医疗、金融、名誉等高风险硬事实强制。普通观点、结构学习和工作流判断可以继续，但必须软化未证实硬事实或降低置信度。\n7. source-open、research 或候选质量失败只淘汰该候选，不得替补；其他 survivor 继续。只有 0 survivor 才停止。\n8. 使用 global ai-account-editorial-director 前必须按 release manifest 验证。Stage2 不得改写决策、标题、角度、理由、推荐或排名。\n9. finalize 成功后才运行 finalize_daily_pipeline_after_editorial.py --run-id <run_id> --write-feishu。\n10. 04 exact read-back 失败或外部写状态 unknown 时停止；成功 read-back 后直接结束，不运行可选 follow-up。\n11. 保留 full_collection_success=false 和 partial truth，不把来源失败洗绿。\n12. 不手工发送 Topic Card，不触发 06。",
+      "expectedPromptSha256": "dfb8402cdfeb33c0950418dc5ab1d6e3a14377dd59f500077c6a909d14adc78f"
     },
     {
       "id": "ai-rebuild-2",
@@ -170,8 +170,8 @@
       "name": "AI账号雷达 每日选题卡发送",
       "status": "ACTIVE",
       "rrule": "FREQ=DAILY;BYHOUR=10;BYMINUTE=0;BYSECOND=0",
-      "expectedPrompt": "先切换到 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar，后续命令只在该目录运行。\n\n本次 heartbeat 是独立运行回合；只读取当前日期、当前 exact run 的 run-scoped artifacts，不依赖固定任务中的历史对话结论。\n\n在工作区运行每日选题卡发送守卫脚本：`python3 scripts/run_topic_card_if_fresh.py`。该脚本只有在当天正式采集成功且 latest_write 有当天候选时才发送第一张选题卡；如果脚本跳过发送，报告跳过原因即可，不要手动绕过守卫发送旧候选。",
-      "expectedPromptSha256": "14f6850c1b20e550fd9037d0805f55225a3732bb4139756df25ed6d61edfce0c"
+      "expectedPrompt": "先切换到 /Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar，后续命令只在该目录运行。\n\n本次 heartbeat 是独立运行回合；只读取当前日期、当前 exact run 的 run-scoped artifacts，不依赖固定任务中的历史对话结论。\n\n在工作区运行每日选题卡发送守卫脚本：`python3 scripts/run_topic_card_if_fresh.py`。该脚本只有在当天正式采集成功且 pipeline 指向的 exact run artifact 有当天候选时才发送第一张选题卡；如果脚本跳过发送，报告跳过原因即可，不要手动绕过守卫发送旧候选。",
+      "expectedPromptSha256": "e79cba0bde49719f0c275e8007fef6cb80c742591321c32db3ca473bbcc19e17"
     }
   ],
   "formalMigration": {

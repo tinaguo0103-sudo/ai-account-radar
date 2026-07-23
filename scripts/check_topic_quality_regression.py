@@ -10,12 +10,6 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-DEBUG = ROOT / "output" / "debug_today10_generation.csv"
-LATEST_DEBUG = ROOT / "output" / "latest" / "debug_today10_generation.csv"
-LATEST_SKILL_REPORT = ROOT / "output" / "latest" / "editorial_skill_report.json"
-LATEST_WRITE_TODAY10 = ROOT / "output" / "latest_write" / "today_10_topics.csv"
-LATEST_WRITE_DEBUG = ROOT / "output" / "latest_write" / "debug_today10_generation.csv"
-LATEST_WRITE_SKILL_REPORT = ROOT / "output" / "latest_write" / "editorial_skill_report.json"
 
 FORBIDDEN_VISIBLE_TERMS = [
     "自查表", "少做一小时", "这类更新", "可执行动作", "业务动作", "业务验收清单",
@@ -175,11 +169,7 @@ def intish(value: str) -> int:
 
 
 def skill_report_for(today10_path: Path) -> dict[str, str]:
-    candidates = [
-        today10_path.with_name("editorial_skill_report.json"),
-        LATEST_WRITE_SKILL_REPORT,
-        LATEST_SKILL_REPORT,
-    ]
+    candidates = [today10_path.with_name("editorial_skill_report.json")]
     for path in candidates:
         if not path.exists():
             continue
@@ -193,11 +183,11 @@ def skill_report_for(today10_path: Path) -> dict[str, str]:
 
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--input", default="", help="Path to today candidate CSV. Defaults to output/latest_write/today_10_topics.csv.")
-    parser.add_argument("--debug", default="", help="Path to debug CSV. Defaults to output/latest/debug_today10_generation.csv, then legacy output/debug_today10_generation.csv.")
+    parser.add_argument("--input", required=True, help="Exact run-scoped today candidate CSV.")
+    parser.add_argument("--debug", default="", help="Debug CSV for the same run; defaults beside --input.")
     args = parser.parse_args()
-    today10_path = Path(args.input) if args.input else LATEST_WRITE_TODAY10
-    debug_path = Path(args.debug) if args.debug else (LATEST_WRITE_DEBUG if LATEST_WRITE_DEBUG.exists() else (LATEST_DEBUG if LATEST_DEBUG.exists() else DEBUG))
+    today10_path = Path(args.input)
+    debug_path = Path(args.debug) if args.debug else today10_path.with_name("debug_today10_generation.csv")
     rows = read_csv(today10_path)
     debug_rows = read_csv(debug_path)
     skill_report = skill_report_for(today10_path)

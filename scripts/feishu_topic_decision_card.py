@@ -82,16 +82,6 @@ NEGATIVE_REASON_OPTIONS = [
 ]
 
 
-def latest_run_id() -> str:
-    log_path = ROOT / "output" / "latest_write" / "content_sampler_log.json"
-    if not log_path.exists():
-        return ""
-    try:
-        return str(json.loads(log_path.read_text(encoding="utf-8")).get("run_id") or "")
-    except json.JSONDecodeError:
-        return ""
-
-
 def require_app_token() -> str:
     app_token = os.getenv("FEISHU_BASE_APP_TOKEN")
     if not app_token:
@@ -1267,14 +1257,14 @@ def parse_args() -> argparse.Namespace:
     sub = parser.add_subparsers(dest="command", required=True)
 
     build = sub.add_parser("build", help="Build a card preview JSON from Feishu 04.")
-    build.add_argument("--run-id", default="latest")
+    build.add_argument("--run-id", required=True)
     build.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     build.add_argument("--include-decided", action="store_true")
     build.add_argument("--strict-run-id", action="store_true", help="Only include records whose 运行批次 exactly matches --run-id; disables compensation-pool additions.")
     build.add_argument("--record-id", action="append", default=[], help="Limit preview to specific Feishu record_id. Can be repeated.")
 
     send = sub.add_parser("send", help="Send the daily decision card as one interactive bot message.")
-    send.add_argument("--run-id", default="latest")
+    send.add_argument("--run-id", required=True)
     send.add_argument("--limit", type=int, default=DEFAULT_LIMIT)
     send.add_argument("--include-decided", action="store_true")
     send.add_argument("--strict-run-id", action="store_true", help="Only include records whose 运行批次 exactly matches --run-id; disables compensation-pool additions.")
@@ -1286,7 +1276,7 @@ def parse_args() -> argparse.Namespace:
     send.add_argument("--allow-empty", action="store_true", help="Allow sending an empty strict-run-id card. Intended only for explicit manual diagnostics.")
 
     apply = sub.add_parser("apply", help="Apply submitted form_value JSON back to Feishu 04.")
-    apply.add_argument("--run-id", default="latest")
+    apply.add_argument("--run-id", required=True)
     apply.add_argument("--form-value-json", required=True)
     apply.add_argument("--candidate-ids-json", default="[]")
     apply.add_argument("--write", action="store_true")
@@ -1302,15 +1292,11 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
-def resolved_run_id(raw: str) -> str:
-    return latest_run_id() if raw == "latest" else raw
-
-
 def main() -> int:
     load_local_env()
     args = parse_args()
     if args.command in {"build", "send"}:
-        run_id = resolved_run_id(args.run_id)
+        run_id = args.run_id
         record_ids = {str(item).strip() for item in args.record_id if str(item).strip()} or None
         token, _app_token, _table_id, records = fetch_candidates_for_card(
             run_id,

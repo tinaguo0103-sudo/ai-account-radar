@@ -392,7 +392,7 @@ def check_qa_notification_smoke(env_file: str) -> dict[str, Any]:
         sys.executable,
         "scripts/automation_failure_qa.py",
         "--reason",
-        "latest_write_not_generated_today",
+        "exact_run_artifact_not_generated_today",
         "--run-id",
         "premerge_smoke",
     ], env=env)

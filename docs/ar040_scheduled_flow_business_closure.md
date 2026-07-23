@@ -7,7 +7,7 @@
 - `works_root_count > 0` is diagnostic only. Trusted works come from `aweme_list` public fields (`aweme_id`, `desc`, pinned state, `create_time`, author binding), scan at least 10 items, exclude pinned/seen/contaminated items, and select at most 3 unseen works. A valid exact-account list with no unseen item returns `updated_no_new_items`.
 - If Chrome rotates the renderer attachment, the probe reopens only the DevTools WebSocket for the same fixed `targetId`. Recovery is bounded per consecutive transition and total reattachments remain auditable across a full account plan. It never closes or replaces the user's page. A permanently blank/lost shared target is one source-runtime failure; page-response failures remain typed and account-local while other configured accounts continue with zero failed-account artifact leakage.
 - Trusted collection artifacts are authoritative for ordinary editorial candidates. Ordinary candidates do not open their display URL. Only high-risk hard facts require source-open and external research.
-- Core output paths, environment, and Feishu DNS are checked before scheduled writes/sends. Optional telemetry path failure is a warning and cannot reverse a green exact write/read-back.
+- Core exact-run paths, environment, and Feishu DNS are checked before scheduled writes/sends. The normal business path does not run optional telemetry after a green exact write/read-back.
 - Staging requires explicit table IDs and explicit test card targets. Table-name fallback into production is forbidden.
 - The formal staging collection proof uses `run_daily_collection_job.py` with an explicit run ID and a current-run Douyin artifact owned by `daily_pipeline.py`. The wrapper writes and reads back staging 03 before its normal daily/downstream ledgers can report `downstream_usable=true`; callers cannot supply or patch that state.
 - Staging uses the public sampler/finalizer entrypoints with explicit staging
@@ -19,7 +19,7 @@
 The definitions inspected on 2026-07-21 are `ai-rebuild`, `ai-04-rebuild`, and `ai-rebuild-2`. Their Prompt commands and business semantics remain correct:
 
 - 08:00 invokes only `run_daily_collection_job.py --defer-editorial --no-notify`.
-- 09:15 already states artifact-first ordinary candidates, high-risk-only research, candidate-local failure, exact 04 read-back, and optional console/telemetry behavior.
+- 09:15 states artifact-first ordinary candidates, high-risk-only research, candidate-local failure, and exact 04 read-back.
 - 10:00 invokes only `run_topic_card_if_fresh.py` and forbids guard bypass.
 
 Prompt changes are not required. Official configuration changes are required before production authorization because all three definitions currently use `cwds=["~"]`, and the observed 09:15 execution surface was read-only. Release operations must set the exact production repo as cwd and select a supported execution surface with project output write access and Feishu DNS/API access. Prompt `cd` cannot grant these capabilities. Development must not edit live automation TOMLs.
@@ -34,7 +34,7 @@ Prompt changes are not required. Official configuration changes are required bef
 | R4 | High-risk unsupported source fails one candidate while unrelated ordinary candidates continue. | Same-run high-risk research failure plus survivor finalization. |
 | R5 | Formal wrapper owns the same-run daily/usability ledger; finalizer is preflight-gated and staging IDs cannot fall back by table name. Feishu 04 create/update planning, unknown-write reconciliation and exact verification share the persisted identity `running batch + original source title + topic title`; display URL is not identity. The writer builds a complete non-ambiguous plan before any PUT/POST and stops on duplicate local or remote identity. | Real staging 03 and 04 exact write/read-back; a second identical finalizer creates zero records, preserves every remote record ID and reports no duplicate, then exact-run cleanup. |
 | R6 | Recommended cards require the Chinese research summary/hook, confidence, structure, Austin angle and display evidence. Source URL and evidence gap are optional metadata: present values render, absent values create no placeholder or fake link. Card entrypoints distinguish build/send failure, dry-run preview, first send receipt and same-run idempotent zero-send; freshness, DNS and target guards remain authoritative. | Dry-run renders the exact 3 candidates including an empty-URL/empty-gap candidate, then one guarded personal test send with receipt and `already_sent_for_run` zero-send. |
-| R7 | Preflight and telemetry tests distinguish optional unwritable telemetry from blocking DNS/external-write failure. | Inject unwritable telemetry during a green exact 04 read-back; synthetic DNS/API failure invokes no writer/sender. |
+| R7 | Preflight blocks concrete DNS/external-write failures before writer/sender. No optional telemetry branch runs in the business path. | Synthetic DNS/API failure invokes no writer/sender; successful exact read-back returns directly. |
 | R8 | Read-only automation audit records current Prompt/cwd and required official execution surface correction. | Official automation configuration read-back and equivalent cwd/write/DNS probe. |
 
 ## Independent QA Command Manifest

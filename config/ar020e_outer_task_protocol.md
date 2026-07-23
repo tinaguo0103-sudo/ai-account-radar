@@ -41,7 +41,7 @@ subagent, deterministic editorial logic, or a second model session.
    logic and cross-field substitution are forbidden.
 8. Only after finalize succeeds, run
    `python3 scripts/finalize_daily_pipeline_after_editorial.py --run-id <run_id>
-   --write-feishu --update-scheduled-log`. This write command is forbidden in
+   --write-feishu`. This write command is forbidden in
    check-only, RC preparation and dry-run regression.
 
 Any missing source/research evidence, stale hash, ownership drift, semantic

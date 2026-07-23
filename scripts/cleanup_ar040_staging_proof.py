@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Delete only AR-040 proof records from explicitly configured staging tables."""
+"""Delete only named AR-040/AR-043B proof records from explicit staging tables."""
 from __future__ import annotations
 
 import argparse
@@ -12,7 +12,7 @@ from feishu_table_registry import configured_table_id
 from local_env import load_local_env
 
 
-RUN_RE = re.compile(r"^run_\d{8}_\d{6}_ar040_devproof$")
+RUN_RE = re.compile(r"^run_\d{8}_\d{6}_(?:ar040_devproof|ar043b_(?:devproof|rework))$")
 
 
 def records_for_run(token: str, app_token: str, table_id: str, run_id: str) -> list[str]:
@@ -44,7 +44,7 @@ def main() -> int:
     if "staging" not in env_marker:
         raise SystemExit("cleanup_requires_explicit_staging_environment")
     if any(not RUN_RE.fullmatch(value) for value in args.run_id):
-        raise SystemExit("cleanup_rejects_non_ar040_run_identity")
+        raise SystemExit("cleanup_rejects_unknown_proof_run_identity")
     app_token = os.environ["FEISHU_BASE_APP_TOKEN"]
     tables_by_name: dict[str, str] = {}
     targets = []

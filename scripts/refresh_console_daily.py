@@ -20,7 +20,6 @@ from feishu_table_registry import VIEW_NAMES, resolve_table_id, table_name
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
 REPORT_DIR = OUT / "daily_reports"
-LATEST_WRITE_DIR = OUT / "latest_write"
 BASE_URL = "https://my.feishu.cn/base"
 
 APP_TOKEN_ENV = "FEISHU_BASE_APP_TOKEN"
@@ -128,18 +127,15 @@ def ready_for_script_recent(record: dict[str, Any]) -> bool:
     )
 
 
-def legacy_sampler_log_is_official(path: Path) -> bool:
-    if not path.exists():
-        return False
+def current_run_dir() -> Path | None:
+    log_path = OUT / "logs" / f"daily_pipeline_{today_slug()}.json"
+    if not log_path.exists():
+        return None
     try:
-        data = json.loads(path.read_text(encoding="utf-8"))
+        run_id = str(json.loads(log_path.read_text(encoding="utf-8")).get("run_id") or "")
     except json.JSONDecodeError:
-        return False
-    return (
-        data.get("mode") == "write-feishu"
-        or "feishu_content_ledger" in data
-        or bool(data.get("mirrors", {}).get("latest_write"))
-    )
+        return None
+    return OUT / "runs" / run_id if run_id else None
 
 
 def table_url(app_token: str, table_id: str) -> str:
@@ -307,10 +303,8 @@ def top_records(records: list[dict[str, Any]], n: int = 5) -> list[dict[str, Any
 
 
 def load_run_errors() -> list[str]:
-    sampler_log = LATEST_WRITE_DIR / "content_sampler_log.json"
-    if not sampler_log.exists():
-        legacy_log = OUT / "content_sampler_log.json"
-        sampler_log = legacy_log if legacy_sampler_log_is_official(legacy_log) else sampler_log
+    run_dir = current_run_dir()
+    sampler_log = run_dir / "content_sampler_log.json" if run_dir else OUT / "runs" / "__missing__"
     if sampler_log.exists():
         try:
             data = json.loads(sampler_log.read_text(encoding="utf-8"))
@@ -319,15 +313,7 @@ def load_run_errors() -> list[str]:
                 return [f"部分源失败：{error}" for error in errors[:5]]
         except json.JSONDecodeError:
             return ["content_sampler_log.json 无法解析"]
-    path = OUT / "run_log.json"
-    if not path.exists():
-        return ["暂无异常"]
-    try:
-        data = json.loads(path.read_text(encoding="utf-8"))
-    except json.JSONDecodeError:
-        return ["run_log.json 无法解析"]
-    errors = [item for item in data.get("aihot_fetch", []) if "ok" not in item.lower()]
-    return errors or ["暂无异常"]
+    return ["暂无 exact run 采集日志"]
 
 
 def asset_candidates(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
@@ -659,13 +645,9 @@ def generate_report(stats: dict[str, Any], updated_at: str) -> Path:
 
 
 def load_today_10() -> dict[str, Any]:
-    path = LATEST_WRITE_DIR / "today_10_topics.csv"
-    legacy_log = OUT / "content_sampler_log.json"
-    if not path.exists() and legacy_sampler_log_is_official(legacy_log):
-        path = OUT / "today_10_topics.csv"
-    report = LATEST_WRITE_DIR / f"today_10_topics_{today_slug()}.md"
-    if not report.exists():
-        report = REPORT_DIR / f"today_10_topics_{today_slug()}.md"
+    run_dir = current_run_dir()
+    path = run_dir / "today_10_topics.csv" if run_dir else OUT / "runs" / "__missing__"
+    report = run_dir / f"today_10_topics_{today_slug()}.md" if run_dir else OUT / "runs" / "__missing__.md"
     if not path.exists():
         return {"count": 0, "top": "尚未生成", "report": str(report)}
     import csv

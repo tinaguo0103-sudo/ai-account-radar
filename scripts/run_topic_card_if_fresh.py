@@ -24,8 +24,8 @@ from scheduled_flow_preflight import evaluate_preflight
 
 
 ROOT = Path(__file__).resolve().parents[1]
-LATEST_WRITE = ROOT / "output" / "latest_write"
 PIPELINE_LOG_DIR = ROOT / "output" / "logs"
+RUNS_DIR = ROOT / "output" / "runs"
 LOCAL_TZ = ZoneInfo("Asia/Shanghai")
 TOPIC_STATUS_FILTER = {"待判断", ""}
 TOPIC_CARD_GUARD_KINDS = {"topic_candidate_create", "topic_card_send"}
@@ -101,22 +101,25 @@ def fresh_collection_status() -> tuple[bool, str, str]:
         return False, "today_daily_pipeline_log_not_ok", ""
     if not pipeline_log.get("ok") and not pipeline_log.get("downstream_usable"):
         return False, "today_downstream_not_usable", pipeline_run_id
-    if not pipeline_log.get("editorial_finalized") and not pipeline_log.get("recovered_ok"):
+    if not pipeline_log.get("editorial_finalized"):
         return False, "today_editorial_not_finalized", pipeline_run_id
+    if not pipeline_run_id:
+        return False, "today_pipeline_run_id_missing", ""
 
-    sampler_log = read_json(LATEST_WRITE / "content_sampler_log.json")
+    run_dir = RUNS_DIR / pipeline_run_id
+    sampler_log = read_json(run_dir / "content_sampler_log.json")
     generated_at = parse_datetime(str(sampler_log.get("generated_at") or ""))
     if not generated_at or generated_at.strftime("%Y-%m-%d") != today:
-        return False, "latest_write_not_generated_today", pipeline_run_id
+        return False, "exact_run_artifact_not_generated_today", pipeline_run_id
     sampler_run_id = str(sampler_log.get("run_id") or "")
     if pipeline_run_id and sampler_run_id and pipeline_run_id != sampler_run_id:
-        return False, "pipeline_and_latest_write_run_id_mismatch", pipeline_run_id
+        return False, "pipeline_and_exact_artifact_run_id_mismatch", pipeline_run_id
     if str(sampler_log.get("mode") or "") != "write-feishu":
-        return False, "latest_write_is_not_write_feishu_mode", sampler_run_id
+        return False, "exact_run_artifact_is_not_write_feishu_mode", sampler_run_id
     if int(sampler_log.get("today_candidates") or 0) <= 0:
         return False, "no_today_candidates_in_sampler_log", sampler_run_id
 
-    topic_csv = LATEST_WRITE / "today_10_topics.csv"
+    topic_csv = run_dir / "today_10_topics.csv"
     if csv_row_count(topic_csv) <= 0:
         return False, "today_10_topics_csv_empty", sampler_run_id
     feishu_count, feishu_reason = feishu_topic_records_for_run(sampler_run_id)
@@ -133,9 +136,10 @@ def skip_summary(reason: str, run_id: str) -> str:
         "today_daily_pipeline_log_not_ok": "今天没有成功的 daily_pipeline 日志，可能是 08:00 采集失败或未运行。",
         "today_downstream_not_usable": "今天采集结果不可供下游使用：可能是登录/profile/CDP、账号 lineage、候选为空或系统级失败。",
         "today_editorial_not_finalized": "今天候选已生成且可供下游使用，但 09:15 主编写回 04 尚未完成。",
-        "latest_write_not_generated_today": "latest_write 不是今天生成的正式候选，已阻止发送旧卡片。",
-        "pipeline_and_latest_write_run_id_mismatch": "daily_pipeline 和 latest_write 的运行批次不一致。",
-        "latest_write_is_not_write_feishu_mode": "latest_write 不是正式写飞书模式。",
+        "today_pipeline_run_id_missing": "今天的 daily_pipeline 日志缺少 exact run_id。",
+        "exact_run_artifact_not_generated_today": "exact run artifact 不是今天生成的正式候选，已阻止发送旧卡片。",
+        "pipeline_and_exact_artifact_run_id_mismatch": "daily_pipeline 和 exact run artifact 的运行批次不一致。",
+        "exact_run_artifact_is_not_write_feishu_mode": "exact run artifact 不是正式写飞书模式。",
         "no_today_candidates_in_sampler_log": "今天候选数量为 0。",
         "today_10_topics_csv_empty": "today_10_topics.csv 为空。",
         "missing_feishu_base_app_token": "缺少 FEISHU_BASE_APP_TOKEN，无法确认飞书 04 是否已有本批次候选。",

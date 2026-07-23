@@ -127,24 +127,25 @@ class RunTopicCardIfFreshCheckOnlyTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             logs = root / "logs"
-            latest = root / "latest_write"
+            runs = root / "runs"
+            exact = runs / "run_20260716_080311"
             logs.mkdir()
-            latest.mkdir()
+            exact.mkdir(parents=True)
             (logs / "daily_pipeline_2026-07-16.json").write_text(json.dumps({
                 "ok": False,
                 "run_id": "run_20260716_080311",
                 "downstream_usable": True,
                 "editorial_finalized": True,
             }), encoding="utf-8")
-            (latest / "content_sampler_log.json").write_text(json.dumps({
+            (exact / "content_sampler_log.json").write_text(json.dumps({
                 "generated_at": "2026-07-16T09:40:00+08:00",
                 "run_id": "run_20260716_080311",
                 "mode": "write-feishu",
                 "today_candidates": 9,
             }), encoding="utf-8")
-            (latest / "today_10_topics.csv").write_text("选题标题\nA\n", encoding="utf-8")
+            (exact / "today_10_topics.csv").write_text("选题标题\nA\n", encoding="utf-8")
             with unittest.mock.patch.object(run_topic_card_if_fresh, "PIPELINE_LOG_DIR", logs), \
-                    unittest.mock.patch.object(run_topic_card_if_fresh, "LATEST_WRITE", latest), \
+                    unittest.mock.patch.object(run_topic_card_if_fresh, "RUNS_DIR", runs), \
                     unittest.mock.patch.object(run_topic_card_if_fresh, "today_key", lambda: "2026-07-16"), \
                     unittest.mock.patch.object(run_topic_card_if_fresh, "feishu_topic_records_for_run", lambda _run_id: (2, "ok")):
                 ok, reason, run_id = run_topic_card_if_fresh.fresh_collection_status()

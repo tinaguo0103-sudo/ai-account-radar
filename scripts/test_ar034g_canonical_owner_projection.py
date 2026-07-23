@@ -294,7 +294,7 @@ class CanonicalOwnerProjectionTests(unittest.TestCase):
         self.assertEqual(len(fingerprints), len(set(fingerprints)))
         self.assertTrue(set(fingerprints).issubset(owner_set))
 
-    def test_future_writer_projects_before_any_create_or_update(self) -> None:
+    def test_writer_projects_before_writes_and_same_run_owners_are_noop(self) -> None:
         items, records = production_shape()
         updates: list[tuple[str, dict]] = []
         posts: list[dict] = []
@@ -309,16 +309,16 @@ class CanonicalOwnerProjectionTests(unittest.TestCase):
              mock.patch.object(content_sampler.time, "sleep"):
             result = content_sampler.write_content_ledger_to_feishu(items, RUN_ID)
         self.assertEqual(140, result["owner_projection"]["unique_owner_count"])
-        self.assertEqual(136, len(updates))
+        self.assertTrue(result["write_plan"]["complete_before_first_business_write"])
+        self.assertEqual(0, result["write_plan"]["update_count"])
+        self.assertEqual([], updates)
         self.assertEqual([], posts)
-        self.assertFalse({"rec-owner-extra-0", "rec-owner-extra-1", "rec-owner-extra-2", "rec-owner-extra-3"} & {record_id for record_id, _ in updates})
-        self.assertFalse(any(row["planned_fingerprint"] in {field.get("内容指纹") for _, field in updates} for row in result["owner_projection"]["mappings"] if row["resolution"] == "alias"))
 
-    def test_current_recovery_surface_has_zero_writer_calls(self) -> None:
+    def test_owner_projection_has_no_public_recovery_surface(self) -> None:
         source = Path(owners.__file__).read_text(encoding="utf-8")
         self.assertNotIn("write_content_ledger_to_feishu", source)
-        self.assertIn('"writes_feishu": False', source)
-        self.assertIn('"calls_full_writer": False', source)
+        self.assertFalse(hasattr(owners, "main"))
+        self.assertFalse(hasattr(owners, "atomic_json"))
 
 
 if __name__ == "__main__":

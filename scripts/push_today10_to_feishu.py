@@ -30,7 +30,6 @@ from topic_decision_fields import (
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
-LATEST_WRITE_TODAY10 = OUT / "latest_write" / "today_10_topics.csv"
 TARGET_TABLE_KEY = "topic_decision"
 TOPIC_TABLE_ID_ENV_KEYS = ("FEISHU_TOPIC_TABLE_ID", "FEISHU_TOPIC_DECISION_TABLE_ID")
 TOPIC_CREATE_KIND = "topic_candidate_create"
@@ -211,15 +210,6 @@ def feishu_visible_rows(rows: list[dict[str, str]]) -> tuple[list[dict[str, str]
             continue
         omitted += 1
     return visible, omitted
-
-
-def default_today10_path() -> Path:
-    if LATEST_WRITE_TODAY10.exists():
-        return LATEST_WRITE_TODAY10
-    raise SystemExit(
-        "No official today candidate CSV found. Use --input with a run-specific CSV, "
-        "or run daily_pipeline.py --write-feishu to create output/latest_write/."
-    )
 
 
 def today_slug() -> str:
@@ -622,12 +612,15 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--write", action="store_true", help="Actually write to Feishu. Default is dry-run only.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
-    parser.add_argument("--input", default="", help="Path to the today candidate CSV for this run.")
+    parser.add_argument("--input", required=True, help="Exact run-scoped today candidate CSV.")
     args = parser.parse_args()
 
     date = today_slug()
     run_id = args.run_id or default_run_id()
-    input_path = Path(args.input) if args.input else default_today10_path()
+    input_path = Path(args.input)
+    expected_input = OUT / "runs" / run_id / "today_10_topics.csv"
+    if input_path.resolve() != expected_input.resolve():
+        raise SystemExit(f"--input must be exact run-scoped artifact: {expected_input}")
     source_rows, omitted_rows = feishu_visible_rows(read_today10(input_path))
     mapped = [map_row(row, idx, date, run_id) for idx, row in enumerate(source_rows, start=1)]
     dry_run_print(mapped)

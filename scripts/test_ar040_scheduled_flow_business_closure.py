@@ -328,7 +328,7 @@ class AR040ScheduledFlowTests(unittest.TestCase):
         successes = [record for record in state["stages"]["source_open"]["candidates"].values() if record["status"] == "completed"]
         self.assertEqual((len(failures), len(successes)), (1, 1))
 
-    def test_preflight_classifies_blockers_and_optional_telemetry(self) -> None:
+    def test_preflight_checks_only_core_runtime_dependencies(self) -> None:
         env = {
             "AI_ACCOUNT_RADAR_ENV": "staging",
             "FEISHU_APP_ID": "id", "FEISHU_APP_SECRET": "secret", "FEISHU_BASE_APP_TOKEN": "base",
@@ -337,10 +337,11 @@ class AR040ScheduledFlowTests(unittest.TestCase):
         result = preflight.evaluate_preflight(
             "card", environ=env, check_network=True,
             resolver=lambda *_args, **_kwargs: [(None, None, None, None, None)],
-            path_probe=lambda path: "logs" not in str(path),
+            path_probe=lambda _path: True,
         )
         self.assertTrue(result["ok"])
-        self.assertIn("optional_telemetry_unavailable", result["classifications"])
+        self.assertEqual([], result["classifications"])
+        self.assertNotIn("optional_telemetry_available", result)
         blocked = preflight.evaluate_preflight(
             "card", environ=env, check_network=True,
             resolver=mock.Mock(side_effect=OSError("dns down")), path_probe=lambda _path: True,

@@ -46,7 +46,7 @@
     },
     {
       "id": "staging_04_write_readback",
-      "command": "AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/finalize_daily_pipeline_after_editorial.py --run-id <TEST_RUN_ID> --input <TEST_EXACT_CSV> --write-feishu --update-scheduled-log",
+      "command": "AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local python3 scripts/finalize_daily_pipeline_after_editorial.py --run-id <TEST_RUN_ID> --input <TEST_EXACT_CSV> --write-feishu",
       "expected": "test 04 exact write and record/run read-back green"
     },
     {
@@ -58,11 +58,6 @@
       "id": "callback_scope",
       "command": "not_required_by_ar040",
       "expected": "callback code is unchanged; retain adjacent receiver regression, no live click required for this delta"
-    },
-    {
-      "id": "optional_telemetry_failure",
-      "command": "FEISHU_REQUEST_TELEMETRY_DIR=<UNWRITABLE_TEST_PATH> AI_ACCOUNT_RADAR_ENV_FILE=.env.staging.local <repeat affected staging write/send fixture>",
-      "expected": "core result and exact read-back green; optional_telemetry_unavailable warning"
     },
     {
       "id": "automation_equivalent_probe",

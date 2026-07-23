@@ -45,7 +45,7 @@ def session_result(args: argparse.Namespace, result: subprocess.CompletedProcess
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(description="Send one Feishu topic decision card. Cloud receiver handles callbacks.")
-    parser.add_argument("--run-id", default="latest")
+    parser.add_argument("--run-id", required=True)
     parser.add_argument("--limit", type=int, default=7)
     parser.add_argument("--include-decided", action="store_true")
     parser.add_argument("--send-dry-run", action="store_true", help="Build the card and print send preview without sending.")

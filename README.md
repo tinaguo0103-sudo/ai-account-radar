@@ -165,9 +165,9 @@ python3 scripts/daily_pipeline.py --no-fetch-aihot
 ```bash
 python3 scripts/editorial_skill_runner.py \
   --engine codex \
-  --input output/latest_write/today_10_topics.csv \
-  --output output/latest_write/today_10_topics.csv \
-  --report output/latest_write/editorial_skill_report.json
+  --input output/runs/<run_id>/today_10_topics.csv \
+  --output output/runs/<run_id>/today_10_topics.csv \
+  --report output/runs/<run_id>/editorial_skill_report.json
 ```
 
 只有修改了抖音采集逻辑、主页链接、登录状态，或者明确要复验采集时，才强制重新采集抖音：
@@ -300,7 +300,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --write-feishu
 
 `--write-feishu` 会把解析出的新 URL 内容写入 `03 内容收件箱`，同时把本轮参与分析的 AIHOT 等 ContentItem 也同步进 `03`，再把今日候选池写入 `04 分析与选题`，并回写 `02 URL投喂入口` 的处理状态、失败原因和解析结果摘要。`02 URL投喂入口` 只作为临时链接入口，解析完成后可手动删除记录，不需要长期保留。
 
-今日候选池不再强制凑满 10 条。AIHOT 可以是主来源，但代码只负责限制明显刷屏和重复，最终是否进入前台候选由 Skill 判断；如果本轮有 URL 投喂或开启已解析 URL 复用，并且 URL 内容解析成功，会和 AIHOT、公众号、抖音主页采样一起进入更宽的 Skill 审阅池。主对标抖音主页标题/文案也和其他来源一样参与评分、进入候选判断、生成命题卡；只是不能编造未采到的口播全文、评论区、镜头结构或完整视频理解。调试文件会写入本轮批次目录，例如 `output/dry_runs/run_*/debug_today10_generation.csv` 或 `output/runs/run_*/debug_today10_generation.csv`，并同步到 `output/latest_dry_run/` 或 `output/latest_write/`，用于查看每条候选是否来自已解析 URL 复用、是否进入 Skill 审阅池、标题结构模板、事件锚点、业务变化判断、内部切入角度和可发布标题。
+今日候选池不再强制凑满 10 条。AIHOT 可以是主来源，但代码只负责限制明显刷屏和重复，最终是否进入前台候选由 Skill 判断；如果本轮有 URL 投喂且 URL 内容解析成功，会和 AIHOT、公众号、抖音主页采样一起进入更宽的 Skill 审阅池。主对标抖音主页标题/文案也和其他来源一样参与评分、进入候选判断、生成命题卡；只是不能编造未采到的口播全文、评论区、镜头结构或完整视频理解。调试文件只写入本轮批次目录，例如 `output/dry_runs/run_*/debug_today10_generation.csv` 或 `output/runs/run_*/debug_today10_generation.csv`。
 
 如果当天没有新 URL，只想跑一次日常热点/对标更新并写入飞书：
 
@@ -317,26 +317,23 @@ python3 scripts/daily_pipeline.py --write-feishu
 
 - 抖音主页采集同一天默认只跑一次；当天再次运行会复用 `output/source_collection_cache/YYYY-MM-DD/` 的缓存结果。
 - 只有修改采集逻辑、主页链接、登录态或需要排查采集问题时，才加 `--force-fetch-douyin`。
-- 测试 Skill、标题质量、字段写入或飞书读回时，不要重新跑平台采集，使用 `output/latest_write/` 或当天缓存。
+- 测试 Skill、标题质量、字段写入或飞书读回时，不要重新跑平台采集；必须显式指定本次测试拥有的 exact run 目录。
 - 如需完全跳过抖音采集，可加 `--no-fetch-douyin`。
 
 输出文件分层：
 
 - `output/dry_runs/<run_id>/`：每次 dry-run 的完整本地输出，不写飞书，也不会覆盖正式结果。
 - `output/runs/<run_id>/`：每次 `--write-feishu` 的正式运行输出，和飞书写入批次一致。
-- `output/latest_dry_run/`：最近一次 dry-run 的快捷副本。
-- `output/latest_write/`：最近一次正式写入飞书的快捷副本，主控台和内容作战台默认以这里为准。
-- `output/latest/`：最近一次运行的快捷副本，可能是 dry-run，也可能是正式写入，仅用于调试。
-- `output/today_10_topics.csv` 等根目录兼容文件只在正式 `--write-feishu` 后更新，用来兼容旧脚本；dry-run 不会再覆盖这些文件。
+- `output/runs/<run_id>/`：正式运行的唯一权威产物；03、主编、04 和 Topic Card 使用同一 exact run。
 
 只想用现有候选测试主编 Skill，不重新采集、不写飞书，可以运行：
 
 ```bash
 python3 scripts/editorial_skill_runner.py \
   --engine codex \
-  --input output/latest_write/today_10_topics.csv \
-  --output output/latest_write/today_10_topics.csv \
-  --report output/latest_write/editorial_skill_report.json
+  --input output/runs/<run_id>/today_10_topics.csv \
+  --output output/runs/<run_id>/today_10_topics.csv \
+  --report output/runs/<run_id>/editorial_skill_report.json
 ```
 
 这一步会调用本机已登录的 Codex CLI，并把 `ai-account-editorial-director` Skill 规则文本嵌入 prompt。默认只读本机全局私有版；仓库脱敏版不会作为隐式兜底。它会覆盖候选的主编判断字段，但不会拉取 AIHOT、不会打开抖音、不会写飞书。需要临时测试脱敏版时，显式设置 `EDITORIAL_SKILL_DIR=skills/ai-account-editorial-director`。
@@ -395,8 +392,7 @@ python3 scripts/content_sampler.py --no-fetch-aihot
 - `output/dry_runs/<run_id>/content_items.csv`：dry-run 的内容对象，不是数据指标表。
 - `output/dry_runs/<run_id>/content_breakdowns.csv`：dry-run 的内容拆解结果。
 - `output/dry_runs/<run_id>/today_10_topics.csv`：dry-run 的今日候选池。
-- `output/latest_dry_run/`：最近一次 dry-run 快捷副本。
-- 正式写入后，对应文件会在 `output/runs/<run_id>/` 和 `output/latest_write/` 中保留；根目录 `output/today_10_topics.csv` 只代表最近一次正式写入飞书的兼容输出。
+- 正式写入后的权威文件保留在 `output/runs/<run_id>/`；下游不消费 mirror、latest 或根目录兼容副本。
 
 ## 不手动导入：直接写入飞书 API
 
@@ -435,9 +431,7 @@ FEISHU_BASE_APP_TOKEN=xxx
 - `output/system_rules_dictionary.csv`：规则与字典表，可导入飞书。
 - `output/system_rules_dictionary.xlsx`：规则与字典 Excel 版。
 - `output/run_log.json`：运行日志和各表数量。
-- `output/latest_write/`：最近一次正式写入飞书的内容对象、拆解结果和今日候选池。
-- `output/latest_dry_run/`：最近一次 dry-run 的内容对象、拆解结果和今日候选池。
-- `output/today_10_topics.csv`：最近一次正式写入飞书的兼容输出文件，dry-run 不再覆盖。
+- `output/runs/<run_id>/`：正式运行的内容对象、拆解结果和今日候选池，也是下游唯一权威输入。
 
 ## 系统不是黑盒
 

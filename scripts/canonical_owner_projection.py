@@ -1,22 +1,12 @@
 #!/usr/bin/env python3
 from __future__ import annotations
 
-import argparse
 import csv
-import hashlib
-import json
-import os
-import tempfile
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
-from pathlib import Path
 from typing import Any, Iterable
 
 import content_sampler
-import push_to_feishu as feishu
-
-
-ROOT = Path(__file__).resolve().parents[1]
 
 
 class OwnerProjectionError(RuntimeError):
@@ -389,76 +379,3 @@ def recompute_candidate_universe(items: list[content_sampler.ContentItem]) -> li
     selected = content_sampler.assign_action_quotas(selected)
     selected = content_sampler.apply_editorial_judgement(selected, item_by_fp)
     return content_sampler.assign_today_priority(selected)
-
-
-def file_sha256(path: Path) -> str:
-    digest = hashlib.sha256()
-    with path.open("rb") as handle:
-        for block in iter(lambda: handle.read(1024 * 1024), b""):
-            digest.update(block)
-    return digest.hexdigest()
-
-
-def atomic_json(path: Path, payload: dict[str, Any]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=str(path.parent))
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as handle:
-            json.dump(payload, handle, ensure_ascii=False, indent=2)
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        if os.path.exists(temporary):
-            os.unlink(temporary)
-
-
-def main() -> int:
-    parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", required=True)
-    parser.add_argument("--expected-content-items-sha256", required=True)
-    parser.add_argument("--check-only", action="store_true", required=True)
-    args = parser.parse_args()
-    run_dir = ROOT / "output" / "runs" / args.run_id
-    content_path = run_dir / "content_items.csv"
-    try:
-        if not content_path.is_file() or file_sha256(content_path) != args.expected_content_items_sha256:
-            raise OwnerProjectionError("owner_plan_artifact_mismatch")
-        items = content_sampler.load_content_items_from_csv(content_path)
-        app_token = content_sampler.require_feishu_env()
-        token = feishu.tenant_token()
-        table_id = content_sampler.resolve_table_id(content_sampler.list_tables(token, app_token), "content_inbox")
-        if not table_id:
-            raise OwnerProjectionError("content_inbox_table_missing")
-        records = content_sampler.all_records(token, app_token, table_id)
-        projection = resolve_owner_projection(items, records, args.run_id)
-        readback = verify_owner_readback(projection.manifest, records, args.run_id)
-        candidates = recompute_candidate_universe(projection.projected_items)
-        candidate_fingerprints = [str(row.get("内容指纹") or "") for row in candidates]
-        if any(value not in set(projection.manifest["ordered_owner_fingerprints"]) for value in candidate_fingerprints):
-            raise OwnerProjectionError("candidate_owner_projection_failed")
-        output = {
-            "ok": True,
-            "run_id": args.run_id,
-            "check_only": True,
-            "owner_manifest": projection.manifest,
-            "owner_readback": readback,
-            "candidate_count": len(candidates),
-            "candidate_fingerprints": candidate_fingerprints,
-            "writes_feishu": False,
-            "calls_full_writer": False,
-        }
-        output_path = ROOT / "output" / "recovery" / args.run_id / "canonical_owner_manifest.json"
-        atomic_json(output_path, output)
-        print(json.dumps(output, ensure_ascii=False, sort_keys=True))
-        return 0
-    except Exception as exc:  # noqa: BLE001 - public recovery CLI is typed and fail-closed.
-        print(json.dumps({"ok": False, "run_id": args.run_id, "check_only": True,
-                          "reason": str(exc), "writes_feishu": False,
-                          "calls_full_writer": False}, ensure_ascii=False, sort_keys=True))
-        return 4
-
-
-if __name__ == "__main__":
-    raise SystemExit(main())

@@ -52,7 +52,7 @@ python3 scripts/daily_pipeline.py --resolve-url-intake --include-resolved-url-in
 
 `scripts/douyin_cdp_source_watch_probe.mjs` 通过 Chrome DevTools Protocol 低频打开主对标抖音主页，只在发现可信账号作品 ID 时才复用单条视频 resolver。`daily_pipeline.py` 在探针和同日缓存复用之前，先通过 `start_douyin_cdp_chrome.py` 核验 `9333` 监听进程与 canonical profile，再通过 `check_douyin_session.py` 做无秘密登录态检查。任一身份、登录或验证状态不明确都会阻断抖音探针并使整次运行保持失败/部分状态；不会复用其他 worktree profile、随机浏览器或 headless。canonical profile 和迁移规则见 `docs/douyin_canonical_profile_runbook.md`。
 
-测试路径原则：日常正式命令写飞书；测试选题、Skill、标题质量或飞书字段时，不重新采集平台数据，优先复用 `output/latest_write/` 和当天采集缓存。
+测试路径原则：日常正式命令写飞书；测试选题、Skill、标题质量或飞书字段时，不重新采集平台数据，只使用明确指定的 `output/runs/<run_id>/` 权威产物。
 
 抖音转写也不是默认流程。先运行 `scripts/douyin_transcript_candidates.py`，从主页采样结果里筛出值得转写的 1-2 条；只有显式执行 `scripts/douyin_video_transcribe.py --raw-payload <raw.json> --model paraformer-v2 --confirm-free-quota --yes` 才会调用百炼 ASR。已经转写过的视频可用 `--transcript-file` 重新包装成 ContentItem，再通过 `daily_pipeline.py --include-douyin-transcripts` 进入候选池，不重复消耗额度。
 

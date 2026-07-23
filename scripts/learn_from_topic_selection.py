@@ -39,7 +39,7 @@ def today_slug() -> str:
 
 
 def latest_run_id() -> str:
-    log_path = ROOT / "output" / "latest_write" / "content_sampler_log.json"
+    log_path = ROOT / "output" / "logs" / f"daily_pipeline_{today_slug()}.json"
     if not log_path.exists():
         return ""
     try:
