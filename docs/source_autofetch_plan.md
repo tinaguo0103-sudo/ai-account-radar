@@ -55,11 +55,11 @@
 ### `--fetch-wechat-fulltext-provider` / `--wechat-fulltext-provider wewe-rss`
 
 - Wechat2RSS 公共 feed 适合发现卡兹克文章列表，但本轮验证中不能稳定提供全文。
-- `wewe-rss` 已验证可作为本地全文 provider：本机服务 `http://127.0.0.1:4000`，JSON 全文接口 `/feeds/all.json?limit=5&mode=fulltext`。
+- `wewe-rss` 已作为 08:00 正常来源：先从本轮开始前的 SQLite snapshot 枚举 active feeds，再逐 feed 调用一次 `POST /trpc/feed.refreshArticles`，body 使用 exact `mpId`，随后立即读取同一 SQLite 和对应全文页。
 - `we-mp-rss` 已从当前主路线降级：它需要公众号平台扫码授权，不适合当前微信小号/微信读书订阅方案，也不建议绑定用户已有公众号主体。
 - 本地 POC 见 `docs/spikes/wechat_fulltext_provider_eval.md`。
 - 当前结论是 `usable_p1_provider`：需要用户在本机维护低频 `wewe-rss` 服务，并用微信读书/微信小号扫码登录；不保存 cookie、token、二维码或数据库到仓库。
-- `scripts/wechat_fulltext_provider_probe.py` 已作为显式 provider adapter 使用：读取本地 `wewe-rss` 输出，转成标准 ContentItem；默认 `daily_pipeline.py` 不调用。
+- `scripts/wewe_provider_refresh.py` 与 `scripts/wewe_current_feed_reader.py` 是正常 adapter：失败 feed 贡献 0 行，成功 feed 的本轮 SQLite delta 转成标准 ContentItem；不读取旧缓存、公共摘要或其他来源补位。
 - 显式 dry-run：`python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5`。
 - 显式写入：`python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5 --write-feishu`。
 - 如需全文候选，只运行全文源：`python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5`。公共 feed 不再和全文源混合进候选池。
@@ -86,7 +86,7 @@
 - 已盘点开源路线：`Agent-Reach` 更适合作为工具清单而不是正式依赖；当前 `_ROUTER_DATA` 单条解析比本轮测试的 `douyin-mcp-server` 更适合 metadata；`MediaCrawler` 是账号主页最近 N 条的 P1 主候选；`Douyin_TikTok_Download_API` 能力全但需要自部署和 Cookie/风控配置，暂作备选。详见 `docs/spikes/douyin_open_source_tool_eval.md`。
 - 当前已有轻量探针：`scripts/douyin_source_watch_probe.py`。它读取当前主对标池里的抖音主页，尝试从公开页面发现作品 ID；如果发现作品 ID，就复用单条视频 resolver 输出本地 ContentItem。它不写飞书、不保存登录态、不下载视频、不抓评论。
 - 2026-06-16 复验结果：秋芝2046、xuan酱公开页面可访问但更像 JS 壳，未解析出作品 ID；ami.moment 缺主页链接。结论是无登录公开主页不足以稳定发现最近 N 条。
-- 当前已有 Chrome CDP 探针：`scripts/douyin_cdp_source_watch_probe.mjs`。它只连接本机远程调试 Chrome，不导出 profile，不保存 cookie/token。它默认进入 `daily_pipeline.py`，正式 `--write-feishu` 时和其他来源一样写入 `03 内容收件箱` 并参与 `04 分析与选题`；普通失败贡献零行，不阻塞其他安全来源。
+- 当前已有 Chrome CDP 探针：`scripts/douyin_cdp_source_watch_probe.mjs`。它只连接本机远程调试 Chrome，不导出 profile，不保存 cookie/token。它默认进入 `daily_pipeline.py`，正式 `--write-feishu` 时和其他来源一样写入 `03 内容收件箱`；账号级失败贡献 0 行，exact-run 成功账号产物在 `completed_with_failures` 下继续，且保留 `today_new` / `historical_unreviewed` 标签。shared runtime failure、错 run 或 failed-account artifact 污染仍使抖音整源为 0。
 - 为避免干扰用户日常 Chrome，使用 `scripts/start_douyin_cdp_chrome.py --port 9333` 以默认 `hidden` 模式后台启动或复用 canonical profile。launcher marker 与 `lsof` open-file proof 必须同时证明 listener PID 正在使用该 profile，随后 `check_douyin_session.py` 必须确认登录。采样不提供 headless 或其他 profile/端口降级路径；登录、验证或身份不明时失败关闭。
 - 口播转写不默认执行。先用 `scripts/douyin_transcript_candidates.py` 根据标题/文案/时长筛选候选；确认值得转写后，再显式调用 `scripts/douyin_video_transcribe.py --raw-payload <raw.json> --model paraformer-v2 --confirm-free-quota --yes`。长视频默认被成本护栏拦截。
 - 已转写内容可通过 `scripts/douyin_video_transcribe.py --raw-payload <raw.json> --transcript-file <transcript.md>` 包装成标准 ContentItem，再用 `python3 scripts/daily_pipeline.py --include-douyin-transcripts` 显式进入候选池。这个流程不重复消耗 ASR 额度，不默认写飞书。

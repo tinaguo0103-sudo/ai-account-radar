@@ -118,13 +118,17 @@ def release_lock(path: Path, owner: dict[str, Any]) -> None:
     path.unlink()
 
 
-def default_request(timeout: float) -> int:
+def configured_provider_url() -> str:
+    return str(os.getenv("WEWE_RSS_PROVIDER_URL") or PROVIDER_URL).rstrip("/")
+
+
+def default_request(feed_id: str, timeout: float) -> int:
     auth_code = os.environ.get("WEWE_RSS_AUTH_CODE", "")
     if not auth_code:
         raise RefreshError("provider_auth_code_missing")
-    body = json.dumps({"json": {}}, separators=(",", ":")).encode()
+    body = json.dumps({"json": {"mpId": feed_id}}, separators=(",", ":")).encode()
     request = urllib.request.Request(
-        f"{PROVIDER_URL}/trpc/feed.refreshAllArticles",
+        f"{configured_provider_url()}/trpc/feed.refreshArticles",
         data=body,
         headers={"Content-Type": "application/json", "Authorization": auth_code},
         method="POST",
@@ -136,26 +140,25 @@ def default_request(timeout: float) -> int:
         return int(response.status)
 
 
-def completion(before: dict[str, Any], after: dict[str, Any], requested_at_ms: int) -> tuple[bool, int]:
+def feed_completion(
+    before: dict[str, Any], after: dict[str, Any], feed_id: str, requested_at_ms: int,
+) -> tuple[bool, int]:
     old = {row["feed_id"]: row for row in before["feeds"]}
     new = {row["feed_id"]: row for row in after["feeds"]}
     if list(old) != list(new):
         raise RefreshError("active_feed_set_drift")
-    added = 0
-    complete = True
-    for feed_id, previous in old.items():
-        current = new[feed_id]
-        if current["article_count"] < previous["article_count"] or current["max_publish_time"] < previous["max_publish_time"]:
-            raise RefreshError("article_aggregate_rollback")
-        complete = complete and current["sync_time"] > previous["sync_time"] and current["sync_time"] >= requested_at_ms // 1000
-        added += current["article_count"] - previous["article_count"]
-    return complete, added
+    previous = old[feed_id]
+    current = new[feed_id]
+    if current["article_count"] < previous["article_count"] or current["max_publish_time"] < previous["max_publish_time"]:
+        raise RefreshError("article_aggregate_rollback")
+    complete = current["sync_time"] > previous["sync_time"] and current["sync_time"] >= requested_at_ms // 1000
+    return complete, current["article_count"] - previous["article_count"]
 
 
 def run_refresh(
     run_id: str, run_started_at_ms: int, *, data_dir: Path | None = None,
     lock_path: Path | None = None, project_root: Path | None = None,
-    request_fn: Callable[[float], int] = default_request,
+    request_fn: Callable[[str, float], int] = default_request,
     snapshot_fn: Callable[[Path], dict[str, Any]] = read_snapshot,
     clock_ms: Callable[[], int] = lambda: int(time.time() * 1000),
     sleep_fn: Callable[[float], None] = time.sleep,
@@ -168,27 +171,90 @@ def run_refresh(
     owner = acquire_lock(resolved_lock, clock_ms())
     try:
         before = snapshot_fn(database)
-        requested_at_ms = clock_ms()
-        status = int(request_fn(15.0))
-        if not 200 <= status < 300:
-            raise RefreshError("refresh_request_rejected")
-        deadline = requested_at_ms + deadline_ms
-        while clock_ms() <= deadline:
-            after = snapshot_fn(database)
-            complete, new_count = completion(before, after, requested_at_ms)
-            if complete:
-                return {
-                    "ok": True, "status": "success", "run_id": run_id,
-                    "run_started_at_ms": run_started_at_ms,
-                    "requested_at_ms": requested_at_ms,
-                    "completed_at_ms": clock_ms(),
-                    "provider_request_count": 1,
-                    "new_item_count": new_count,
-                    "before": before, "after": after,
-                    "secret_material_read": False, "secrets_exposed": False,
-                }
-            sleep_fn(poll_interval_ms / 1000)
-        raise RefreshError("refresh_completion_timeout")
+        feed_outcomes: list[dict[str, Any]] = []
+        successful_feed_ids: list[str] = []
+        first_requested_at_ms = 0
+        total_new_items = 0
+        after = before
+        for feed in before["feeds"]:
+            feed_id = str(feed["feed_id"])
+            requested_at_ms = clock_ms()
+            if not first_requested_at_ms:
+                first_requested_at_ms = requested_at_ms
+            try:
+                status = int(request_fn(feed_id, 15.0))
+                if not 200 <= status < 300:
+                    raise RefreshError("refresh_request_rejected")
+            except (OSError, RefreshError, urllib.error.URLError, json.JSONDecodeError) as exc:
+                feed_outcomes.append({
+                    "feed_id": feed_id, "status": "failed",
+                    "reason": str(exc) or type(exc).__name__, "artifact_count": 0,
+                })
+                continue
+            deadline = requested_at_ms + deadline_ms
+            completed = False
+            while clock_ms() <= deadline:
+                after = snapshot_fn(database)
+                completed, new_count = feed_completion(before, after, feed_id, requested_at_ms)
+                if completed:
+                    successful_feed_ids.append(feed_id)
+                    total_new_items += new_count
+                    feed_outcomes.append({
+                        "feed_id": feed_id, "status": "success",
+                        "reason": "", "artifact_count": new_count,
+                    })
+                    break
+                sleep_fn(poll_interval_ms / 1000)
+            if not completed:
+                feed_outcomes.append({
+                    "feed_id": feed_id, "status": "failed",
+                    "reason": "refresh_completion_timeout", "artifact_count": 0,
+                })
+        failed_count = len(feed_outcomes) - len(successful_feed_ids)
+        if not successful_feed_ids:
+            return {
+                "ok": False,
+                "status": "provider_failed",
+                "reason": "all_active_feeds_failed",
+                "full_collection_success": False,
+                "downstream_usable": False,
+                "run_id": run_id,
+                "run_started_at_ms": run_started_at_ms,
+                "requested_at_ms": first_requested_at_ms,
+                "completed_at_ms": clock_ms(),
+                "provider_request_count": len(before["feeds"]),
+                "planned_feed_count": len(before["feeds"]),
+                "successful_feed_count": 0,
+                "failed_feed_count": failed_count,
+                "successful_feed_ids": [],
+                "feed_outcomes": feed_outcomes,
+                "new_item_count": 0,
+                "before": before,
+                "after": after,
+                "secret_material_read": False,
+                "secrets_exposed": False,
+            }
+        return {
+            "ok": True,
+            "status": "completed" if failed_count == 0 else "completed_with_failures",
+            "full_collection_success": failed_count == 0,
+            "downstream_usable": True,
+            "run_id": run_id,
+            "run_started_at_ms": run_started_at_ms,
+            "requested_at_ms": first_requested_at_ms,
+            "completed_at_ms": clock_ms(),
+            "provider_request_count": len(before["feeds"]),
+            "planned_feed_count": len(before["feeds"]),
+            "successful_feed_count": len(successful_feed_ids),
+            "failed_feed_count": failed_count,
+            "successful_feed_ids": successful_feed_ids,
+            "feed_outcomes": feed_outcomes,
+            "new_item_count": total_new_items,
+            "before": before,
+            "after": after,
+            "secret_material_read": False,
+            "secrets_exposed": False,
+        }
     finally:
         release_lock(resolved_lock, owner)
 
@@ -231,7 +297,7 @@ def main() -> int:
     except (OSError, RefreshError, urllib.error.URLError, json.JSONDecodeError) as exc:
         result = {
             "ok": False, "status": "provider_failed", "reason": str(exc),
-            "run_id": args.run_id, "provider_request_count": 1 if not args.check_only else 0,
+            "run_id": args.run_id, "provider_request_count": 0,
             "secret_material_read": False, "secrets_exposed": False,
         }
     write_result(Path(args.out).expanduser().resolve(), result)

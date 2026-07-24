@@ -7,6 +7,7 @@ source is attempted once and only current-run successful rows enter planning.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import subprocess
@@ -316,21 +317,101 @@ def combine_manual_jsonl(paths: list[Path], output: Path) -> Path:
     return output
 
 
-def current_douyin_rows(result_path: Path, manual_path: Path, run_id: str) -> int:
+def current_douyin_artifact(result_path: Path, manual_path: Path, run_id: str) -> dict[str, Any]:
     result = read_json(result_path)
-    if str(result.get("run_id") or "") != run_id or not manual_path.is_file():
-        return 0
+    status = str(result.get("status") or "")
+    if str(result.get("run_id") or "") != run_id:
+        return {"ok": False, "row_count": 0, "reason": "douyin_run_mismatch"}
+    if status not in {"completed", "completed_with_failures"}:
+        return {"ok": False, "row_count": 0, "reason": "douyin_status_not_usable"}
+    if result.get("source_runtime_failure"):
+        return {"ok": False, "row_count": 0, "reason": "douyin_shared_runtime_failure"}
+    lineage = result.get("item_lineage")
+    if not isinstance(lineage, dict) or lineage.get("ok") is not True:
+        return {"ok": False, "row_count": 0, "reason": "douyin_item_lineage_invalid"}
+    if not manual_path.is_file():
+        return {"ok": False, "row_count": 0, "reason": "douyin_manual_artifact_missing"}
     try:
         rows = [json.loads(line) for line in manual_path.read_text(encoding="utf-8").splitlines() if line.strip()]
     except (OSError, json.JSONDecodeError, TypeError):
-        return 0
-    failed = [
-        row for row in (result.get("rows") or [])
-        if str(row.get("status") or "").startswith(("failed", "needs_"))
-    ]
-    if any(int(row.get("artifact_count") or 0) != 0 for row in failed):
-        return 0
-    return len(rows)
+        return {"ok": False, "row_count": 0, "reason": "douyin_manual_artifact_unreadable"}
+    artifact = result.get("manual_artifact")
+    if not isinstance(artifact, dict):
+        return {"ok": False, "row_count": 0, "reason": "douyin_manual_artifact_identity_missing"}
+    raw = manual_path.read_bytes()
+    if (
+        str(artifact.get("run_id") or "") != run_id
+        or str(artifact.get("path") or "") != str(manual_path.resolve())
+        or int(artifact.get("row_count") or -1) != len(rows)
+        or str(artifact.get("sha256") or "") != hashlib.sha256(raw).hexdigest()
+    ):
+        return {"ok": False, "row_count": 0, "reason": "douyin_manual_artifact_identity_mismatch"}
+    coverage = result.get("coverage")
+    if not isinstance(coverage, dict):
+        return {"ok": False, "row_count": 0, "reason": "douyin_coverage_missing"}
+    failed_accounts = coverage.get("failed_accounts")
+    if not isinstance(failed_accounts, list):
+        return {"ok": False, "row_count": 0, "reason": "douyin_failed_accounts_missing"}
+    if any(int(row.get("artifact_count") or 0) != 0 for row in failed_accounts if isinstance(row, dict)):
+        return {"ok": False, "row_count": 0, "reason": "douyin_failed_account_artifact_pollution"}
+    failed_names = {
+        str(row.get("account_name") or "")
+        for row in failed_accounts if isinstance(row, dict)
+    }
+    if any(str(row.get("运行批次") or "") != run_id for row in rows):
+        return {"ok": False, "row_count": 0, "reason": "douyin_manual_row_run_mismatch"}
+    if any(str(row.get("账号名/公众号名") or "") in failed_names for row in rows):
+        return {"ok": False, "row_count": 0, "reason": "douyin_failed_account_row_pollution"}
+    temporal_counts = {
+        "today_new": sum(str(row.get("候选时态") or "") == "today_new" for row in rows),
+        "historical_unreviewed": sum(str(row.get("候选时态") or "") == "historical_unreviewed" for row in rows),
+    }
+    if sum(temporal_counts.values()) != len(rows):
+        return {"ok": False, "row_count": 0, "reason": "douyin_candidate_temporal_state_invalid"}
+    lifecycle = result.get("candidate_lifecycle")
+    if not isinstance(lifecycle, dict) or (
+        int(lifecycle.get("today_new_count") or 0) != temporal_counts["today_new"]
+        or int(lifecycle.get("historical_unreviewed_count") or 0) != temporal_counts["historical_unreviewed"]
+    ):
+        return {"ok": False, "row_count": 0, "reason": "douyin_candidate_temporal_count_mismatch"}
+    if not rows:
+        return {"ok": False, "row_count": 0, "reason": "douyin_safe_rows_empty"}
+    return {
+        "ok": True,
+        "row_count": len(rows),
+        "status": status,
+        "partial": status == "completed_with_failures",
+        "failed_account_count": len(failed_accounts),
+        **temporal_counts,
+    }
+
+
+def current_douyin_rows(result_path: Path, manual_path: Path, run_id: str) -> int:
+    return int(current_douyin_artifact(result_path, manual_path, run_id).get("row_count") or 0)
+
+
+def attach_current_douyin_artifact(
+    step: dict[str, Any],
+    artifact: dict[str, Any],
+    manual_path: Path,
+    manual_inputs: list[Path],
+) -> bool:
+    if artifact.get("ok") is not True:
+        return False
+    manual_inputs.append(manual_path)
+    step["source_rows"] = int(artifact.get("row_count") or 0)
+    step["source_outcome"] = str(artifact["status"])
+    step["today_new_rows"] = int(artifact["today_new"])
+    step["historical_unreviewed_rows"] = int(artifact["historical_unreviewed"])
+    if artifact.get("partial"):
+        step["source_returncode"] = step["returncode"]
+        step["returncode"] = 0
+        step["candidate_local_partial"] = True
+        step["source"] = "douyin"
+        step["source_failure_reason"] = (
+            f"{int(artifact['failed_account_count'])} account failures isolated"
+        )
+    return True
 
 
 def main() -> int:
@@ -402,6 +483,7 @@ def main() -> int:
             refresh_cmd.append("--check-only")
         steps.append(run_step("request fixed wewe-rss provider refresh", refresh_cmd, env=step_env))
         refresh_result = stdout_json(steps[-1])
+        refresh_step = steps[-1]
         provider_cmd: list[str] = []
         if refresh_result.get("status") == "refresh_required" or steps[-1]["returncode"] != 0:
             state = str(refresh_result.get("status") or "provider_failed")
@@ -418,6 +500,17 @@ def main() -> int:
                 "source_rows": 0,
             }
         else:
+            if refresh_result.get("status") == "completed_with_failures":
+                refresh_step.update({
+                    "candidate_local_partial": True,
+                    "source": "wechat",
+                    "source_outcome": "completed_with_failures",
+                    "source_rows": 0,
+                    "failed_feed_count": int(refresh_result.get("failed_feed_count") or 0),
+                    "source_failure_reason": (
+                        f"{int(refresh_result.get('failed_feed_count') or 0)} feed failures isolated"
+                    ),
+                })
             health_cmd = [py, str(ROOT / "scripts" / "wewe_provider_health.py"), "--check-only", "--run-id", run_id, "--run-started-at-ms", str(run_started_at_ms), "--refresh-result", str(refresh_attempt_path)]
             steps.append(run_step("verify canonical wewe-rss account and refresh freshness", health_cmd, env=step_env))
             wechat_freshness = stdout_json(steps[-1])
@@ -464,6 +557,7 @@ def main() -> int:
                     steps[-1]["candidate_returncode"] = steps[-1]["returncode"]
                     steps[-1]["returncode"] = 0
                 manual_inputs.append(WECHAT_FULLTEXT_RESOLVED_MANUAL)
+                refresh_step["source_rows"] = int(wechat_read_outcome.get("succeeded") or 0)
             if candidate_partial:
                 steps[-1]["candidate_local_partial"] = True
                 steps[-1]["note"] = "WeChat candidate-local read failures were isolated; successful truthful rows continue."
@@ -497,16 +591,17 @@ def main() -> int:
             douyin_step = run_step("fetch daily Douyin homepage title/caption samples through Chrome CDP", douyin_cmd, env=step_env)
             steps.append(douyin_step)
             active_douyin_probe_result = douyin_artifacts["result"]
-            row_count = current_douyin_rows(douyin_artifacts["result"], douyin_artifacts["manual"], run_id)
-            if douyin_step["returncode"] == 0 and row_count > 0:
-                manual_inputs.append(douyin_artifacts["manual"])
-                douyin_step["source_rows"] = row_count
-            else:
+            douyin_artifact = current_douyin_artifact(
+                douyin_artifacts["result"], douyin_artifacts["manual"], run_id,
+            )
+            if not attach_current_douyin_artifact(
+                douyin_step, douyin_artifact, douyin_artifacts["manual"], manual_inputs,
+            ):
                 isolate_source_failure(
                     douyin_step,
                     source="douyin",
                     state="collection_failed",
-                    reason=str(douyin_step.get("stderr") or "douyin_current_run_rows_missing"),
+                    reason=str(douyin_artifact.get("reason") or douyin_step.get("stderr") or "douyin_current_run_rows_missing"),
                 )
 
     manual_path = str(combine_manual_jsonl(

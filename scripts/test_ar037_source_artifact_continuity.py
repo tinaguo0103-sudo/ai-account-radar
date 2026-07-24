@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -38,12 +39,28 @@ class AR037SourceContinuityTests(unittest.TestCase):
             root = Path(tmp)
             result = root / "result.json"
             manual = root / "manual.jsonl"
+            manual.write_text(json.dumps({
+                "运行批次": "run_exact",
+                "账号名/公众号名": "account",
+                "候选时态": "today_new",
+            }) + "\n", encoding="utf-8")
             result.write_text(json.dumps({
                 "run_id": "run_exact",
                 "status": "completed",
-                "artifact_count": 1,
+                "source_runtime_failure": None,
+                "item_lineage": {"ok": True},
+                "coverage": {"failed_accounts": []},
+                "manual_artifact": {
+                    "run_id": "run_exact",
+                    "path": str(manual.resolve()),
+                    "row_count": 1,
+                    "sha256": hashlib.sha256(manual.read_bytes()).hexdigest(),
+                },
+                "candidate_lifecycle": {
+                    "today_new_count": 1,
+                    "historical_unreviewed_count": 0,
+                },
             }), encoding="utf-8")
-            manual.write_text(json.dumps({"运行批次": "run_exact"}) + "\n", encoding="utf-8")
             self.assertEqual(1, daily_pipeline.current_douyin_rows(result, manual, "run_exact"))
             self.assertEqual(0, daily_pipeline.current_douyin_rows(result, manual, "run_other"))
 

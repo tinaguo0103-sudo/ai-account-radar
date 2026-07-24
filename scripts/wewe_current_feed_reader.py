@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any, Callable
 
 from wechat_fulltext_provider_probe import Provider, html_to_text, to_manual_row
-from wewe_provider_refresh import CANONICAL_DATA_DIR, PROVIDER_URL
+from wewe_provider_refresh import configured_data_dir, configured_provider_url
 
 
 MAX_ARTICLE_RESPONSE_BYTES = 8_000_000
@@ -44,21 +44,50 @@ def load_refresh_result(path: Path) -> dict[str, Any]:
         payload = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError, TypeError) as exc:
         raise CurrentFeedError("refresh_result_unreadable") from exc
-    required = {"before", "after", "completed_at_ms", "new_item_count", "ok", "provider_request_count", "requested_at_ms", "run_id", "run_started_at_ms", "secret_material_read", "secrets_exposed", "status"}
+    required = {
+        "before", "after", "completed_at_ms", "feed_outcomes", "new_item_count",
+        "ok", "provider_request_count", "requested_at_ms", "run_id",
+        "run_started_at_ms", "secret_material_read", "secrets_exposed", "status",
+        "successful_feed_ids",
+    }
     if not isinstance(payload, dict) or not required.issubset(payload):
         raise CurrentFeedError("refresh_result_schema_invalid")
-    if payload["ok"] is not True or payload["status"] != "success":
+    if payload["ok"] is not True or payload["status"] not in {"completed", "completed_with_failures"}:
         raise CurrentFeedError("refresh_result_not_success")
+    successful_feed_ids = payload.get("successful_feed_ids")
+    if not isinstance(successful_feed_ids, list) or not successful_feed_ids:
+        raise CurrentFeedError("refresh_successful_feed_set_invalid")
+    outcomes = payload.get("feed_outcomes")
+    if not isinstance(outcomes, list):
+        raise CurrentFeedError("refresh_feed_outcomes_invalid")
+    outcome_successes = [
+        str(row.get("feed_id") or "")
+        for row in outcomes
+        if isinstance(row, dict) and row.get("status") == "success"
+    ]
+    if outcome_successes != successful_feed_ids:
+        raise CurrentFeedError("refresh_successful_feed_set_invalid")
+    if any(
+        int(row.get("artifact_count") or 0) != 0
+        for row in outcomes
+        if isinstance(row, dict) and row.get("status") != "success"
+    ):
+        raise CurrentFeedError("refresh_failed_feed_artifact_pollution")
     return payload
 
 
 def current_run_plan(database: Path, result: dict[str, Any]) -> list[dict[str, Any]]:
     before_by_feed = {row["feed_id"]: row for row in result["before"]["feeds"]}
     after_by_feed = {row["feed_id"]: row for row in result["after"]["feeds"]}
+    successful_feed_ids = [str(value) for value in result["successful_feed_ids"]]
+    if len(set(successful_feed_ids)) != len(successful_feed_ids):
+        raise CurrentFeedError("refresh_successful_feed_set_invalid")
     planned: list[dict[str, Any]] = []
     try:
         connection = sqlite3.connect(f"file:{database}?mode=ro", uri=True)
-        for feed_id in before_by_feed:
+        for feed_id in successful_feed_ids:
+            if feed_id not in before_by_feed or feed_id not in after_by_feed:
+                raise CurrentFeedError("refresh_successful_feed_set_invalid")
             old = before_by_feed[feed_id]
             new = after_by_feed[feed_id]
             live = connection.execute(
@@ -158,7 +187,7 @@ def fetch_planned_fulltext(
     outcomes: list[dict[str, Any]] = []
     for expected in planned:
         query = urllib.parse.urlencode({"limit": 1, "page": expected["page"], "mode": "fulltext"})
-        url = f"{PROVIDER_URL}/feeds/{urllib.parse.quote(expected['feed_id'], safe='')}.json?{query}"
+        url = f"{configured_provider_url()}/feeds/{urllib.parse.quote(expected['feed_id'], safe='')}.json?{query}"
         try:
             raw, content_type = fetcher(url)
         except Exception as exc:
@@ -261,7 +290,9 @@ def write_atomic_batch(
             provider = Provider(
                 provider_id="wewe-rss", provider="wewe-rss", name="WeWe-RSS current feed",
                 source_name=expected["feed_name"], platform="微信公众号", source_type="公众号文章",
-                base_url=PROVIDER_URL, feed_path=f"/feeds/{expected['feed_id']}.json", source_id=expected["feed_id"],
+                base_url=configured_provider_url(),
+                feed_path=f"/feeds/{expected['feed_id']}.json",
+                source_id=expected["feed_id"],
             )
             item = dict(success); item["raw_body"] = ""; item["raw_payload_path"] = str(final_raw_path)
             row = to_manual_row(provider, item, "success", "", refresh_revision=refresh_revision)
@@ -316,7 +347,7 @@ def write_atomic_batch(
 
 def run(
     *, refresh_result_path: Path, run_id: str, run_started_at_ms: int,
-    data_dir: Path = CANONICAL_DATA_DIR,
+    data_dir: Path | None = None,
     check_only: bool = False, out: Path | None = None, csv_path: Path | None = None,
     report_path: Path | None = None,
     fetcher: Callable[[str], tuple[bytes, str]] = bounded_fetch,
@@ -324,7 +355,7 @@ def run(
     result = load_refresh_result(refresh_result_path)
     if result["run_id"] != run_id or result["run_started_at_ms"] != run_started_at_ms:
         raise CurrentFeedError("current_feed_run_mismatch")
-    database = data_dir.resolve() / "wewe-rss.db"
+    database = (data_dir or configured_data_dir()).resolve() / "wewe-rss.db"
     planned = current_run_plan(database, result)
     refresh_revision = max((int(row["sync_time"]) for row in result["after"]["feeds"]), default=0)
     base = {

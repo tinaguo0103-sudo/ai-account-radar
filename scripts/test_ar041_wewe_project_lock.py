@@ -59,7 +59,7 @@ class ProjectRefreshMutexTests(unittest.TestCase):
                 data_dir=root,
                 lock_path=lock,
                 project_root=root,
-                request_fn=lambda timeout: requests.append(timeout) or 200,
+                request_fn=lambda feed_id, timeout: requests.append((feed_id, timeout)) or 200,
                 snapshot_fn=lambda _path: snapshots.pop(0),
                 clock_ms=lambda: next(clocks),
                 sleep_fn=lambda _seconds: None,
@@ -67,6 +67,7 @@ class ProjectRefreshMutexTests(unittest.TestCase):
             self.assertTrue(result["ok"])
             self.assertEqual(1, result["provider_request_count"])
             self.assertEqual(1, len(requests))
+            self.assertEqual("f", requests[0][0])
             self.assertFalse(lock.exists())
             self.assertFalse(result["secret_material_read"])
 
