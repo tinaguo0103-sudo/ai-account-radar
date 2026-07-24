@@ -1,12 +1,12 @@
 {
   "schema_version": 1,
   "skill_name": "ai-account-editorial-director",
-  "source_release": "AR-038 business-first candidate funnel",
-  "source_release_commit": "6d3133a8f857c65d00b3a66ae7e1cf7f9aecc0cc",
+  "source_release": "AR-044 Editorial Single-Path Gate Removal",
+  "source_release_commit": "7f1dfd9f8db73fc48e8be083e30f9bac14999d8b",
   "managed_files": [
     {
       "path": "SKILL.md",
-      "sha256": "c8b6ab343e96912af7a6efc7e156718fd4d02d4bc6a5a3d7d36cbc2a89f6abbe"
+      "sha256": "36a47dc83a71415c6a3e57deb091e15b9c90a742ce0ee6ec8c08c09f44196006"
     },
     {
       "path": "agents/openai.yaml",
