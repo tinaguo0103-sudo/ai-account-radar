@@ -20,15 +20,15 @@ subagent, deterministic editorial logic, or a second model session.
    This mode consumes every CSV row in order and must not invoke the
    `content_items.csv` shortlist/resampling path or add replacement candidates.
 4. Run the current-task state machine in this order:
-   `prepare-source-open -> current task exact-source capture ->
-   validate-source-open -> prepare-research -> current task web research ->
-   validate-research -> prepare-stage1 -> current task editorial decisions ->
+   `prepare-source-open -> validate-source-open -> prepare-research ->
+   prepare-stage1 -> current task editorial decisions ->
    validate-stage1 -> prepare-ranking -> current task global 0..N ranking ->
    validate-ranking -> prepare-stage2 -> current task operational mapping ->
    validate-stage2 -> finalize`.
-5. Every exact source and opened research result must retain raw evidence,
-   hashes and literal excerpts. Candidate failures remain excluded and visible;
-   partial runs remain non-green.
+5. Every trusted exact-run candidate enters Stage 1. Raw digits, legal, medical,
+   financial, or safety terms do not trigger pre-Stage-1 research. Only a
+   selected visible title or angle that retains a hard claim needs matching
+   opened evidence; otherwise soften the claim or fail that candidate only.
 6. Use the global `ai-account-editorial-director` only after
    `ar020e_daily_editorial_entrypoint.py --check-only` reports
    `manifest_verified=true`. Persona material is style and judgment reference
@@ -44,6 +44,7 @@ subagent, deterministic editorial logic, or a second model session.
    --write-feishu`. This write command is forbidden in
    check-only, RC preparation and dry-run regression.
 
-Any missing source/research evidence, stale hash, ownership drift, semantic
-fallback, missing page identity or incomplete review fails closed. No legacy
-editorial path is permitted.
+Stale identity, unsupported final visible hard claims, ownership drift,
+semantic fallback, or incomplete review fails closed at the affected boundary.
+Zero genuine recommendations is `completed_no_recommendation`, not a task
+failure. No legacy editorial path is permitted.

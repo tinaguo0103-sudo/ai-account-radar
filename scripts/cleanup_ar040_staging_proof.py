@@ -12,7 +12,7 @@ from feishu_table_registry import configured_table_id
 from local_env import load_local_env
 
 
-RUN_RE = re.compile(r"^run_\d{8}_\d{6}_(?:ar040_devproof|ar043b_(?:devproof|rework))$")
+RUN_RE = re.compile(r"^run_\d{8}_\d{6}_(?:ar040_devproof|ar043b_(?:devproof|rework)|ar044_devproof)$")
 
 
 def records_for_run(token: str, app_token: str, table_id: str, run_id: str) -> list[str]:

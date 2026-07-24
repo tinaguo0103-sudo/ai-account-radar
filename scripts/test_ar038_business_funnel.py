@@ -82,11 +82,17 @@ class AR038BusinessFunnelTests(unittest.TestCase):
         self.assertTrue(result["eligible"])
         self.assertTrue(result["link_unavailable"])
         self.assertEqual(result["evidence_level"], "trusted_collection_artifact")
-        self.assertFalse(research.requires_external_research(candidate))
 
-    def test_high_risk_fact_requires_research(self) -> None:
-        candidate = {"artifact_text": "Official financing reached 10亿元 on a stated release date"}
-        self.assertTrue(research.requires_external_research(candidate))
+    def test_raw_high_risk_words_do_not_prequalify_candidate_for_research(self) -> None:
+        candidate = {
+            "content_fingerprint": "fp-2",
+            "source_type": "AIHOT",
+            "source_account": "AIHOT",
+            "artifact_text": "Official financing reached 10亿元 on a stated release date",
+        }
+        result = research.validate_source_open(candidate, {"open_status": "failed"})
+        self.assertTrue(result["eligible"])
+        self.assertNotIn("needs_verification", result)
 
 
 if __name__ == "__main__":

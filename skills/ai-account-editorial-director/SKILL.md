@@ -14,9 +14,8 @@ description: 基于已打开的精确来源、网页研究证据与 Austin 私�
 ```text
 trusted collection artifact review pool
 -> optional exact source enhancement
--> risk-triggered web research dossier
--> evidence-backed hook analysis
 -> persona-native editorial decision
+-> selected visible hard-claim evidence check
 -> dynamic global ranking (0..N, no cap)
 -> operational field mapping
 -> lossless paginated Topic Cards
@@ -27,7 +26,8 @@ trusted collection artifact review pool
 ## 证据边界
 
 - 已验证 run/date/source/account/fingerprint 且具有非空标题、caption 或 body 的采集 artifact 本身可进入 Skill。原链接为空或打不开时标记 `link_unavailable` 与较低置信度，不得因此删除候选。
-- 外部研究只对精确数字/日期/引语、官方功能或声明、时效新闻，以及法律、医疗、金融、名誉类硬事实强制。普通观点、结构学习和工作流判断可使用采集 artifact；无外研时必须降低置信度、软化硬事实或标记待补证据。
+- raw 素材中的数字、日期、法律、医疗、金融等词不构成 Stage 1 前置研究资格门。所有可信 exact-run artifact 先进入 Stage 1。
+- 只有最终选择的可见标题或角度实际保留精确数字、日期、直接引语、官方声明、法律、医疗、金融、安全等 hard claim 时，才要求对应研究证据。证据不足时先删除或软化该 hard claim；仍不成立时只淘汰该候选。
 - 产品名、创作者名、工具名不是天然钩子。钩子必须解释陌生受众为什么会点，并绑定 evidence IDs。
 - persona 只影响 Austin 如何注意、比较、怀疑、取舍和表达；不能改变来源事实、证据强度或 eligibility。
 - 私有案例不是候选证据。禁止输出案例名、case ID、引用、锚点或“案例证明”。
@@ -109,4 +109,4 @@ Stage 2 只生成运营字段，如实验、验证、资产和内部细节。它
 
 ## Fail Closed
 
-来源打不开、研究失败、证据过期、Skill 输出失败、schema/hash 不一致、ownership drift、排序 bijection 失败或分页 ID 丢失/重复时，该候选不得生成标题、推荐或卡片。其他完整候选可以继续，但整 run 必须是 `completed_with_failures / ok=false`，不得把部分成功写成完整成功。
+最终可见 hard claim 无证据、Skill 输出失败、schema/hash 不一致、ownership drift、排序 bijection 失败或分页 ID 丢失/重复时，该候选不得生成标题、推荐或卡片。其他完整候选继续，候选失败保持可见但不得反转 survivor 的核心业务结果。推荐数可以为 0，此时正常结束为 `completed_no_recommendation`，不得凑数。

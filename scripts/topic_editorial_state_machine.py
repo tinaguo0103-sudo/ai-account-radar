@@ -318,14 +318,7 @@ def source_open_candidate(row: dict[str, Any], index: int) -> dict[str, Any]:
         "primary_adapter": "",
         "expected_page_identity": {},
     }
-    item["research_required"] = research_contract.requires_external_research(item)
-    item["source_open_required"] = bool(exact_url and item["research_required"])
-    if item["source_open_required"]:
-        try:
-            item["primary_adapter"] = source_adapter.primary_adapter_for_url(exact_url)
-            item["expected_page_identity"] = source_adapter.expected_identity(exact_url)
-        except source_adapter.AdapterContractError as exc:
-            item["source_open_prepare_error"] = str(exc)
+    item["source_open_required"] = False
     return item
 
 
@@ -344,16 +337,9 @@ def exact_source_open_candidate(row: dict[str, Any], identity: dict[str, Any]) -
         "artifact_text": identity["source_content"],
         "local_trace_hash": identity["row_hash"],
     })
-    item["research_required"] = research_contract.requires_external_research(item)
-    item["source_open_required"] = bool(item["exact_url"] and item["research_required"])
+    item["source_open_required"] = False
     item["primary_adapter"] = ""
     item["expected_page_identity"] = {}
-    if item["source_open_required"]:
-        try:
-            item["primary_adapter"] = source_adapter.primary_adapter_for_url(item["exact_url"])
-            item["expected_page_identity"] = source_adapter.expected_identity(item["exact_url"])
-        except source_adapter.AdapterContractError as exc:
-            item["source_open_prepare_error"] = str(exc)
     return item
 
 
@@ -586,52 +572,38 @@ def prepare_research(args: argparse.Namespace) -> dict[str, Any]:
             records[cid] = stage_record("failed", error="source_open_failed", index=candidate["index"])
             continue
         source = read_json(out_dir / "source_open" / cid / "validated.json")
-        if not research_contract.requires_external_research(candidate):
-            evidence_ids = [str(item.get("evidence_id")) for item in source.get("content_evidence", []) if item.get("evidence_id")]
-            dossier = {
-                "status": "completed",
-                "eligible": True,
-                "research_requirement": "optional",
-                "research_summary": "可信采集产物足够进入主编判断；未经独立验证的外部事实必须弱化或另行补证。",
-                "results": [],
-                "conflicts": [],
-                "confidence": "low" if source.get("link_unavailable") else "medium",
-                "source": source,
-                "hook_analysis": {
-                    "audience_hook": str(candidate.get("artifact_text") or candidate.get("csv_title") or ""),
-                    "why_unfamiliar_audience_clicks": "The artifact contains a concrete workflow, viewpoint, or content structure worth editorial review.",
-                    "hook_type": ["decision_tradeoff"],
-                    "hook_evidence_ids": evidence_ids,
-                    "product_name_is_not_hook": True,
-                },
-                "claim_evidence": [],
-                "completed_at": now_iso(),
-            }
-            dossier["dossier_hash"] = hash_json(dossier)
-            write_json(out_dir / "research" / cid / "validated.json", dossier)
-            records[cid] = stage_record("completed", output_hash=dossier["dossier_hash"], dossier_hash=dossier["dossier_hash"], index=candidate["index"])
-            continue
-        payload = {
-            "protocol": VERSION,
-            "stage": "web_research_and_hook_analysis",
-            "candidate": candidate,
+        evidence_ids = [str(item.get("evidence_id")) for item in source.get("content_evidence", []) if item.get("evidence_id")]
+        dossier = {
+            "status": "completed",
+            "eligible": True,
+            "research_requirement": "final_visible_hard_claim_only",
+            "research_summary": "可信采集产物已进入主编判断；最终标题或角度若保留硬事实，必须另有对应证据。",
+            "results": [],
+            "conflicts": [],
+            "confidence": "low" if source.get("link_unavailable") else "medium",
             "source": source,
-            "rules": {
-                "research_every_opened_source": False,
-                "research_required_for_high_risk_facts": True,
-                "official_then_credible_independent": True,
-                "search_snippet_is_discovery_only": True,
+            "hook_analysis": {
+                "audience_hook": str(candidate.get("artifact_text") or candidate.get("csv_title") or ""),
+                "why_unfamiliar_audience_clicks": "The artifact contains a concrete workflow, viewpoint, or content structure worth editorial review.",
+                "hook_type": ["decision_tradeoff"],
+                "hook_evidence_ids": evidence_ids,
                 "product_name_is_not_hook": True,
-                "persona_is_not_evidence": True,
             },
+            "claim_evidence": [],
+            "completed_at": now_iso(),
         }
-        path = out_dir / "research" / cid
-        write_json(path / "input.json", payload)
-        records[cid] = stage_record("prepared", input_hash=hash_json(payload), index=candidate["index"])
+        dossier["dossier_hash"] = hash_json(dossier)
+        write_json(out_dir / "research" / cid / "validated.json", dossier)
+        records[cid] = stage_record("completed", output_hash=dossier["dossier_hash"], dossier_hash=dossier["dossier_hash"], index=candidate["index"])
     state["stages"]["research"] = stage_record("prepared", candidates=records)
     update_terminal_stage(state, "research")
     save_state(out_dir, state)
-    return {"ok": True, "stage": "prepare_research", "researchable": sum(1 for item in records.values() if item["status"] == "prepared")}
+    return {
+        "ok": True,
+        "stage": "prepare_research",
+        "researchable": 0,
+        "stage1_eligible": sum(1 for item in records.values() if item["status"] == "completed"),
+    }
 
 
 def validate_research(args: argparse.Namespace) -> dict[str, Any]:
@@ -677,7 +649,7 @@ def prepare_stage1(args: argparse.Namespace) -> dict[str, Any]:
     eligible = [item for item in candidates if item["candidate_id"] in eligible_ids]
     eligible = [{**item, "eligible_index": index} for index, item in enumerate(eligible)]
     if not eligible:
-        raise RuntimeError("No fully researched candidates; Stage 1 is blocked")
+        raise RuntimeError("No safe candidates; Stage 1 is blocked")
     write_json(out_dir / "eligible_candidates.json", eligible)
     batch_state: dict[str, Any] = {}
     for batch_index, start, rows in replay.batch_slices(eligible, int(state["batch_size"])):
@@ -1100,25 +1072,16 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
             if item.get("status") == "failed"
         }
         candidate_failures = len(failed_candidate_ids)
+        apply_business_completion_status(
+            summary,
+            candidate_failure_count=candidate_failures,
+            source_open_failure_count=source_failures,
+            research_failure_count=research_failures,
+        )
         if candidate_failures:
-            summary.update({
-                "ok": False,
-                "full_run_success": False,
-                "completed": True,
-                "stage": "completed_with_failures",
-                "survivor_quality_gate_ok": True,
-                "quality_gate_ok": False,
-                "candidate_failure_count": candidate_failures,
-                "source_open_failure_count": source_failures,
-                "research_failure_count": research_failures,
-                "failure_semantics": "failed candidates were excluded before editorial decision and cards",
-            })
             replay.write_json(out_dir / "skill_replay_summary.json", summary)
             replay.write_markdown_report(out_dir, summary, replay.sample_rows(rows))
             replay.write_ar020d_self_acceptance_report(out_dir, summary, replay.sample_rows(rows))
-        if not candidate_failures:
-            summary["full_run_success"] = True
-            summary["survivor_quality_gate_ok"] = bool(summary.get("quality_gate_ok"))
         ranked_decisions = read_json(out_dir / "global_ranking" / "ranked_decisions.json")
         decision_by_index = {int(item["index"]): str(item.get("locked_decision") or "") for item in ranked_decisions}
         eligible_candidates = read_json(out_dir / "eligible_candidates.json")
@@ -1135,7 +1098,7 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
         complete_stage(
             record,
             hash_json(summary),
-            quality_gate_ok=not candidate_failures and bool(summary.get("quality_gate_ok")),
+            quality_gate_ok=bool(summary.get("quality_gate_ok")),
             survivor_quality_gate_ok=bool(summary.get("survivor_quality_gate_ok")),
             candidate_failure_count=candidate_failures,
         )
@@ -1146,6 +1109,40 @@ def finalize(args: argparse.Namespace) -> dict[str, Any]:
         save_state(out_dir, state)
         raise
     save_state(out_dir, state)
+    return summary
+
+
+def apply_business_completion_status(
+    summary: dict[str, Any],
+    *,
+    candidate_failure_count: int,
+    source_open_failure_count: int = 0,
+    research_failure_count: int = 0,
+) -> dict[str, Any]:
+    """Record the one-path business result without overriding survivor quality."""
+    summary["survivor_quality_gate_ok"] = bool(summary.get("quality_gate_ok"))
+    if candidate_failure_count:
+        summary.update({
+            "ok": True,
+            "full_run_success": False,
+            "completed": True,
+            "stage": "completed_with_failures",
+            "candidate_failure_count": candidate_failure_count,
+            "source_open_failure_count": source_open_failure_count,
+            "research_failure_count": research_failure_count,
+            "failure_semantics": "failed candidates were excluded; safe editorial survivors remain usable",
+        })
+    else:
+        summary["full_run_success"] = True
+    if int(summary.get("actionable_count", 0) or 0) == 0:
+        summary.update({
+            "ok": True,
+            "completed": True,
+            "stage": "completed_no_recommendation",
+            "writes_feishu": False,
+            "topic_card_calls": 0,
+            "generation_06_calls": 0,
+        })
     return summary
 
 

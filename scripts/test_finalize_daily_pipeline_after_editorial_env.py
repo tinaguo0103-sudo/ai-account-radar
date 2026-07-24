@@ -25,13 +25,39 @@ class FinalizerEnvironmentTests(unittest.TestCase):
         run_dir = root / "runs" / run_id
         run_dir.mkdir(parents=True)
         path = run_dir / "today_10_topics.csv"
-        path.write_text("内容指纹,选题标题\nfp,测试\n", encoding="utf-8")
+        path.write_text("内容指纹,选题标题,今日建议级别\nfp,测试,推荐制作\n", encoding="utf-8")
         (run_dir / "content_sampler_log.json").write_text(json.dumps({
             "run_id": run_id,
             "mode": "write-feishu",
             "outputs": {},
         }), encoding="utf-8")
         return path
+
+    def test_zero_recommendation_finishes_before_env_or_external_call(self) -> None:
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / "output"
+            run_id = "run_20260724_080215"
+            input_path = self.exact_input(out, run_id)
+            input_path.write_text(
+                "内容指纹,选题标题,今日建议级别\nfp,观察候选,暂存观察\n",
+                encoding="utf-8",
+            )
+            with mock.patch.object(finalizer, "OUT", out), \
+                    mock.patch.object(finalizer, "LOG_DIR", out / "logs"), \
+                    mock.patch.object(finalizer, "load_local_env") as load, \
+                    mock.patch.object(finalizer, "evaluate_preflight") as preflight, \
+                    mock.patch.object(finalizer, "run_step") as run_step, \
+                    mock.patch.object(finalizer, "update_pipeline_log", return_value=out / "log.json"):
+                code, output = self.run_main([
+                    "finalize_daily_pipeline_after_editorial.py",
+                    "--run-id", run_id,
+                    "--write-feishu",
+                ])
+            self.assertEqual(code, 0)
+            self.assertIn("completed_no_recommendation", output)
+            load.assert_not_called()
+            preflight.assert_not_called()
+            run_step.assert_not_called()
 
     def test_write_mode_loads_environment_once_before_preflight_and_writer(self) -> None:
         events: list[str] = []

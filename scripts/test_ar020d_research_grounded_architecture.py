@@ -300,6 +300,7 @@ class ResearchContractTests(unittest.TestCase):
     def test_exact_source_only_cannot_be_recommended(self) -> None:
         decision = {
             "decision": "select", "recommendation_status": "生成脚本包",
+            "hard_fact_usage": "10亿元融资",
             "research_evidence_ids": "src-1", "hook_evidence_ids": "src-1",
         }
         dossier = {"source": {"content_evidence": [{"evidence_id": "src-1"}]}, "results": []}
@@ -309,6 +310,7 @@ class ResearchContractTests(unittest.TestCase):
     def test_query_only_cannot_be_recommended(self) -> None:
         decision = {
             "decision": "select", "recommendation_status": "生成脚本包",
+            "hard_fact_usage": "官方发布日期",
             "research_evidence_ids": "src-1", "hook_evidence_ids": "src-1",
         }
         dossier = {
@@ -319,7 +321,7 @@ class ResearchContractTests(unittest.TestCase):
         with self.assertRaisesRegex(research.ContractError, "no freshly opened"):
             research.validate_recommendation_research_eligibility(decision, dossier)
 
-    def test_no_opened_external_result_is_ineligible_before_stage1(self) -> None:
+    def test_requested_hard_claim_research_requires_opened_result(self) -> None:
         source = self._validated_source()
         spec = {
             "source_content_hash": "a" * 64, "queries": [{"query": "real topical query"}], "results": [],
@@ -329,7 +331,7 @@ class ResearchContractTests(unittest.TestCase):
                 "hook_evidence_ids": ["src-1"], "product_name_is_not_hook": True},
             "claim_evidence": [],
         }
-        with self.assertRaisesRegex(research.ContractError, "ineligible before Stage 1"):
+        with self.assertRaisesRegex(research.ContractError, "no freshly opened external result"):
             research.validate_research_dossier({}, source, dossier_builder.build_dossier(spec))
 
     def test_counterfactual_rejects_constructed_non_independent_outputs(self) -> None:

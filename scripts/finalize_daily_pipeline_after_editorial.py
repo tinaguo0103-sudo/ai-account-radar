@@ -34,6 +34,15 @@ OUT = ROOT / "output"
 LOG_DIR = OUT / "logs"
 
 
+def recommended_row_count(path: Path) -> int:
+    with path.open("r", encoding="utf-8-sig", newline="") as handle:
+        return sum(
+            1
+            for row in csv.DictReader(handle)
+            if str(row.get("今日建议级别") or "").strip() == "推荐制作"
+        )
+
+
 def run_step(name: str, command: list[str]) -> dict[str, Any]:
     started_at = datetime.now().isoformat(timespec="seconds")
     print(f"\n== {name} ==")
@@ -168,6 +177,19 @@ def main() -> int:
     authoritative_path = default_today_path(args.run_id).resolve()
     if today_path.resolve() != authoritative_path:
         raise SystemExit(f"Finalizer input must be exact run-scoped artifact: {authoritative_path}")
+    if recommended_row_count(today_path) == 0:
+        log_path = update_pipeline_log(args.run_id, [], True)
+        print(json.dumps({
+            "ok": True,
+            "status": "completed_no_recommendation",
+            "run_id": args.run_id,
+            "input": str(today_path),
+            "log": str(log_path),
+            "feishu_04_calls": 0,
+            "topic_card_calls": 0,
+            "generation_06_calls": 0,
+        }, ensure_ascii=False, indent=2))
+        return 0
 
     if args.write_feishu:
         try:

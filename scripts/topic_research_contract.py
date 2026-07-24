@@ -17,10 +17,6 @@ VERSION = "ar020d_research_grounded_v1"
 TRACKING_KEYS = {"utm_source", "utm_medium", "utm_campaign", "utm_term", "utm_content", "spm", "from"}
 ACCOUNT_PATH_MARKERS = {"user", "profile", "account", "channel", "home", "search"}
 MATERIAL_CONCEPTS = {"\u8fd4\u4fee", "\u9a8c\u6536", "\u4ea4\u4ed8", "\u5546\u4e1a\u53ef\u7528", "\u6548\u7387\u63d0\u5347", "\u66ff\u4ee3\u5c97\u4f4d"}
-HIGH_RISK_FACT_PATTERNS = (
-    r"\d+(?:\.\d+)?%", r"[$¥€]\s*\d", r"\d+(?:\.\d+)?\s*(?:万|亿|元|美元)",
-    r"融资|估值|发布日期|官方宣布|法律|医疗|金融|投资回报|直接引语|数据显示",
-)
 
 
 class ContractError(RuntimeError):
@@ -34,13 +30,6 @@ def trusted_artifact_sufficient(candidate: dict[str, Any]) -> bool:
         and str(candidate.get("source_account") or "").strip()
         and str(candidate.get("artifact_text") or candidate.get("csv_title") or "").strip()
     )
-
-
-def requires_external_research(candidate: dict[str, Any]) -> bool:
-    text = "\n".join(str(candidate.get(field) or "") for field in (
-        "artifact_text", "csv_title", "original_publication_copy", "hard_fact_usage",
-    ))
-    return any(re.search(pattern, text, re.I) for pattern in HIGH_RISK_FACT_PATTERNS)
 
 
 def canonical_json(value: Any) -> str:
@@ -130,7 +119,7 @@ def validate_recommendation_research_eligibility(
         decision.get("recommendation_status") or ""
     ) != "生成脚本包":
         return
-    if dossier.get("research_requirement") == "optional" and str(decision.get("hard_fact_usage") or "none").strip().lower() in {"", "none", "无"}:
+    if str(decision.get("hard_fact_usage") or "none").strip().lower() in {"", "none", "无"}:
         return
     opened_ids = {
         str(item.get("evidence_id"))
@@ -163,7 +152,6 @@ def validate_source_open(candidate: dict[str, Any], output: dict[str, Any]) -> d
             "failure_reason": "",
             "link_unavailable": True,
             "evidence_level": "trusted_collection_artifact",
-            "needs_verification": requires_external_research(candidate),
             "captured_content_hash": str(candidate.get("local_trace_hash") or hash_json(candidate)),
             "content_evidence": [{"evidence_id": evidence_id, "text": artifact_text, "source": "trusted_collection_artifact"}],
             "exact_url": str(candidate.get("exact_url") or ""),
@@ -225,7 +213,7 @@ def validate_research_dossier(candidate: dict[str, Any], source: dict[str, Any],
     opened = [item for item in results if item.get("open_status") == "opened" and item.get("url") and item.get("evidence_id")]
     corroboration_state = str(dossier.get("external_corroboration_state") or "")
     if not opened:
-        raise ContractError("Research has no freshly opened external result; candidate is ineligible before Stage 1")
+        raise ContractError("Research has no freshly opened external result")
     for item in opened:
         required_result_fields = (
             "title", "publisher", "opened_at", "captured_at", "captured_content_hash",

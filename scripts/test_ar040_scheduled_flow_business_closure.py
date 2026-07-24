@@ -315,7 +315,7 @@ class AR040ScheduledFlowTests(unittest.TestCase):
             self.assertEqual(validated["open_status"], "artifact_only")
             self.assertTrue(validated["eligible"])
 
-    def test_high_risk_unsupported_url_is_candidate_local(self) -> None:
+    def test_raw_high_risk_words_do_not_trigger_source_open(self) -> None:
         rows = [
             {"来源链接": "https://claude.com/blog/article/unsupported-slug", "内容指纹": "fp-risk", "来源类型": "AI热点", "来源内容": "官方宣布融资10亿元", "原始来源标题": "Funding", "原始发布文案": "", "原始来源账号": "AIHOT", "平台": "Web"},
             {"来源链接": "https://example.com/opinion", "内容指纹": "fp-safe", "来源类型": "AI热点", "来源内容": "An ordinary workflow opinion", "原始来源标题": "Opinion", "原始发布文案": "", "原始来源账号": "AIHOT", "平台": "Web"},
@@ -323,10 +323,10 @@ class AR040ScheduledFlowTests(unittest.TestCase):
         temp, root, result, state = self.prepare(rows, assert_no_open=False)
         self.addCleanup(temp.cleanup)
         self.assertEqual(result["source_open_calls"], 0)
-        self.assertEqual(state["stages"]["source_open"]["status"], "completed_with_failures")
+        self.assertEqual(state["stages"]["source_open"]["status"], "completed")
         failures = [record for record in state["stages"]["source_open"]["candidates"].values() if record["status"] == "failed"]
         successes = [record for record in state["stages"]["source_open"]["candidates"].values() if record["status"] == "completed"]
-        self.assertEqual((len(failures), len(successes)), (1, 1))
+        self.assertEqual((len(failures), len(successes)), (0, 2))
 
     def test_preflight_checks_only_core_runtime_dependencies(self) -> None:
         env = {

@@ -22,14 +22,28 @@ class TopicEditorialStateMachineTests(unittest.TestCase):
         self.assertIn('ranked_by_index = {int(item["index"]): item for item in ranked}', text)
         self.assertIn('decisions = [ranked_by_index[start + offset] for offset in range(len(rows))]', text)
 
-    def test_finalize_marks_upstream_candidate_failures_visible(self) -> None:
-        source = Path(inspect.getsourcefile(machine) or "")
-        text = source.read_text(encoding="utf-8")
-        self.assertIn('"stage": "completed_with_failures"', text)
-        self.assertIn('"failure_semantics": "failed candidates were excluded before editorial decision and cards"', text)
-        self.assertIn('"quality_gate_ok": False', text)
-        self.assertIn('"survivor_quality_gate_ok": True', text)
-        self.assertIn('"full_run_success": False', text)
+    def test_candidate_failures_remain_visible_without_flipping_survivor_quality(self) -> None:
+        summary = {"quality_gate_ok": True, "actionable_count": 3}
+        machine.apply_business_completion_status(
+            summary,
+            candidate_failure_count=10,
+            source_open_failure_count=0,
+            research_failure_count=10,
+        )
+        self.assertTrue(summary["ok"])
+        self.assertTrue(summary["quality_gate_ok"])
+        self.assertTrue(summary["survivor_quality_gate_ok"])
+        self.assertFalse(summary["full_run_success"])
+        self.assertEqual(summary["stage"], "completed_with_failures")
+
+    def test_zero_recommendation_is_a_successful_terminal_state(self) -> None:
+        summary = {"quality_gate_ok": True, "actionable_count": 0}
+        machine.apply_business_completion_status(summary, candidate_failure_count=0)
+        self.assertEqual(summary["stage"], "completed_no_recommendation")
+        self.assertTrue(summary["ok"])
+        self.assertFalse(summary["writes_feishu"])
+        self.assertEqual(summary["topic_card_calls"], 0)
+        self.assertEqual(summary["generation_06_calls"], 0)
 
     def test_one_failed_candidate_does_not_block_completed_candidates(self) -> None:
         state = {"stages": {"source_open": machine.stage_record("prepared", candidates={
