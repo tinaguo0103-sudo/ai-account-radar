@@ -113,7 +113,7 @@
     },
     {
       "name": "自动拉取分级",
-      "rule": "P0 自动拉取包含 AIHOT精选、AIHOT日报、官方RSS/Atom、公开网页/Jina Reader、URL投喂、稳定公开API，以及主对标/辅助对标抖音主页标题文案采样；公众号只读固定 canonical wewe-rss provider，必须证明 active account、refresh revision 和 new-since-last-success 水位。旧缓存、Wechat2RSS 摘要、URL 投喂或其他源不得代填当日 WeChat 采集；无新文章应显式记录 updated_no_new_items。"
+      "rule": "P0 自动拉取包含 AIHOT精选、AIHOT日报、官方RSS/Atom、公开网页/Jina Reader、URL投喂、稳定公开API，以及主对标/辅助对标抖音主页标题文案采样；公众号正常路径只允许公开发现 exact mp.weixin.qq.com URL 后解析 exact run 当日全文。旧 WeWe、旧缓存、Wechat2RSS 摘要、URL 投喂或其他源不得代填当日 WeChat 采集；只有当日身份与全文验证成立且 seen 命中时才记录 updated_no_new_items。"
     }
   ],
   "today_top10_quota": {

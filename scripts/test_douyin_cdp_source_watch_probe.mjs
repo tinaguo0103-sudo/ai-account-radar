@@ -11,6 +11,7 @@ import {
   buildHomepageCardItems,
   buildSourceRuntimeCoverage,
   classifyWorksResponse,
+  collectionStatusWithHealth,
   configuredAccountIdentity,
   deriveAccountHealth,
   FixedPageSession,
@@ -69,6 +70,11 @@ assert.equal(isTransientAccountFailure({
   status: "failed",
   extraction_diagnostics: { failure_code: "douyin_configured_account_identity_missing" },
 }), false);
+assert.equal(collectionStatusWithHealth(true, null, { projection: { ok: true } }), "completed");
+assert.equal(
+  collectionStatusWithHealth(true, null, { projection: { ok: false } }),
+  "completed_with_failures",
+);
 
 const shapedSources = Array.from({ length: 29 }, (_, index) => source(`valid-${index + 1}`));
 shapedSources.push({ ...source("铁锤人"), url: "https://x.com/lxfater" });
@@ -532,15 +538,17 @@ let health = persistAccountHealth(healthLedger, healthRun, [healthSource], [{
   status: "failed",
   extraction_diagnostics: { failure_code: "douyin_works_response_timeout" },
 }], "run_20260727_080000", "2026-07-27T00:00:00Z");
-assert.equal(health[0].consecutive_failures, 3);
-assert.equal(health[0].action_required, true);
+assert.equal(health.accounts[0].consecutive_failures, 3);
+assert.equal(health.accounts[0].action_required, true);
+assert.equal(health.authority.ok, true);
+assert.equal(health.projection.ok, true);
 health = persistAccountHealth(healthLedger, healthRun, [healthSource], [{
   account_name: "health-account",
   homepage_url: healthSource.url,
   status: "success",
 }], "run_20260728_080000", "2026-07-28T00:00:00Z");
-assert.equal(health[0].consecutive_failures, 0);
-assert.equal(health[0].action_required, false);
+assert.equal(health.accounts[0].consecutive_failures, 0);
+assert.equal(health.accounts[0].action_required, false);
 const eventCount = Object.keys(JSON.parse(fs.readFileSync(healthLedger, "utf8")).events).length;
 persistAccountHealth(healthLedger, healthRun, [healthSource], [{
   account_name: "health-account",

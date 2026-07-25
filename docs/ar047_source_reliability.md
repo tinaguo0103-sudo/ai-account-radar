@@ -29,10 +29,17 @@ Douyin API，不读取旧 artifact。
 
 ## Douyin Health Authority
 
-运行事实写入：
+跨 run 健康事实只有一个 authority：
 
-- run-scoped：`output/runs/<run_id>/sources/douyin/account_health.json`
-- durable：`output/state/douyin_account_health.json`
+- durable authority：`output/state/douyin_account_health.json`
+- run projection：`output/runs/<run_id>/sources/douyin/account_health.json`
+
+durable 文件先原子提交并 exact read-back。run projection 只能从已提交的
+durable 字节按 exact `run_id|source_id` event keys 派生，记录 durable path、
+schema 和 SHA256。它是可重建的 run evidence，不是第二 authority。投影写入
+失败时 durable 事实不回滚，结果必须显式
+`health_projection_write_failed`；相同 run 重试从 durable 重建，不增加 event
+或改变健康计数。digest/event keys 不一致的旧投影不得被当作 authority。
 
 每个账号输出：
 
@@ -63,8 +70,9 @@ recovery
 - rolling success 至少 3 个样本才显示，窗口最多 10 个 run；
 - 同 run/source event 覆盖写，重复执行不增加事件。
 
-未来 WEB-008 只读 durable health 和 run-scoped result。它不得写健康值，也
-不得成为第二配置源；Feishu 01 仍是来源配置 authority。
+未来 WEB-008 只读 durable health authority；run result/projection 只用于
+exact-run drill-down，不能与 durable 合并出第二套健康事实。它不得写健康值，
+也不得成为第二配置源；Feishu 01 仍是来源配置 authority。
 
 ## WeChat 单一路径
 

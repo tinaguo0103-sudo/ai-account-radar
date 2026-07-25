@@ -312,6 +312,51 @@ export function atomicWriteJson(pathname, payload, io = fs) {
   }
 }
 
+export function validateHealthProjection(projection, ledgerPath, durableBytes, runId) {
+  const digest = createHash("sha256").update(durableBytes).digest("hex");
+  const authority = projection?.authority || {};
+  const eventKeys = Object.keys(JSON.parse(durableBytes).events || {})
+    .filter((key) => key.startsWith(`${runId}|`))
+    .sort();
+  return {
+    ok: projection?.schema_version === 1
+      && projection?.projection_kind === "douyin_account_health_run_projection"
+      && projection?.run_id === runId
+      && authority.path === path.resolve(ledgerPath)
+      && authority.schema_version === 1
+      && authority.sha256 === digest
+      && JSON.stringify(projection.event_keys || []) === JSON.stringify(eventKeys),
+    authority_sha256: digest,
+    event_keys: eventKeys,
+  };
+}
+
+export function buildHealthProjection(ledgerPath, durableBytes, runId) {
+  const durable = JSON.parse(durableBytes);
+  if (durable?.schema_version !== 1 || !durable.events || typeof durable.events !== "object") {
+    throw new Error("douyin_account_health_authority_readback_invalid");
+  }
+  const eventKeys = Object.keys(durable.events)
+    .filter((key) => key.startsWith(`${runId}|`))
+    .sort();
+  const projection = {
+    schema_version: 1,
+    projection_kind: "douyin_account_health_run_projection",
+    run_id: runId,
+    authority: {
+      path: path.resolve(ledgerPath),
+      schema_version: durable.schema_version,
+      sha256: createHash("sha256").update(durableBytes).digest("hex"),
+    },
+    event_keys: eventKeys,
+    events: Object.fromEntries(eventKeys.map((key) => [key, durable.events[key]])),
+    accounts: durable.accounts || [],
+  };
+  const validation = validateHealthProjection(projection, ledgerPath, durableBytes, runId);
+  if (!validation.ok) throw new Error("douyin_account_health_projection_invalid");
+  return projection;
+}
+
 export function persistAccountHealth(ledgerPath, runPath, sources, rows, runId, now = new Date().toISOString(), io = fs) {
   const existing = fs.existsSync(ledgerPath) ? JSON.parse(fs.readFileSync(ledgerPath, "utf8")) : { schema_version: 1, events: {} };
   existing.events ||= {};
@@ -346,8 +391,57 @@ export function persistAccountHealth(ledgerPath, runPath, sources, rows, runId, 
   existing.updated_at = now;
   existing.accounts = accounts;
   atomicWriteJson(ledgerPath, existing, io);
-  atomicWriteJson(runPath, { schema_version: 1, run_id: runId, accounts }, io);
-  return accounts;
+  const durableBytes = fs.readFileSync(ledgerPath);
+  const committed = JSON.parse(durableBytes);
+  const expectedKeys = rows.map((row) => {
+    const source = sourceByName.get(String(row.account_name || "")) || {
+      account_name: row.account_name,
+      url: row.homepage_url,
+    };
+    const sourceId = source.source_id || `douyin:${createHash("sha256").update(`${source.account_name || source.name}|${source.url || ""}`).digest("hex").slice(0, 16)}`;
+    return `${runId}|${sourceId}`;
+  });
+  if (committed?.schema_version !== 1 || expectedKeys.some((key) => !committed.events?.[key])) {
+    throw new Error("douyin_account_health_authority_readback_failed");
+  }
+  const authority = {
+    ok: true,
+    status: "committed",
+    path: path.resolve(ledgerPath),
+    schema_version: committed.schema_version,
+    sha256: createHash("sha256").update(durableBytes).digest("hex"),
+    event_keys: expectedKeys.sort(),
+  };
+  const projectionPayload = buildHealthProjection(ledgerPath, durableBytes, runId);
+  let projection;
+  try {
+    atomicWriteJson(runPath, projectionPayload, io);
+    const projectionReadback = JSON.parse(fs.readFileSync(runPath, "utf8"));
+    const validation = validateHealthProjection(projectionReadback, ledgerPath, durableBytes, runId);
+    if (!validation.ok) throw new Error("douyin_account_health_projection_readback_failed");
+    projection = {
+      ok: true,
+      status: "committed",
+      path: path.resolve(runPath),
+      authority_sha256: authority.sha256,
+      event_keys: validation.event_keys,
+    };
+  } catch (error) {
+    projection = {
+      ok: false,
+      status: "health_projection_write_failed",
+      path: path.resolve(runPath),
+      authority_sha256: authority.sha256,
+      event_keys: projectionPayload.event_keys,
+      failure_type: String(error?.message || "health_projection_write_failed").split(":", 1)[0],
+    };
+  }
+  return { accounts, authority, projection };
+}
+
+export function collectionStatusWithHealth(coverageOk, sharedRuntimeFailure, accountHealth) {
+  if (sharedRuntimeFailure) return "source_runtime_failed";
+  return coverageOk && accountHealth?.projection?.ok ? "completed" : "completed_with_failures";
 }
 
 async function getJson(url) {
@@ -1472,7 +1566,7 @@ async function main() {
 
   const output = {
     ok: coverage.ok,
-    status: sharedRuntimeFailure ? "source_runtime_failed" : (coverage.ok ? "completed" : "completed_with_failures"),
+    status: collectionStatusWithHealth(coverage.ok, sharedRuntimeFailure, accountHealth),
     check_only: false,
     writes_feishu: false,
     run_id: runId,
@@ -1484,10 +1578,14 @@ async function main() {
     item_lineage: itemLineage,
     source_plan: plan,
     account_health: {
+      ok: accountHealth.authority.ok && accountHealth.projection.ok,
+      status: accountHealth.projection.ok ? "committed" : "health_projection_write_failed",
+      authority: accountHealth.authority,
+      projection: accountHealth.projection,
       run_scoped_path: path.join(options.outDir, "account_health.json"),
       durable_path: path.resolve(options.healthLedger),
-      account_count: accountHealth.length,
-      action_required_count: accountHealth.filter((row) => row.action_required).length,
+      account_count: accountHealth.accounts.length,
+      action_required_count: accountHealth.accounts.filter((row) => row.action_required).length,
     },
     accounts: rows.length,
     discovered_video_links: videoLinks.length,

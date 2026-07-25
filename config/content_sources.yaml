@@ -226,14 +226,14 @@
       "account_name": "数字生命卡兹克-公众号文章",
       "url": "",
       "content_shape": "long_article",
-      "fetch_method": "wechat_fulltext_provider_or_single_url_intake",
+      "fetch_method": "wechat_public_discovery_exact_fulltext",
       "priority": "high",
       "needs_url": false,
       "sample_frequency": "daily_or_when_updated",
       "learn_focus": "学他的判断力、选题判断、AI产品分析结构、长文观点组织、信息筛选逻辑。",
       "do_not_copy": "不照搬原文观点、不做AI资讯搬运、不复制他的好奇心人格。",
       "convert_direction": "转成“这个AI变化对内容团队、品牌增长、AI工作流和创业项目意味着什么”。",
-      "remarks": "当前主对标，参与主采样；公众号全文走本地 wewe-rss provider 或 02 单篇 URL 投喂，不要求主页链接。"
+      "remarks": "当前主对标，参与主采样；公众号正常路径只接受公开发现的 exact mp.weixin.qq.com URL 与 exact run 当日全文，不用 WeWe 历史、单篇 URL 或其他来源代填。"
     },
     {
       "id": "qiuzhi_2046",
