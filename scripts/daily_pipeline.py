@@ -172,6 +172,14 @@ def stdout_json(step: dict[str, Any]) -> dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
+def wechat_terminal_failure(payload: dict[str, Any]) -> tuple[str, str]:
+    outcomes = list(payload.get("outcomes") or [])
+    terminal = outcomes[0] if outcomes else {}
+    state = str(terminal.get("status") or payload.get("status") or "provider_failed")
+    reason = str(terminal.get("reason") or state or "wechat_public_fulltext_failed")
+    return state, reason
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -495,13 +503,15 @@ def main() -> int:
             "state": str(wechat_read_outcome.get("status") or "provider_failed"),
             "run_id": run_id,
             "source_rows": int(wechat_read_outcome.get("rows") or 0),
+            "outcomes": list(wechat_read_outcome.get("outcomes") or []),
         }
         if steps[-1]["returncode"] != 0:
+            terminal_state, terminal_reason = wechat_terminal_failure(wechat_read_outcome)
             isolate_source_failure(
                 steps[-1],
                 source="wechat",
-                state=wechat_freshness["state"],
-                reason=str(steps[-1].get("stderr") or "wechat_public_fulltext_failed"),
+                state=terminal_state,
+                reason=terminal_reason,
             )
         else:
             manual_inputs.append(wechat_dir / "content_items_manual.jsonl")

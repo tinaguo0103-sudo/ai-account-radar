@@ -34,7 +34,7 @@ flowchart LR
 
 当前默认自动源是 AIHOT、官方 RSS/Atom、官方网页/普通网页/Jina Reader、URL 投喂，以及主/辅对标抖音账号主页标题/文案采样。每个来源在本轮只执行一次；抖音主页采样失败时贡献零行并保留失败原因，不阻塞其他来源。公众号历史列表不直接进入默认流程。完整自动拉取路线见 `docs/source_autofetch_plan.md`。
 
-卡兹克公众号 Wechat2RSS 公共 feed 已降级为发现源说明，不再进入 `03 内容收件箱` 或 `04 分析与选题`。公众号候选以全文为准：优先用本地 `wewe-rss` 全文 provider，或者在 `02 URL投喂入口` 粘贴单篇文章 URL。
+卡兹克公众号 Wechat2RSS 公共 feed 仅作历史发现说明，不进入 `03 内容收件箱` 或 `04 分析与选题`。公众号正常路径只接受公开发现的 exact URL 与当日完整正文；归档 `wewe-rss` 和手工 URL 都不替代本轮正常采集。
 
 公众号当前正常路线为公开发现 exact `mp.weixin.qq.com` URL 后直接解析
 `js_content` 全文：`python3 scripts/daily_pipeline.py --fetch-wechat-public-fulltext

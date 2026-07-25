@@ -9,9 +9,10 @@ import json
 import re
 import sys
 import urllib.request
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 ROOT = Path(__file__).resolve().parents[1]
 sys.path.insert(0, str(ROOT / "scripts"))
@@ -20,6 +21,7 @@ from url_content_resolver import resolve_wechat  # noqa: E402
 DEFAULT_CONFIG = ROOT / "config" / "wechat_public_fulltext_sources.json"
 DEFAULT_STATE = ROOT / "output" / "state" / "wechat_public_fulltext_seen.json"
 UA = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AIAccountRadar/1.0"
+BUSINESS_TIMEZONE = ZoneInfo("Asia/Shanghai")
 
 
 def read_json(path: Path, default: Any) -> Any:
@@ -45,8 +47,6 @@ def discover_articles(page: str, account_name: str) -> list[dict[str, str]]:
             continue
         raw_url = html.unescape(match.group(1)).replace("http://", "https://", 1).split("#", 1)[0]
         title = re.sub(r"<[^>]+>", "", html.unescape(match.group(2))).strip()
-        if urllib_host(raw_url) != "mp.weixin.qq.com":
-            continue
         rows.append({"account_name": account_name, "title": title, "url": raw_url})
     return rows
 
@@ -77,6 +77,119 @@ def item_row(item: Any, run_id: str) -> dict[str, Any]:
     }
 
 
+def run_business_date(run_id: str) -> date:
+    return datetime.strptime(run_id[4:12], "%Y%m%d").date()
+
+
+def published_business_date(value: str) -> date:
+    normalized = str(value or "").strip().replace("Z", "+00:00")
+    if not normalized:
+        raise ValueError("published_at_missing")
+    parsed = datetime.fromisoformat(normalized)
+    if parsed.tzinfo is None:
+        parsed = parsed.replace(tzinfo=BUSINESS_TIMEZONE)
+    return parsed.astimezone(BUSINESS_TIMEZONE).date()
+
+
+def source_outcome(source_id: str, status: str, *, ok: bool, rows: int = 0, **details: Any) -> dict[str, Any]:
+    return {
+        "source_id": source_id,
+        "status": status,
+        "ok": ok,
+        "rows": rows,
+        "artifact_count": rows,
+        "substitute_count": 0,
+        **details,
+    }
+
+
+def collect_source(
+    source: dict[str, Any],
+    run_id: str,
+    raw_dir: Path,
+    seen: dict[str, Any],
+    limit: int,
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    source_id = str(source["source_id"])
+    account = str(source["account_name"])
+    try:
+        discovered = discover_articles(fetch_text(str(source["discovery_url"])), account)
+    except Exception as exc:
+        return source_outcome(source_id, "discovery_failed", ok=False, reason=type(exc).__name__), []
+    if not discovered:
+        return source_outcome(source_id, "discovery_empty", ok=False), []
+
+    business_date = run_business_date(run_id)
+    current_items: list[Any] = []
+    stale_count = 0
+    for article in discovered:
+        if urllib_host(article["url"]) != "mp.weixin.qq.com":
+            return source_outcome(source_id, "article_url_wrong_host", ok=False), []
+        try:
+            resolved = resolve_wechat(article["url"], raw_dir)
+        except Exception as exc:
+            return source_outcome(source_id, "fulltext_failed", ok=False, reason=type(exc).__name__), []
+        item = resolved[0] if resolved else None
+        if not item or item.fetch_status != "success":
+            return source_outcome(
+                source_id,
+                "fulltext_failed",
+                ok=False,
+                reason=getattr(item, "failure_reason", "empty"),
+            ), []
+        if item.account_name != account:
+            return source_outcome(source_id, "article_account_mismatch", ok=False), []
+        if item.content_title != article["title"]:
+            return source_outcome(source_id, "article_title_mismatch", ok=False), []
+        if len(item.body_or_transcript) < 500:
+            return source_outcome(source_id, "article_fulltext_too_short", ok=False), []
+        try:
+            item_date = published_business_date(item.published_at)
+        except (TypeError, ValueError):
+            return source_outcome(source_id, "article_published_at_invalid", ok=False), []
+        if item_date != business_date:
+            stale_count += 1
+            continue
+        current_items.append(item)
+        if len(current_items) >= max(1, limit):
+            break
+
+    if not current_items:
+        return source_outcome(
+            source_id,
+            "no_current_day_article",
+            ok=False,
+            discovered=len(discovered),
+            stale_articles=stale_count,
+            run_business_date=business_date.isoformat(),
+        ), []
+
+    new_rows: list[dict[str, Any]] = []
+    for item in current_items:
+        if item.content_url in seen.get("urls", {}):
+            continue
+        new_rows.append(item_row(item, run_id))
+        seen.setdefault("urls", {})[item.content_url] = {
+            "source_id": source_id,
+            "content_fingerprint": item.content_fingerprint,
+            "first_run_id": run_id,
+        }
+    if not new_rows:
+        return source_outcome(
+            source_id,
+            "updated_no_new_items",
+            ok=True,
+            discovered=len(discovered),
+        ), []
+    return source_outcome(
+        source_id,
+        "success",
+        ok=True,
+        rows=len(new_rows),
+        discovered=len(discovered),
+    ), new_rows
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default=str(DEFAULT_CONFIG))
@@ -105,41 +218,9 @@ def main() -> int:
     seen_path = Path(args.seen_ledger)
     seen = read_json(seen_path, {"schema_version": 1, "urls": {}})
     for source in sources:
-        account = str(source["account_name"])
-        try:
-            discovered = discover_articles(fetch_text(str(source["discovery_url"])), account)
-        except Exception as exc:
-            outcomes.append({"source_id": source["source_id"], "status": "discovery_failed", "reason": type(exc).__name__, "rows": 0})
-            continue
-        if not discovered:
-            outcomes.append({"source_id": source["source_id"], "status": "discovery_empty", "rows": 0})
-            continue
-        selected = discovered[: max(1, args.limit)]
-        new_count = 0
-        for article in selected:
-            resolved = resolve_wechat(article["url"], raw_dir)
-            item = resolved[0] if resolved else None
-            if not item or item.fetch_status != "success":
-                outcomes.append({"source_id": source["source_id"], "status": "fulltext_failed", "reason": getattr(item, "failure_reason", "empty"), "rows": 0})
-                continue
-            if item.account_name != account or item.content_title != article["title"] or len(item.body_or_transcript) < 500:
-                outcomes.append({"source_id": source["source_id"], "status": "article_identity_or_fulltext_mismatch", "rows": 0})
-                continue
-            if article["url"] in seen.get("urls", {}):
-                continue
-            rows.append(item_row(item, args.run_id))
-            seen.setdefault("urls", {})[article["url"]] = {
-                "source_id": source["source_id"],
-                "content_fingerprint": item.content_fingerprint,
-                "first_run_id": args.run_id,
-            }
-            new_count += 1
-        outcomes.append({
-            "source_id": source["source_id"],
-            "status": "success" if new_count else "updated_no_new_items",
-            "discovered": len(discovered),
-            "rows": new_count,
-        })
+        outcome, source_rows = collect_source(source, args.run_id, raw_dir, seen, args.limit)
+        outcomes.append(outcome)
+        rows.extend(source_rows)
 
     out_dir.mkdir(parents=True, exist_ok=True)
     manual = out_dir / "content_items_manual.jsonl"
@@ -148,7 +229,7 @@ def main() -> int:
     seen["updated_at"] = datetime.now(timezone.utc).isoformat()
     seen_path.write_text(json.dumps(seen, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     payload = {
-        "ok": any(row["status"] in {"success", "updated_no_new_items"} for row in outcomes),
+        "ok": all(row["ok"] for row in outcomes),
         "status": "completed" if all(row["status"] in {"success", "updated_no_new_items"} for row in outcomes) else "completed_with_failures",
         "run_id": args.run_id,
         "rows": len(rows),

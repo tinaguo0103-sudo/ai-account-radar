@@ -7,6 +7,7 @@ import unittest
 from pathlib import Path
 from unittest import mock
 import run_daily_collection_job
+import daily_pipeline
 
 ROOT = Path(__file__).resolve().parents[1]
 SPEC = importlib.util.spec_from_file_location(
@@ -49,10 +50,9 @@ class AR047SourceReliabilityTests(unittest.TestCase):
         </article>
         """
         rows = wechat.discover_articles(page, "数字生命卡兹克")
-        self.assertEqual(
-            [{"account_name": "数字生命卡兹克", "title": "Exact article", "url": "https://mp.weixin.qq.com/s?x=1"}],
-            rows,
-        )
+        self.assertEqual(2, len(rows))
+        self.assertEqual("https://mp.weixin.qq.com/s?x=1", rows[0]["url"])
+        self.assertEqual("https://example.com/not-wechat", rows[1]["url"])
 
     def test_public_source_is_idempotent_and_never_uses_wewe(self) -> None:
         with tempfile.TemporaryDirectory() as tmp:
@@ -90,6 +90,70 @@ class AR047SourceReliabilityTests(unittest.TestCase):
                 self.assertEqual(0, second["rows"])
                 self.assertEqual("updated_no_new_items", second["outcomes"][0]["status"])
 
+    def test_public_source_rejects_stale_article_without_substitute(self) -> None:
+        stale = Item()
+        stale.published_at = "2026-07-22T08:00:00"
+        outcome, rows = self._collect(stale)
+        self.assertEqual([], rows)
+        self.assertEqual("no_current_day_article", outcome["status"])
+        self.assertFalse(outcome["ok"])
+        self.assertEqual(0, outcome["artifact_count"])
+        self.assertEqual(0, outcome["substitute_count"])
+
+    def test_public_source_has_one_terminal_outcome_for_each_failure(self) -> None:
+        cases = [
+            ("article_fulltext_too_short", {"body_or_transcript": "短" * 499}),
+            ("article_account_mismatch", {"account_name": "其他账号"}),
+            ("article_title_mismatch", {"content_title": "Other title"}),
+        ]
+        for expected, overrides in cases:
+            with self.subTest(expected=expected):
+                item = Item()
+                for key, value in overrides.items():
+                    setattr(item, key, value)
+                outcome, rows = self._collect(item)
+                self.assertEqual([], rows)
+                self.assertEqual(expected, outcome["status"])
+                self.assertFalse(outcome["ok"])
+                self.assertNotEqual("updated_no_new_items", outcome["status"])
+
+        source = {
+            "source_id": "wechat:kazike",
+            "account_name": "数字生命卡兹克",
+            "discovery_url": "https://discovery.invalid/",
+        }
+        wrong_host = """
+        <article class="article" data-account="数字生命卡兹克">
+          <a class="article-title" href="https://example.com/a">Exact article</a>
+        </article>
+        """
+        with mock.patch.object(wechat, "fetch_text", return_value=wrong_host):
+            outcome, rows = wechat.collect_source(source, "run_20260725_080000", Path("/tmp/raw"), {"urls": {}}, 1)
+        self.assertEqual("article_url_wrong_host", outcome["status"])
+        self.assertFalse(outcome["ok"])
+        self.assertEqual([], rows)
+
+        with mock.patch.object(wechat, "fetch_text", side_effect=OSError("offline")):
+            outcome, rows = wechat.collect_source(source, "run_20260725_080000", Path("/tmp/raw"), {"urls": {}}, 1)
+        self.assertEqual("discovery_failed", outcome["status"])
+        self.assertFalse(outcome["ok"])
+        self.assertEqual([], rows)
+
+    def _collect(self, item: Item) -> tuple[dict, list[dict]]:
+        source = {
+            "source_id": "wechat:kazike",
+            "account_name": "数字生命卡兹克",
+            "discovery_url": "https://discovery.invalid/",
+        }
+        page = """
+        <article class="article" data-account="数字生命卡兹克">
+          <a class="article-title" href="https://mp.weixin.qq.com/s?x=1">Exact article</a>
+        </article>
+        """
+        with mock.patch.object(wechat, "fetch_text", return_value=page), \
+             mock.patch.object(wechat, "resolve_wechat", return_value=[item]):
+            return wechat.collect_source(source, "run_20260725_080000", Path("/tmp/raw"), {"urls": {}}, 1)
+
     def test_normal_entrypoint_has_no_wewe_runtime_call(self) -> None:
         pipeline = (ROOT / "scripts" / "daily_pipeline.py").read_text(encoding="utf-8")
         outer = (ROOT / "scripts" / "run_daily_collection_job.py").read_text(encoding="utf-8")
@@ -98,6 +162,19 @@ class AR047SourceReliabilityTests(unittest.TestCase):
         self.assertNotIn("wewe_current_feed_reader.py", pipeline)
         self.assertIn("--fetch-wechat-public-fulltext", outer)
         self.assertNotIn("--fetch-wechat-fulltext-provider", outer)
+
+    def test_daily_pipeline_preserves_wechat_terminal_failure(self) -> None:
+        state, reason = daily_pipeline.wechat_terminal_failure({
+            "status": "completed_with_failures",
+            "outcomes": [{
+                "status": "no_current_day_article",
+                "ok": False,
+                "reason": "",
+                "rows": 0,
+            }],
+        })
+        self.assertEqual("no_current_day_article", state)
+        self.assertEqual("no_current_day_article", reason)
 
     def test_production_shaped_plan_excludes_two_wrong_platform_accounts(self) -> None:
         plan = run_daily_collection_job.scheduled_collection_plan(

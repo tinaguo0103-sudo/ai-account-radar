@@ -256,7 +256,63 @@ export function deriveAccountHealth(events, source, runId) {
   };
 }
 
-export function persistAccountHealth(ledgerPath, runPath, sources, rows, runId, now = new Date().toISOString()) {
+export function atomicWriteJson(pathname, payload, io = fs) {
+  const target = path.resolve(pathname);
+  const parent = path.dirname(target);
+  io.mkdirSync(parent, { recursive: true });
+  const token = `${process.pid}.${Date.now()}.${Math.random().toString(16).slice(2)}`;
+  const temporary = `${target}.${token}.tmp`;
+  const restore = `${target}.${token}.restore`;
+  const original = io.existsSync(target) ? io.readFileSync(target) : null;
+  let fd;
+  let replaced = false;
+  try {
+    fd = io.openSync(temporary, "wx", 0o600);
+    io.writeSync(fd, `${JSON.stringify(payload, null, 2)}\n`, null, "utf8");
+    io.fsyncSync(fd);
+    io.closeSync(fd);
+    fd = undefined;
+    io.renameSync(temporary, target);
+    replaced = true;
+    const dirFd = io.openSync(parent, "r");
+    try {
+      io.fsyncSync(dirFd);
+    } finally {
+      io.closeSync(dirFd);
+    }
+  } catch (error) {
+    if (fd !== undefined) {
+      try { io.closeSync(fd); } catch {}
+    }
+    if (replaced) {
+      try {
+        if (original === null) {
+          io.unlinkSync(target);
+        } else {
+          const restoreFd = fs.openSync(restore, "wx", 0o600);
+          try {
+            fs.writeSync(restoreFd, original);
+            fs.fsyncSync(restoreFd);
+          } finally {
+            fs.closeSync(restoreFd);
+          }
+          fs.renameSync(restore, target);
+        }
+      } catch (rollbackError) {
+        error.rollback_error = String(rollbackError?.message || rollbackError);
+      }
+    }
+    throw error;
+  } finally {
+    for (const candidate of [temporary, restore]) {
+      try {
+        if (fs.existsSync(candidate)) fs.unlinkSync(candidate);
+      } catch {}
+    }
+  }
+}
+
+export function persistAccountHealth(ledgerPath, runPath, sources, rows, runId, now = new Date().toISOString(), io = fs) {
   const existing = fs.existsSync(ledgerPath) ? JSON.parse(fs.readFileSync(ledgerPath, "utf8")) : { schema_version: 1, events: {} };
   existing.events ||= {};
   const sourceByName = new Map(sources.map((source) => [String(source.account_name || source.name || ""), source]));
@@ -289,10 +345,8 @@ export function persistAccountHealth(ledgerPath, runPath, sources, rows, runId, 
   });
   existing.updated_at = now;
   existing.accounts = accounts;
-  fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
-  fs.writeFileSync(ledgerPath, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
-  fs.mkdirSync(path.dirname(runPath), { recursive: true });
-  fs.writeFileSync(runPath, `${JSON.stringify({ schema_version: 1, run_id: runId, accounts }, null, 2)}\n`, "utf8");
+  atomicWriteJson(ledgerPath, existing, io);
+  atomicWriteJson(runPath, { schema_version: 1, run_id: runId, accounts }, io);
   return accounts;
 }
 
@@ -842,10 +896,7 @@ export function writeSeenVideoIds(ledgerPath, seenIds, runId) {
 }
 
 function atomicJson(pathname, payload) {
-  fs.mkdirSync(path.dirname(pathname), { recursive: true });
-  const temporary = `${pathname}.${process.pid}.tmp`;
-  fs.writeFileSync(temporary, JSON.stringify(payload, null, 2), { encoding: "utf8", mode: 0o600 });
-  fs.renameSync(temporary, pathname);
+  atomicWriteJson(pathname, payload);
 }
 
 export function loadCandidateLifecycle(ledgerPath) {
