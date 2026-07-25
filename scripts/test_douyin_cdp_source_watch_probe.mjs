@@ -12,6 +12,7 @@ import {
   buildSourceRuntimeCoverage,
   classifyWorksResponse,
   configuredAccountIdentity,
+  deriveAccountHealth,
   FixedPageSession,
   decodeRuntimeEvaluation,
   fixedDouyinTarget,
@@ -19,12 +20,16 @@ import {
   loadCandidateLifecycle,
   materializeHistoricalBacklog,
   mergeNewAndBacklog,
+  persistAccountHealth,
+  probeSourcesWithTailRetry,
   persistCollectedCandidates,
   probeAccount,
   parseWorksResponseBody,
   waitForNavigationAndWorksGrid,
   selectIncrementalWorks,
   selectedSources,
+  isTransientAccountFailure,
+  validateDouyinSourceIdentity,
   validateFullAccountLimitArgs,
   validateContentItemLineage,
   validateSourcePlan,
@@ -50,8 +55,62 @@ assert.equal(selectedSources(sources).length, 33);
 assert.equal(validateFullAccountLimitArgs([]).ok, true);
 assert.equal(validateFullAccountLimitArgs(["--account-limit", "0"]).ok, true);
 assert.equal(limitedPlanRejection(validateFullAccountLimitArgs(["--account-limit", "12"])).status, "limited_plan_rejected");
-assert.equal(validateSourcePlan([...sources, source("account-1")]).ok, false);
+const duplicatePlan = validateSourcePlan([...sources, source("account-1")]);
+assert.equal(duplicatePlan.ok, true);
+assert.equal(duplicatePlan.invalid_account_count, 2);
 assert.equal(validateSourcePlan([{ ...source(""), account_name: "" }]).ok, false);
+assert.equal(validateDouyinSourceIdentity({ ...source("x"), url: "https://x.com/example" }).failure_code, "douyin_configured_account_wrong_platform");
+assert.equal(validateDouyinSourceIdentity(source("valid")).ok, true);
+assert.equal(isTransientAccountFailure({
+  status: "failed",
+  extraction_diagnostics: { failure_code: "douyin_works_response_timeout" },
+}), true);
+assert.equal(isTransientAccountFailure({
+  status: "failed",
+  extraction_diagnostics: { failure_code: "douyin_configured_account_identity_missing" },
+}), false);
+
+const shapedSources = Array.from({ length: 29 }, (_, index) => source(`valid-${index + 1}`));
+shapedSources.push({ ...source("铁锤人"), url: "https://x.com/lxfater" });
+shapedSources.push({ ...source("歸藏 guizang.ai"), url: "https://x.com/op7418/status/1" });
+const shapedPlan = validateSourcePlan(shapedSources);
+assert.equal(shapedPlan.planned_accounts, 31);
+assert.equal(shapedPlan.executable_accounts, 29);
+assert.equal(shapedPlan.invalid_account_count, 2);
+const callOrder = [];
+const attempts = new Map();
+const transientNames = ["valid-3", "valid-7", "valid-9", "valid-11", "valid-13", "valid-15", "valid-17"];
+const shapedProbe = async (_client, row) => {
+  const name = row.account_name;
+  callOrder.push(name);
+  const count = (attempts.get(name) || 0) + 1;
+  attempts.set(name, count);
+  if (transientNames.includes(name) && (count === 1 || name === "valid-17")) {
+    return {
+      account_name: name,
+      status: "failed",
+      failure_reason: "douyin_works_response_timeout",
+      extraction_diagnostics: { failure_code: "douyin_works_response_timeout" },
+      video_links: [],
+    };
+  }
+  return { account_name: name, status: name === "valid-29" ? "updated_no_new_items" : "success", video_links: name === "valid-29" ? [] : [`https://www.douyin.com/video/${name}`] };
+};
+const sleeps = [];
+const shapedResult = await probeSourcesWithTailRetry(
+  {},
+  shapedPlan.valid_sources,
+  { tailRetryDelayMs: 2500, accountPacingMs: 0 },
+  shapedProbe,
+  async (ms) => { sleeps.push(ms); },
+);
+assert.deepEqual(sleeps, [2500]);
+assert.deepEqual(callOrder.slice(0, 29), shapedPlan.executable_account_names);
+assert.deepEqual(callOrder.slice(29), transientNames);
+assert.equal(shapedResult.rows.filter((row) => row.attempts === 2).length, 7);
+assert.equal(shapedResult.rows.filter((row) => row.status === "success").length, 27);
+assert.equal(shapedResult.rows.filter((row) => row.status === "updated_no_new_items").length, 1);
+assert.equal(shapedResult.rows.filter((row) => row.status === "failed").length, 1);
 
 const fixedTarget = await fixedDouyinTarget("http://127.0.0.1:9333", async () => [
   { type: "page", url: "about:blank", webSocketDebuggerUrl: "ws://blank" },
@@ -452,6 +511,45 @@ assert.equal(preview.collection_started, false);
 assert.equal(preview.cdp_contacted, false);
 assert.equal(preview.writes_feishu, false);
 
+const healthLedger = path.join(tmp, "health.json");
+const healthRun = path.join(tmp, "run-health.json");
+const healthSource = source("health-account");
+persistAccountHealth(healthLedger, healthRun, [healthSource], [{
+  account_name: "health-account",
+  homepage_url: healthSource.url,
+  status: "failed",
+  extraction_diagnostics: { failure_code: "douyin_works_response_timeout" },
+}], "run_20260725_080000", "2026-07-25T00:00:00Z");
+persistAccountHealth(healthLedger, healthRun, [healthSource], [{
+  account_name: "health-account",
+  homepage_url: healthSource.url,
+  status: "failed",
+  extraction_diagnostics: { failure_code: "douyin_works_response_timeout" },
+}], "run_20260726_080000", "2026-07-26T00:00:00Z");
+let health = persistAccountHealth(healthLedger, healthRun, [healthSource], [{
+  account_name: "health-account",
+  homepage_url: healthSource.url,
+  status: "failed",
+  extraction_diagnostics: { failure_code: "douyin_works_response_timeout" },
+}], "run_20260727_080000", "2026-07-27T00:00:00Z");
+assert.equal(health[0].consecutive_failures, 3);
+assert.equal(health[0].action_required, true);
+health = persistAccountHealth(healthLedger, healthRun, [healthSource], [{
+  account_name: "health-account",
+  homepage_url: healthSource.url,
+  status: "success",
+}], "run_20260728_080000", "2026-07-28T00:00:00Z");
+assert.equal(health[0].consecutive_failures, 0);
+assert.equal(health[0].action_required, false);
+const eventCount = Object.keys(JSON.parse(fs.readFileSync(healthLedger, "utf8")).events).length;
+persistAccountHealth(healthLedger, healthRun, [healthSource], [{
+  account_name: "health-account",
+  homepage_url: healthSource.url,
+  status: "success",
+}], "run_20260728_080000", "2026-07-28T00:00:00Z");
+assert.equal(Object.keys(JSON.parse(fs.readFileSync(healthLedger, "utf8")).events).length, eventCount);
+assert.equal(deriveAccountHealth([], healthSource, "run_20260728_080000").rolling_success, null);
+
 const rejectedLimits = [
   ["--account-limit", "1"],
   ["--account-limit", "3"],
@@ -500,6 +598,8 @@ assert.equal(sourceText.includes("Network.getResponseBody"), true);
 assert.equal(sourceText.includes("fetch(rawUrl"), false);
 assert.equal(sourceText.includes("Network.getAllCookies"), false);
 assert.equal(sourceText.includes("Network.getCookies"), false);
+assert.equal(sourceText.includes("probeAccountWithRetry"), false);
+assert.equal(sourceText.includes("tailRetryDelayMs"), true);
 
 const outerSource = fs.readFileSync(path.resolve("scripts/run_daily_collection_job.py"), "utf8");
 assert.equal(outerSource.includes('"--force-fetch-douyin"'), false);

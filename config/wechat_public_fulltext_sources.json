@@ -1,0 +1,12 @@
+{
+  "schema_version": 1,
+  "sources": [
+    {
+      "source_id": "wechat:kazike",
+      "account_name": "数字生命卡兹克",
+      "discovery_url": "https://weixin.imaseo.com/",
+      "enabled": true,
+      "priority": "primary"
+    }
+  ]
+}

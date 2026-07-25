@@ -30,7 +30,9 @@ export function parseArgs(args = process.argv.slice(2)) {
     seenLedger: path.join(ROOT, "output/state/douyin_seen_items.json"),
     lifecycleLedger: path.join(ROOT, "output/state/douyin_candidate_lifecycle.json"),
     waitMs: 7000,
-    retries: 2,
+    accountPacingMs: 500,
+    tailRetryDelayMs: 5000,
+    healthLedger: path.join(ROOT, "output/state/douyin_account_health.json"),
     checkOnly: false,
   };
   for (let i = 0; i < args.length; i += 1) {
@@ -44,7 +46,9 @@ export function parseArgs(args = process.argv.slice(2)) {
     else if (arg === "--seen-ledger") options.seenLedger = args[++i];
     else if (arg === "--lifecycle-ledger") options.lifecycleLedger = args[++i];
     else if (arg === "--wait-ms") options.waitMs = Number(args[++i]);
-    else if (arg === "--retries") options.retries = Number(args[++i]);
+    else if (arg === "--account-pacing-ms") options.accountPacingMs = Number(args[++i]);
+    else if (arg === "--tail-retry-delay-ms") options.tailRetryDelayMs = Number(args[++i]);
+    else if (arg === "--health-ledger") options.healthLedger = args[++i];
     else if (arg === "--check-only") options.checkOnly = true;
   }
   return options;
@@ -103,22 +107,193 @@ export function loadSources(configPath) {
 export function selectedSources(sources) {
   const roles = new Set(["current_main_competitor", "current_aux_competitor"]);
   return sources
-    .filter((source) => source.platform === "抖音" && roles.has(source.source_role))
+    .filter((source) => source.platform === "抖音"
+      && roles.has(source.source_role)
+      && source.default_enabled !== false
+      && source.participates_main_sampling !== false)
+}
+
+export function validateDouyinSourceIdentity(source) {
+  const name = String(source.account_name || source.name || "").trim();
+  const homepage = String(source.url || source.homepage_url || "").trim();
+  if (!name) return { ok: false, failure_code: "douyin_account_name_missing", name, homepage, identity: "" };
+  let parsed;
+  try {
+    parsed = new URL(homepage);
+  } catch {
+    return { ok: false, failure_code: "douyin_configured_account_url_invalid", name, homepage, identity: "" };
+  }
+  const host = parsed.hostname.toLowerCase();
+  const identity = configuredAccountIdentity(homepage);
+  if (!["douyin.com", "www.douyin.com"].includes(host) || !identity) {
+    return {
+      ok: false,
+      failure_code: host.endsWith("douyin.com")
+        ? "douyin_configured_account_identity_missing"
+        : "douyin_configured_account_wrong_platform",
+      name,
+      homepage,
+      identity: "",
+    };
+  }
+  return { ok: true, failure_code: "", name, homepage, identity };
 }
 
 export function validateSourcePlan(sources) {
-  const names = sources.map((source) => String(source.account_name || source.name || "").trim());
-  const missing = names.map((name, index) => ({ name, index })).filter((item) => !item.name);
-  const counts = new Map();
-  for (const name of names) counts.set(name, (counts.get(name) || 0) + 1);
-  const duplicates = [...counts.entries()].filter(([, count]) => count > 1).map(([name]) => name);
+  const inspected = sources.map((source) => ({ source, ...validateDouyinSourceIdentity(source) }));
+  const identityCounts = new Map();
+  for (const row of inspected.filter((item) => item.ok)) {
+    identityCounts.set(row.identity, (identityCounts.get(row.identity) || 0) + 1);
+  }
+  for (const row of inspected) {
+    if (row.ok && identityCounts.get(row.identity) > 1) {
+      row.ok = false;
+      row.failure_code = "douyin_configured_account_identity_duplicate";
+    }
+  }
+  const valid = inspected.filter((item) => item.ok);
+  const invalid = inspected.filter((item) => !item.ok);
   return {
-    ok: missing.length === 0 && duplicates.length === 0,
-    planned_accounts: names.length,
-    account_names: names,
-    missing_account_name_indexes: missing.map((item) => item.index),
-    duplicate_account_names: duplicates,
+    ok: valid.length > 0,
+    planned_accounts: sources.length,
+    executable_accounts: valid.length,
+    invalid_account_count: invalid.length,
+    account_names: inspected.map((item) => item.name),
+    executable_account_names: valid.map((item) => item.name),
+    valid_sources: valid.map((item) => item.source),
+    invalid_accounts: invalid.map((item) => ({
+      account_name: item.name,
+      homepage_url: item.homepage,
+      failure_code: item.failure_code,
+      action_required: true,
+      action: "在 Feishu 01 补充可信 douyin.com/user/<sec_user_id> 主页，或停用该来源；不得猜测身份。",
+    })),
   };
+}
+
+export function isTransientAccountFailure(row) {
+  return row?.status === "failed"
+    && row?.extraction_diagnostics?.failure_code === "douyin_works_response_timeout"
+    && !row?.shared_runtime_failure;
+}
+
+export async function probeSourcesWithTailRetry(client, sources, options, probe = probeAccount, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
+  const rows = [];
+  let sharedRuntimeFailure = null;
+  for (const [sourceIndex, source] of sources.entries()) {
+    if (sharedRuntimeFailure) {
+      rows.push({
+        account_name: source.account_name || source.name || "",
+        homepage_url: source.url || source.homepage_url || "",
+        status: "not_attempted_source_runtime_failure",
+        failure_reason: sharedRuntimeFailure.reason,
+        artifact_count: 0,
+        video_ids: [],
+        video_links: [],
+      });
+      continue;
+    }
+    const row = await probe(client, source, options);
+    row.attempts = 1;
+    rows.push(row);
+    if (row.shared_runtime_failure) {
+      sharedRuntimeFailure = { status: "shared_fixed_target_runtime_failure", reason: row.failure_reason };
+    }
+    if (!sharedRuntimeFailure && sourceIndex < sources.length - 1 && Number(options.accountPacingMs) > 0) {
+      await sleep(Number(options.accountPacingMs));
+    }
+  }
+  const retryRows = rows.filter(isTransientAccountFailure);
+  if (!sharedRuntimeFailure && retryRows.length) {
+    await sleep(Math.max(0, options.tailRetryDelayMs));
+    for (const [retryIndex, failed] of retryRows.entries()) {
+      const source = sources.find((item) => String(item.account_name || item.name || "") === failed.account_name);
+      const retried = await probe(client, source, options);
+      retried.attempts = 2;
+      retried.first_attempt_failure = failed.extraction_diagnostics?.failure_code || failed.failure_reason;
+      rows[rows.indexOf(failed)] = retried;
+      if (retried.shared_runtime_failure) {
+        sharedRuntimeFailure = { status: "shared_fixed_target_runtime_failure", reason: retried.failure_reason };
+        break;
+      }
+      if (retryIndex < retryRows.length - 1 && Number(options.accountPacingMs) > 0) {
+        await sleep(Number(options.accountPacingMs));
+      }
+    }
+  }
+  return { rows, sharedRuntimeFailure };
+}
+
+export function deriveAccountHealth(events, source, runId) {
+  const ordered = [...events].sort((a, b) => String(a.run_id).localeCompare(String(b.run_id)));
+  const current = ordered.findLast((event) => event.run_id === runId) || ordered.at(-1) || {};
+  let consecutiveFailures = 0;
+  for (const event of [...ordered].reverse()) {
+    if (["success", "updated_no_new_items"].includes(event.outcome)) break;
+    consecutiveFailures += 1;
+  }
+  const window = ordered.slice(-10);
+  const successes = window.filter((event) => ["success", "updated_no_new_items"].includes(event.outcome)).length;
+  const configurationFailure = String(current.failure_class || "").startsWith("configuration_");
+  return {
+    source_id: source.source_id || `douyin:${createHash("sha256").update(`${source.account_name || source.name}|${source.url || ""}`).digest("hex").slice(0, 16)}`,
+    account_name: source.account_name || source.name || "",
+    platform: "douyin",
+    configured_identity: configuredAccountIdentity(source.url || source.homepage_url || ""),
+    verified_identity: current.verified_identity || "",
+    enabled: source.default_enabled !== false && source.participates_main_sampling !== false,
+    priority: source.source_role || "",
+    last_attempt: current.attempted_at || "",
+    last_success: [...ordered].reverse().find((event) => ["success", "updated_no_new_items"].includes(event.outcome))?.attempted_at || "",
+    current_outcome: current.outcome || "not_attempted",
+    failure_class: current.failure_class || "",
+    consecutive_failures: consecutiveFailures,
+    rolling_success: window.length >= 3 ? { successes, attempts: window.length, rate: successes / window.length } : null,
+    action_required: configurationFailure || consecutiveFailures >= 3,
+    recovery: configurationFailure
+      ? "修复并验证 exact Douyin 身份后，下一次成功运行自动清零。"
+      : "下一次 success/updated_no_new_items 自动清零 consecutive_failures。",
+  };
+}
+
+export function persistAccountHealth(ledgerPath, runPath, sources, rows, runId, now = new Date().toISOString()) {
+  const existing = fs.existsSync(ledgerPath) ? JSON.parse(fs.readFileSync(ledgerPath, "utf8")) : { schema_version: 1, events: {} };
+  existing.events ||= {};
+  const sourceByName = new Map(sources.map((source) => [String(source.account_name || source.name || ""), source]));
+  for (const row of rows) {
+    const source = sourceByName.get(String(row.account_name || "")) || {
+      account_name: row.account_name,
+      url: row.homepage_url,
+      default_enabled: true,
+      participates_main_sampling: true,
+    };
+    const identity = configuredAccountIdentity(source.url || source.homepage_url || "");
+    const sourceId = source.source_id || `douyin:${createHash("sha256").update(`${source.account_name || source.name}|${source.url || ""}`).digest("hex").slice(0, 16)}`;
+    const failureCode = String(row.extraction_diagnostics?.failure_code || row.failure_code || "");
+    const failureClass = ["success", "updated_no_new_items"].includes(row.status)
+      ? ""
+      : (failureCode.includes("configured_account") ? `configuration_${failureCode}` : (isTransientAccountFailure(row) ? "transient_timeout" : "account_failure"));
+    existing.events[`${runId}|${sourceId}`] = {
+      run_id: runId,
+      source_id: sourceId,
+      attempted_at: now,
+      outcome: row.status,
+      failure_class: failureClass,
+      verified_identity: ["success", "updated_no_new_items"].includes(row.status) ? identity : "",
+    };
+  }
+  const eventRows = Object.values(existing.events);
+  const accounts = sources.map((source) => {
+    const sourceId = source.source_id || `douyin:${createHash("sha256").update(`${source.account_name || source.name}|${source.url || ""}`).digest("hex").slice(0, 16)}`;
+    return deriveAccountHealth(eventRows.filter((event) => event.source_id === sourceId), source, runId);
+  });
+  existing.updated_at = now;
+  existing.accounts = accounts;
+  fs.mkdirSync(path.dirname(ledgerPath), { recursive: true });
+  fs.writeFileSync(ledgerPath, `${JSON.stringify(existing, null, 2)}\n`, "utf8");
+  fs.mkdirSync(path.dirname(runPath), { recursive: true });
+  fs.writeFileSync(runPath, `${JSON.stringify({ schema_version: 1, run_id: runId, accounts }, null, 2)}\n`, "utf8");
+  return accounts;
 }
 
 async function getJson(url) {
@@ -1029,21 +1204,6 @@ export async function probeAccount(client, source, options) {
   }
 }
 
-async function probeAccountWithRetry(client, source, options) {
-  let last = null;
-  const attempts = Math.max(1, options.retries || 1);
-  for (let attempt = 1; attempt <= attempts; attempt += 1) {
-    const result = await probeAccount(client, source, options);
-    result.attempts = attempt;
-    last = result;
-    if (["success", "updated_no_new_items"].includes(result.status) || result.shared_runtime_failure) return result;
-    if (attempt < attempts) {
-      await new Promise((resolve) => setTimeout(resolve, Math.min(5000, 1000 * attempt)));
-    }
-  }
-  return last;
-}
-
 async function main() {
   const accountGate = validateFullAccountLimitArgs(process.argv.slice(2));
   if (!accountGate.ok) {
@@ -1065,8 +1225,8 @@ async function main() {
   }
   fs.mkdirSync(options.outDir, { recursive: true });
 
-  const sources = selectedSources(loadSources(options.config));
-  const plan = validateSourcePlan(sources);
+  const configuredSources = selectedSources(loadSources(options.config));
+  const plan = validateSourcePlan(configuredSources);
   if (!plan.ok) {
     const failure = {
       ok: false,
@@ -1092,6 +1252,8 @@ async function main() {
         account_limit: options.accountLimit,
         planned_accounts: plan.planned_accounts,
         planned_account_names: plan.account_names,
+        executable_accounts: plan.executable_accounts,
+        invalid_accounts: plan.invalid_accounts,
       },
     };
     fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(preview, null, 2), "utf8");
@@ -1115,8 +1277,25 @@ async function main() {
     return 2;
   }
 
-  const rows = [];
+  const sources = plan.valid_sources;
+  const invalidRows = plan.invalid_accounts.map((account) => ({
+    account_name: account.account_name,
+    homepage_url: account.homepage_url,
+    status: "invalid_configuration",
+    failure_reason: account.failure_code,
+    failure_code: account.failure_code,
+    action_required: true,
+    action: account.action,
+    artifact_count: 0,
+    video_ids: [],
+    video_links: [],
+    extraction_diagnostics: {
+      failure_code: account.failure_code,
+      extraction_source: "pre_browser_source_plan",
+    },
+  }));
   let sharedRuntimeFailure = null;
+  let rows = invalidRows;
   let fixedTarget;
   try {
     fixedTarget = await fixedDouyinTarget(options.cdp);
@@ -1128,24 +1307,9 @@ async function main() {
     await pageClient.open();
   }
   try {
-    for (const source of sources) {
-      if (sharedRuntimeFailure) {
-        rows.push({
-          account_name: source.account_name || source.name || "",
-          homepage_url: source.url || source.homepage_url || "",
-          status: "not_attempted_source_runtime_failure",
-          failure_reason: sharedRuntimeFailure.reason,
-          video_ids: [],
-          video_links: [],
-        });
-        continue;
-      }
-      const row = await probeAccountWithRetry(pageClient, source, options);
-      rows.push(row);
-      if (row.shared_runtime_failure) {
-        sharedRuntimeFailure = { status: "shared_fixed_target_runtime_failure", reason: row.failure_reason };
-      }
-    }
+    const probed = await probeSourcesWithTailRetry(pageClient, sources, options);
+    rows = [...invalidRows, ...probed.rows];
+    sharedRuntimeFailure = probed.sharedRuntimeFailure;
   } finally {
     pageClient?.close();
   }
@@ -1226,8 +1390,8 @@ async function main() {
   };
 
   const coverage = sharedRuntimeFailure
-    ? buildSourceRuntimeCoverage(sources, rows, sharedRuntimeFailure)
-    : buildCoverage(sources, rows);
+    ? buildSourceRuntimeCoverage(configuredSources, rows, sharedRuntimeFailure)
+    : buildCoverage(configuredSources, rows);
   for (const item of homepageCardItems) {
     const account = String(item["账号名/公众号名"] || "");
     if (Object.hasOwn(coverage.per_account_artifact_counts, account)) {
@@ -1247,6 +1411,13 @@ async function main() {
     video_links: [...(row.video_links || []), ...(backlogLinks.get(String(row.account_name || "")) || [])],
   })), homepageCardItems);
   if (!itemLineage.ok) coverage.ok = false;
+  const accountHealth = persistAccountHealth(
+    options.healthLedger,
+    path.join(options.outDir, "account_health.json"),
+    configuredSources,
+    rows,
+    runId,
+  );
 
   const output = {
     ok: coverage.ok,
@@ -1260,6 +1431,13 @@ async function main() {
     fixed_target_id: fixedTarget?.id || "",
     fixed_target_reattachments: pageClient?.reattachments || 0,
     item_lineage: itemLineage,
+    source_plan: plan,
+    account_health: {
+      run_scoped_path: path.join(options.outDir, "account_health.json"),
+      durable_path: path.resolve(options.healthLedger),
+      account_count: accountHealth.length,
+      action_required_count: accountHealth.filter((row) => row.action_required).length,
+    },
     accounts: rows.length,
     discovered_video_links: videoLinks.length,
     resolver: resolverResult,

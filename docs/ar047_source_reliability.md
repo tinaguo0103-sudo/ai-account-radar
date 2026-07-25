@@ -1,0 +1,115 @@
+# AR-047 来源渠道可靠性合同
+
+## 结论
+
+来源可靠性不是“失败后继续”一个布尔值，而是三件可运营的事：
+
+1. 运行前知道哪些账号身份可执行，错误配置不得进入浏览器。
+2. 运行后知道每个账号最后成功、连续失败和需要采取的动作。
+3. 正式来源只有一条当前路径；失败时贡献 0 行，不用旧文章、旧作品或其他来源补位。
+
+## Douyin 单一路径
+
+正式账号必须同时满足：
+
+- `platform=抖音`，启用并参与主采样；
+- URL host 是 `douyin.com` 或 `www.douyin.com`；
+- path 是 `/user/<sec_user_id>` 且 identity 非空；
+- account name 与 identity 在本次计划内均不重复。
+
+错误平台、空 URL、缺 identity 和重复 identity 在浏览器前形成
+`invalid_configuration`，artifact=0，并要求在 Feishu 01 修复或停用。
+Dev 不猜测账号主页，也不写 live 01。
+
+所有合法账号先各执行一次。第一轮结束后，仅
+`douyin_works_response_timeout` 进入一次 delayed tail retry。
+配置、登录/验证、账号内容错误和 shared runtime failure 不重试。
+继续使用 fixed 9333 exact page、自有 XHR 和 exact account binding；不直调
+Douyin API，不读取旧 artifact。
+
+## Douyin Health Authority
+
+运行事实写入：
+
+- run-scoped：`output/runs/<run_id>/sources/douyin/account_health.json`
+- durable：`output/state/douyin_account_health.json`
+
+每个账号输出：
+
+```text
+source_id
+account_name
+platform
+configured_identity
+verified_identity
+enabled
+priority
+last_attempt
+last_success
+current_outcome
+failure_class
+consecutive_failures
+rolling_success
+action_required
+recovery
+```
+
+状态只能由 run event 派生：
+
+- 配置错误立即 `action_required=true`；
+- transient failure 连续 3 次后才要求动作；
+- 首次 transient 不自动禁用；
+- `success` 或 `updated_no_new_items` 自动清零连续失败；
+- rolling success 至少 3 个样本才显示，窗口最多 10 个 run；
+- 同 run/source event 覆盖写，重复执行不增加事件。
+
+未来 WEB-008 只读 durable health 和 run-scoped result。它不得写健康值，也
+不得成为第二配置源；Feishu 01 仍是来源配置 authority。
+
+## WeChat 单一路径
+
+WeWe 已归档，退出唯一正式来源。其历史 DB/文章可保留，但不得补当天。
+
+当前正式候选是：
+
+```text
+public discovery
+-> exact mp.weixin.qq.com article URL
+-> direct js_content full-text parser
+```
+
+配置位于 `config/wechat_public_fulltext_sources.json`。当前只启用
+`数字生命卡兹克`，每轮最多一篇。验收必须同时满足：
+
+- discovery account exact；
+- URL host exact `mp.weixin.qq.com`；
+- parser account/title 与 discovery exact；
+- 正文不少于 500 字；
+- 发布时间、指纹和正文可读；
+- seen URL 返回 `updated_no_new_items`，不重复；
+- discovery/fulltext 任一步失败时 WeChat=0，其他来源继续。
+
+`we-mp-rss` 当前仍需要扫码/授权和新服务安装，不属于正常无交互执行面。
+不运行 WeWe 与新路径双写，不保留 runtime fallback。
+
+## Hard Stops
+
+- wrong run/date；
+- shared Douyin runtime failure；
+- failed account artifact 非 0；
+- identity collision 导致账号归属不确定；
+- wrong Feishu environment/table；
+- duplicate/destructive write；
+- bounded reconciliation 后外部状态仍 unknown；
+- secret 暴露；
+- 0 safe downstream survivor。
+
+单账号、单 feed、单文章失败均局部隔离并贡献 0 行。
+
+## Release Boundary
+
+- 08:00 public entrypoint 不变，Prompt 无需修改。
+- Production 发布前独立 QA 必须重跑 31/2-invalid/tail-retry/health 矩阵。
+- Production 同步 Feishu 01 中“铁锤人”“歸藏 guizang.ai”是独立授权动作；
+  在建立公开 exact Douyin identity 前，应停用其 Douyin 主采样。
+- 第一次正常次日 08:00 是真实 Douyin/WeChat 生产证明；不以 Dev mock 代替。

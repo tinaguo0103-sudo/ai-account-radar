@@ -61,12 +61,12 @@ class WeWeRefreshOwnershipTests(unittest.TestCase):
         self.assertIn("COREPACK_ENABLE_PROJECT_SPEC=0", dockerfile)
         self.assertNotIn("npm i -g pnpm", dockerfile)
 
-    def test_daily_path_has_one_signed_refresh_and_no_keepalive(self):
+    def test_daily_path_no_longer_calls_archived_wewe_runtime(self):
         source = (ROOT / "scripts/daily_pipeline.py").read_text(encoding="utf-8")
-        block = source[source.index("if args.fetch_wechat_fulltext_provider"):source.index("fetch_douyin =")]
-        self.assertEqual(block.count('"wewe_provider_refresh.py"'), 1)
-        self.assertNotIn("keepalive", block.lower())
-        self.assertNotIn("start_wewe_rss.py", block)
+        self.assertNotIn('"wewe_provider_refresh.py"', source)
+        self.assertNotIn('"wewe_provider_health.py"', source)
+        self.assertNotIn('"wewe_current_feed_reader.py"', source)
+        self.assertIn('"wechat_public_fulltext_source.py"', source)
 
     def test_401_remains_wechat_source_local_with_machine_reason(self):
         step = {"name": "request fixed wewe-rss provider refresh", "returncode": 4, "stderr": "HTTP 401 / -2041"}

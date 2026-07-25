@@ -226,7 +226,7 @@ class AR040ScheduledFlowTests(unittest.TestCase):
         self.assertIn("daily_pipeline.py", " ".join(pipeline))
         self.assertIn("--defer-editorial", pipeline)
         self.assertIn("--resolve-url-intake", pipeline)
-        self.assertIn("--fetch-wechat-fulltext-provider", pipeline)
+        self.assertIn("--fetch-wechat-public-fulltext", pipeline)
         self.assertNotIn("--owned-source-input-only", pipeline)
         self.assertNotIn("--douyin-artifact-result", pipeline)
 

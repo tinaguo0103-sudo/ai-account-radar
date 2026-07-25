@@ -50,19 +50,20 @@
 - feed URL：`https://wechat2rss.xlab.app/feed/7b1c10c25bdfe69d0a08a5349cf3b032e55f4f05.xml`。
 - 仓库不再保留公共 feed intake 脚本，也不保留 no-op 兼容参数。
 - 原因：公共 feed 能发现文章列表，但不能稳定提供全文；摘要会让选题继续有“资讯味”和“猜测感”。
-- 如果要处理卡兹克公众号文章，使用本地 `wewe-rss` 全文 provider，或把单篇公众号文章 URL 放入 `02 URL投喂入口`。
+- 如果要处理卡兹克公众号文章，使用下述公开发现 + exact 全文路径。
 
-### `--fetch-wechat-fulltext-provider` / `--wechat-fulltext-provider wewe-rss`
+### `--fetch-wechat-public-fulltext`
 
-- Wechat2RSS 公共 feed 适合发现卡兹克文章列表，但本轮验证中不能稳定提供全文。
-- `wewe-rss` 已作为 08:00 正常来源：先从本轮开始前的 SQLite snapshot 枚举 active feeds，再逐 feed 调用一次 `POST /trpc/feed.refreshArticles`，body 使用 exact `mpId`，随后立即读取同一 SQLite 和对应全文页。
+- 公开发现页只负责给出卡兹克文章列表和 exact URL，不能用摘要替代全文。
+- 归档的 `wewe-rss` 已退出 08:00 正常路径；历史 DB 只读保留，不补当天。
 - `we-mp-rss` 已从当前主路线降级：它需要公众号平台扫码授权，不适合当前微信小号/微信读书订阅方案，也不建议绑定用户已有公众号主体。
 - 本地 POC 见 `docs/spikes/wechat_fulltext_provider_eval.md`。
-- 当前结论是 `usable_p1_provider`：需要用户在本机维护低频 `wewe-rss` 服务，并用微信读书/微信小号扫码登录；不保存 cookie、token、二维码或数据库到仓库。
-- `scripts/wewe_provider_refresh.py` 与 `scripts/wewe_current_feed_reader.py` 是正常 adapter：失败 feed 贡献 0 行，成功 feed 的本轮 SQLite delta 转成标准 ContentItem；不读取旧缓存、公共摘要或其他来源补位。
-- 显式 dry-run：`python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5`。
-- 显式写入：`python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5 --write-feishu`。
-- 如需全文候选，只运行全文源：`python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5`。公共 feed 不再和全文源混合进候选池。
+- 当前正常路径不需要扫码、登录或新服务安装。
+- `scripts/wechat_public_fulltext_source.py` 从公开发现页取得 exact
+  `mp.weixin.qq.com` URL，再由现有微信正文解析器读取全文；摘要不进入候选池。
+- 显式 dry-run：`python3 scripts/daily_pipeline.py --fetch-wechat-public-fulltext --wechat-article-limit 1`。
+- 显式写入：`python3 scripts/daily_pipeline.py --fetch-wechat-public-fulltext --wechat-article-limit 1 --write-feishu`。
+- WeWe 历史数据不补当天；新路径失败时 WeChat 贡献 0 行。
 
 ## P1 单独 PoC / source_watch_probe
 
@@ -126,7 +127,8 @@
 - 当前能力：单篇 URL 解析可用，全文解析可用。
 - 自动发现：Wechat2RSS feed 已验证可读，但已降级为发现源说明，不进入候选池。
 - 全文 provider：本地 `wewe-rss` 已验证可输出最近文章全文，并已接入显式参数。
-- 推荐：需要全文时显式运行 `--fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss`，或用 `02 URL投喂入口` 放单篇文章 URL。公共 feed 不再进入候选池，避免摘要污染判断。
+- 推荐：正常 08:00 使用 `--fetch-wechat-public-fulltext`。公开发现只提供
+  exact URL，候选必须通过正文解析和账号/标题一致性校验。
 - 不进入默认 `daily_pipeline.py`。
 
 ### 数字生命卡兹克-抖音教程视频

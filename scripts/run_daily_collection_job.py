@@ -9,6 +9,7 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 from automation_failure_qa import qa_for_steps
 from automation_worktree_guard import check_automation_worktree, guard_failure_summary
@@ -118,10 +119,33 @@ def failure_summary(steps: list[dict[str, Any]], log_path: Path) -> str:
 
 def scheduled_collection_plan(config_path: Path, douyin_account_limit: int) -> dict[str, Any]:
     sources = flow.load_json_config(config_path).get("sources", [])
+    raw_by_name = {str(row.get("account_name") or row.get("name") or ""): row for row in sources}
     governance = flow.source_governance_plan(sources)
     active = governance["active_competitor_accounts"]
     douyin = [row for row in active if row.get("platform") == "抖音"]
     other = [row for row in active if row.get("platform") != "抖音"]
+    invalid_douyin = []
+    identities: dict[str, list[str]] = {}
+    for row in douyin:
+        raw = raw_by_name.get(str(row.get("name") or "")) or {}
+        url = str(raw.get("url") or raw.get("homepage_url") or "")
+        parsed = urlparse(url)
+        parts = [part for part in parsed.path.split("/") if part]
+        identity = parts[1] if len(parts) == 2 and parts[0] == "user" else ""
+        if parsed.hostname not in {"douyin.com", "www.douyin.com"} or not identity:
+            invalid_douyin.append({
+                "account_name": row["name"],
+                "reason": "douyin_configured_account_wrong_platform" if not str(parsed.hostname or "").endswith("douyin.com")
+                else "douyin_configured_account_identity_missing",
+            })
+        else:
+            identities.setdefault(identity, []).append(row["name"])
+    for identity, names in identities.items():
+        if len(names) > 1:
+            invalid_douyin.extend(
+                {"account_name": name, "reason": "douyin_configured_account_identity_duplicate"}
+                for name in names
+            )
     unlimited = douyin_account_limit == 0
     return {
         "ok": governance["active_competitor_count"] > 0 and unlimited,
@@ -131,6 +155,8 @@ def scheduled_collection_plan(config_path: Path, douyin_account_limit: int) -> d
         "collection_started": False,
         "planned_accounts": governance["active_competitor_count"],
         "planned_douyin_accounts": len(douyin),
+        "executable_douyin_accounts": len(douyin) - len({row["account_name"] for row in invalid_douyin}),
+        "invalid_douyin_accounts": invalid_douyin,
         "planned_other_accounts": len(other),
         "planned_account_names": [row["name"] for row in active],
         "douyin_account_limit": douyin_account_limit,
@@ -148,8 +174,7 @@ def main() -> int:
     parser = argparse.ArgumentParser(description="Run daily full-source collection then write Feishu 04.")
     parser.add_argument("--douyin-account-limit", type=int, default=0, help="0 means every eligible Douyin competitor account.")
     parser.add_argument("--douyin-video-limit", type=int, default=3)
-    parser.add_argument("--wechat-feed-limit", type=int, default=5)
-    parser.add_argument("--wechat-fulltext-provider", default="wewe_rss_local")
+    parser.add_argument("--wechat-article-limit", type=int, default=1)
     parser.add_argument(
         "--defer-editorial",
         action="store_true",
@@ -237,11 +262,9 @@ def main() -> int:
     ]
     pipeline_cmd.extend([
         "--resolve-url-intake",
-        "--fetch-wechat-fulltext-provider",
-        "--wechat-fulltext-provider",
-        args.wechat_fulltext_provider,
-        "--wechat-feed-limit",
-        str(args.wechat_feed_limit),
+        "--fetch-wechat-public-fulltext",
+        "--wechat-article-limit",
+        str(args.wechat_article_limit),
     ])
     if args.run_id:
         pipeline_cmd.extend(["--run-id", args.run_id])

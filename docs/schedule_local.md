@@ -204,9 +204,8 @@ python3 scripts/reconcile_source_sampling_from_feishu.py --write-config --write-
 
 python3 scripts/daily_pipeline.py \
   --resolve-url-intake \
-  --fetch-wechat-fulltext-provider \
-  --wechat-fulltext-provider wewe_rss_local \
-  --wechat-feed-limit 5 \
+  --fetch-wechat-public-fulltext \
+  --wechat-article-limit 1 \
   --douyin-account-limit 0 \
   --douyin-video-limit 3 \
   --write-feishu \

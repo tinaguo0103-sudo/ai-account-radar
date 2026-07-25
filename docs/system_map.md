@@ -36,7 +36,11 @@ flowchart LR
 
 卡兹克公众号 Wechat2RSS 公共 feed 已降级为发现源说明，不再进入 `03 内容收件箱` 或 `04 分析与选题`。公众号候选以全文为准：优先用本地 `wewe-rss` 全文 provider，或者在 `02 URL投喂入口` 粘贴单篇文章 URL。
 
-公众号全文 provider 已有显式 P1 路线：本地 `wewe-rss` 可通过 `python3 scripts/daily_pipeline.py --fetch-wechat-fulltext-provider --wechat-fulltext-provider wewe-rss --wechat-feed-limit 5` 拉取卡兹克全文；默认工作流不依赖本地服务。`we-mp-rss` 因需要公众号平台扫码授权，已从当前主路线降级。当前结论见 `docs/spikes/wechat_fulltext_provider_eval.md`。
+公众号当前正常路线为公开发现 exact `mp.weixin.qq.com` URL 后直接解析
+`js_content` 全文：`python3 scripts/daily_pipeline.py --fetch-wechat-public-fulltext
+--wechat-article-limit 1`。归档的 `wewe-rss` 不再是 08:00 唯一正式依赖；
+`we-mp-rss` 需要扫码授权，不属于无人值守正常执行面。当前合同见
+`docs/ar047_source_reliability.md`。
 
 抖音主页标题/文案采样现在是日常默认输入，但只用于先判断“是否值得转写”和是否有选题价值，不直接做深拆。字幕/ASR 仍然只适合显式命令和 API key。当前结论见 `docs/spikes/douyin_open_source_tool_eval.md`。
 

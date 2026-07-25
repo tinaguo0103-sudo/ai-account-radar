@@ -26,9 +26,8 @@ OUT = ROOT / "output"
 LOG_DIR = OUT / "logs"
 URL_RESOLVED = OUT / "url_content_items.jsonl"
 URL_RESOLVED_MANUAL = OUT / "url_content_items_manual.jsonl"
-WECHAT_FULLTEXT_RESOLVED_MANUAL = OUT / "wechat_fulltext_provider_items.jsonl"
+DEFAULT_WECHAT_PUBLIC_CONFIG = ROOT / "config" / "wechat_public_fulltext_sources.json"
 DOUYIN_CDP_RESULT = OUT / "spikes" / "douyin_cdp_source_watch_probe" / "cdp_probe_results.json"
-DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG = ROOT / "config" / "wechat_fulltext_provider.example.yaml"
 
 
 def douyin_run_artifact_paths(run_id: str) -> dict[str, Path]:
@@ -425,10 +424,9 @@ def main() -> int:
     parser.add_argument("--no-fetch-aihot", action="store_true", help="Skip AIHOT network fetch for an isolated test run.")
     parser.add_argument("--run-id", default="", help="Use an explicit run id across source, 03, editorial, 04, and card state.")
     parser.add_argument("--resolve-url-intake", action="store_true", help="Resolve URLs from Feishu 02 URL投喂入口 into ContentItem rows before sampling.")
-    parser.add_argument("--fetch-wechat-fulltext-provider", action="store_true", help="Explicit P1 mode: fetch local WeChat fulltext provider rows into the candidate pool. Default is off.")
-    parser.add_argument("--wechat-fulltext-provider-config", default=str(DEFAULT_WECHAT_FULLTEXT_PROVIDER_CONFIG), help="Config for explicit WeChat fulltext provider intake.")
-    parser.add_argument("--wechat-fulltext-provider", default="", help="Provider id/name to fetch, e.g. wewe-rss. Only used with explicit WeChat fulltext provider mode.")
-    parser.add_argument("--wechat-feed-limit", type=int, default=5, help="Max articles to fetch from the explicit WeChat fulltext provider.")
+    parser.add_argument("--fetch-wechat-public-fulltext", action="store_true", help="Discover exact public WeChat article URLs and parse their full text.")
+    parser.add_argument("--wechat-public-config", default=str(DEFAULT_WECHAT_PUBLIC_CONFIG))
+    parser.add_argument("--wechat-article-limit", type=int, default=1)
     parser.add_argument("--no-fetch-douyin", action="store_true", help="Skip the daily Douyin collection attempt.")
     parser.add_argument("--douyin-cdp", default=os.getenv("DOUYIN_CDP_URL", "http://127.0.0.1:9333"), help="Chrome DevTools endpoint for explicit Douyin homepage probe.")
     parser.add_argument("--douyin-account-limit", type=int, default=0, help="Max Douyin accounts to probe; 0 means every eligible account.")
@@ -476,91 +474,43 @@ def main() -> int:
         else:
             manual_inputs = [URL_RESOLVED_MANUAL]
 
-    if args.fetch_wechat_fulltext_provider or args.wechat_fulltext_provider:
-        refresh_attempt_path = OUT / "provider_health" / run_id / "wewe_refresh_attempt.json"
-        refresh_cmd = [py, str(ROOT / "scripts" / "wewe_provider_refresh.py"), "--run-id", run_id, "--run-started-at-ms", str(run_started_at_ms), "--out", str(refresh_attempt_path)]
-        if not args.write_feishu:
-            refresh_cmd.append("--check-only")
-        steps.append(run_step("request fixed wewe-rss provider refresh", refresh_cmd, env=step_env))
-        refresh_result = stdout_json(steps[-1])
-        refresh_step = steps[-1]
-        provider_cmd: list[str] = []
-        if refresh_result.get("status") == "refresh_required" or steps[-1]["returncode"] != 0:
-            state = str(refresh_result.get("status") or "provider_failed")
+    if args.fetch_wechat_public_fulltext:
+        wechat_dir = OUT / "runs" / run_id / "sources" / "wechat"
+        provider_cmd = [
+            py,
+            str(ROOT / "scripts" / "wechat_public_fulltext_source.py"),
+            "--config",
+            args.wechat_public_config,
+            "--run-id",
+            run_id,
+            "--out-dir",
+            str(wechat_dir),
+            "--limit",
+            str(args.wechat_article_limit),
+        ]
+        steps.append(run_step("discover exact public WeChat article and parse full text", provider_cmd, env=step_env))
+        wechat_read_outcome = stdout_json(steps[-1])
+        wechat_freshness = {
+            "ok": wechat_read_outcome.get("ok") is True,
+            "state": str(wechat_read_outcome.get("status") or "provider_failed"),
+            "run_id": run_id,
+            "source_rows": int(wechat_read_outcome.get("rows") or 0),
+        }
+        if steps[-1]["returncode"] != 0:
             isolate_source_failure(
                 steps[-1],
                 source="wechat",
-                state=state,
-                reason=machine_failure_reason(refresh_result, steps[-1], state),
+                state=wechat_freshness["state"],
+                reason=str(steps[-1].get("stderr") or "wechat_public_fulltext_failed"),
             )
-            wechat_freshness = {
-                "ok": False,
-                "state": state,
-                "run_id": run_id,
-                "source_rows": 0,
-            }
         else:
-            if refresh_result.get("status") == "completed_with_failures":
-                refresh_step.update({
-                    "candidate_local_partial": True,
-                    "source": "wechat",
-                    "source_outcome": "completed_with_failures",
-                    "source_rows": 0,
-                    "failed_feed_count": int(refresh_result.get("failed_feed_count") or 0),
-                    "source_failure_reason": (
-                        f"{int(refresh_result.get('failed_feed_count') or 0)} feed failures isolated"
-                    ),
-                })
-            health_cmd = [py, str(ROOT / "scripts" / "wewe_provider_health.py"), "--check-only", "--run-id", run_id, "--run-started-at-ms", str(run_started_at_ms), "--refresh-result", str(refresh_attempt_path)]
-            steps.append(run_step("verify canonical wewe-rss account and refresh freshness", health_cmd, env=step_env))
-            wechat_freshness = stdout_json(steps[-1])
-            if steps[-1]["returncode"] != 0:
-                isolate_source_failure(
-                    steps[-1],
-                    source="wechat",
-                    state=str(wechat_freshness.get("state") or "provider_failed"),
-                    reason=machine_failure_reason(wechat_freshness, steps[-1], "wechat_health_failed"),
-                )
-            elif wechat_freshness.get("state") != "updated_no_new_items":
-                provider_cmd = [
-                    py,
-                    str(ROOT / "scripts" / "wewe_current_feed_reader.py"),
-                    "--refresh-result",
-                    str(refresh_attempt_path),
-                    "--run-id",
-                    run_id,
-                    "--run-started-at-ms",
-                    str(run_started_at_ms),
-                    "--out",
-                    str(WECHAT_FULLTEXT_RESOLVED_MANUAL),
-                    "--csv",
-                    str(OUT / "wechat_fulltext_provider_items.csv"),
-                    "--report",
-                    str(OUT / "provider_health" / run_id / "wewe_current_feed_read_report.json"),
-                ]
-        if provider_cmd:
-            steps.append(run_step("fetch refreshed WeChat fulltext provider into ContentItem rows", provider_cmd, env=step_env))
-            wechat_read_outcome = stdout_json(steps[-1])
-            candidate_partial = (
-                wechat_read_outcome.get("status") == "completed_with_failures"
-                and bool(wechat_read_outcome.get("downstream_usable"))
-            )
-            if steps[-1]["returncode"] != 0 and not candidate_partial:
-                isolate_source_failure(
-                    steps[-1],
-                    source="wechat",
-                    state=str(wechat_read_outcome.get("status") or "provider_failed"),
-                    reason=str(wechat_read_outcome.get("error") or steps[-1].get("stderr") or "wechat_read_failed"),
-                )
-            else:
-                if steps[-1]["returncode"] != 0:
-                    steps[-1]["candidate_returncode"] = steps[-1]["returncode"]
-                    steps[-1]["returncode"] = 0
-                manual_inputs.append(WECHAT_FULLTEXT_RESOLVED_MANUAL)
-                refresh_step["source_rows"] = int(wechat_read_outcome.get("succeeded") or 0)
-            if candidate_partial:
+            manual_inputs.append(wechat_dir / "content_items_manual.jsonl")
+            steps[-1]["source"] = "wechat"
+            steps[-1]["source_rows"] = int(wechat_read_outcome.get("rows") or 0)
+            steps[-1]["source_outcome"] = wechat_freshness["state"]
+            if wechat_freshness["state"] == "completed_with_failures":
                 steps[-1]["candidate_local_partial"] = True
-                steps[-1]["note"] = "WeChat candidate-local read failures were isolated; successful truthful rows continue."
+                steps[-1]["source_failure_reason"] = "one or more WeChat accounts failed with zero substitute rows"
 
     fetch_douyin = not args.no_fetch_douyin
     if fetch_douyin:
