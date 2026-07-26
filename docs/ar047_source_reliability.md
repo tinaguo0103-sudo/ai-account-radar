@@ -79,7 +79,9 @@ exact-run drill-down，不能与 durable 合并出第二套健康事实。它不
 一次性迁移，不在 normal runtime 调用图且无 fallback。
 
 Hosted 网站只生产 versioned pending command。`source_command_bridge.py` 从
-runtime env 读取 Site URL 与 machine bearer，原子 claim 后只调用 loopback
+runtime env 读取 Site URL、官方 Sites SIWC bypass bearer 和独立 Worker app bearer；
+前者只通过 owner-only Site 外层门禁，后者只通过应用 bridge 鉴权。source/deploy
+credential 与 owner control-plane 权限都不能替代 runtime machine identity。原子 claim 后只调用 loopback
 source-control domain service，不直接写 SQLite；commit exact read-back 后再回写
 receipt/projection。receipt 失败时相同 command 通过 `applied_commands` reconcile，
 不重复应用。bridge 离线不改变 SQLite plan，也不把 pending 显示为 applied。

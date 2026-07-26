@@ -38,12 +38,15 @@ def request_json(
     url: str,
     *,
     bearer: str = "",
+    sites_bypass_bearer: str = "",
     payload: dict[str, Any] | None = None,
     timeout: float = 10,
 ) -> dict[str, Any]:
     headers = {"Content-Type": "application/json"}
     if bearer:
         headers["Authorization"] = f"Bearer {bearer}"
+    if sites_bypass_bearer:
+        headers["OAI-Sites-Authorization"] = f"Bearer {sites_bypass_bearer}"
     body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode()
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:
@@ -54,7 +57,11 @@ def request_json(
             value = json.loads(error.read())
             code = str(value.get("error") or f"http_{error.code}")
         except Exception:
-            code = f"http_{error.code}"
+            code = (
+                "sites_siwc_machine_auth_failed"
+                if sites_bypass_bearer and error.code in {401, 403}
+                else f"http_{error.code}"
+            )
         raise BridgeError(code) from None
     except (urllib.error.URLError, TimeoutError, OSError):
         raise BridgeError("bridge_transport_unavailable") from None
@@ -84,9 +91,18 @@ def reconcile_domain_result(source_url: str, command_id: str) -> dict[str, Any] 
     return result
 
 
-def reconcile_bridge_receipt(bridge_url: str, command_id: str, status: str) -> dict[str, Any] | None:
+def reconcile_bridge_receipt(
+    bridge_url: str,
+    command_id: str,
+    status: str,
+    sites_bypass_bearer: str,
+) -> dict[str, Any] | None:
     try:
-        readback = request_json("GET", f"{bridge_url}/api/source-commands/{command_id}")
+        readback = request_json(
+            "GET",
+            f"{bridge_url}/api/source-commands/{command_id}",
+            sites_bypass_bearer=sites_bypass_bearer,
+        )
     except BridgeError as error:
         if str(error) == "command_not_found":
             return None
@@ -103,9 +119,16 @@ def run_once() -> dict[str, Any]:
     bridge_url = endpoint("SOURCE_BRIDGE_URL", loopback=False)
     source_url = endpoint("SOURCE_CONTROL_URL", loopback=True)
     bearer = required_env("SOURCE_BRIDGE_BEARER")
+    sites_bypass_bearer = required_env("SOURCE_BRIDGE_SIWC_BYPASS_BEARER")
     source_identity(source_url)
 
-    claimed = request_json("POST", f"{bridge_url}/api/source-bridge/claim", bearer=bearer, payload={})
+    claimed = request_json(
+        "POST",
+        f"{bridge_url}/api/source-bridge/claim",
+        bearer=bearer,
+        sites_bypass_bearer=sites_bypass_bearer,
+        payload={},
+    )
     command = claimed.get("command")
     if command is None:
         return {
@@ -174,10 +197,16 @@ def run_once() -> dict[str, Any]:
             "POST",
             f"{bridge_url}/api/source-bridge/complete",
             bearer=bearer,
+            sites_bypass_bearer=sites_bypass_bearer,
             payload=completion,
         )
     except BridgeError:
-        readback = reconcile_bridge_receipt(bridge_url, command_id, status)
+        readback = reconcile_bridge_receipt(
+            bridge_url,
+            command_id,
+            status,
+            sites_bypass_bearer,
+        )
         if readback is None:
             raise BridgeError("bridge_receipt_status_unknown") from None
         receipt = readback.get("receipt")
@@ -218,11 +247,17 @@ def main() -> int:
         if args.check_only:
             bridge_url = endpoint("SOURCE_BRIDGE_URL", loopback=False)
             source_url = endpoint("SOURCE_CONTROL_URL", loopback=True)
+            sites_bypass_bearer = required_env("SOURCE_BRIDGE_SIWC_BYPASS_BEARER")
             source_identity(source_url)
-            health = request_json("GET", f"{bridge_url}/api/source-bridge/health")
+            health = request_json(
+                "GET",
+                f"{bridge_url}/api/source-bridge/health",
+                sites_bypass_bearer=sites_bypass_bearer,
+            )
             print(json.dumps({
                 "ok": True,
                 "status": "ready",
+                "machine_auth": "sites_siwc_bypass",
                 "bridge_health_ok": bool(health.get("ok")),
                 "credentials_logged": False,
                 "business_actions": 0,

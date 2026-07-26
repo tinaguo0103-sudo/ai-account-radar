@@ -206,7 +206,9 @@ python3 scripts/run_topic_card_if_fresh.py --no-notify
 ```bash
 python3 scripts/source_control_cli.py plan
 
-# Hosted command bridge: credentials and exact endpoints come only from runtime env.
+# Hosted command bridge: exact endpoints and both credentials come only from runtime env.
+# SOURCE_BRIDGE_SIWC_BYPASS_BEARER crosses the owner-only Sites SIWC gate via
+# OAI-Sites-Authorization. SOURCE_BRIDGE_BEARER remains the Worker app credential.
 python3 scripts/source_command_bridge.py --check-only
 python3 scripts/source_command_bridge.py
 
@@ -225,6 +227,9 @@ python3 scripts/daily_pipeline.py \
 
 日常来源配置以 `output/state/source_control.sqlite3` 为准，不需要先 dry-run。
 Feishu `01 来源与采样` 仅是迁移前历史，不同步、不回写、也不作为 fallback。
+owner control-plane permission and source repository credentials do not authorize runtime
+bridge requests. The bridge requires the official Sites SIWC bypass bearer plus the
+independent Worker app bearer; neither value may be passed as a CLI argument or logged.
 第一条命令只读 SQLite exact revision；第二条命令对 URL intake、
 WeWe、全部抖音跟踪账号和 AIHOT 各执行一次当前 run 采集，只把成功来源的
 当前 run 行放入统一 owner/candidate plan，再写入 `03 内容收件箱` 并生成 raw
