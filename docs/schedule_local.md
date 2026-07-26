@@ -1,5 +1,27 @@
 # 本机轻量 watcher 运行说明
 
+## WEB-010 单一每日流水线候选
+
+当前 Git 候选把日常业务收敛为一条 `08:00` 外部 schedule：
+
+```bash
+python3 scripts/run_daily_workflow.py \
+  --run-id <EXACT_RUN_ID> \
+  --business-date <SHANGHAI_DATE> \
+  --source-revision <EXACT_SOURCE_REVISION>
+```
+
+该入口在同一 exact run 内依次提交并 read-back `collection -> editorial -> scripts`。
+来源配置继续只读 `output/state/source_control.sqlite3`，每日运行权威为 ignored
+`output/state/daily_workflow.sqlite3`，网站 D1 仅保存 projection。正常调用图不读取
+或写入飞书 01/02/03/04/06，不发送 Topic Card、callback 或成功/失败通知。
+
+`ai-04-rebuild`、`ai-rebuild-2` 在发布候选中保持 PAUSED；下一次正常 `08:00`
+三阶段 first-real-flow 与网站 exact read-back 全绿后，才通过官方 control plane
+归档/删除。`watch_script_package_queue.py` 同样退出 active runtime，但保留为历史
+维护代码，不得被统一入口调用。live automation、watcher 和腾讯云资源不在 Dev
+修改。
+
 当前正式脚本包生成走本机轻量 watcher。原因是 `06 完整脚本与制作包` 需要 Codex 和全局私有 Skill 参与，不能退化成纯模板代码；但也不应该每小时固定消耗 Codex automation 额度。
 
 边界要清楚：

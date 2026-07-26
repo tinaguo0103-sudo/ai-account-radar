@@ -1,0 +1,22 @@
+{
+  "schemaVersion": 1,
+  "taskId": "WEB-010",
+  "candidateOnly": true,
+  "externalSchedule": {
+    "existingId": "ai-rebuild",
+    "schedule": "08:00 Asia/Shanghai",
+    "publicEntrypoint": "python3 scripts/run_daily_workflow.py --run-id <EXACT_RUN_ID> --business-date <SHANGHAI_DATE> --source-revision <EXACT_SOURCE_REVISION>",
+    "inPlaceUpdateOnly": true
+  },
+  "retireAfterFirstRealFlow": [
+    {"existingId": "ai-04-rebuild", "releaseState": "keep_paused", "afterFirstRealFlow": "archive_or_delete_via_official_control_plane"},
+    {"existingId": "ai-rebuild-2", "releaseState": "keep_paused", "afterFirstRealFlow": "archive_or_delete_via_official_control_plane"}
+  ],
+  "watcher": {
+    "entrypoint": "scripts/watch_script_package_queue.py",
+    "releaseState": "remove_from_active_runtime_after_accepted_release",
+    "normalWorkflowReachable": false
+  },
+  "normalRuntimeForbiddenCalls": ["Feishu 01", "Feishu 02", "Feishu 03", "Feishu 04", "Feishu 06", "Topic Card", "callback", "notification"],
+  "stopConditions": ["wrong_run_or_business_date", "cross_run_input", "stage_commit_readback_unknown", "active_skill_identity_unknown", "duplicate_or_conflicting_stage"]
+}

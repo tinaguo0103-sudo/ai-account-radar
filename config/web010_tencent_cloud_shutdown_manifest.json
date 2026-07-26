@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "taskId": "WEB-010",
+  "inventoryStatus": "Cloud Inventory Blocked",
+  "blockedReason": "Official Tencent Cloud read-only CLI/session is unavailable in Dev; resource identities must not be guessed from repository names.",
+  "knownLegacyOwner": "Feishu interactive topic-card receiver and production-direction card sender",
+  "knownDependencyNames": ["cloud_functions/feishu-card-receiver", "send-production-direction-cards"],
+  "requiredOfficialInventory": [
+    {"resourceType": "SCF function", "requiredFields": ["account_id", "region", "function_name", "function_id", "state", "runtime", "function_url", "triggers"], "stopAction": "disable triggers and function URL, then stop/delete only after dependency proof", "rollback": "restore exact function, URL and trigger definitions"},
+    {"resourceType": "timer trigger", "requiredFields": ["account_id", "region", "function_id", "trigger_id", "cron", "state"], "stopAction": "disable exact trigger", "rollback": "enable exact trigger with prior cron"},
+    {"resourceType": "log delivery", "requiredFields": ["account_id", "region", "function_id", "logset_id", "topic_id", "state"], "stopAction": "detach old-card-only delivery after retention decision", "rollback": "restore exact log binding"},
+    {"resourceType": "monitor or alarm", "requiredFields": ["account_id", "region", "policy_id", "resource_id", "state"], "stopAction": "disable old-card-only policy", "rollback": "restore exact policy"}
+  ],
+  "dependencyProofRequired": ["accepted WEB-010 release", "post-release smoke green", "first normal 08:00 three-stage flow green", "no non-Feishu dependency", "supported billing and no-new-invocation read-back"],
+  "cloudMutationsInDev": 0
+}

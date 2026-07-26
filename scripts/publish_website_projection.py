@@ -8,6 +8,7 @@ import hashlib
 import json
 import os
 import re
+import sqlite3
 import urllib.error
 import urllib.request
 from collections import Counter
@@ -161,6 +162,104 @@ def build_projection(repo: Path, run_id: str, revision: int, authority_identity:
     return payload
 
 
+def build_workflow_projection(db_path: Path, run_id: str, stage: str,
+                              revision: int, authority_identity: str) -> dict[str, Any]:
+    database = sqlite3.connect(db_path)
+    database.row_factory = sqlite3.Row
+    run = database.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+    rows = database.execute(
+        "SELECT * FROM stages WHERE run_id=? AND revision<=? ORDER BY revision",
+        (run_id, revision),
+    ).fetchall()
+    if not run or not rows or rows[-1]["stage"] != stage:
+        raise ProjectionError("workflow_stage_not_committed")
+    payloads = {row["stage"]: json.loads(row["payload_json"]) for row in rows}
+    collection = payloads.get("collection", {})
+    editorial = payloads.get("editorial", {})
+    scripts_stage = payloads.get("scripts", {})
+    content: list[dict[str, Any]] = []
+    by_identity: dict[str, dict[str, Any]] = {}
+    for row in collection.get("content_items", []):
+        identity = str(row.get("content_fingerprint") or row.get("id") or "")
+        if not identity or identity in by_identity:
+            raise ProjectionError("content_fingerprint_conflict")
+        item = {
+            "id": stable_id("content", run_id, identity), "run_id": run_id,
+            "content_fingerprint": identity, "source": source_name(str(row.get("source") or row.get("平台") or "")),
+            "account": str(row.get("account") or row.get("账号名/公众号名") or ""),
+            "title": str(row.get("title") or row.get("内容标题") or ""),
+            "summary": str(row.get("summary") or row.get("正文/字幕/简介片段") or "")[:360],
+            "body": str(row.get("body") or row.get("正文/字幕/简介片段") or ""),
+            "source_url": str(row.get("source_url") or row.get("内容链接") or ""),
+            "published_at": str(row.get("published_at") or row.get("发布时间") or ""),
+            "collected_at": str(row.get("collected_at") or run["updated_at"]),
+        }
+        content.append(item)
+        by_identity[identity] = item
+    topics: list[dict[str, Any]] = []
+    for row in editorial.get("topics", []):
+        if row.get("decision") != "select":
+            continue
+        identity = str(row.get("candidate_id") or "")
+        item = by_identity.get(identity)
+        if not item:
+            raise ProjectionError("topic_content_mapping_missing")
+        topics.append({
+            "id": stable_id("topic", run_id, identity), "run_id": run_id,
+            "content_id": item["id"], "title": str(row.get("title") or ""),
+            "source": item["source"], "brief": item["summary"],
+            "reason": str(row.get("selection_reason") or ""), "status": "selected",
+            "updated_at": run["updated_at"], "selection_reason": str(row.get("selection_reason") or ""),
+            "hook": str(row.get("hook") or ""), "content_structure": str(row.get("structure") or ""),
+            "source_url": item["source_url"], "generation_status": "not_generated",
+            "generation_error": "",
+        })
+    topic_by_identity = {
+        str(row.get("candidate_id")): topic
+        for row, topic in zip(
+            [row for row in editorial.get("topics", []) if row.get("decision") == "select"], topics
+        )
+    }
+    scripts: list[dict[str, Any]] = []
+    for row in scripts_stage.get("scripts", []):
+        identity = str(row.get("topic_id") or "")
+        topic = topic_by_identity.get(identity)
+        if not topic:
+            raise ProjectionError("script_topic_mapping_missing")
+        topic["generation_status"] = "generated"
+        scripts.append({
+            "id": stable_id("script", run_id, identity), "run_id": run_id,
+            "topic_id": topic["id"], "script_version": 1,
+            "title": str(row.get("title") or ""), "hook": str(row.get("hook") or ""),
+            "content_structure": str(row.get("structure") or ""), "body": str(row.get("body") or ""),
+            "updated_at": run["updated_at"], "current_revision_number": 1, "saved_at": run["updated_at"],
+        })
+    for failure in scripts_stage.get("failures", []):
+        topic = topic_by_identity.get(str(failure.get("topic_id") or ""))
+        if topic:
+            topic["generation_status"] = "failed"
+            topic["generation_error"] = str(failure.get("reason") or "script_generation_failed")
+    source_runs = []
+    for row in collection.get("source_runs", []):
+        source_runs.append({
+            "id": str(row.get("id") or f"{run_id}:{row.get('source')}"),
+            "run_id": run_id, "source": source_name(str(row.get("source") or "")),
+            "status": str(row.get("status") or "completed"), "planned_count": int(row.get("planned_count") or row.get("item_count") or 0),
+            "succeeded_count": int(row.get("succeeded_count") or row.get("item_count") or 0),
+            "failed_count": int(row.get("failed_count") or (1 if row.get("status") == "failed" else 0)),
+            "item_count": int(row.get("item_count") or 0), "error_summary": str(row.get("error_summary") or ""),
+            "completed_at": str(row.get("completed_at") or run["updated_at"]),
+        })
+    payload = {
+        "run_id": run_id, "business_date": run["business_date"], "revision": revision,
+        "stage": stage, "authority_identity": authority_identity, "updated_at": run["updated_at"],
+        "run": {"status": rows[-1]["status"], "candidate_count": len(collection.get("candidates", []))},
+        "source_runs": source_runs, "collected_items": content, "topics": topics, "scripts": scripts,
+    }
+    payload["payload_sha256"] = digest(payload)
+    return payload
+
+
 def request_json(method: str, url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
     app_bearer = os.environ.get("WEBSITE_PROJECTION_BEARER", "").strip()
     if not app_bearer:
@@ -191,11 +290,21 @@ def main() -> int:
     parser.add_argument("--revision", type=int, required=True)
     parser.add_argument("--authority-identity", required=True)
     parser.add_argument("--website-url", required=True)
+    parser.add_argument("--workflow-db", type=Path)
+    parser.add_argument("--stage", choices=("collection", "editorial", "scripts"))
     parser.add_argument("--payload-out", type=Path)
     parser.add_argument("--build-only", action="store_true")
     args = parser.parse_args()
     try:
-        payload = build_projection(args.repo.resolve(), args.run_id, args.revision, args.authority_identity)
+        if args.workflow_db:
+            if not args.stage:
+                raise ProjectionError("workflow_stage_required")
+            payload = build_workflow_projection(
+                args.workflow_db.resolve(), args.run_id, args.stage, args.revision,
+                args.authority_identity,
+            )
+        else:
+            payload = build_projection(args.repo.resolve(), args.run_id, args.revision, args.authority_identity)
         if args.payload_out:
             args.payload_out.parent.mkdir(parents=True, exist_ok=True)
             args.payload_out.write_text(json.dumps(payload, ensure_ascii=False, indent=2))

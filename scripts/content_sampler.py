@@ -2031,8 +2031,8 @@ def write_csv(path: Path, rows: list[dict[str, Any]]) -> None:
         writer.writerows(rows)
 
 
-def run_output_dir(run_id: str, write_feishu: bool) -> Path:
-    base = RUNS_DIR if write_feishu else DRY_RUNS_DIR
+def run_output_dir(run_id: str, write_feishu: bool, local_authority: bool = False) -> Path:
+    base = RUNS_DIR if write_feishu or local_authority else DRY_RUNS_DIR
     return base / run_id
 
 
@@ -2883,12 +2883,13 @@ def main() -> int:
     parser.add_argument("--no-fetch-aihot", action="store_true")
     parser.add_argument("--manual", default=str(MANUAL_ITEMS))
     parser.add_argument("--write-feishu", action="store_true", help="Write all analyzed ContentItems into Feishu 03 内容收件箱 as the content ledger.")
+    parser.add_argument("--local-authority-output", action="store_true", help="Write run-scoped local authority artifacts without Feishu.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
     parser.add_argument("--debug-top10", action="store_true", help="Write local candidate generation diagnostics into this run's output directory.")
     args = parser.parse_args()
 
     run_id = args.run_id or default_run_id()
-    output_dir = run_output_dir(run_id, args.write_feishu)
+    output_dir = run_output_dir(run_id, args.write_feishu, args.local_authority_output)
     output_dir.mkdir(parents=True, exist_ok=True)
     items, logs = collect_items(not args.no_fetch_aihot, Path(args.manual))
     item_rows = [item_row(item) for item in items]

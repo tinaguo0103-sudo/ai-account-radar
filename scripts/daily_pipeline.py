@@ -136,8 +136,8 @@ def write_run_log(
     return path
 
 
-def pipeline_output_dir(run_id: str, write_feishu: bool) -> Path:
-    return OUT / ("runs" if write_feishu else "dry_runs") / run_id
+def pipeline_output_dir(run_id: str, write_feishu: bool, local_authority: bool = False) -> Path:
+    return OUT / ("runs" if write_feishu or local_authority else "dry_runs") / run_id
 
 
 def today10_count(path: Path) -> int:
@@ -430,6 +430,7 @@ def main() -> int:
 
     parser = argparse.ArgumentParser(description="Run the daily AI account radar pipeline.")
     parser.add_argument("--write-feishu", action="store_true", help="Write Feishu changes for selected steps: URL resolver writes 03/updates 02; 今日候选池 writes 04 and refreshes 00.")
+    parser.add_argument("--no-feishu-runtime", action="store_true", help="Write exact local run artifacts with every Feishu path disabled.")
     parser.add_argument("--no-fetch-aihot", action="store_true", help="Skip AIHOT network fetch for an isolated test run.")
     parser.add_argument("--run-id", default="", help="Use an explicit run id across source, 03, editorial, 04, and card state.")
     parser.add_argument("--resolve-url-intake", action="store_true", help="Resolve URLs from Feishu 02 URL投喂入口 into ContentItem rows before sampling.")
@@ -447,6 +448,8 @@ def main() -> int:
         help="Stop after raw candidate generation so the outer Codex automation can apply ai-account-editorial-director without nested codex exec.",
     )
     args = parser.parse_args()
+    if args.no_feishu_runtime and (args.write_feishu or args.resolve_url_intake):
+        parser.error("--no-feishu-runtime conflicts with Feishu-backed paths")
     args.douyin_account_limit = account_gate.value
 
     load_local_env()
@@ -582,6 +585,8 @@ def main() -> int:
     ))
 
     sampler_cmd = [py, str(ROOT / "scripts" / "content_sampler.py"), "--manual", manual_path, "--run-id", run_id]
+    if args.no_feishu_runtime:
+        sampler_cmd.append("--local-authority-output")
     if args.no_fetch_aihot:
         sampler_cmd.append("--no-fetch-aihot")
     if args.write_feishu:
@@ -592,7 +597,7 @@ def main() -> int:
         print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return steps[-1]["returncode"]
 
-    output_dir = pipeline_output_dir(run_id, args.write_feishu)
+    output_dir = pipeline_output_dir(run_id, args.write_feishu, args.no_feishu_runtime)
     today10_path = output_dir / "today_10_topics.csv"
     generated_count = today10_count(today10_path)
     downstream_report = downstream_usability_report(
