@@ -1,4 +1,7 @@
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -111,6 +114,59 @@ class DailyWorkflowTest(unittest.TestCase):
             last_json_object('child output {"rows": 2}\nfinal\\n{"run_id":"run_exact","ok":true}\\n'),
             {"run_id": "run_exact", "ok": True},
         )
+
+    def test_all_four_publisher_bindings_fail_before_any_business_side_effect(self):
+        script = Path(__file__).with_name("run_daily_workflow.py")
+        cases = {
+            "publisher_url_missing": {
+                "omit": "--publisher-url",
+                "env": {"WEBSITE_PROJECTION_BEARER": "app", "WEBSITE_PROJECTION_SIWC_BYPASS_BEARER": "machine"},
+            },
+            "publisher_identity_missing": {
+                "omit": "--publisher-identity",
+                "env": {"WEBSITE_PROJECTION_BEARER": "app", "WEBSITE_PROJECTION_SIWC_BYPASS_BEARER": "machine"},
+            },
+            "website_projection_bearer_missing": {
+                "omit_env": "WEBSITE_PROJECTION_BEARER",
+                "env": {"WEBSITE_PROJECTION_SIWC_BYPASS_BEARER": "machine"},
+            },
+            "website_projection_machine_access_bearer_missing": {
+                "omit_env": "WEBSITE_PROJECTION_SIWC_BYPASS_BEARER",
+                "env": {"WEBSITE_PROJECTION_BEARER": "app"},
+            },
+        }
+        for expected, config in cases.items():
+            with self.subTest(expected=expected), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                database = root / "state" / "workflow.sqlite3"
+                artifacts = root / "artifacts"
+                command = [
+                    sys.executable, str(script),
+                    "--run-id", "run_20260726_120000",
+                    "--business-date", "2026-07-26",
+                    "--source-revision", "1",
+                    "--source-db", str(root / "source.sqlite3"),
+                    "--workflow-db", str(database),
+                    "--collection-fixture", str(root / "must_not_be_read.json"),
+                    "--artifact-root", str(artifacts),
+                    "--publisher-url", "http://127.0.0.1:1",
+                    "--publisher-identity", "qa-private:workflow",
+                ]
+                omit = config.get("omit")
+                if omit:
+                    index = command.index(omit)
+                    del command[index:index + 2]
+                environment = os.environ.copy()
+                environment.pop("WEBSITE_PROJECTION_BEARER", None)
+                environment.pop("WEBSITE_PROJECTION_SIWC_BYPASS_BEARER", None)
+                environment.update(config["env"])
+                result = subprocess.run(command, text=True, capture_output=True, env=environment)
+                self.assertEqual(result.returncode, 2)
+                self.assertEqual(json.loads(result.stdout), {"ok": False, "error": expected})
+                self.assertFalse(database.exists())
+                self.assertFalse(artifacts.exists())
+                self.assertEqual(list(root.rglob("*.sqlite3")), [])
+                self.assertFalse((root / "must_not_be_read.json").exists())
 
 
 if __name__ == "__main__":

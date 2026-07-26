@@ -9,7 +9,6 @@ import json
 import os
 import subprocess
 import sys
-import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Any
@@ -148,10 +147,7 @@ def validate_runtime(args: argparse.Namespace) -> None:
         raise RuntimeError("publisher_identity_missing")
     if not os.environ.get("WEBSITE_PROJECTION_BEARER", "").strip():
         raise RuntimeError("website_projection_bearer_missing")
-    host = urllib.parse.urlparse(args.publisher_url).hostname or ""
-    if host not in {"127.0.0.1", "localhost", "::1"} and not os.environ.get(
-        "WEBSITE_PROJECTION_SIWC_BYPASS_BEARER", ""
-    ).strip():
+    if not os.environ.get("WEBSITE_PROJECTION_SIWC_BYPASS_BEARER", "").strip():
         raise RuntimeError("website_projection_machine_access_bearer_missing")
 
 
@@ -198,8 +194,8 @@ def main() -> int:
     parser.add_argument("--workflow-db", default=str(DEFAULT_DB))
     parser.add_argument("--source-revision", type=int, required=True)
     parser.add_argument("--collection-fixture", default="")
-    parser.add_argument("--publisher-url", required=True)
-    parser.add_argument("--publisher-identity", required=True)
+    parser.add_argument("--publisher-url", default="")
+    parser.add_argument("--publisher-identity", default="")
     parser.add_argument("--artifact-root", default=str(ROOT / "output/runs"))
     args = parser.parse_args()
     DailyWorkflow.validate_identity(args.run_id, args.business_date)
