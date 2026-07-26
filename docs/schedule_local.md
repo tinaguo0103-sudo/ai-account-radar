@@ -206,6 +206,13 @@ python3 scripts/run_topic_card_if_fresh.py --no-notify
 ```bash
 python3 scripts/source_control_cli.py plan
 
+# Hosted command bridge: credentials and exact endpoints come only from runtime env.
+python3 scripts/source_command_bridge.py --check-only
+python3 scripts/source_command_bridge.py
+
+# Long-running local bridge process.
+python3 scripts/source_command_bridge.py --watch --interval-seconds 5
+
 python3 scripts/daily_pipeline.py \
   --resolve-url-intake \
   --fetch-wechat-public-fulltext \

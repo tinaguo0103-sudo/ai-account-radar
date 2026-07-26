@@ -78,6 +78,12 @@ exact-run drill-down，不能与 durable 合并出第二套健康事实。它不
 `output/state/source_control.sqlite3`；Feishu 01 仅允许显式、只读、可重复的
 一次性迁移，不在 normal runtime 调用图且无 fallback。
 
+Hosted 网站只生产 versioned pending command。`source_command_bridge.py` 从
+runtime env 读取 Site URL 与 machine bearer，原子 claim 后只调用 loopback
+source-control domain service，不直接写 SQLite；commit exact read-back 后再回写
+receipt/projection。receipt 失败时相同 command 通过 `applied_commands` reconcile，
+不重复应用。bridge 离线不改变 SQLite plan，也不把 pending 显示为 applied。
+
 ## WeChat 单一路径
 
 WeWe 已归档，退出唯一正式来源。其历史 DB/文章可保留，但不得补当天。
