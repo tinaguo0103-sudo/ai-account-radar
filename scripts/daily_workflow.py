@@ -42,7 +42,8 @@ class DailyWorkflow:
         CREATE TABLE IF NOT EXISTS runs(
           run_id TEXT PRIMARY KEY, business_date TEXT NOT NULL,
           status TEXT NOT NULL, source_revision INTEGER NOT NULL,
-          created_at TEXT NOT NULL, updated_at TEXT NOT NULL
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
+          contract_hash TEXT NOT NULL DEFAULT ''
         );
         CREATE TABLE IF NOT EXISTS stages(
           run_id TEXT NOT NULL REFERENCES runs(run_id), stage TEXT NOT NULL,
@@ -67,10 +68,19 @@ class DailyWorkflow:
           PRIMARY KEY(run_id, stage, revision)
         );
         """)
-        self.db.execute(
-            "INSERT OR REPLACE INTO workflow_meta(key,value) VALUES('schema_version',?)",
-            (str(SCHEMA_VERSION),),
-        )
+        version = self.db.execute(
+            "SELECT value FROM workflow_meta WHERE key='schema_version'"
+        ).fetchone()
+        if not version:
+            self.db.execute(
+                "INSERT INTO workflow_meta(key,value) VALUES('schema_version',?)",
+                (str(SCHEMA_VERSION),),
+            )
+        elif version["value"] != str(SCHEMA_VERSION):
+            raise WorkflowConflict("workflow_schema_version_conflict")
+        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(runs)")}
+        if "contract_hash" not in columns:
+            self.db.execute("ALTER TABLE runs ADD COLUMN contract_hash TEXT NOT NULL DEFAULT ''")
         self.db.commit()
 
     @staticmethod
@@ -81,18 +91,25 @@ class DailyWorkflow:
         if business_date != f"{compact[:4]}-{compact[4:6]}-{compact[6:]}":
             raise ValueError("wrong_business_date")
 
-    def begin(self, run_id: str, business_date: str, source_revision: int) -> None:
+    def begin(self, run_id: str, business_date: str, source_revision: int,
+              contract_hash: str) -> str:
         self.validate_identity(run_id, business_date)
-        now = datetime.now(timezone.utc).isoformat()
         row = self.db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-        if row and (row["business_date"] != business_date or row["source_revision"] != source_revision):
-            raise WorkflowConflict("run_identity_conflict")
+        if row:
+            if (row["business_date"] != business_date
+                    or row["source_revision"] != source_revision
+                    or row["contract_hash"] != contract_hash):
+                raise WorkflowConflict("run_identity_conflict")
+            return "completed_replay" if row["status"] in {
+                "completed", "completed_with_failures", "completed_empty"
+            } else "resume"
+        now = datetime.now(timezone.utc).isoformat()
         self.db.execute(
-            """INSERT INTO runs VALUES(?,?,?,?,?,?)
-            ON CONFLICT(run_id) DO UPDATE SET updated_at=excluded.updated_at""",
-            (run_id, business_date, "running", source_revision, now, now),
+            "INSERT INTO runs VALUES(?,?,?,?,?,?,?)",
+            (run_id, business_date, "running", source_revision, now, now, contract_hash),
         )
         self.db.commit()
+        return "new"
 
     def commit_stage(self, run_id: str, stage: str, input_hash: str,
                      payload: dict[str, Any], status: str) -> dict[str, Any]:
@@ -124,7 +141,8 @@ class DailyWorkflow:
             )
             self.db.execute(
                 "UPDATE runs SET status=?,updated_at=? WHERE run_id=?",
-                (status if stage == "scripts" else "running", now, run_id),
+                (status if stage == "scripts" or (stage == "collection" and status == "completed_empty")
+                 else "running", now, run_id),
             )
         readback = self.db.execute(
             "SELECT * FROM stages WHERE run_id=? AND stage=?", (run_id, stage)
@@ -148,12 +166,27 @@ class DailyWorkflow:
 
     def record_projection(self, run_id: str, stage: str, revision: int,
                           payload_hash: str, status: str, detail: str) -> None:
+        existing = self.db.execute(
+            "SELECT * FROM projection_receipts WHERE run_id=? AND stage=? AND revision=?",
+            (run_id, stage, revision),
+        ).fetchone()
+        if existing and existing["status"] == "applied":
+            if existing["payload_hash"] != payload_hash:
+                raise WorkflowConflict("applied_projection_payload_conflict")
+            return
         self.db.execute(
             """INSERT OR REPLACE INTO projection_receipts VALUES(?,?,?,?,?,?,?)""",
             (run_id, stage, revision, payload_hash, status, detail,
              datetime.now(timezone.utc).isoformat()),
         )
         self.db.commit()
+
+    def projection(self, run_id: str, stage: str, revision: int) -> dict[str, Any] | None:
+        row = self.db.execute(
+            "SELECT * FROM projection_receipts WHERE run_id=? AND stage=? AND revision=?",
+            (run_id, stage, revision),
+        ).fetchone()
+        return dict(row) if row else None
 
     def stage(self, run_id: str, stage: str) -> dict[str, Any] | None:
         row = self.db.execute(
@@ -175,4 +208,8 @@ class DailyWorkflow:
         skills = [dict(row) for row in self.db.execute(
             "SELECT * FROM skill_attempts WHERE run_id=? ORDER BY stage,unit_id,attempt", (run_id,)
         )]
-        return {"run": dict(run), "stages": stages, "skill_attempts": skills}
+        receipts = [dict(row) for row in self.db.execute(
+            "SELECT * FROM projection_receipts WHERE run_id=? ORDER BY revision", (run_id,)
+        )]
+        return {"run": dict(run), "stages": stages, "skill_attempts": skills,
+                "projection_receipts": receipts}

@@ -5,7 +5,9 @@
   "externalSchedule": {
     "existingId": "ai-rebuild",
     "schedule": "08:00 Asia/Shanghai",
-    "publicEntrypoint": "python3 scripts/run_daily_workflow.py --run-id <EXACT_RUN_ID> --business-date <SHANGHAI_DATE> --source-revision <EXACT_SOURCE_REVISION>",
+    "publicEntrypoint": "python3 scripts/run_daily_workflow.py --run-id <EXACT_RUN_ID> --business-date <SHANGHAI_DATE> --source-revision <EXACT_SOURCE_REVISION> --publisher-url https://ai-account-workbench-v1.le-ei.chatgpt.site --publisher-identity radar-production:daily-workflow.sqlite3",
+    "requiredRuntimeEnvironment": ["WEBSITE_PROJECTION_BEARER", "WEBSITE_PROJECTION_SIWC_BYPASS_BEARER"],
+    "requiredProjectionBindings": ["publisher-url", "publisher-identity"],
     "inPlaceUpdateOnly": true
   },
   "retireAfterFirstRealFlow": [
@@ -18,5 +20,5 @@
     "normalWorkflowReachable": false
   },
   "normalRuntimeForbiddenCalls": ["Feishu 01", "Feishu 02", "Feishu 03", "Feishu 04", "Feishu 06", "Topic Card", "callback", "notification"],
-  "stopConditions": ["wrong_run_or_business_date", "cross_run_input", "stage_commit_readback_unknown", "active_skill_identity_unknown", "duplicate_or_conflicting_stage"]
+  "stopConditions": ["publisher_binding_or_bearer_missing", "wrong_run_or_business_date", "cross_run_input", "stage_commit_readback_unknown", "active_skill_identity_unknown", "duplicate_or_conflicting_stage", "projection_unresolved_or_conflict"]
 }

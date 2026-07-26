@@ -9,15 +9,21 @@ import json
 import os
 import subprocess
 import sys
+import urllib.parse
 from datetime import datetime
 from pathlib import Path
 from typing import Any
 
-from active_skill_executor import invoke
-from daily_workflow import DailyWorkflow, digest
+from active_skill_executor import ACTIVE_ROOT, file_hash, invoke
+from daily_workflow import DailyWorkflow, WorkflowConflict, digest
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "output/state/daily_workflow.sqlite3"
+ACTIVE_SKILLS = (
+    "ai-account-editorial-director",
+    "austin-no-overtime-scripting",
+    "austin-voice-scriptwriter",
+)
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -113,19 +119,75 @@ def write_script_artifact(root: Path, run_id: str, payload: dict[str, Any]) -> d
     return value
 
 
-def publish(args: argparse.Namespace, stage_payload: dict[str, Any], revision: int) -> tuple[str, str]:
+def contract_identity(args: argparse.Namespace) -> str:
+    skills = []
+    for name in ACTIVE_SKILLS:
+        path = ACTIVE_ROOT / name / "SKILL.md"
+        if not path.is_file():
+            raise RuntimeError(f"active_skill_missing:{name}")
+        skills.append({"name": name, "path": str(path), "sha256": file_hash(path)})
+    fixture_hash = ""
+    if args.collection_fixture:
+        fixture = Path(args.collection_fixture).resolve()
+        fixture_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    return digest({
+        "run_id": args.run_id, "business_date": args.business_date,
+        "source_revision": args.source_revision,
+        "source_db": str(Path(args.source_db).resolve()),
+        "collection_fixture_sha256": fixture_hash,
+        "publisher_url": args.publisher_url.rstrip("/"),
+        "publisher_identity": args.publisher_identity,
+        "skills": skills,
+    })
+
+
+def validate_runtime(args: argparse.Namespace) -> None:
     if not args.publisher_url:
-        return "pending", "publisher_not_configured"
+        raise RuntimeError("publisher_url_missing")
+    if not args.publisher_identity:
+        raise RuntimeError("publisher_identity_missing")
+    if not os.environ.get("WEBSITE_PROJECTION_BEARER", "").strip():
+        raise RuntimeError("website_projection_bearer_missing")
+    host = urllib.parse.urlparse(args.publisher_url).hostname or ""
+    if host not in {"127.0.0.1", "localhost", "::1"} and not os.environ.get(
+        "WEBSITE_PROJECTION_SIWC_BYPASS_BEARER", ""
+    ).strip():
+        raise RuntimeError("website_projection_machine_access_bearer_missing")
+
+
+def publish(args: argparse.Namespace, stage_payload: dict[str, Any], revision: int) -> tuple[str, str]:
     env = os.environ.copy()
     command = [
         sys.executable, str(ROOT / "scripts/publish_website_projection.py"),
         "--repo", str(ROOT), "--run-id", args.run_id, "--stage", stage_payload["stage"],
         "--revision", str(revision), "--website-url", args.publisher_url,
         "--workflow-db", args.workflow_db,
-        "--authority-identity", f"daily_workflow.sqlite3:{args.source_revision}",
+        "--authority-identity", args.publisher_identity,
     ]
     result = subprocess.run(command, text=True, capture_output=True, env=env)
-    return ("applied", result.stdout[-500:]) if result.returncode == 0 else ("pending", f"publisher_exit_{result.returncode}")
+    try:
+        detail = last_json_object(result.stdout)
+    except RuntimeError:
+        detail = {"ok": False, "error": f"publisher_exit_{result.returncode}"}
+    if result.returncode == 0 and detail.get("ok", True):
+        return "applied", json.dumps(detail, ensure_ascii=False, sort_keys=True)
+    error = str(detail.get("error") or f"publisher_exit_{result.returncode}")
+    return ("pending" if error == "website_projection_transport_unavailable" else "conflict",
+            json.dumps(detail, ensure_ascii=False, sort_keys=True))
+
+
+def publish_committed_stage(args: argparse.Namespace, workflow: DailyWorkflow,
+                            stage: str, payload: dict[str, Any],
+                            committed: dict[str, Any]) -> bool:
+    revision = int(committed["revision"])
+    prior = workflow.projection(args.run_id, stage, revision)
+    if prior and prior["status"] == "applied":
+        return True
+    status, detail = publish(args, {"stage": stage, **payload}, revision)
+    workflow.record_projection(
+        args.run_id, stage, revision, committed["output_hash"], status, detail,
+    )
+    return status == "applied"
 
 
 def main() -> int:
@@ -136,28 +198,44 @@ def main() -> int:
     parser.add_argument("--workflow-db", default=str(DEFAULT_DB))
     parser.add_argument("--source-revision", type=int, required=True)
     parser.add_argument("--collection-fixture", default="")
-    parser.add_argument("--publisher-url", default="")
+    parser.add_argument("--publisher-url", required=True)
+    parser.add_argument("--publisher-identity", required=True)
     parser.add_argument("--artifact-root", default=str(ROOT / "output/runs"))
     args = parser.parse_args()
     DailyWorkflow.validate_identity(args.run_id, args.business_date)
+    validate_runtime(args)
+    exact_contract = contract_identity(args)
     workflow = DailyWorkflow(args.workflow_db)
-    workflow.begin(args.run_id, args.business_date, args.source_revision)
+    begin_action = workflow.begin(
+        args.run_id, args.business_date, args.source_revision, exact_contract,
+    )
+    if begin_action == "completed_replay":
+        completed = workflow.read_run(args.run_id)
+        unresolved = []
+        for stage_row in completed["stages"]:
+            stage = str(stage_row["stage"])
+            payload = json.loads(stage_row["payload_json"])
+            if not publish_committed_stage(args, workflow, stage, payload, stage_row):
+                unresolved.append(stage)
+        result = workflow.read_run(args.run_id)
+        result["action"] = "noop" if not unresolved else "projection_unresolved"
+        result["unresolved_stages"] = unresolved
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if not unresolved else 2
 
     collection = run_collection(args)
     collection_commit = workflow.commit_stage(
         args.run_id, "collection", digest({"source_revision": args.source_revision}),
         collection, "completed_empty" if not collection["content_items"] else collection.get("status", "completed"),
     )
-    projection_status, projection_detail = publish(
-        args, {"stage": "collection", **collection}, int(collection_commit["revision"])
-    )
-    workflow.record_projection(
-        args.run_id, "collection", int(collection_commit["revision"]),
-        collection_commit["output_hash"], projection_status, projection_detail,
+    projection_green = publish_committed_stage(
+        args, workflow, "collection", collection, collection_commit,
     )
     if not collection["content_items"]:
-        print(json.dumps(workflow.read_run(args.run_id), ensure_ascii=False))
-        return 0
+        result = workflow.read_run(args.run_id)
+        result["action"] = "completed_empty" if projection_green else "projection_unresolved"
+        print(json.dumps(result, ensure_ascii=False))
+        return 0 if projection_green else 2
 
     existing_editorial = workflow.stage(args.run_id, "editorial")
     if existing_editorial:
@@ -180,12 +258,8 @@ def main() -> int:
             args.run_id, "editorial", collection_commit["output_hash"], editorial_payload, "completed",
         )
     selected = [row for row in editorial_payload.get("topics", []) if row.get("decision") == "select"]
-    projection_status, projection_detail = publish(
-        args, {"stage": "editorial", **editorial_payload}, int(editorial_commit["revision"])
-    )
-    workflow.record_projection(
-        args.run_id, "editorial", int(editorial_commit["revision"]),
-        editorial_commit["output_hash"], projection_status, projection_detail,
+    editorial_projection_green = publish_committed_stage(
+        args, workflow, "editorial", editorial_payload, editorial_commit,
     )
 
     existing_scripts = workflow.stage(args.run_id, "scripts")
@@ -219,16 +293,26 @@ def main() -> int:
             args.run_id, "scripts", editorial_commit["output_hash"], scripts_payload,
             "completed_with_failures" if failures else "completed",
         )
-    projection_status, projection_detail = publish(
-        args, {"stage": "scripts", **scripts_payload}, int(script_commit["revision"])
+    scripts_projection_green = publish_committed_stage(
+        args, workflow, "scripts", scripts_payload, script_commit,
     )
-    workflow.record_projection(
-        args.run_id, "scripts", int(script_commit["revision"]),
-        script_commit["output_hash"], projection_status, projection_detail,
-    )
-    print(json.dumps(workflow.read_run(args.run_id), ensure_ascii=False))
-    return 0
+    result = workflow.read_run(args.run_id)
+    unresolved = [
+        stage for stage, green in (
+            ("collection", projection_green),
+            ("editorial", editorial_projection_green),
+            ("scripts", scripts_projection_green),
+        ) if not green
+    ]
+    result["action"] = "completed" if not unresolved else "projection_unresolved"
+    result["unresolved_stages"] = unresolved
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if not unresolved else 2
 
 
 if __name__ == "__main__":
-    raise SystemExit(main())
+    try:
+        raise SystemExit(main())
+    except (RuntimeError, WorkflowConflict, ValueError, json.JSONDecodeError) as error:
+        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False, sort_keys=True))
+        raise SystemExit(2)

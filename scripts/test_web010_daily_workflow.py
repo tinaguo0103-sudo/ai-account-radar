@@ -11,7 +11,7 @@ class DailyWorkflowTest(unittest.TestCase):
     def test_three_stage_commit_readback_and_duplicate_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
             flow = DailyWorkflow(Path(tmp) / "workflow.sqlite3")
-            flow.begin("run_20260726_120000", "2026-07-26", 9)
+            flow.begin("run_20260726_120000", "2026-07-26", 9, "contract")
             collection = {"content_items": [{"id": "c1"}], "candidates": [{"id": "c1"}]}
             first = flow.commit_stage("run_20260726_120000", "collection", "source-9", collection, "completed")
             self.assertEqual(first["action"], "committed")
@@ -26,8 +26,8 @@ class DailyWorkflowTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             flow = DailyWorkflow(Path(tmp) / "workflow.sqlite3")
             with self.assertRaises(ValueError):
-                flow.begin("run_20260726_120000", "2026-07-25", 1)
-            flow.begin("run_20260726_120000", "2026-07-26", 1)
+                flow.begin("run_20260726_120000", "2026-07-25", 1, "contract")
+            flow.begin("run_20260726_120000", "2026-07-26", 1, "contract")
             with self.assertRaises(WorkflowConflict):
                 flow.commit_stage("run_20260726_120000", "editorial", "x", {}, "completed")
             flow.commit_stage("run_20260726_120000", "collection", "x", {"content_items": []}, "completed_empty")
@@ -37,7 +37,7 @@ class DailyWorkflowTest(unittest.TestCase):
     def test_skill_and_pending_projection_are_durable(self):
         with tempfile.TemporaryDirectory() as tmp:
             flow = DailyWorkflow(Path(tmp) / "workflow.sqlite3")
-            flow.begin("run_20260726_120000", "2026-07-26", 1)
+            flow.begin("run_20260726_120000", "2026-07-26", 1, "contract")
             flow.record_skill(
                 run_id="run_20260726_120000", stage="editorial", unit_id="daily",
                 attempt=1, skill_name="skill", skill_path="/active/SKILL.md",
@@ -50,6 +50,42 @@ class DailyWorkflowTest(unittest.TestCase):
             )
             flow.record_projection("run_20260726_120000", "collection", 1, "h", "pending", "offline")
             self.assertEqual(len(flow.read_run("run_20260726_120000")["skill_attempts"]), 2)
+
+    def test_completed_begin_is_byte_stable_and_contract_scoped(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "workflow.sqlite3"
+            flow = DailyWorkflow(path)
+            self.assertEqual(
+                flow.begin("run_20260726_120000", "2026-07-26", 1, "contract-a"),
+                "new",
+            )
+            flow.commit_stage(
+                "run_20260726_120000", "collection", "input",
+                {"run_id": "run_20260726_120000", "content_items": []},
+                "completed_empty",
+            )
+            before = path.read_bytes()
+            self.assertEqual(
+                flow.begin("run_20260726_120000", "2026-07-26", 1, "contract-a"),
+                "completed_replay",
+            )
+            self.assertEqual(path.read_bytes(), before)
+            with self.assertRaises(WorkflowConflict):
+                flow.begin("run_20260726_120000", "2026-07-26", 1, "contract-b")
+
+    def test_applied_projection_cannot_be_downgraded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            flow = DailyWorkflow(Path(tmp) / "workflow.sqlite3")
+            flow.begin("run_20260726_120000", "2026-07-26", 1, "contract")
+            flow.record_projection(
+                "run_20260726_120000", "collection", 1, "payload", "applied", "green",
+            )
+            flow.record_projection(
+                "run_20260726_120000", "collection", 1, "payload", "pending", "offline",
+            )
+            receipt = flow.projection("run_20260726_120000", "collection", 1)
+            self.assertEqual(receipt["status"], "applied")
+            self.assertEqual(receipt["detail"], "green")
 
     def test_normal_entrypoint_has_no_feishu_or_notification_calls(self):
         source = Path(__file__).with_name("run_daily_workflow.py").read_text()

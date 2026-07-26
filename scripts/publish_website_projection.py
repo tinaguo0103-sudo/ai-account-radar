@@ -315,9 +315,27 @@ def main() -> int:
                                  "topics": len(payload["topics"]), "scripts": len(payload["scripts"])}}
         else:
             endpoint = args.website_url.rstrip("/") + "/api/business-projection"
-            result = request_json("POST", endpoint, payload)
+            try:
+                result = request_json("POST", endpoint, payload)
+            except ProjectionError as error:
+                if str(error) != "business_projection_conflict":
+                    raise
+                readback = request_json("GET", f"{endpoint}?run_id={args.run_id}")
+                expected_counts = {
+                    "content": len(payload["collected_items"]),
+                    "topics": len(payload["topics"]),
+                    "scripts": len(payload["scripts"]),
+                }
+                if (readback.get("revision") != args.revision
+                        or readback.get("payload_sha256") != payload["payload_sha256"]
+                        or readback.get("authority_identity") != args.authority_identity
+                        or readback.get("counts") != expected_counts):
+                    raise
+                result = {"ok": True, "status": "reconciled"}
             readback = request_json("GET", f"{endpoint}?run_id={args.run_id}")
-            if readback.get("payload_sha256") != payload["payload_sha256"]:
+            if (readback.get("revision") != args.revision
+                    or readback.get("payload_sha256") != payload["payload_sha256"]
+                    or readback.get("authority_identity") != args.authority_identity):
                 raise ProjectionError("business_projection_readback_mismatch")
             result["readback"] = readback
         print(json.dumps(result, ensure_ascii=False, sort_keys=True))
