@@ -213,8 +213,27 @@ class SourceControl:
         self.initialize()
         with self.connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            if self.current_revision(db):
-                raise SourceControlError("source_import_requires_fresh_database")
+            current_revision = self.current_revision(db)
+            if current_revision:
+                current = db.execute(
+                    "SELECT source,payload_sha256,payload_json FROM config_revisions WHERE revision=?",
+                    (current_revision,),
+                ).fetchone()
+                expected_json = canonical_json(payload)
+                expected_hash = digest(payload)
+                if (
+                    current_revision == 1
+                    and current["source"] == "migration"
+                    and current["payload_sha256"] == expected_hash
+                    and current["payload_json"] == expected_json
+                ):
+                    db.rollback()
+                    snapshot = self.get_source_snapshot()
+                    if snapshot["count"] != len(accounts) or snapshot["revision"] != 1:
+                        raise SourceControlError("source_import_readback_mismatch")
+                    return snapshot
+                db.rollback()
+                raise SourceControlError("source_import_identity_conflict")
             revision = 1
             db.execute(
                 """INSERT INTO config_revisions
@@ -242,10 +261,26 @@ class SourceControl:
             db.commit()
         return self.get_source_snapshot()
 
+    def get_authority_identity(self, instance_id: str) -> dict[str, Any]:
+        if not instance_id.strip():
+            raise SourceControlError("source_control_instance_id_missing")
+        snapshot = self.get_source_snapshot()
+        return {
+            "ok": True,
+            "schema_version": snapshot["schema_version"],
+            "instance_id": instance_id,
+            "database_identity": hashlib.sha256(str(self.path).encode("utf-8")).hexdigest(),
+            "authority": "source_control_sqlite",
+        }
+
     def get_source_snapshot(self) -> dict[str, Any]:
         self.initialize()
         with self.connect() as db:
             revision = self.current_revision(db)
+            revision_row = db.execute(
+                "SELECT payload_sha256 FROM config_revisions WHERE revision=?",
+                (revision,),
+            ).fetchone() if revision else None
             rows = [dict(row) for row in db.execute(
                 """SELECT a.*,c.platform,c.provider_key,
                 h.last_attempt,h.last_success,h.current_outcome,h.failure_class,
@@ -254,7 +289,14 @@ class SourceControl:
                 LEFT JOIN account_health_current h USING(source_id)
                 ORDER BY c.platform,a.priority,a.display_name"""
             )]
-        return {"ok": True, "schema_version": 1, "revision": revision, "count": len(rows), "accounts": rows}
+        return {
+            "ok": True,
+            "schema_version": 1,
+            "revision": revision,
+            "payload_sha256": revision_row["payload_sha256"] if revision_row else "",
+            "count": len(rows),
+            "accounts": rows,
+        }
 
     def build_collection_plan(self) -> dict[str, Any]:
         snapshot = self.get_source_snapshot()

@@ -216,8 +216,9 @@ python3 scripts/daily_pipeline.py \
   --defer-editorial
 ```
 
-日常使用以飞书为准，不需要先 dry-run。第一条命令先把飞书 `01 来源与采样`
-的手工修改同步回本地 `config/content_sources.yaml`。第二条命令对 URL intake、
+日常来源配置以 `output/state/source_control.sqlite3` 为准，不需要先 dry-run。
+Feishu `01 来源与采样` 仅是迁移前历史，不同步、不回写、也不作为 fallback。
+第一条命令只读 SQLite exact revision；第二条命令对 URL intake、
 WeWe、全部抖音跟踪账号和 AIHOT 各执行一次当前 run 采集，只把成功来源的
 当前 run 行放入统一 owner/candidate plan，再写入 `03 内容收件箱` 并生成 raw
 `today_10_topics.csv`。来源失败贡献零行，其他安全来源继续；不会读取 cache、

@@ -18,8 +18,8 @@
 - account name 与 identity 在本次计划内均不重复。
 
 错误平台、空 URL、缺 identity 和重复 identity 在浏览器前形成
-`invalid_configuration`，artifact=0，并要求在 Feishu 01 修复或停用。
-Dev 不猜测账号主页，也不写 live 01。
+`invalid_configuration`，artifact=0，并要求在来源管理页修复或停用。
+Feishu 01 只保留迁移前历史，不是 normal runtime 配置入口。
 
 所有合法账号先各执行一次。第一轮结束后，仅
 `douyin_works_response_timeout` 进入一次 delayed tail retry。
@@ -72,9 +72,11 @@ recovery
 - rolling success 至少 3 个样本才显示，窗口最多 10 个 run；
 - 同 run/source event 覆盖写，重复执行不增加事件。
 
-未来 WEB-008 只读 durable health authority；run result/projection 只用于
+WEB-008 只读 SQLite durable health authority；run result/projection 只用于
 exact-run drill-down，不能与 durable 合并出第二套健康事实。它不得写健康值，
-也不得成为第二配置源；Feishu 01 仍是来源配置 authority。
+也不得成为第二配置源。配置与健康的唯一 authority 都是
+`output/state/source_control.sqlite3`；Feishu 01 仅允许显式、只读、可重复的
+一次性迁移，不在 normal runtime 调用图且无 fallback。
 
 ## WeChat 单一路径
 
@@ -108,7 +110,7 @@ public discovery
 - shared Douyin runtime failure；
 - failed account artifact 非 0；
 - identity collision 导致账号归属不确定；
-- wrong Feishu environment/table；
+- wrong SQLite authority/instance/database identity；
 - duplicate/destructive write；
 - bounded reconciliation 后外部状态仍 unknown；
 - secret 暴露；
@@ -120,6 +122,6 @@ public discovery
 
 - 08:00 public entrypoint 不变，Prompt 无需修改。
 - Production 发布前独立 QA 必须重跑 31/2-invalid/tail-retry/health 矩阵。
-- Production 同步 Feishu 01 中“铁锤人”“歸藏 guizang.ai”是独立授权动作；
-  在建立公开 exact Douyin identity 前，应停用其 Douyin 主采样。
+- Production cutover 只通过已核验的 SQLite migration/revision 发布；不得回写
+  Feishu 01。“铁锤人教AI”“歸藏”使用已核验 exact Douyin identity 并保持启用。
 - 第一次正常次日 08:00 是真实 Douyin/WeChat 生产证明；不以 Dev mock 代替。

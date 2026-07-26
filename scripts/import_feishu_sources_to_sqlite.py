@@ -101,6 +101,7 @@ def main() -> int:
         "record_count": len(records),
         "snapshot_count": snapshot["count"],
         "revision": snapshot["revision"],
+        "canonical_payload_sha256": snapshot.get("payload_sha256", ""),
     }, ensure_ascii=False, indent=2))
     return 0
 

@@ -12,6 +12,11 @@ from source_control import DEFAULT_DB, SourceControl, SourceControlError
 
 class Handler(BaseHTTPRequestHandler):
     service: SourceControl
+    instance_id: str
+    request_counts: dict[str, int] = {}
+
+    def count_request(self, path: str) -> None:
+        self.request_counts[path] = self.request_counts.get(path, 0) + 1
 
     def send_json(self, status: int, value: object) -> None:
         payload = json.dumps(value, ensure_ascii=False).encode()
@@ -30,13 +35,18 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_GET(self) -> None:  # noqa: N802
         route = urlparse(self.path)
+        self.count_request(route.path)
         try:
             if route.path == "/v1/sources":
                 value = self.service.get_source_snapshot()
+            elif route.path == "/v1/identity":
+                value = self.service.get_authority_identity(self.instance_id)
             elif route.path == "/v1/plan":
                 value = self.service.build_collection_plan()
             elif route.path.startswith("/v1/commands/"):
                 value = self.service.get_command_result(route.path.rsplit("/", 1)[-1])
+            elif route.path == "/v1/request-counts":
+                value = {"ok": True, "counts": dict(self.request_counts)}
             else:
                 return self.send_json(404, {"error": "not_found"})
             self.send_json(200, value)
@@ -45,6 +55,7 @@ class Handler(BaseHTTPRequestHandler):
 
     def do_POST(self) -> None:  # noqa: N802
         route = urlparse(self.path)
+        self.count_request(route.path)
         try:
             payload = self.body()
             if route.path == "/v1/commands":
@@ -75,10 +86,13 @@ def main() -> int:
     parser.add_argument("--db", default=str(DEFAULT_DB))
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4180)
+    parser.add_argument("--instance-id", required=True)
     args = parser.parse_args()
     if args.host not in {"127.0.0.1", "localhost"}:
         raise SystemExit("source_control_http_must_bind_loopback")
     Handler.service = SourceControl(args.db)
+    Handler.instance_id = args.instance_id
+    Handler.request_counts = {}
     Handler.service.initialize()
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()
     return 0

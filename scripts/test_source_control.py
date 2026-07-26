@@ -56,6 +56,26 @@ class SourceControlTest(unittest.TestCase):
         restored = next(row for row in self.service.get_source_snapshot()["accounts"] if row["source_id"] == source["source_id"])
         self.assertEqual(restored["priority"], "medium")
 
+    def test_identical_import_is_noop_and_conflict_preserves_state(self):
+        path = self.service.path
+        before = path.read_bytes()
+        same = self.service.import_accounts([account(index) for index in range(3)])
+        self.assertEqual(same["revision"], 1)
+        self.assertEqual(same["count"], 3)
+        self.assertEqual(path.read_bytes(), before)
+        with self.assertRaisesRegex(SourceControlError, "source_import_identity_conflict"):
+            self.service.import_accounts([account(0), account(1), account(3)])
+        self.assertEqual(path.read_bytes(), before)
+
+    def test_authority_identity_is_instance_and_database_exact(self):
+        first = self.service.get_authority_identity("qa-primary")
+        self.assertEqual(first["instance_id"], "qa-primary")
+        self.assertEqual(first["authority"], "source_control_sqlite")
+        other = SourceControl(Path(self.tmp.name) / "other.sqlite3")
+        other.import_accounts([account(index) for index in range(3)])
+        second = other.get_authority_identity("qa-primary")
+        self.assertNotEqual(first["database_identity"], second["database_identity"])
+
     def test_stale_command_is_conflict_without_revision_churn(self):
         result = self.service.apply_config_command("sourcecmd_stale001", 9, [{
             "source_id": self.snapshot["accounts"][0]["source_id"], "changes": {"priority": "high"},
