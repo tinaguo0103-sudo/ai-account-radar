@@ -640,6 +640,8 @@ class SourceControl:
             state = db.execute("SELECT * FROM douyin_risk_state WHERE singleton_id=1").fetchone()
             if run_id and not RUN_RE.fullmatch(run_id):
                 raise SourceControlError("wrong_run")
+            if run_id and state and str(state["run_id"]) != run_id:
+                raise SourceControlError("douyin_risk_run_mismatch")
             exact_run = run_id or (str(state["run_id"]) if state else "")
             checkpoints = [dict(row) for row in db.execute(
                 "SELECT * FROM douyin_run_checkpoints WHERE run_id=? ORDER BY ordinal,source_id",

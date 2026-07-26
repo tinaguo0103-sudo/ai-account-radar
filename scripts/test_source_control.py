@@ -184,6 +184,14 @@ class SourceControlTest(unittest.TestCase):
                 [dict(rows[0], artifact_sha256="b" * 64)],
                 risk_status="running",
             )
+        self.service.record_douyin_checkpoint(
+            "run_20260726_081500",
+            "fixed_douyin_profile_9333",
+            [{"source_id": accounts[0]["source_id"], "status": "pending", "ordinal": 0}],
+            risk_status="running",
+        )
+        with self.assertRaisesRegex(SourceControlError, "douyin_risk_run_mismatch"):
+            self.service.get_douyin_risk_state("run_20260726_080000")
 
     def test_douyin_verification_requires_exact_profile_and_green_preflight(self):
         account_row = self.snapshot["accounts"][0]
