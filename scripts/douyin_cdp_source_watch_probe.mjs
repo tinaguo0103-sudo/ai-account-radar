@@ -30,8 +30,10 @@ export function parseArgs(args = process.argv.slice(2)) {
     seenLedger: path.join(ROOT, "output/state/douyin_seen_items.json"),
     lifecycleLedger: path.join(ROOT, "output/state/douyin_candidate_lifecycle.json"),
     waitMs: 7000,
-    accountPacingMs: 500,
-    tailRetryDelayMs: 5000,
+    batchSize: 5,
+    accountPacingMs: 10000,
+    batchCooldownMs: 120000,
+    tailRetryDelayMs: 600000,
     sourceDb: path.join(ROOT, "output/state/source_control.sqlite3"),
     checkOnly: false,
   };
@@ -47,6 +49,8 @@ export function parseArgs(args = process.argv.slice(2)) {
     else if (arg === "--lifecycle-ledger") options.lifecycleLedger = args[++i];
     else if (arg === "--wait-ms") options.waitMs = Number(args[++i]);
     else if (arg === "--account-pacing-ms") options.accountPacingMs = Number(args[++i]);
+    else if (arg === "--batch-size") options.batchSize = Number(args[++i]);
+    else if (arg === "--batch-cooldown-ms") options.batchCooldownMs = Number(args[++i]);
     else if (arg === "--tail-retry-delay-ms") options.tailRetryDelayMs = Number(args[++i]);
     else if (arg === "--source-db") options.sourceDb = args[++i];
     else if (arg === "--check-only") options.checkOnly = true;
@@ -177,12 +181,45 @@ export function isTransientAccountFailure(row) {
     && !row?.shared_runtime_failure;
 }
 
+export function sourceGlobalRisk(row, priorRows = []) {
+  if (row?.source_global_risk) return String(row.source_global_risk);
+  if (row?.status === "needs_login_or_verification") return "verification_required";
+  const code = String(row?.extraction_diagnostics?.failure_code || "");
+  if (["verification_required", "logged_out", "challenge_detected", "sms_verification_required"].includes(code)) {
+    return code;
+  }
+  const schemaFailures = [...priorRows, row].filter((item) =>
+    ["douyin_works_response_schema_invalid", "douyin_works_response_body_invalid"].includes(
+      String(item?.extraction_diagnostics?.failure_code || ""),
+    ));
+  return schemaFailures.length >= 2 ? "repeated_cross_account_xhr_failure" : "";
+}
+
 export async function probeSourcesWithTailRetry(client, sources, options, probe = probeAccount, sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))) {
   const rows = [];
   let sharedRuntimeFailure = null;
+  let riskSignal = "";
+  const completedIds = new Set(options.completedSourceIds || []);
+  const batchSize = Math.max(1, Number(options.batchSize) || 5);
   for (const [sourceIndex, source] of sources.entries()) {
+    const sourceId = String(source.id || source.source_id || "");
+    if (completedIds.has(sourceId)) continue;
+    if (riskSignal) {
+      rows.push({
+        source_id: sourceId,
+        account_name: source.account_name || source.name || "",
+        homepage_url: source.url || source.homepage_url || "",
+        status: "not_attempted_waiting_manual_verification",
+        failure_reason: riskSignal,
+        artifact_count: 0,
+        video_ids: [],
+        video_links: [],
+      });
+      continue;
+    }
     if (sharedRuntimeFailure) {
       rows.push({
+        source_id: sourceId,
         account_name: source.account_name || source.name || "",
         homepage_url: source.url || source.homepage_url || "",
         status: "not_attempted_source_runtime_failure",
@@ -194,24 +231,44 @@ export async function probeSourcesWithTailRetry(client, sources, options, probe 
       continue;
     }
     const row = await probe(client, source, options);
+    row.source_id = sourceId;
     row.attempts = 1;
     rows.push(row);
+    riskSignal = sourceGlobalRisk(row, rows.filter((_item, index) => index < rows.length - 1));
+    if (riskSignal) {
+      await options.onCheckpoint?.(rows, riskSignal);
+      continue;
+    }
+    await options.onCheckpoint?.(rows, "");
     if (row.shared_runtime_failure) {
       sharedRuntimeFailure = { status: "shared_fixed_target_runtime_failure", reason: row.failure_reason };
     }
-    if (!sharedRuntimeFailure && sourceIndex < sources.length - 1 && Number(options.accountPacingMs) > 0) {
-      await sleep(Number(options.accountPacingMs));
+    if (!sharedRuntimeFailure && sourceIndex < sources.length - 1) {
+      const completedInBatch = (sourceIndex + 1) % batchSize;
+      const delay = completedInBatch === 0
+        ? Number(options.batchCooldownMs)
+        : Number(options.accountPacingMs);
+      if (delay > 0) await sleep(delay);
     }
   }
   const retryRows = rows.filter(isTransientAccountFailure);
-  if (!sharedRuntimeFailure && retryRows.length) {
+  if (!sharedRuntimeFailure && !riskSignal && retryRows.length) {
     await sleep(Math.max(0, options.tailRetryDelayMs));
     for (const [retryIndex, failed] of retryRows.entries()) {
+      const preRetryRisk = await options.riskCheck?.();
+      if (preRetryRisk) {
+        riskSignal = String(preRetryRisk);
+        break;
+      }
       const source = sources.find((item) => String(item.account_name || item.name || "") === failed.account_name);
       const retried = await probe(client, source, options);
+      retried.source_id = String(source.id || source.source_id || "");
       retried.attempts = 2;
       retried.first_attempt_failure = failed.extraction_diagnostics?.failure_code || failed.failure_reason;
       rows[rows.indexOf(failed)] = retried;
+      riskSignal = sourceGlobalRisk(retried, rows.filter((item) => item !== retried));
+      await options.onCheckpoint?.(rows, riskSignal);
+      if (riskSignal) break;
       if (retried.shared_runtime_failure) {
         sharedRuntimeFailure = { status: "shared_fixed_target_runtime_failure", reason: retried.failure_reason };
         break;
@@ -221,7 +278,87 @@ export async function probeSourcesWithTailRetry(client, sources, options, probe 
       }
     }
   }
-  return { rows, sharedRuntimeFailure };
+  return { rows, sharedRuntimeFailure, riskSignal };
+}
+
+export function runDouyinPreflight(root = ROOT, runner = spawnSync) {
+  const result = runner("python3", [path.join(root, "scripts/check_douyin_session.py"), "--port", "9333"], {
+    cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"],
+  });
+  try {
+    const payload = JSON.parse(String(result.stdout || "{}"));
+    return {
+      ok: result.status === 0 && payload.ok === true && payload.login_state === "logged_in",
+      status: String(payload.status || "login_preflight_failed"),
+      login_state: String(payload.login_state || "indeterminate"),
+      profile_identity: "fixed_douyin_profile_9333",
+    };
+  } catch {
+    return {
+      ok: false,
+      status: "login_preflight_failed",
+      login_state: "indeterminate",
+      profile_identity: "fixed_douyin_profile_9333",
+    };
+  }
+}
+
+export function notifyManualVerification(runner = spawnSync) {
+  const script = 'display notification "请在既有固定抖音页面完成滑块或短信验证，然后回到来源管理点击我已完成验证。" with title "抖音采集已暂停"';
+  const result = runner("osascript", ["-e", script], { encoding: "utf8", stdio: "ignore" });
+  return result.status === 0 ? "sent" : "failed";
+}
+
+export function checkpointPayload(sources, rows, riskSignal = "") {
+  const byId = new Map(rows.map((row) => [String(row.source_id || ""), row]));
+  return sources.map((source, ordinal) => {
+    const sourceId = String(source.id || source.source_id || "");
+    const row = byId.get(sourceId);
+    let status = "pending";
+    if (row?.status === "success") status = "completed";
+    else if (row?.status === "updated_no_new_items") status = "updated_no_new_items";
+    else if (row?.status === "not_attempted_waiting_manual_verification" || (!row && riskSignal)) {
+      status = "not_attempted_waiting_manual_verification";
+    } else if (row) status = "failed_account_local";
+    const artifact = {
+      video_ids: row?.video_ids || [],
+      video_links: row?.video_links || [],
+    };
+    return {
+      source_id: sourceId,
+      status,
+      artifact_sha256: ["completed", "updated_no_new_items"].includes(status)
+        ? createHash("sha256").update(JSON.stringify(artifact)).digest("hex")
+        : "",
+      artifact_count: Array.isArray(row?.video_links) ? row.video_links.length : 0,
+      ordinal,
+    };
+  });
+}
+
+export function persistRiskCheckpoint(options, runId, sources, rows, riskSignal, notificationStatus = "") {
+  const checkpointPath = path.join(options.outDir, "douyin_checkpoint_rows.json");
+  const payload = checkpointPayload(sources, rows, riskSignal);
+  fs.writeFileSync(checkpointPath, JSON.stringify(payload, null, 2), "utf8");
+  const finalStatus = riskSignal
+    ? "waiting_manual_verification"
+    : (payload.every((row) => !["pending", "not_attempted_waiting_manual_verification"].includes(row.status))
+      ? "completed"
+      : "running");
+  const result = spawnSync("python3", [
+    path.join(ROOT, "scripts/source_control_cli.py"),
+    "--db", options.sourceDb,
+    "douyin-checkpoint",
+    "--run-id", runId,
+    "--profile-identity", "fixed_douyin_profile_9333",
+    "--rows-json", checkpointPath,
+    "--risk-status", finalStatus,
+    "--risk-reason", riskSignal,
+    "--preflight-state", riskSignal ? "verification_required" : "session_verified",
+    "--notification-status", notificationStatus,
+  ], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  if (result.status !== 0) throw new Error("douyin_checkpoint_write_failed");
+  return JSON.parse(String(result.stdout || "{}"));
 }
 
 export function deriveAccountHealth(events, source, runId) {
@@ -1263,6 +1400,16 @@ export async function probeAccount(client, source, options) {
     const navigation = await client.send("Page.navigate", { url: homepage });
     if (navigation.errorText) throw new Error(`navigation_failed:${navigation.errorText}`);
     const payload = await waitForNavigationAndWorksGrid(client, homepage, { timeoutMs: options.waitMs });
+    if (
+      payload.loginHint
+      || /验证码|安全验证|短信验证|滑块|captcha|verification|challenge/i.test(
+        `${payload.text || ""} ${payload.title || ""} ${payload.url || ""}`,
+      )
+    ) {
+      const error = new Error("verification_required");
+      error.code = "verification_required";
+      throw error;
+    }
     const worksLoaded = Boolean(payload.works_ready);
     const accountWorksFailed = /服务异常|重新刷新拉取数据/.test(payload.text || "") || !worksLoaded;
     if (accountWorksFailed) {
@@ -1330,6 +1477,9 @@ export async function probeAccount(client, source, options) {
       column: source.column || "",
       status: "failed",
       failure_reason: error.message,
+      source_global_risk: [
+        "verification_required", "logged_out", "challenge_detected", "sms_verification_required",
+      ].includes(String(error.code || "")) ? String(error.code) : "",
       shared_runtime_failure: String(error.code || "").startsWith("works_snapshot_") || [
         "shared_fixed_target_blank",
         "fixed_douyin_target_missing",
@@ -1399,11 +1549,53 @@ async function main() {
         planned_account_names: plan.account_names,
         executable_accounts: plan.executable_accounts,
         invalid_accounts: plan.invalid_accounts,
+        pacing: {
+          batch_size: options.batchSize,
+          account_interval_ms: options.accountPacingMs,
+          batch_cooldown_ms: options.batchCooldownMs,
+          timeout_tail_retry_limit: 1,
+          timeout_tail_retry_cooldown_ms: options.tailRetryDelayMs,
+        },
       },
     };
     fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(preview, null, 2), "utf8");
     console.log(JSON.stringify(preview, null, 2));
     return 0;
+  }
+
+  const preflight = runDouyinPreflight();
+  if (!preflight.ok) {
+    const notificationStatus = notifyManualVerification();
+    const waitingRows = plan.valid_sources.map((source) => ({
+      source_id: String(source.id || source.source_id || ""),
+      account_name: source.account_name || source.name || "",
+      status: "not_attempted_waiting_manual_verification",
+      video_ids: [],
+      video_links: [],
+    }));
+    persistRiskCheckpoint(
+      options,
+      runId,
+      plan.valid_sources,
+      waitingRows,
+      preflight.login_state || preflight.status,
+      notificationStatus,
+    );
+    const failure = {
+      ok: false,
+      status: "waiting_manual_verification",
+      reason: preflight.login_state || preflight.status,
+      preflight,
+      account_navigations: 0,
+      completed_accounts: 0,
+      remaining_accounts: plan.valid_sources.length,
+      notification_status: notificationStatus,
+      collection_started: false,
+      writes_feishu: false,
+    };
+    fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(failure, null, 2), "utf8");
+    console.log(JSON.stringify(failure, null, 2));
+    return 4;
   }
 
   let version;
@@ -1452,9 +1644,52 @@ async function main() {
     await pageClient.open();
   }
   try {
+    const prior = spawnSync("python3", [
+      path.join(ROOT, "scripts/source_control_cli.py"),
+      "--db", options.sourceDb,
+      "douyin-risk",
+      "--run-id", runId,
+    ], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+    const priorRisk = prior.status === 0 ? JSON.parse(String(prior.stdout || "{}")) : { checkpoints: [] };
+    options.completedSourceIds = (priorRisk.checkpoints || [])
+      .filter((row) => ["completed", "updated_no_new_items"].includes(row.status))
+      .map((row) => row.source_id);
+    let notificationStatus = "";
+    options.onCheckpoint = async (checkpointRows, riskSignal) => {
+      if (riskSignal && !notificationStatus) notificationStatus = notifyManualVerification();
+      persistRiskCheckpoint(
+        options,
+        runId,
+        sources,
+        checkpointRows,
+        riskSignal,
+        notificationStatus,
+      );
+    };
+    options.riskCheck = async () => {
+      const current = runDouyinPreflight();
+      return current.ok ? "" : (current.login_state || current.status);
+    };
     const probed = await probeSourcesWithTailRetry(pageClient, sources, options);
     rows = [...invalidRows, ...probed.rows];
     sharedRuntimeFailure = probed.sharedRuntimeFailure;
+    if (probed.riskSignal) {
+      const completedCount = rows.filter((row) =>
+        ["success", "updated_no_new_items", "failed"].includes(row.status)
+      ).length;
+      const riskResult = {
+        ok: false,
+        status: "waiting_manual_verification",
+        reason: probed.riskSignal,
+        completed_accounts: completedCount,
+        remaining_accounts: sources.length - completedCount,
+        notification_status: notificationStatus,
+        rows,
+      };
+      fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(riskResult, null, 2), "utf8");
+      console.log(JSON.stringify(riskResult, null, 2));
+      return 4;
+    }
   } finally {
     pageClient?.close();
   }

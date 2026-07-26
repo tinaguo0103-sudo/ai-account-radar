@@ -14,6 +14,12 @@ export function classifyLoginMarkers(markers) {
   return "indeterminate";
 }
 
+export function classifyPageRisk(url = "", title = "") {
+  return /captcha|verify|verification|challenge|滑块|短信验证|安全验证/i.test(`${url} ${title}`)
+    ? "verification_required"
+    : "";
+}
+
 export function probeDocument(documentRef, windowRef) {
   const viewportWidth = Number(windowRef?.innerWidth || documentRef?.documentElement?.clientWidth || 0);
   const viewportHeight = Number(windowRef?.innerHeight || documentRef?.documentElement?.clientHeight || 0);
@@ -65,7 +71,7 @@ export function probeDocument(documentRef, windowRef) {
     .filter((node) => /captcha|verify|verification/i.test(node.src || node.title || ""));
   const verificationDialogs = visibleNodes('[class*="verify"], [class*="captcha"], [id*="verify"], [id*="captcha"], [role="dialog"][aria-label*="验证"]');
   const verificationTextNodes = visibleTextNodes
-    .filter((node) => /验证码|安全验证|完成验证|captcha|verification/i.test(directText(node)));
+    .filter((node) => /验证码|安全验证|完成验证|短信验证|滑块|captcha|verification|challenge/i.test(directText(node)));
   const rectSummary = (node) => {
     const rect = rectFor(node);
     return { width: Math.round(rect.width), height: Math.round(rect.height), visible: isVisible(node) };
@@ -131,8 +137,9 @@ export async function inspectDouyinLogin(cdp) {
   const page = pages[0];
   const inspected = await evaluate(page.webSocketDebuggerUrl);
   const markers = inspected.markers || {};
+  const pageRisk = classifyPageRisk(page.url || "", page.title || "");
   return {
-    state: classifyLoginMarkers(markers),
+    state: pageRisk || classifyLoginMarkers(markers),
     url: page.url || "",
     title: page.title || "",
     markers,

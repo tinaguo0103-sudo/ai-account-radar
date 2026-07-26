@@ -642,7 +642,7 @@ python3 scripts/start_douyin_cdp_chrome.py --port 9333
 node scripts/douyin_cdp_source_watch_probe.mjs --cdp http://127.0.0.1:9333 --account-limit 3 --video-limit 3
 ```
 
-`start_douyin_cdp_chrome.py` 默认使用 `hidden` 模式启动/复用专用 Chrome，尽量不抢当前桌面焦点；只有需要登录/验证码时才会由 daily pipeline 临时前台打开。CDP 探针会用后台 target 打开主页，并尽量最小化专用 Chrome，避免每个博主页采样时反复弹窗。`--headless` 仅作为实验模式保留，抖音登录态/校验场景不优先使用。2026-06-16 复验结果：在专用 Chrome 登录抖音小号后，CDP 探针可以从秋芝2046、xuan酱等主页拿到多条可信作品，并复用单条视频 resolver 输出本地 ContentItem。它现在作为默认日常内容源之一进入 `daily_pipeline.py`；普通失败会记录并跳过，登录/验证失败会先弹出专用 Chrome 给你处理，然后重试相关账号。
+`start_douyin_cdp_chrome.py` 默认使用 `hidden` 模式启动/复用专用 Chrome，尽量不抢当前桌面焦点。CDP 探针会用后台 target 打开主页，并尽量最小化专用 Chrome，避免每个博主页采样时反复弹窗。`--headless` 仅作为实验模式保留，抖音登录态/校验场景不优先使用。2026-06-16 复验结果：在专用 Chrome 登录抖音小号后，CDP 探针可以从秋芝2046、xuan酱等主页拿到多条可信作品，并复用单条视频 resolver 输出本地 ContentItem。它现在作为默认日常内容源之一进入 `daily_pipeline.py`；账号局部失败会记录并跳过。登录、滑块、验证码、短信或 challenge 属于 source-global 暂停：系统不自动重试或代解，用户在既有 fixed 9333 profile 手工验证后从 `/sources` 只恢复当前 exact run 的剩余账号，详见 `docs/ar048_douyin_risk_control.md`。
 
 抖音口播转写不默认跑。先用标题/文案/时长做候选筛选：
 

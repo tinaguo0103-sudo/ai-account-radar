@@ -97,6 +97,28 @@ CREATE TABLE IF NOT EXISTS applied_commands (
   created_at TEXT NOT NULL,
   completed_at TEXT NOT NULL
 );
+CREATE TABLE IF NOT EXISTS douyin_risk_state (
+  singleton_id INTEGER PRIMARY KEY CHECK(singleton_id=1),
+  run_id TEXT NOT NULL,
+  profile_identity TEXT NOT NULL,
+  status TEXT NOT NULL,
+  reason TEXT NOT NULL,
+  completed_count INTEGER NOT NULL,
+  remaining_count INTEGER NOT NULL,
+  preflight_state TEXT NOT NULL,
+  notification_status TEXT NOT NULL,
+  updated_at TEXT NOT NULL
+);
+CREATE TABLE IF NOT EXISTS douyin_run_checkpoints (
+  run_id TEXT NOT NULL,
+  source_id TEXT NOT NULL REFERENCES source_accounts(source_id),
+  status TEXT NOT NULL,
+  artifact_sha256 TEXT NOT NULL,
+  artifact_count INTEGER NOT NULL,
+  ordinal INTEGER NOT NULL,
+  updated_at TEXT NOT NULL,
+  PRIMARY KEY(run_id, source_id)
+);
 CREATE INDEX IF NOT EXISTS source_accounts_plan_idx
   ON source_accounts(enabled, participates_sampling, channel_id, priority);
 CREATE INDEX IF NOT EXISTS source_events_account_idx
@@ -531,3 +553,136 @@ class SourceControl:
                 )
             db.commit()
         return {"ok": True, "run_id": run_id, "event_count": len(outcomes), "snapshot": self.get_source_snapshot()}
+
+    def record_douyin_checkpoint(
+        self,
+        run_id: str,
+        profile_identity: str,
+        rows: list[dict[str, Any]],
+        *,
+        risk_status: str,
+        risk_reason: str = "",
+        preflight_state: str = "",
+        notification_status: str = "",
+    ) -> dict[str, Any]:
+        if not RUN_RE.fullmatch(run_id):
+            raise SourceControlError("wrong_run")
+        if not profile_identity.strip():
+            raise SourceControlError("douyin_profile_identity_missing")
+        allowed = {
+            "completed", "updated_no_new_items", "failed_account_local", "pending",
+            "not_attempted_waiting_manual_verification",
+        }
+        self.initialize()
+        timestamp = now()
+        with self.connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for row in rows:
+                sid = str(row.get("source_id") or "")
+                status = str(row.get("status") or "")
+                if status not in allowed:
+                    raise SourceControlError("douyin_checkpoint_status_invalid")
+                if not db.execute("SELECT 1 FROM source_accounts WHERE source_id=?", (sid,)).fetchone():
+                    raise SourceControlError("source_not_found")
+                values = (
+                    run_id, sid, status, str(row.get("artifact_sha256") or ""),
+                    int(row.get("artifact_count") or 0), int(row.get("ordinal") or 0), timestamp,
+                )
+                existing = db.execute(
+                    "SELECT * FROM douyin_run_checkpoints WHERE run_id=? AND source_id=?", (run_id, sid)
+                ).fetchone()
+                if existing:
+                    immutable = existing["status"] in {"completed", "updated_no_new_items"}
+                    same_artifact = (
+                        existing["artifact_sha256"] == values[3]
+                        and int(existing["artifact_count"]) == values[4]
+                    )
+                    if immutable and (status != existing["status"] or not same_artifact):
+                        db.rollback()
+                        raise SourceControlError("completed_checkpoint_immutable")
+                    if immutable:
+                        continue
+                    db.execute(
+                        """UPDATE douyin_run_checkpoints SET status=?,artifact_sha256=?,artifact_count=?,
+                        ordinal=?,updated_at=? WHERE run_id=? AND source_id=?""",
+                        (status, values[3], values[4], values[5], timestamp, run_id, sid),
+                    )
+                else:
+                    db.execute("INSERT INTO douyin_run_checkpoints VALUES(?,?,?,?,?,?,?)", values)
+            completed = db.execute(
+                """SELECT COUNT(*) AS count FROM douyin_run_checkpoints
+                WHERE run_id=? AND status IN ('completed','updated_no_new_items','failed_account_local')""",
+                (run_id,),
+            ).fetchone()["count"]
+            remaining = db.execute(
+                """SELECT COUNT(*) AS count FROM douyin_run_checkpoints
+                WHERE run_id=? AND status IN ('pending','not_attempted_waiting_manual_verification')""",
+                (run_id,),
+            ).fetchone()["count"]
+            db.execute(
+                """INSERT INTO douyin_risk_state VALUES(1,?,?,?,?,?,?,?,?,?)
+                ON CONFLICT(singleton_id) DO UPDATE SET
+                run_id=excluded.run_id,profile_identity=excluded.profile_identity,status=excluded.status,
+                reason=excluded.reason,completed_count=excluded.completed_count,
+                remaining_count=excluded.remaining_count,preflight_state=excluded.preflight_state,
+                notification_status=excluded.notification_status,updated_at=excluded.updated_at""",
+                (
+                    run_id, profile_identity, risk_status, risk_reason, completed, remaining,
+                    preflight_state, notification_status, timestamp,
+                ),
+            )
+            db.commit()
+        return self.get_douyin_risk_state(run_id)
+
+    def get_douyin_risk_state(self, run_id: str | None = None) -> dict[str, Any]:
+        self.initialize()
+        with self.connect() as db:
+            state = db.execute("SELECT * FROM douyin_risk_state WHERE singleton_id=1").fetchone()
+            if run_id and not RUN_RE.fullmatch(run_id):
+                raise SourceControlError("wrong_run")
+            exact_run = run_id or (str(state["run_id"]) if state else "")
+            checkpoints = [dict(row) for row in db.execute(
+                "SELECT * FROM douyin_run_checkpoints WHERE run_id=? ORDER BY ordinal,source_id",
+                (exact_run,),
+            )] if exact_run else []
+        return {
+            "ok": True,
+            "state": dict(state) if state else {
+                "run_id": "", "profile_identity": "", "status": "clear", "reason": "",
+                "completed_count": 0, "remaining_count": 0, "preflight_state": "",
+                "notification_status": "", "updated_at": "",
+            },
+            "checkpoints": checkpoints,
+        }
+
+    def confirm_douyin_verification(
+        self, run_id: str, profile_identity: str, preflight_state: str
+    ) -> dict[str, Any]:
+        current = self.get_douyin_risk_state(run_id)
+        state = current["state"]
+        if state["run_id"] != run_id:
+            raise SourceControlError("douyin_risk_run_mismatch")
+        if state["profile_identity"] != profile_identity:
+            raise SourceControlError("douyin_profile_identity_mismatch")
+        if state["status"] == "completed":
+            return current
+        if preflight_state != "session_verified":
+            return current
+        rows = [
+            {
+                "source_id": row["source_id"],
+                "status": "pending" if row["status"] == "not_attempted_waiting_manual_verification" else row["status"],
+                "artifact_sha256": row["artifact_sha256"],
+                "artifact_count": row["artifact_count"],
+                "ordinal": row["ordinal"],
+            }
+            for row in current["checkpoints"]
+        ]
+        return self.record_douyin_checkpoint(
+            run_id,
+            profile_identity,
+            rows,
+            risk_status="resume_ready",
+            preflight_state=preflight_state,
+            notification_status=state["notification_status"],
+        )

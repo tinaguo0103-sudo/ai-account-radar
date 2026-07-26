@@ -141,6 +141,69 @@ class SourceControlTest(unittest.TestCase):
         self.assertNotIn("healthLedger", main_body)
         self.assertIn("source_control_cli.py", main_body)
 
+    def test_douyin_risk_checkpoint_is_exact_and_resume_preserves_completed(self):
+        accounts = self.snapshot["accounts"]
+        rows = [
+            {
+                "source_id": accounts[0]["source_id"], "status": "completed",
+                "artifact_sha256": "a" * 64, "artifact_count": 2, "ordinal": 0,
+            },
+            {
+                "source_id": accounts[1]["source_id"], "status": "not_attempted_waiting_manual_verification",
+                "artifact_sha256": "", "artifact_count": 0, "ordinal": 1,
+            },
+            {
+                "source_id": accounts[2]["source_id"], "status": "not_attempted_waiting_manual_verification",
+                "artifact_sha256": "", "artifact_count": 0, "ordinal": 2,
+            },
+        ]
+        paused = self.service.record_douyin_checkpoint(
+            "run_20260726_080000", "fixed_douyin_profile_9333", rows,
+            risk_status="waiting_manual_verification",
+            risk_reason="verification_required",
+            preflight_state="verification_required",
+            notification_status="sent",
+        )
+        self.assertEqual(paused["state"]["completed_count"], 1)
+        self.assertEqual(paused["state"]["remaining_count"], 2)
+        resumed = self.service.confirm_douyin_verification(
+            "run_20260726_080000", "fixed_douyin_profile_9333", "session_verified"
+        )
+        self.assertEqual(resumed["state"]["status"], "resume_ready")
+        self.assertEqual(
+            [row["status"] for row in resumed["checkpoints"]],
+            ["completed", "pending", "pending"],
+        )
+        duplicate = self.service.confirm_douyin_verification(
+            "run_20260726_080000", "fixed_douyin_profile_9333", "session_verified"
+        )
+        self.assertEqual(duplicate["checkpoints"], resumed["checkpoints"])
+        with self.assertRaisesRegex(SourceControlError, "completed_checkpoint_immutable"):
+            self.service.record_douyin_checkpoint(
+                "run_20260726_080000", "fixed_douyin_profile_9333",
+                [dict(rows[0], artifact_sha256="b" * 64)],
+                risk_status="running",
+            )
+
+    def test_douyin_verification_requires_exact_profile_and_green_preflight(self):
+        account_row = self.snapshot["accounts"][0]
+        self.service.record_douyin_checkpoint(
+            "run_20260726_080001", "fixed_douyin_profile_9333",
+            [{
+                "source_id": account_row["source_id"], "status": "not_attempted_waiting_manual_verification",
+                "artifact_sha256": "", "artifact_count": 0, "ordinal": 0,
+            }],
+            risk_status="waiting_manual_verification",
+        )
+        waiting = self.service.confirm_douyin_verification(
+            "run_20260726_080001", "fixed_douyin_profile_9333", "login_preflight_failed"
+        )
+        self.assertEqual(waiting["state"]["status"], "waiting_manual_verification")
+        with self.assertRaisesRegex(SourceControlError, "douyin_profile_identity_mismatch"):
+            self.service.confirm_douyin_verification(
+                "run_20260726_080001", "other_profile", "session_verified"
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

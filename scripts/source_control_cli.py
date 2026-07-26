@@ -30,6 +30,16 @@ def main() -> int:
     rollback.add_argument("--command-id", required=True)
     rollback.add_argument("--expected-revision", type=int, required=True)
     rollback.add_argument("--target-revision", type=int, required=True)
+    checkpoint = commands.add_parser("douyin-checkpoint")
+    checkpoint.add_argument("--run-id", required=True)
+    checkpoint.add_argument("--profile-identity", required=True)
+    checkpoint.add_argument("--rows-json", required=True)
+    checkpoint.add_argument("--risk-status", required=True)
+    checkpoint.add_argument("--risk-reason", default="")
+    checkpoint.add_argument("--preflight-state", default="")
+    checkpoint.add_argument("--notification-status", default="")
+    risk = commands.add_parser("douyin-risk")
+    risk.add_argument("--run-id")
     result = commands.add_parser("command")
     result.add_argument("--command-id", required=True)
     events = commands.add_parser("record-events")
@@ -49,6 +59,18 @@ def main() -> int:
         output = service.apply_config_command(args.command_id, args.expected_revision, read_json(args.operations))
     elif args.action == "rollback":
         output = service.rollback_to_revision(args.command_id, args.expected_revision, args.target_revision)
+    elif args.action == "douyin-checkpoint":
+        output = service.record_douyin_checkpoint(
+            args.run_id,
+            args.profile_identity,
+            read_json(args.rows_json),
+            risk_status=args.risk_status,
+            risk_reason=args.risk_reason,
+            preflight_state=args.preflight_state,
+            notification_status=args.notification_status,
+        )
+    elif args.action == "douyin-risk":
+        output = service.get_douyin_risk_state(args.run_id)
     elif args.action == "command":
         output = service.get_command_result(args.command_id)
     else:

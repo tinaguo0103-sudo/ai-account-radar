@@ -27,6 +27,12 @@ Feishu 01 只保留迁移前历史，不是 normal runtime 配置入口。
 继续使用 fixed 9333 exact page、自有 XHR 和 exact account binding；不直调
 Douyin API，不读取旧 artifact。
 
+滑块、验证码、短信验证、challenge、登出或登录态无法确认时，AR-048 source-global
+门禁立即暂停后续账号。已完成 artifact 不变，未尝试账号标记为
+`not_attempted_waiting_manual_verification`，用户在 fixed 9333 profile 手工验证后只续跑
+exact remaining accounts。固定节奏、checkpoint 和 `/sources` 恢复合同见
+`docs/ar048_douyin_risk_control.md`。
+
 ## Douyin Health Authority
 
 跨 run 健康事实只有一个 authority：

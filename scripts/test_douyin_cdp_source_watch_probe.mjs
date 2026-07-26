@@ -10,6 +10,7 @@ import {
   buildCoverage,
   buildHomepageCardItems,
   buildSourceRuntimeCoverage,
+  checkpointPayload,
   classifyWorksResponse,
   collectionStatusWithHealth,
   configuredAccountIdentity,
@@ -23,6 +24,7 @@ import {
   mergeNewAndBacklog,
   persistAccountHealth,
   probeSourcesWithTailRetry,
+  notifyManualVerification,
   persistCollectedCandidates,
   probeAccount,
   parseWorksResponseBody,
@@ -30,6 +32,7 @@ import {
   selectIncrementalWorks,
   selectedSources,
   isTransientAccountFailure,
+  sourceGlobalRisk,
   validateDouyinSourceIdentity,
   validateFullAccountLimitArgs,
   validateContentItemLineage,
@@ -44,6 +47,7 @@ function attachCapture(client, result) {
 
 function source(name) {
   return {
+    id: `source_${name}`,
     account_name: name,
     platform: "抖音",
     source_role: "current_aux_competitor",
@@ -117,6 +121,91 @@ assert.equal(shapedResult.rows.filter((row) => row.attempts === 2).length, 7);
 assert.equal(shapedResult.rows.filter((row) => row.status === "success").length, 27);
 assert.equal(shapedResult.rows.filter((row) => row.status === "updated_no_new_items").length, 1);
 assert.equal(shapedResult.rows.filter((row) => row.status === "failed").length, 1);
+
+const riskSources = Array.from({ length: 8 }, (_, index) => source(`risk-${index + 1}`));
+const riskCalls = [];
+const riskCheckpoints = [];
+const riskResult = await probeSourcesWithTailRetry(
+  {},
+  riskSources,
+  { batchSize: 5, accountPacingMs: 10, batchCooldownMs: 120, tailRetryDelayMs: 600 },
+  async (_client, row) => {
+    riskCalls.push(row.id);
+    if (row.id === "source_risk-3") {
+      return {
+        account_name: row.account_name,
+        status: "needs_login_or_verification",
+        source_global_risk: "verification_required",
+        video_links: [],
+      };
+    }
+    return { account_name: row.account_name, status: "success", video_links: [`https://www.douyin.com/video/${row.id}`] };
+  },
+  async () => {},
+);
+assert.deepEqual(riskCalls, ["source_risk-1", "source_risk-2", "source_risk-3"]);
+assert.equal(riskResult.riskSignal, "verification_required");
+assert.equal(riskResult.rows.filter((row) => row.status === "not_attempted_waiting_manual_verification").length, 5);
+const riskPayload = checkpointPayload(riskSources, riskResult.rows, riskResult.riskSignal);
+assert.deepEqual(riskPayload.slice(0, 3).map((row) => row.status), [
+  "completed", "completed", "failed_account_local",
+]);
+assert.equal(riskPayload.slice(3).every((row) => row.status === "not_attempted_waiting_manual_verification"), true);
+assert.equal(sourceGlobalRisk({ status: "needs_login_or_verification" }), "verification_required");
+assert.equal(notifyManualVerification(() => ({ status: 0 })), "sent");
+assert.equal(notifyManualVerification(() => ({ status: 1 })), "failed");
+
+const completedIds = new Set(["source_risk-1", "source_risk-2"]);
+const resumeOrder = [];
+await probeSourcesWithTailRetry(
+  {},
+  riskSources,
+  {
+    completedSourceIds: [...completedIds],
+    batchSize: 5,
+    accountPacingMs: 0,
+    batchCooldownMs: 0,
+    tailRetryDelayMs: 600,
+    onCheckpoint: async (rows) => riskCheckpoints.push(rows.map((row) => row.source_id)),
+  },
+  async (_client, row) => {
+    resumeOrder.push(row.id);
+    return { account_name: row.account_name, status: "updated_no_new_items", video_links: [] };
+  },
+  async () => {},
+);
+assert.deepEqual(resumeOrder, riskSources.slice(2).map((row) => row.id));
+assert.equal(riskCheckpoints.length, 6);
+
+const timingSources = Array.from({ length: 31 }, (_, index) => source(`timing-${index + 1}`));
+const timingOrder = [];
+const timingSleeps = [];
+const timingAttempts = new Map();
+await probeSourcesWithTailRetry(
+  {},
+  timingSources,
+  { batchSize: 5, accountPacingMs: 10000, batchCooldownMs: 120000, tailRetryDelayMs: 600000 },
+  async (_client, row) => {
+    timingOrder.push(row.id);
+    const attempt = (timingAttempts.get(row.id) || 0) + 1;
+    timingAttempts.set(row.id, attempt);
+    if (row.id === "source_timing-7" && attempt === 1) {
+      return {
+        account_name: row.account_name,
+        status: "failed",
+        extraction_diagnostics: { failure_code: "douyin_works_response_timeout" },
+        video_links: [],
+      };
+    }
+    return { account_name: row.account_name, status: "updated_no_new_items", video_links: [] };
+  },
+  async (ms) => timingSleeps.push(ms),
+);
+assert.deepEqual(timingOrder.slice(0, 31), timingSources.map((row) => row.id));
+assert.deepEqual(timingOrder.slice(31), ["source_timing-7"]);
+assert.equal(timingSleeps.filter((value) => value === 120000).length, 6);
+assert.equal(timingSleeps.filter((value) => value === 10000).length, 24);
+assert.equal(timingSleeps.filter((value) => value === 600000).length, 1);
 
 const fixedTarget = await fixedDouyinTarget("http://127.0.0.1:9333", async () => [
   { type: "page", url: "about:blank", webSocketDebuggerUrl: "ws://blank" },

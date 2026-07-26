@@ -7,7 +7,7 @@ import os from "node:os";
 import path from "node:path";
 import { spawn } from "node:child_process";
 import { fileURLToPath, pathToFileURL } from "node:url";
-import { classifyLoginMarkers, isMainModule, probeDocument } from "./douyin_login_dom_probe.mjs";
+import { classifyLoginMarkers, classifyPageRisk, isMainModule, probeDocument } from "./douyin_login_dom_probe.mjs";
 
 assert.equal(classifyLoginMarkers({ headerAccountControl: true, headerSelfLink: true }), "logged_in");
 assert.equal(classifyLoginMarkers({
@@ -26,6 +26,9 @@ assert.equal(classifyLoginMarkers({
   verificationIframe: true,
 }), "verification_required");
 assert.equal(classifyLoginMarkers({}), "indeterminate");
+assert.equal(classifyPageRisk("https://www.douyin.com/passport/challenge", ""), "verification_required");
+assert.equal(classifyPageRisk("https://www.douyin.com/", "短信验证"), "verification_required");
+assert.equal(classifyPageRisk("https://www.douyin.com/", "首页"), "");
 
 function fixtureNode({
   text = "",
@@ -112,6 +115,10 @@ assert.equal(classifyLoginMarkers(inspected.markers), "verification_required");
 const visibleVerificationText = fixtureNode({ text: "安全验证" });
 inspected = inspectFixture({ selfLinks: [visibleSelfA, visibleSelfB], textNodes: [visibleVerificationText] });
 assert.equal(classifyLoginMarkers(inspected.markers), "verification_required");
+for (const text of ["拖动滑块完成验证", "短信验证", "challenge verification"]) {
+  inspected = inspectFixture({ selfLinks: [visibleSelfA, visibleSelfB], textNodes: [fixtureNode({ text })] });
+  assert.equal(classifyLoginMarkers(inspected.markers), "verification_required");
+}
 
 const visibleVerificationDialog = fixtureNode();
 inspected = inspectFixture({ selfLinks: [visibleSelfA, visibleSelfB], verificationDialogs: [visibleVerificationDialog] });

@@ -155,7 +155,7 @@ Git candidate 与 shared control docs 只在三条正式 heartbeat read-back 全
 
 08:00 采集任务会使用 `--defer-editorial`：仓库脚本只负责同步来源、采集素材、写入 `03 内容收件箱`、生成 raw shortlist，然后停止在“等待外层 Codex 主编判断”状态。外层 Codex automation 必须使用 Git 管理的 `skills/ai-account-editorial-director/SKILL.md` 和 `topic_editorial_state_machine.py`，依次完成精确来源打开、网页研究、主编判断、无损排序与运营字段映射；不得调用旧 one-shot runner、环境切换 Skill 或 deterministic editorial fallback。发布时才把 repo Skill 显式同步到 global private Skill 并做 hash read-back。
 
-抖音采集使用与 worktree 无关的 canonical Chrome profile。每天 `07:45` 先运行 `python3 scripts/check_douyin_session.py --port 9333`；只有 profile 进程身份精确匹配且 `login_state=logged_in` 才允许启动抖音 source probe。门禁失败会阻断抖音探针并让本次 08:00 外层日志保持 `failed_or_partial`，不会随机寻找其他浏览器、端口或 profile。迁移与回滚见 `docs/douyin_canonical_profile_runbook.md`。
+抖音采集使用与 worktree 无关的 canonical Chrome profile。每天 `07:45` 先运行 `python3 scripts/check_douyin_session.py --port 9333`；只有 profile 进程身份精确匹配且 `login_state=logged_in` 才允许启动抖音 source probe。门禁失败会在任何账号导航前写入 typed 暂停状态，不会随机寻找其他浏览器、端口或 profile。运行中出现滑块、验证码、短信、challenge、登出或跨账号 XHR 风控信号时，后续账号导航立即为 0；用户在既有 fixed 9333 profile 手工验证后，通过 `/sources` fresh preflight 只恢复 exact remaining accounts。完整节奏与 checkpoint 合同见 `docs/ar048_douyin_risk_control.md`，profile 迁移与回滚见 `docs/douyin_canonical_profile_runbook.md`。
 
 在外层 Codex 完成收尾前，`daily_pipeline_YYYY-MM-DD.json` 会保持 `ok=false`，所以 10:00 守卫不会误发 raw 候选卡。只有收尾脚本成功后，10:00 才会正常发卡。
 
