@@ -31,7 +31,9 @@ Douyin API，不读取旧 artifact。
 
 跨 run 健康事实只有一个 authority：
 
-- durable authority：`output/state/douyin_account_health.json`
+- AR-047 的 JSON health candidate 已被 WEB-008-CORE 的单一来源权威取代。正常 runtime
+  只读写 `output/state/source_control.sqlite3`：`source_run_events` 是运行事实，
+  `account_health_current` 在同一事务内派生。JSON ledger/projection 不再是 normal runtime authority。
 - run projection：`output/runs/<run_id>/sources/douyin/account_health.json`
 
 durable 文件先原子提交并 exact read-back。run projection 只能从已提交的

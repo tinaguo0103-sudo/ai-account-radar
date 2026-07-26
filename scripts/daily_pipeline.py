@@ -20,6 +20,7 @@ from urllib.parse import urlparse
 
 from local_env import load_local_env
 from full_account_collection_contract import rejection_payload, validate_account_limit_argv
+from source_control import DEFAULT_DB, SourceControl
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
@@ -439,6 +440,7 @@ def main() -> int:
     parser.add_argument("--douyin-cdp", default=os.getenv("DOUYIN_CDP_URL", "http://127.0.0.1:9333"), help="Chrome DevTools endpoint for explicit Douyin homepage probe.")
     parser.add_argument("--douyin-account-limit", type=int, default=0, help="Max Douyin accounts to probe; 0 means every eligible account.")
     parser.add_argument("--douyin-video-limit", type=int, default=3, help="Max videos per Douyin account.")
+    parser.add_argument("--source-db", default=str(DEFAULT_DB), help="Source-control SQLite authority.")
     parser.add_argument(
         "--defer-editorial",
         action="store_true",
@@ -460,6 +462,12 @@ def main() -> int:
     wechat_read_outcome: dict[str, Any] | None = None
     run_id = args.run_id or new_run_id()
     douyin_artifacts = douyin_run_artifact_paths(run_id)
+    runtime_source_config = douyin_artifacts["dir"] / "source_plan_config.json"
+    runtime_source_config.parent.mkdir(parents=True, exist_ok=True)
+    runtime_source_config.write_text(
+        json.dumps(SourceControl(args.source_db).export_runtime_config(), ensure_ascii=False, indent=2),
+        encoding="utf-8",
+    )
     run_started_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     step_env = os.environ.copy()
     step_env["RUN_ID"] = run_id
@@ -543,6 +551,10 @@ def main() -> int:
                 args.douyin_cdp,
                 "--out-dir",
                 str(douyin_artifacts["dir"]),
+                "--config",
+                str(runtime_source_config),
+                "--source-db",
+                str(args.source_db),
                 "--account-limit",
                 str(args.douyin_account_limit),
                 "--video-limit",

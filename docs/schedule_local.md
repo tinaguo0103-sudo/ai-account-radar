@@ -132,7 +132,7 @@ python3 scripts/codex_script_package_runner.py --write-feishu --record-id <04_re
 
 每日采集和第一张选题卡发送由 Codex automation 触发，不使用本机 LaunchAgent：
 
-- 08:00：同步 `01 来源与采样`，然后跑全源采集和选题。
+- 08:00：从 project-owned SQLite 读取 exact 来源计划，然后跑全源采集和选题。
 - 10:00：发送第一张选题卡。发送前会检查当天 `daily_pipeline` 是否成功、该 pipeline 指向的 exact run 候选 CSV 是否非空；不满足就跳过，避免误发旧候选。
 
 ### Three Fixed Tasks heartbeat 发布合同
@@ -164,6 +164,10 @@ Codex 定时任务负责触发本仓库脚本和执行外层主编 Skill；迁�
 `06 完整脚本与制作包` 是另一条本机生成链路：它由本机 LaunchAgent watcher 负责，只扫描飞书 `04` 中已确认且已提交制作方向的记录。空队列只做飞书 API 检查，不调用 Codex；有待生成记录时才调用本机 `codex exec` 和全局私有 Skill。
 
 08:00 只有一条正式业务路径：每个来源执行一次，失败来源贡献零行；成功行进入一次完整 owner/candidate 计划，随后写入 03 并立即 exact read-back。历史 owner 在这次计划中复用 remote record ID，只更新本次参与字段，不注入历史正文，也不存在单独 recovery、mirror 或 latest 路径。
+
+08:00 的来源配置权威是 `output/state/source_control.sqlite3`。入口在浏览器或 Feishu 03
+写入前读取 SQLite exact revision，并把 run-scoped config projection 交给来源采集。正常调用图
+不再 reconcile、读取或回写 Feishu 01，也没有 Feishu 配置 fallback；Feishu 01 只保留迁移前历史。
 
 正式收尾入口在 `--write-feishu` 模式下会自行通过 `local_env.load_local_env(required=True)` 加载仓库本地环境，再执行网络预检和 Feishu 04 写入。生产默认读取 `.env.local`；staging/test 必须使用 `AI_ACCOUNT_RADAR_ENV` 或 `AI_ACCOUNT_RADAR_ENV_FILE` 选择对应环境。Prompt 中的 `cd` 只确定工作目录，不能提供环境变量或扩大可写权限。
 
@@ -200,7 +204,7 @@ python3 scripts/run_topic_card_if_fresh.py --no-notify
 在项目目录运行：
 
 ```bash
-python3 scripts/reconcile_source_sampling_from_feishu.py --write-config --write-feishu
+python3 scripts/source_control_cli.py plan
 
 python3 scripts/daily_pipeline.py \
   --resolve-url-intake \

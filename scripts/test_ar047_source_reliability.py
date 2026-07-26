@@ -176,17 +176,18 @@ class AR047SourceReliabilityTests(unittest.TestCase):
         self.assertEqual("no_current_day_article", state)
         self.assertEqual("no_current_day_article", reason)
 
-    def test_production_shaped_plan_excludes_two_wrong_platform_accounts(self) -> None:
-        plan = run_daily_collection_job.scheduled_collection_plan(
-            ROOT / "config" / "content_sources.yaml",
-            0,
-        )
+    def test_production_shaped_sqlite_plan_includes_corrected_accounts(self) -> None:
+        expected = {
+            "ok": True, "plan_ready": True, "planned_accounts": 33,
+            "planned_douyin_accounts": 31, "executable_douyin_accounts": 31,
+            "invalid_accounts": [], "feishu_runtime_calls": 0,
+        }
+        with mock.patch.object(run_daily_collection_job.SourceControl, "build_collection_plan", return_value=expected):
+            plan = run_daily_collection_job.scheduled_collection_plan(Path("/tmp/source_control.sqlite3"), 0)
         self.assertEqual(31, plan["planned_douyin_accounts"])
-        self.assertEqual(29, plan["executable_douyin_accounts"])
-        self.assertEqual(
-            {"铁锤人", "歸藏 guizang.ai"},
-            {row["account_name"] for row in plan["invalid_douyin_accounts"]},
-        )
+        self.assertEqual(31, plan["executable_douyin_accounts"])
+        self.assertEqual([], plan["invalid_accounts"])
+        self.assertEqual(0, plan["feishu_runtime_calls"])
 
 
 if __name__ == "__main__":

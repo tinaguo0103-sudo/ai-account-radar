@@ -32,7 +32,7 @@ export function parseArgs(args = process.argv.slice(2)) {
     waitMs: 7000,
     accountPacingMs: 500,
     tailRetryDelayMs: 5000,
-    healthLedger: path.join(ROOT, "output/state/douyin_account_health.json"),
+    sourceDb: path.join(ROOT, "output/state/source_control.sqlite3"),
     checkOnly: false,
   };
   for (let i = 0; i < args.length; i += 1) {
@@ -48,7 +48,7 @@ export function parseArgs(args = process.argv.slice(2)) {
     else if (arg === "--wait-ms") options.waitMs = Number(args[++i]);
     else if (arg === "--account-pacing-ms") options.accountPacingMs = Number(args[++i]);
     else if (arg === "--tail-retry-delay-ms") options.tailRetryDelayMs = Number(args[++i]);
-    else if (arg === "--health-ledger") options.healthLedger = args[++i];
+    else if (arg === "--source-db") options.sourceDb = args[++i];
     else if (arg === "--check-only") options.checkOnly = true;
   }
   return options;
@@ -1556,17 +1556,38 @@ async function main() {
     video_links: [...(row.video_links || []), ...(backlogLinks.get(String(row.account_name || "")) || [])],
   })), homepageCardItems);
   if (!itemLineage.ok) coverage.ok = false;
-  const accountHealth = persistAccountHealth(
-    options.healthLedger,
-    path.join(options.outDir, "account_health.json"),
-    configuredSources,
-    rows,
-    runId,
-  );
+  const sourcesByName = new Map(configuredSources.map((source) => [
+    String(source.account_name || source.name || ""),
+    source,
+  ]));
+  const healthEvents = rows.map((row) => {
+    const source = sourcesByName.get(String(row.account_name || ""));
+    return {
+      source_id: String(source?.id || ""),
+      attempted_at: new Date().toISOString(),
+      outcome: String(row.status || "failed"),
+      failure_class: String(row.failure_code || row.failure_reason || ""),
+      artifact_count: Number(row.artifact_count || 0),
+      verified_identity: String(source?.verified_identity || ""),
+      substitute_count: 0,
+    };
+  });
+  const healthInput = path.join(options.outDir, "account_health_events.json");
+  fs.writeFileSync(healthInput, JSON.stringify(healthEvents, null, 2), "utf8");
+  const healthProc = spawnSync("python3", [
+    path.join(ROOT, "scripts/source_control_cli.py"),
+    "--db", options.sourceDb,
+    "record-events", "--run-id", runId, "--input", healthInput,
+  ], { cwd: ROOT, encoding: "utf8" });
+  const accountHealth = {
+    ok: healthProc.status === 0,
+    status: healthProc.status === 0 ? "committed" : "source_control_event_commit_failed",
+    error: healthProc.status === 0 ? "" : String(healthProc.stderr || healthProc.stdout || "").slice(-1000),
+  };
 
   const output = {
     ok: coverage.ok,
-    status: collectionStatusWithHealth(coverage.ok, sharedRuntimeFailure, accountHealth),
+    status: coverage.ok && accountHealth.ok && !sharedRuntimeFailure ? "completed" : "completed_with_failures",
     check_only: false,
     writes_feishu: false,
     run_id: runId,
@@ -1578,14 +1599,12 @@ async function main() {
     item_lineage: itemLineage,
     source_plan: plan,
     account_health: {
-      ok: accountHealth.authority.ok && accountHealth.projection.ok,
-      status: accountHealth.projection.ok ? "committed" : "health_projection_write_failed",
-      authority: accountHealth.authority,
-      projection: accountHealth.projection,
-      run_scoped_path: path.join(options.outDir, "account_health.json"),
-      durable_path: path.resolve(options.healthLedger),
-      account_count: accountHealth.accounts.length,
-      action_required_count: accountHealth.accounts.filter((row) => row.action_required).length,
+      ok: accountHealth.ok,
+      status: accountHealth.status,
+      authority: "source_control_sqlite",
+      durable_path: path.resolve(options.sourceDb),
+      event_count: healthEvents.length,
+      error: accountHealth.error,
     },
     accounts: rows.length,
     discovered_video_links: videoLinks.length,

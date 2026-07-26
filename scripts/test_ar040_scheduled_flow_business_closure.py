@@ -203,10 +203,7 @@ class AR040ScheduledFlowTests(unittest.TestCase):
 
         def fake_step(name: str, command: list[str]):
             commands.append(command)
-            stdout = (
-                'SOURCE_PLAN_STATUS_JSON={"plan_ready":true}'
-                if "reconcile Feishu 01" in name else ""
-            )
+            stdout = '{"plan_ready":true}' if "SQLite authority" in name else ""
             return {"name": name, "command": command, "returncode": 0, "stdout": stdout, "stderr": ""}
 
         argv = [

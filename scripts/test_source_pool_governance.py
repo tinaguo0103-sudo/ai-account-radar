@@ -149,7 +149,12 @@ class SourcePoolGovernanceTests(unittest.TestCase):
             {**source("wechat"), "platform": "微信公众号"},
             {**source("mixed"), "platform": "公众号/X/AIHOT"},
         ])
-        with mock.patch.object(run_daily_collection_job.flow, "load_json_config", return_value={"sources": sources}):
+        expected = {
+            "ok": True, "plan_ready": True, "planned_accounts": 33,
+            "planned_douyin_accounts": 31, "executable_douyin_accounts": 31,
+            "planned_other_accounts": 2, "feishu_runtime_calls": 0,
+        }
+        with mock.patch.object(run_daily_collection_job.SourceControl, "build_collection_plan", return_value=expected):
             plan = run_daily_collection_job.scheduled_collection_plan(governance.CONFIG, 0)
         self.assertTrue(plan["ok"])
         self.assertEqual(plan["planned_accounts"], 33)
@@ -159,7 +164,12 @@ class SourcePoolGovernanceTests(unittest.TestCase):
         self.assertFalse(plan["writes_feishu"])
 
     def test_scheduled_check_only_rejects_any_positive_account_cap(self) -> None:
-        with mock.patch.object(run_daily_collection_job.flow, "load_json_config", return_value={"sources": [source("one")]}):
+        expected = {
+            "ok": True, "plan_ready": True, "planned_accounts": 1,
+            "planned_douyin_accounts": 1, "executable_douyin_accounts": 1,
+            "feishu_runtime_calls": 0,
+        }
+        with mock.patch.object(run_daily_collection_job.SourceControl, "build_collection_plan", return_value=expected):
             plan = run_daily_collection_job.scheduled_collection_plan(governance.CONFIG, 12)
         self.assertFalse(plan["ok"])
         self.assertEqual(plan["status"], "limited_plan_rejected")

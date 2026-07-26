@@ -9,7 +9,6 @@ import sys
 from datetime import datetime
 from pathlib import Path
 from typing import Any
-from urllib.parse import urlparse
 
 from automation_failure_qa import qa_for_steps
 from automation_worktree_guard import check_automation_worktree, guard_failure_summary
@@ -17,7 +16,7 @@ from full_account_collection_contract import rejection_payload, validate_account
 from local_env import load_local_env
 from feishu_automation_notify import notify
 from scheduled_flow_preflight import evaluate_preflight
-import topic_flow_rework as flow
+from source_control import DEFAULT_DB, SourceControl
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -117,52 +116,20 @@ def failure_summary(steps: list[dict[str, Any]], log_path: Path) -> str:
     return qa_for_steps("08:00 每日全源采集", steps, log_path=str(log_path))
 
 
-def scheduled_collection_plan(config_path: Path, douyin_account_limit: int) -> dict[str, Any]:
-    sources = flow.load_json_config(config_path).get("sources", [])
-    raw_by_name = {str(row.get("account_name") or row.get("name") or ""): row for row in sources}
-    governance = flow.source_governance_plan(sources)
-    active = governance["active_competitor_accounts"]
-    douyin = [row for row in active if row.get("platform") == "抖音"]
-    other = [row for row in active if row.get("platform") != "抖音"]
-    invalid_douyin = []
-    identities: dict[str, list[str]] = {}
-    for row in douyin:
-        raw = raw_by_name.get(str(row.get("name") or "")) or {}
-        url = str(raw.get("url") or raw.get("homepage_url") or "")
-        parsed = urlparse(url)
-        parts = [part for part in parsed.path.split("/") if part]
-        identity = parts[1] if len(parts) == 2 and parts[0] == "user" else ""
-        if parsed.hostname not in {"douyin.com", "www.douyin.com"} or not identity:
-            invalid_douyin.append({
-                "account_name": row["name"],
-                "reason": "douyin_configured_account_wrong_platform" if not str(parsed.hostname or "").endswith("douyin.com")
-                else "douyin_configured_account_identity_missing",
-            })
-        else:
-            identities.setdefault(identity, []).append(row["name"])
-    for identity, names in identities.items():
-        if len(names) > 1:
-            invalid_douyin.extend(
-                {"account_name": name, "reason": "douyin_configured_account_identity_duplicate"}
-                for name in names
-            )
+def scheduled_collection_plan(db_path: Path, douyin_account_limit: int) -> dict[str, Any]:
+    plan = SourceControl(db_path).build_collection_plan()
     unlimited = douyin_account_limit == 0
-    return {
-        "ok": governance["active_competitor_count"] > 0 and unlimited,
+    plan.update({
+        "ok": bool(plan["ok"]) and unlimited,
         "status": "planned" if unlimited else "limited_plan_rejected",
         "check_only": True,
         "writes_feishu": False,
         "collection_started": False,
-        "planned_accounts": governance["active_competitor_count"],
-        "planned_douyin_accounts": len(douyin),
-        "executable_douyin_accounts": len(douyin) - len({row["account_name"] for row in invalid_douyin}),
-        "invalid_douyin_accounts": invalid_douyin,
-        "planned_other_accounts": len(other),
-        "planned_account_names": [row["name"] for row in active],
         "douyin_account_limit": douyin_account_limit,
-        "polluted_sources_excluded": governance["polluted_match_count"],
+        "source_authority": "sqlite",
         "touches_historical_03": False,
-    }
+    })
+    return plan
 
 
 def main() -> int:
@@ -182,7 +149,7 @@ def main() -> int:
     )
     parser.add_argument("--no-notify", action="store_true", help="Do not send Feishu exception notifications.")
     parser.add_argument("--check-only", action="store_true", help="Print the full scheduled account plan without browser, collection, or Feishu I/O.")
-    parser.add_argument("--source-config", default=str(ROOT / "config" / "content_sources.yaml"), help="Source config used by --check-only.")
+    parser.add_argument("--source-db", default=str(DEFAULT_DB), help="Source-control SQLite authority.")
     parser.add_argument("--run-id", default="", help="Explicit exact run id.")
     parser.add_argument(
         "--allow-non-production-worktree",
@@ -193,7 +160,7 @@ def main() -> int:
     args.douyin_account_limit = account_gate.value
 
     if args.check_only:
-        plan = scheduled_collection_plan(Path(args.source_config), args.douyin_account_limit)
+        plan = scheduled_collection_plan(Path(args.source_db), args.douyin_account_limit)
         print(json.dumps(plan, ensure_ascii=False, indent=2))
         return 0 if plan["ok"] else 2
 
@@ -223,11 +190,12 @@ def main() -> int:
         print(json.dumps({"ok": False, "reason": guard.reason, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return 2
 
-    steps.append(run_step("reconcile Feishu 01 source sampling into local config", [
+    steps.append(run_step("read exact source plan from local SQLite authority", [
         py,
-        str(ROOT / "scripts" / "reconcile_source_sampling_from_feishu.py"),
-        "--write-config",
-        "--write-feishu",
+        str(ROOT / "scripts" / "source_control_cli.py"),
+        "--db",
+        str(args.source_db),
+        "plan",
     ]))
     if steps[-1]["returncode"] != 0:
         log_path = write_job_log(steps)
@@ -235,14 +203,10 @@ def main() -> int:
             notify("AI账号雷达采集失败", failure_summary(steps, log_path))
         print(json.dumps({"ok": False, "log": str(log_path)}, ensure_ascii=False, indent=2))
         return steps[-1]["returncode"]
-    source_plan_result: dict[str, Any] = {}
-    for line in reversed(str(steps[-1].get("stdout") or "").splitlines()):
-        if line.startswith("SOURCE_PLAN_STATUS_JSON="):
-            try:
-                source_plan_result = json.loads(line.split("=", 1)[1])
-            except json.JSONDecodeError:
-                source_plan_result = {}
-            break
+    try:
+        source_plan_result: dict[str, Any] = json.loads(str(steps[-1].get("stdout") or ""))
+    except json.JSONDecodeError:
+        source_plan_result = {}
     if source_plan_result.get("plan_ready") is not True:
         steps[-1]["returncode"] = 2
         steps[-1]["stderr"] = "source_plan_not_ready"
@@ -259,6 +223,8 @@ def main() -> int:
         "--douyin-video-limit",
         str(args.douyin_video_limit),
         "--write-feishu",
+        "--source-db",
+        str(args.source_db),
     ]
     pipeline_cmd.extend([
         "--resolve-url-intake",
