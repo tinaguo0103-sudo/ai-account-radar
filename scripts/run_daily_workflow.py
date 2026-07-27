@@ -91,7 +91,9 @@ def editorial_input(collection: dict[str, Any], understanding: dict[str, Any]) -
     }
 
 
-def run_video_understanding(args: argparse.Namespace) -> dict[str, Any]:
+def run_video_understanding(
+    args: argparse.Namespace, on_demand_ids: set[str] | None = None,
+) -> dict[str, Any]:
     bindings = [args.video_candidates, args.video_decisions, args.video_packages, args.video_policy]
     if not any(bindings):
         return {
@@ -112,13 +114,33 @@ def run_video_understanding(args: argparse.Namespace) -> dict[str, Any]:
         decisions=json.loads(Path(args.video_decisions).read_text()),
         packages=json.loads(Path(args.video_packages).read_text()),
         policy=policy, output_root=Path(args.artifact_root),
-        on_demand_ids=set(args.video_on_demand),
+        on_demand_ids=on_demand_ids or set(),
     )
     result["status"] = (
         "completed_with_failures" if result["failed_count"]
         else "completed" if result["completed_count"] else "completed_empty"
     )
     return result
+
+
+def editorial_on_demand_ids(
+    selected: list[dict[str, Any]],
+    automatic_understanding: dict[str, Any],
+    candidate_batches: list[list[dict[str, Any]]],
+) -> set[str]:
+    automatic_ids = {
+        str(row.get("candidate_id") or "")
+        for row in automatic_understanding.get("understanding_results", [])
+    }
+    candidate_ids = {
+        f"douyin:{row.get('aweme_id')}"
+        for batch in candidate_batches for row in batch
+    }
+    return {
+        str(row.get("candidate_id") or "") for row in selected
+        if str(row.get("candidate_id") or "") in candidate_ids
+        and str(row.get("candidate_id") or "") not in automatic_ids
+    }
 
 
 def script_input(run_id: str, topic: dict[str, Any], content: dict[str, Any]) -> dict[str, Any]:
@@ -280,28 +302,43 @@ def main() -> int:
         return 0 if projection_green else 2
 
     existing_understanding = workflow.stage(args.run_id, "video_understanding")
-    if existing_understanding:
-        understanding = existing_understanding["payload"]
-        understanding_commit = existing_understanding
-    else:
-        understanding = run_video_understanding(args)
-        understanding_commit = workflow.commit_stage(
-            args.run_id, "video_understanding", collection_commit["output_hash"],
-            understanding, understanding["status"],
-        )
-    understanding_projection_green = publish_committed_stage(
-        args, workflow, "video_understanding", understanding, understanding_commit,
-    )
-
     existing_editorial = workflow.stage(args.run_id, "editorial")
     if existing_editorial:
+        if not existing_understanding:
+            raise RuntimeError("editorial_without_video_understanding")
+        understanding = existing_understanding["payload"]
+        understanding_commit = existing_understanding
         editorial_payload = existing_editorial["payload"]
         editorial_commit = existing_editorial
     else:
+        automatic_understanding = (
+            existing_understanding["payload"] if existing_understanding
+            else run_video_understanding(args)
+        )
         editorial_payload, editorial_skills = invoke(
-            ["ai-account-editorial-director"], editorial_input(collection, understanding)
+            ["ai-account-editorial-director"],
+            editorial_input(collection, automatic_understanding),
         )
         selected = [row for row in editorial_payload.get("topics", []) if row.get("decision") == "select"]
+        editorial_on_demand = editorial_on_demand_ids(
+            selected,
+            automatic_understanding,
+            json.loads(Path(args.video_candidates).read_text())
+            if args.video_candidates else [],
+        )
+        requested_on_demand = set(args.video_on_demand)
+        if existing_understanding:
+            understanding = existing_understanding["payload"]
+            understanding_commit = existing_understanding
+        else:
+            understanding = run_video_understanding(
+                args, editorial_on_demand | requested_on_demand,
+            )
+            understanding["editorial_on_demand_ids"] = sorted(editorial_on_demand)
+            understanding_commit = workflow.commit_stage(
+                args.run_id, "video_understanding", collection_commit["output_hash"],
+                understanding, understanding["status"],
+            )
         for identity in editorial_skills:
             workflow.record_skill(
                 run_id=args.run_id, stage="editorial", unit_id="daily",
@@ -315,6 +352,9 @@ def main() -> int:
             args.run_id, "editorial", understanding_commit["output_hash"],
             editorial_payload, "completed",
         )
+    understanding_projection_green = publish_committed_stage(
+        args, workflow, "video_understanding", understanding, understanding_commit,
+    )
     selected = [row for row in editorial_payload.get("topics", []) if row.get("decision") == "select"]
     editorial_projection_green = publish_committed_stage(
         args, workflow, "editorial", editorial_payload, editorial_commit,

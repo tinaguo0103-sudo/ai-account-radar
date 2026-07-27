@@ -7,10 +7,32 @@ import unittest
 from pathlib import Path
 
 from daily_workflow import DailyWorkflow, WorkflowConflict, digest
-from run_daily_workflow import last_json_object, write_script_artifact
+from run_daily_workflow import (
+    editorial_on_demand_ids,
+    last_json_object,
+    write_script_artifact,
+)
 
 
 class DailyWorkflowTest(unittest.TestCase):
+    def test_editorial_selected_unparsed_video_becomes_on_demand_only(self):
+        selected = [
+            {"candidate_id": "douyin:automatic", "decision": "select"},
+            {"candidate_id": "douyin:on-demand", "decision": "select"},
+            {"candidate_id": "aihot:other", "decision": "select"},
+        ]
+        automatic = {
+            "understanding_results": [{"candidate_id": "douyin:automatic"}],
+        }
+        candidates = [[
+            {"aweme_id": "automatic"},
+            {"aweme_id": "on-demand"},
+        ]]
+        self.assertEqual(
+            editorial_on_demand_ids(selected, automatic, candidates),
+            {"douyin:on-demand"},
+        )
+
     def test_schema_v1_history_upgrades_without_rewriting_committed_run(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "workflow.sqlite3"
