@@ -6,5 +6,6 @@
   "fsmn_vad_model": "/absolute/path/to/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
   "whisper_python": "/absolute/path/to/ignored/mlx/venv/bin/python",
   "whisper_model": "mlx-community/whisper-large-v3",
-  "timeout": 90
+  "timeout": 90,
+  "maximum_media_bytes": 314572800
 }

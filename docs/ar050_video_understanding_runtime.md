@@ -28,6 +28,16 @@ stage，不创建第二个 daemon、schedule 或数据 authority。
 公共 workflow 在创建 workflow DB、采集、Skill 调用或 projection 前 typed fail。
 不自动修改 Homebrew、system Python 或下载模型。
 
+`timeout` 是单条公开媒体的总下载 deadline，不只是 socket read timeout；
+`maximum_media_bytes` 是单条临时媒体上限。任一超限只产生 candidate-local typed
+failure，并在继续下一条前清理 partial。
+
+媒体 resolver 只从 exact 视频页的 page-owned public resources 读取短效地址，
+同时保留 DASH video/audio 轨。下载仅发送普通浏览器 User-Agent 与 exact 视频
+Referer，不读取 Cookie/session；OCR 使用 video 轨，ASR 使用 audio 轨。配置中的
+virtualenv Python launcher 必须保留原 symlink 路径，否则会丢失 venv
+site-packages。
+
 ## 正常调用图
 
 `run_daily_workflow.py`

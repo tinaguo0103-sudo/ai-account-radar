@@ -5,6 +5,21 @@
   "target_count_max": 20,
   "target_duration_seconds": 1800,
   "maximum_duration_seconds": 2700,
+  "maximum_video_duration_seconds": 600,
+  "title_value_patterns": [
+    "\\bAI\\b",
+    "人工智能",
+    "模型",
+    "Agent",
+    "Prompt",
+    "工作流",
+    "智能体",
+    "豆包",
+    "Claude",
+    "GPT"
+  ],
+  "relative_engagement_percentile": 0.6,
+  "exploration_limit": 2,
   "selection_contract": {
     "allowed_reasons": [
       "title_value",

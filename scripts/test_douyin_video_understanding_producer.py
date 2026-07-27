@@ -31,6 +31,61 @@ class ProducerTest(unittest.TestCase):
         with self.assertRaisesRegex(producer.ProducerError, "video_ffmpeg_missing"):
             producer.validate_runtime({})
 
+    def test_runtime_preserves_virtualenv_python_launcher(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            base_python = root / "base-python"
+            base_python.write_text("")
+            venv_python = root / "venv-python"
+            venv_python.symlink_to(base_python)
+            files = {
+                "ffmpeg": root / "ffmpeg",
+                "vision_ocr_binary": root / "vision",
+                "sensevoice_python": venv_python,
+                "sensevoice_model": root / "sense",
+                "fsmn_vad_model": root / "vad",
+            }
+            for key, path in files.items():
+                if key != "sensevoice_python":
+                    path.touch()
+            runtime = producer.validate_runtime({key: str(path) for key, path in files.items()})
+            self.assertEqual(runtime["sensevoice_python"], venv_python.absolute())
+            self.assertNotEqual(runtime["sensevoice_python"], base_python.resolve())
+
+    def test_media_download_uses_public_browser_headers_without_credentials(self):
+        response = mock.MagicMock()
+        response.status = 200
+        response.read.side_effect = [b"media", b""]
+        response.__enter__.return_value = response
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp) / "video.mp4"
+            with mock.patch.object(producer.urllib.request, "urlopen", return_value=response) as opened:
+                producer.download(
+                    "https://example.douyinvod.com/video/tos/example",
+                    destination,
+                    10,
+                    1024,
+                    "https://www.douyin.com/video/12345678901",
+                )
+            request = opened.call_args.args[0]
+            self.assertIn("Chrome/", request.headers["User-agent"])
+            self.assertEqual(
+                request.headers["Referer"],
+                "https://www.douyin.com/video/12345678901",
+            )
+            self.assertNotIn("Cookie", request.headers)
+
+    def test_media_download_rejects_non_exact_douyin_referer(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            with self.assertRaisesRegex(producer.ProducerError, "video_media_referer_invalid"):
+                producer.download(
+                    "https://example.douyinvod.com/video/tos/example",
+                    Path(tmp) / "video.mp4",
+                    10,
+                    1024,
+                    "https://example.com/video/12345678901",
+                )
+
     def test_atomic_json_duplicate_is_no_churn_and_conflict_fails(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "value.json"
@@ -69,6 +124,7 @@ class ProducerTest(unittest.TestCase):
             for name in (
                 "douyin_video_understanding_producer.py",
                 "douyin_video_discovery.mjs",
+                "douyin_video_media_resolver.mjs",
                 "run_daily_workflow.py",
             )
         )
@@ -78,6 +134,24 @@ class ProducerTest(unittest.TestCase):
             "/private/tmp/ar050_resume_20260727/packages",
         ):
             self.assertNotIn(forbidden, text)
+
+    def test_vision_ocr_is_offline_and_does_not_silently_require_language_correction(self):
+        text = (Path(__file__).parent / "douyin_video_vision_ocr.swift").read_text()
+        self.assertIn("recognitionLevel = .accurate", text)
+        self.assertIn('recognitionLanguages = ["zh-Hans", "en-US"]', text)
+        self.assertIn("usesLanguageCorrection = false", text)
+
+    def test_discovery_uses_exact_recommendation_then_dynamic_search(self):
+        text = (Path(__file__).parent / "douyin_video_discovery.mjs").read_text()
+        recommendation = text.index("https://www.douyin.com/?recommend=1&from_nav=1")
+        dynamic = text.index("dynamic_search", recommendation)
+        self.assertLess(recommendation, dynamic)
+
+    def test_media_resolver_preserves_exact_video_and_audio_tracks(self):
+        text = (Path(__file__).parent / "douyin_video_media_resolver.mjs").read_text()
+        self.assertIn("media-video-", text)
+        self.assertIn("media-audio-", text)
+        self.assertIn("audio_url", text)
 
     def test_discovered_video_enters_exact_collection_without_substitute(self):
         collection = {
@@ -153,6 +227,56 @@ class ProducerTest(unittest.TestCase):
             "AI", [{"text": "temperature=0.7 model:claude-3", "start": 0, "end": 1}]
         )
         self.assertIn("parameter", {row["kind"] for row in facts})
+
+    def test_media_total_deadline_is_bounded_and_partial_is_local(self):
+        class SlowResponse:
+            status = 200
+            def __enter__(self):
+                return self
+            def __exit__(self, *_):
+                return False
+            def read(self, _):
+                return b"x"
+
+        with tempfile.TemporaryDirectory() as tmp:
+            destination = Path(tmp) / "video.mp4"
+            with mock.patch.object(producer.urllib.request, "urlopen", return_value=SlowResponse()), \
+                    mock.patch.object(producer.time, "monotonic", side_effect=[0, 2]):
+                with self.assertRaisesRegex(
+                    producer.ProducerError, "video_media_fetch_deadline_exceeded"
+                ):
+                    producer.download(
+                        "https://example.com/video",
+                        destination,
+                        1,
+                        100,
+                        "https://www.douyin.com/video/12345678901",
+                    )
+
+    def test_asr_worker_uses_exact_configured_ffmpeg_in_run_scoped_path(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            audio = root / "audio.wav"
+            audio.write_bytes(b"audio")
+            ffmpeg = root / "ffmpeg-exact"
+            ffmpeg.write_bytes(b"binary")
+            result = audio.with_suffix(".sensevoice.json")
+
+            def fake_command(args, error, *, env=None):
+                self.assertEqual(error, "video_asr_failed")
+                self.assertEqual((audio.parent / "runtime_bin/ffmpeg").resolve(), ffmpeg.resolve())
+                self.assertEqual(str(audio.parent / "runtime_bin"), env["PATH"].split(":")[0])
+                result.write_text(json.dumps({"text": "ok"}))
+                return mock.Mock(returncode=0)
+
+            with mock.patch.object(producer, "command", side_effect=fake_command):
+                value = producer.asr_worker({
+                    "sensevoice_python": root / "python",
+                    "sensevoice_model": root / "sensevoice",
+                    "fsmn_vad_model": root / "vad",
+                    "ffmpeg": ffmpeg,
+                }, audio)
+            self.assertEqual(value["text"], "ok")
 
 
 if __name__ == "__main__":

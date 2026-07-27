@@ -11,6 +11,7 @@ import shutil
 import subprocess
 import sys
 import tempfile
+import time
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -27,7 +28,11 @@ from douyin_video_understanding import (
 
 ROOT = Path(__file__).resolve().parents[1]
 DISCOVERY = ROOT / "scripts/douyin_video_discovery.mjs"
-USER_AGENT = "Mozilla/5.0 AI Account Radar bounded public media"
+MEDIA_RESOLVER = ROOT / "scripts/douyin_video_media_resolver.mjs"
+USER_AGENT = (
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138 Safari/537.36"
+)
 
 
 class ProducerError(RuntimeError):
@@ -85,28 +90,37 @@ def validate_runtime(config: dict[str, Any]) -> dict[str, Path]:
         value = Path(raw).expanduser()
         if not raw or not value.exists():
             raise ProducerError(error)
-        output[key] = value.resolve()
+        # Virtualenv Python launchers must retain their symlink path so Python
+        # discovers the venv site-packages instead of the base interpreter.
+        output[key] = value.absolute() if key.endswith("_python") else value.resolve()
     return output
 
 
-def policy_decisions(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def policy_decisions(
+    candidates: list[dict[str, Any]],
+    policy: dict[str, Any] | None = None,
+) -> list[dict[str, Any]]:
+    policy = policy or {}
     totals = sorted(
         sum(int(row.get(key) or 0) for key in ("likes", "comments", "favorites", "shares"))
         for row in candidates
     )
-    relative_floor = totals[max(0, len(totals) * 3 // 5 - 1)] if totals else 0
+    percentile = float(policy.get("relative_engagement_percentile", 0.6))
+    relative_floor = totals[max(0, int(len(totals) * percentile) - 1)] if totals else 0
+    title_patterns = list(policy.get("title_value_patterns") or [
+        r"\bAI\b", "人工智能", "模型", "Agent", "Prompt", "工作流", "智能体", "豆包", "Claude", "GPT",
+    ])
+    title_expression = "|".join(f"(?:{value})" for value in title_patterns)
+    exploration_limit = int(policy.get("exploration_limit", 2))
     exploration_used = 0
     output = []
     for row in candidates:
-        title_value = bool(re.search(
-            r"\bAI\b|人工智能|模型|Agent|Prompt|工作流|智能体|豆包|Claude|GPT",
-            str(row.get("title") or ""), re.I,
-        ))
+        title_value = bool(re.search(title_expression, str(row.get("title") or ""), re.I))
         total = sum(int(row.get(key) or 0) for key in ("likes", "comments", "favorites", "shares"))
         engagement = bool(totals and total > 0 and total >= max(1, relative_floor))
         exploration = (
             row.get("discovery_source") == "dynamic_search"
-            and not title_value and not engagement and exploration_used < 2
+            and not title_value and not engagement and exploration_used < exploration_limit
         )
         if exploration:
             exploration_used += 1
@@ -126,15 +140,37 @@ def policy_decisions(candidates: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return output
 
 
-def download(url: str, destination: Path, timeout: int) -> dict[str, Any]:
+def download(
+    url: str,
+    destination: Path,
+    timeout: int,
+    max_bytes: int,
+    referer: str,
+) -> dict[str, Any]:
     if not url.startswith(("https://", "http://")):
         raise ProducerError("video_media_url_invalid")
-    request = urllib.request.Request(url, headers={"User-Agent": USER_AGENT})
+    if not re.fullmatch(r"https://www\.douyin\.com/video/\d+", referer):
+        raise ProducerError("video_media_referer_invalid")
+    request = urllib.request.Request(
+        url,
+        headers={"User-Agent": USER_AGENT, "Referer": referer},
+    )
     try:
         with urllib.request.urlopen(request, timeout=timeout) as response, destination.open("wb") as out:
             if getattr(response, "status", 200) != 200:
                 raise ProducerError("video_media_fetch_failed")
-            shutil.copyfileobj(response, out, length=1024 * 1024)
+            started = time.monotonic()
+            written = 0
+            while True:
+                if time.monotonic() - started > timeout:
+                    raise ProducerError("video_media_fetch_deadline_exceeded")
+                chunk = response.read(1024 * 1024)
+                if not chunk:
+                    break
+                written += len(chunk)
+                if written > max_bytes:
+                    raise ProducerError("video_media_size_limit_exceeded")
+                out.write(chunk)
     except (urllib.error.URLError, TimeoutError, OSError) as error:
         raise ProducerError(f"video_media_fetch_failed:{type(error).__name__}") from error
     if not destination.exists() or not destination.stat().st_size:
@@ -142,8 +178,13 @@ def download(url: str, destination: Path, timeout: int) -> dict[str, Any]:
     return {"sha256": file_hash(destination), "bytes": destination.stat().st_size}
 
 
-def command(args: list[str], error: str) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(args, text=True, capture_output=True)
+def command(
+    args: list[str],
+    error: str,
+    *,
+    env: dict[str, str] | None = None,
+) -> subprocess.CompletedProcess[str]:
+    result = subprocess.run(args, text=True, capture_output=True, env=env)
     if result.returncode != 0:
         raise ProducerError(f"{error}:{result.returncode}")
     return result
@@ -204,12 +245,17 @@ def screen_facts(title: str, timeline: list[dict[str, Any]]) -> tuple[list[dict[
 
 def asr_worker(config: dict[str, Any], audio: Path) -> dict[str, Any]:
     result_path = audio.with_suffix(".sensevoice.json")
+    runtime_bin = audio.parent / "runtime_bin"
+    runtime_bin.mkdir()
+    (runtime_bin / "ffmpeg").symlink_to(Path(config["ffmpeg"]))
+    env = os.environ.copy()
+    env["PATH"] = f"{runtime_bin}{os.pathsep}{env.get('PATH', '')}"
     args = [
         str(config["sensevoice_python"]), str(Path(__file__).resolve()), "asr-worker",
         "--audio", str(audio), "--result", str(result_path),
         "--model", str(config["sensevoice_model"]), "--vad", str(config["fsmn_vad_model"]),
     ]
-    command(args, "video_asr_failed")
+    command(args, "video_asr_failed", env=env)
     return json.loads(result_path.read_text())
 
 
@@ -239,14 +285,35 @@ def process_one(
     aweme_id = candidate["aweme_id"]
     work = work_root / aweme_id
     work.mkdir(parents=True, exist_ok=False)
-    media, audio, frames = work / "video.mp4", work / "audio.wav", work / "frames"
+    media = work / "video.mp4"
+    audio_media = work / "audio-media.mp4"
+    audio = work / "audio.wav"
+    frames = work / "frames"
     frames.mkdir()
     package: dict[str, Any]
     try:
-        media_info = download(str(candidate.get("playable_url") or ""), media, int(config.get("timeout", 90)))
+        media_info = download(
+            str(candidate.get("playable_url") or ""),
+            media,
+            int(config.get("timeout", 90)),
+            int(config.get("maximum_media_bytes", 300 * 1024 * 1024)),
+            str(candidate.get("source_url") or ""),
+        )
+        audio_info = None
+        audio_input = media
+        if candidate.get("audio_url"):
+            audio_info = download(
+                str(candidate["audio_url"]),
+                audio_media,
+                int(config.get("timeout", 90)),
+                int(config.get("maximum_media_bytes", 300 * 1024 * 1024)),
+                str(candidate.get("source_url") or ""),
+            )
+            audio_input = audio_media
         command([
             str(runtime["ffmpeg"]), "-hide_banner", "-loglevel", "error", "-y",
-            "-i", str(media), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(audio),
+            "-i", str(audio_input), "-vn", "-ac", "1", "-ar", "16000",
+            "-c:a", "pcm_s16le", str(audio),
         ], "video_audio_extract_failed")
         command([
             str(runtime["ffmpeg"]), "-hide_banner", "-loglevel", "error", "-y",
@@ -298,6 +365,9 @@ def process_one(
                 "frame_rate_fps": 1,
                 "frame_count": len(frame_paths),
                 "media_sha256": media_info["sha256"],
+                "audio_media_sha256": (
+                    audio_info["sha256"] if audio_info else media_info["sha256"]
+                ),
             },
             "asr": asr,
             "full_large_v3_fallback": full,
@@ -322,6 +392,9 @@ def process_one(
             "run_id": run_id,
             "candidate_raw_identity": candidate["raw_identity"],
             "media_sha256": media_info["sha256"],
+            "audio_media_sha256": (
+                audio_info["sha256"] if audio_info else media_info["sha256"]
+            ),
             "runtime": package["runtime_provenance"],
         })
     except (OSError, ValueError, json.JSONDecodeError, ProducerError) as error:
@@ -399,11 +472,11 @@ def produce(
     output_root = Path(getattr(args, "output_root", "") or args.artifact_root).resolve()
     candidates = discovered_candidates or load_discovery(args, args.run_id, output_root)
     merged = merge_candidates([candidates], args.run_id)
-    decisions = policy_decisions(candidates)
     policy_path = getattr(args, "video_policy", "") or getattr(args, "policy", "")
     if not policy_path:
         raise ProducerError("video_policy_missing")
     policy = json.loads(Path(policy_path).read_text())
+    decisions = policy_decisions(candidates, policy)
     plan = budget_selection(
         fold_near_duplicates(apply_policy_decisions(merged, decisions, policy)),
         policy,
@@ -413,6 +486,33 @@ def produce(
     } if include_automatic else set()
     selected = automatic | (on_demand_ids or set())
     by_id = {f"douyin:{row['aweme_id']}": row for row in candidates}
+    mode = getattr(args, "mode", "") or args.video_mode
+    if mode == "normal" and selected:
+        producer_root = output_root / args.run_id / "video_producer"
+        resolver_input = producer_root / (
+            "media_resolver_input.json" if include_automatic
+            else f"media_resolver_input_{digest(sorted(selected))[:16]}.json"
+        )
+        resolver_output = producer_root / (
+            "media_resolver.json" if include_automatic
+            else f"media_resolver_{digest(sorted(selected))[:16]}.json"
+        )
+        atomic_json(resolver_input, [by_id[identity] for identity in sorted(selected) if identity in by_id])
+        resolution = subprocess.run([
+            "node", str(MEDIA_RESOLVER), "--cdp", args.cdp,
+            "--input", str(resolver_input), "--output", str(resolver_output),
+        ], text=True, capture_output=True)
+        if resolution.returncode:
+            try:
+                error = json.loads(resolution.stdout).get("error")
+            except (ValueError, AttributeError):
+                error = "media_resolution_failed"
+            raise ProducerError(str(error or "media_resolution_failed"))
+        resolved = json.loads(resolver_output.read_text())
+        if resolved.get("status") != "completed":
+            raise ProducerError("media_resolution_not_completed")
+        for candidate in resolved.get("candidates") or []:
+            by_id[f"douyin:{candidate['aweme_id']}"] = candidate
     work_root = output_root / args.run_id / "video_producer" / "work"
     keyframe_root = output_root / args.run_id / "video_understanding" / "keyframes"
     packages = []

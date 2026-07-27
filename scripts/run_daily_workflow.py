@@ -382,7 +382,7 @@ def main() -> int:
     parser.add_argument("--video-runtime-config", default=os.environ.get("DOUYIN_VIDEO_RUNTIME_CONFIG", ""))
     parser.add_argument("--discovery-fixture", default="")
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
-    parser.add_argument("--search-query", default="AI")
+    parser.add_argument("--search-query", default="")
     args = parser.parse_args()
     DailyWorkflow.validate_identity(args.run_id, args.business_date)
     validate_runtime(args)
@@ -546,6 +546,15 @@ def main() -> int:
 if __name__ == "__main__":
     try:
         raise SystemExit(main())
+    except KeyboardInterrupt:
+        argv = sys.argv[1:]
+        if "--workflow-db" in argv and "--run-id" in argv:
+            database = Path(argv[argv.index("--workflow-db") + 1])
+            run_id = argv[argv.index("--run-id") + 1]
+            if database.exists():
+                DailyWorkflow(database).fail_run(run_id, "workflow_interrupted")
+        print(json.dumps({"ok": False, "error": "workflow_interrupted"}, sort_keys=True))
+        raise SystemExit(130)
     except (RuntimeError, WorkflowConflict, ValueError, json.JSONDecodeError) as error:
         argv = sys.argv[1:]
         if "--workflow-db" in argv and "--run-id" in argv:

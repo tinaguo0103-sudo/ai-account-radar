@@ -20,7 +20,7 @@ for path in CommandLine.arguments.dropFirst() {
         let request = VNRecognizeTextRequest()
         request.recognitionLevel = .accurate
         request.recognitionLanguages = ["zh-Hans", "en-US"]
-        request.usesLanguageCorrection = true
+        request.usesLanguageCorrection = false
         do {
             try VNImageRequestHandler(cgImage: cgImage).perform([request])
             let text = (request.results ?? [])

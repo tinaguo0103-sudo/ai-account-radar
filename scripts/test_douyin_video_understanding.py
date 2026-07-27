@@ -73,6 +73,7 @@ class VideoUnderstandingTests(unittest.TestCase):
             vu.validate_package(value, row)
 
     def test_budget_allows_less_and_caps_duration(self):
+        self.policy["maximum_video_duration_seconds"] = 900
         rows = vu.merge_candidates([[
             candidate(number, "dynamic_search", f"独立标题{number}", duration=900)
             for number in range(1, 6)
@@ -82,6 +83,19 @@ class VideoUnderstandingTests(unittest.TestCase):
         self.assertEqual(plan["selected_count"], 3)
         self.assertEqual(plan["total_duration_seconds"], 2700)
         self.assertTrue(plan["under_target_allowed"])
+
+    def test_single_overlong_video_cannot_consume_daily_budget(self):
+        rows = vu.merge_candidates([[
+            candidate(1, "dynamic_search", "超长", duration=2297),
+            candidate(2, "dynamic_search", "正常", duration=120),
+        ]], RUN_ID)
+        decisions = [
+            {"candidate_id": row["id"], "selected": True, "reasons": ["title_value"]}
+            for row in rows
+        ]
+        plan = vu.budget_selection(vu.apply_policy_decisions(rows, decisions, self.policy), self.policy)
+        self.assertEqual([row["duration_seconds"] for row in plan["selected"]], [120])
+        self.assertEqual(plan["skipped"][0]["reason"], "video_duration_exceeds_policy")
 
     def test_materialize_is_no_churn_and_failure_is_local(self):
         raw = [candidate(1, "configured_account", "A"), candidate(2, "recommendation", "B")]

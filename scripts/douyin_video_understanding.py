@@ -154,10 +154,23 @@ def budget_selection(rows: list[dict[str, Any]], policy: dict[str, Any]) -> dict
     ))
     maximum_count = int(policy["target_count_max"])
     maximum_duration = int(policy["maximum_duration_seconds"])
-    chosen, total = [], 0
+    maximum_video_duration = int(policy.get("maximum_video_duration_seconds") or maximum_duration)
+    chosen, skipped, total = [], [], 0
     for row in selected:
         duration = int(row["duration_seconds"])
+        if duration > maximum_video_duration:
+            skipped.append({
+                "candidate_id": row["id"],
+                "reason": "video_duration_exceeds_policy",
+                "duration_seconds": duration,
+            })
+            continue
         if len(chosen) >= maximum_count or total + duration > maximum_duration:
+            skipped.append({
+                "candidate_id": row["id"],
+                "reason": "daily_budget_exhausted",
+                "duration_seconds": duration,
+            })
             continue
         chosen.append(row)
         total += duration
@@ -168,6 +181,8 @@ def budget_selection(rows: list[dict[str, Any]], policy: dict[str, Any]) -> dict
         "target_count": [policy["target_count_min"], policy["target_count_max"]],
         "target_duration_seconds": policy["target_duration_seconds"],
         "maximum_duration_seconds": maximum_duration,
+        "maximum_video_duration_seconds": maximum_video_duration,
+        "skipped": skipped,
         "under_target_allowed": True,
     }
 

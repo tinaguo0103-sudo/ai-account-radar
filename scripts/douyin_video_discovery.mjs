@@ -23,6 +23,23 @@ function parseArgs(argv) {
   return out;
 }
 
+function writeAtomicJson(output, payload) {
+  const target = path.resolve(output);
+  fs.mkdirSync(path.dirname(target), { recursive: true });
+  const temporary = path.join(
+    path.dirname(target),
+    `.${path.basename(target)}.${process.pid}.${Date.now()}.tmp`,
+  );
+  const descriptor = fs.openSync(temporary, "wx");
+  try {
+    fs.writeFileSync(descriptor, `${JSON.stringify(payload, null, 2)}\n`);
+    fs.fsyncSync(descriptor);
+  } finally {
+    fs.closeSync(descriptor);
+  }
+  fs.renameSync(temporary, target);
+}
+
 function riskExpression() {
   return `(() => {
     const visible = (element) => {
@@ -69,6 +86,22 @@ function firstUrl(value) {
   return String(value || "");
 }
 
+function deriveSearchQuery(candidates, fallback, currentUrl) {
+  const current = decodeURIComponent(new URL(currentUrl || "https://www.douyin.com/").pathname);
+  const tokens = [];
+  for (const item of candidates) {
+    const title = String(item.title || "");
+    for (const match of title.matchAll(/#([^#\s]{2,18})|\b(AI|AIGC|Agent|Prompt|GPT|Claude|Vibecoding)\b/gi)) {
+      const token = String(match[1] || match[2] || "").trim();
+      if (token && !tokens.includes(token)) tokens.push(token);
+    }
+  }
+  const candidatesQuery = tokens.slice(0, 3).join(" ");
+  const query = candidatesQuery || fallback || "AI 工具 人工智能";
+  if (current.includes(query)) return `${query} 教程`;
+  return query;
+}
+
 function normalize(item, source) {
   const stats = item.statistics || {};
   const video = item.video || {};
@@ -94,8 +127,67 @@ function normalize(item, source) {
   };
 }
 
+function parseVisibleCount(value) {
+  const text = String(value || "").trim().toLowerCase();
+  const match = text.match(/^([\d.]+)\s*(万|w)?$/i);
+  if (!match) return 0;
+  return Math.round(Number(match[1]) * (match[2] ? 10000 : 1));
+}
+
+function normalizeVisibleCard(card, source) {
+  const awemeId = String(card.href || "").match(/\/video\/(\d{10,})/)?.[1] || "";
+  const lines = String(card.text || "").split("\n").map((item) => item.trim()).filter(Boolean);
+  const durationIndex = lines.findIndex((item) => /^\d{1,2}:\d{2}$/.test(item));
+  const durationText = durationIndex >= 0 ? lines[durationIndex] : "00:00";
+  const [minutes, seconds] = durationText.split(":").map(Number);
+  const countIndex = durationIndex + 1;
+  const authorIndex = lines.findIndex((item, index) => index > countIndex && item.startsWith("@"));
+  const title = lines.slice(countIndex + 1, authorIndex > countIndex ? authorIndex : undefined).join(" ");
+  const author = authorIndex >= 0 ? lines[authorIndex].replace(/^@/, "") : "";
+  return {
+    run_id: "",
+    discovery_source: source,
+    aweme_id: awemeId,
+    source_url: awemeId ? `https://www.douyin.com/video/${awemeId}` : "",
+    author,
+    title,
+    published_at: authorIndex >= 0 ? String(lines[authorIndex + 1] || "") : "",
+    duration_seconds: Math.max(1, minutes * 60 + seconds),
+    likes: parseVisibleCount(lines[countIndex]),
+    comments: 0,
+    favorites: 0,
+    shares: 0,
+    playable_url: "",
+    raw_identity: crypto.createHash("sha256")
+      .update(JSON.stringify({ awemeId, title, author, durationText, visibleCount: lines[countIndex] }))
+      .digest("hex"),
+  };
+}
+
 async function sleep(milliseconds) {
   await new Promise((resolve) => setTimeout(resolve, milliseconds));
+}
+
+async function collectVisibleFeed(session, waitMs, risk, stage) {
+  await session.send("Page.reload", { ignoreCache: true });
+  await sleep(waitMs);
+  await risk(`${stage}_after_reload`);
+  await session.send("Runtime.evaluate", {
+    expression: "window.scrollBy({top: Math.min(window.innerHeight * 2, 1600), behavior: 'instant'}); true",
+    returnByValue: true,
+  });
+  await sleep(Math.min(waitMs, 4000));
+  await risk(`${stage}_after_scroll`);
+  const result = await session.send("Runtime.evaluate", {
+    expression: `JSON.stringify([...document.querySelectorAll('a[href*="/video/"]')]
+      .slice(0, 80)
+      .map((node) => ({href: node.href, text: node.innerText || node.getAttribute('aria-label') || ''})))`,
+    returnByValue: true,
+  });
+  if (result?.exceptionDetails || typeof result?.result?.value !== "string") {
+    throw new Error(`discovery_visible_cards_indeterminate:${stage}`);
+  }
+  return JSON.parse(result.result.value);
 }
 
 async function main() {
@@ -132,14 +224,18 @@ async function main() {
   };
   try {
     await risk("before_navigation");
-    await session.send("Page.navigate", { url: "https://www.douyin.com/" });
-    await sleep(options.waitMs);
-    await risk("after_recommendation");
+    await session.send("Page.navigate", {
+      url: "https://www.douyin.com/?recommend=1&from_nav=1",
+    });
+    const recommendationCards = await collectVisibleFeed(
+      session, options.waitMs, risk, "recommendation",
+    );
+    captured.push(...recommendationCards.map((card) => normalizeVisibleCard(card, "recommendation")));
     source = "dynamic_search";
-    const query = encodeURIComponent(options.query);
+    const query = encodeURIComponent(deriveSearchQuery(captured, options.query, target.url));
     await session.send("Page.navigate", { url: `https://www.douyin.com/search/${query}?type=video` });
-    await sleep(options.waitMs);
-    await risk("after_dynamic_search");
+    const searchCards = await collectVisibleFeed(session, options.waitMs, risk, "dynamic_search");
+    captured.push(...searchCards.map((card) => normalizeVisibleCard(card, "dynamic_search")));
   } finally {
     session.close();
   }
@@ -156,8 +252,7 @@ async function main() {
     captcha_actions: 0,
     candidates,
   };
-  fs.mkdirSync(path.dirname(path.resolve(options.output)), { recursive: true });
-  fs.writeFileSync(options.output, `${JSON.stringify(payload, null, 2)}\n`);
+  writeAtomicJson(options.output, payload);
   process.stdout.write(`${JSON.stringify({ ok: true, status: payload.status, count: candidates.length })}\n`);
 }
 
