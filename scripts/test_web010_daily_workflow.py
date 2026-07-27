@@ -11,7 +11,30 @@ from run_daily_workflow import last_json_object, write_script_artifact
 
 
 class DailyWorkflowTest(unittest.TestCase):
-    def test_three_stage_commit_readback_and_duplicate_noop(self):
+    def test_schema_v1_history_upgrades_without_rewriting_committed_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "workflow.sqlite3"
+            flow = DailyWorkflow(path)
+            flow.begin("run_20260726_120000", "2026-07-26", 1, "legacy")
+            flow.commit_stage(
+                "run_20260726_120000", "collection", "source",
+                {"content_items": []}, "completed_empty",
+            )
+            flow.db.execute(
+                "UPDATE workflow_meta SET value='1' WHERE key='schema_version'"
+            )
+            flow.db.commit()
+            before = flow.stage("run_20260726_120000", "collection")
+            flow.db.close()
+
+            upgraded = DailyWorkflow(path)
+            version = upgraded.db.execute(
+                "SELECT value FROM workflow_meta WHERE key='schema_version'"
+            ).fetchone()["value"]
+            self.assertEqual(version, "2")
+            self.assertEqual(upgraded.stage("run_20260726_120000", "collection"), before)
+
+    def test_four_stage_commit_readback_and_duplicate_noop(self):
         with tempfile.TemporaryDirectory() as tmp:
             flow = DailyWorkflow(Path(tmp) / "workflow.sqlite3")
             flow.begin("run_20260726_120000", "2026-07-26", 9, "contract")
@@ -20,10 +43,15 @@ class DailyWorkflowTest(unittest.TestCase):
             self.assertEqual(first["action"], "committed")
             duplicate = flow.commit_stage("run_20260726_120000", "collection", "source-9", collection, "completed")
             self.assertEqual(duplicate["action"], "noop")
+            understanding = {"understanding_results": [], "understanding_failures": []}
+            enriched = flow.commit_stage(
+                "run_20260726_120000", "video_understanding",
+                first["output_hash"], understanding, "completed_empty",
+            )
             editorial = {"topics": [{"candidate_id": "c1", "decision": "select"}]}
-            flow.commit_stage("run_20260726_120000", "editorial", first["output_hash"], editorial, "completed")
+            flow.commit_stage("run_20260726_120000", "editorial", enriched["output_hash"], editorial, "completed")
             flow.commit_stage("run_20260726_120000", "scripts", digest(editorial), {"scripts": []}, "completed_empty")
-            self.assertEqual(len(flow.read_run("run_20260726_120000")["stages"]), 3)
+            self.assertEqual(len(flow.read_run("run_20260726_120000")["stages"]), 4)
 
     def test_conflict_wrong_date_and_stage_order(self):
         with tempfile.TemporaryDirectory() as tmp:

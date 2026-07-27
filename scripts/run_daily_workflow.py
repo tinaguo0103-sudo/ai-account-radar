@@ -15,6 +15,8 @@ from typing import Any
 
 from active_skill_executor import ACTIVE_ROOT, file_hash, invoke
 from daily_workflow import DailyWorkflow, WorkflowConflict, digest
+from douyin_video_understanding import materialize as materialize_video_understanding
+from douyin_video_understanding import merge_candidates as merge_video_candidates
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "output/state/daily_workflow.sqlite3"
@@ -73,12 +75,13 @@ def run_collection(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
-def editorial_input(collection: dict[str, Any]) -> dict[str, Any]:
+def editorial_input(collection: dict[str, Any], understanding: dict[str, Any]) -> dict[str, Any]:
     return {
         "task": "editorial_selection",
         "run_id": collection["run_id"],
         "business_date": collection["business_date"],
         "candidates": collection["candidates"],
+        "video_understanding": understanding,
         "output_contract": {
             "run_id": "exact input run_id",
             "topics": [{"candidate_id": "stable candidate identity", "decision": "select|observe|reject",
@@ -86,6 +89,36 @@ def editorial_input(collection: dict[str, Any]) -> dict[str, Any]:
                         "selection_reason": "string"}],
         },
     }
+
+
+def run_video_understanding(args: argparse.Namespace) -> dict[str, Any]:
+    bindings = [args.video_candidates, args.video_decisions, args.video_packages, args.video_policy]
+    if not any(bindings):
+        return {
+            "run_id": args.run_id, "business_date": args.business_date,
+            "status": "completed_empty", "reason": "no_douyin_video_understanding_input",
+            "understanding_results": [], "understanding_failures": [],
+            "completed_count": 0, "failed_count": 0, "substitute_count": 0,
+        }
+    if not all(bindings):
+        raise RuntimeError("video_understanding_binding_incomplete")
+    policy = json.loads(Path(args.video_policy).read_text())
+    candidates = merge_video_candidates(
+        json.loads(Path(args.video_candidates).read_text()), args.run_id
+    )
+    result = materialize_video_understanding(
+        run_id=args.run_id, business_date=args.business_date,
+        candidates=candidates,
+        decisions=json.loads(Path(args.video_decisions).read_text()),
+        packages=json.loads(Path(args.video_packages).read_text()),
+        policy=policy, output_root=Path(args.artifact_root),
+        on_demand_ids=set(args.video_on_demand),
+    )
+    result["status"] = (
+        "completed_with_failures" if result["failed_count"]
+        else "completed" if result["completed_count"] else "completed_empty"
+    )
+    return result
 
 
 def script_input(run_id: str, topic: dict[str, Any], content: dict[str, Any]) -> dict[str, Any]:
@@ -129,6 +162,12 @@ def contract_identity(args: argparse.Namespace) -> str:
     if args.collection_fixture:
         fixture = Path(args.collection_fixture).resolve()
         fixture_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    video_inputs = {}
+    for key in ("video_candidates", "video_decisions", "video_packages", "video_policy"):
+        value = getattr(args, key, "")
+        if value:
+            path = Path(value).resolve()
+            video_inputs[key] = hashlib.sha256(path.read_bytes()).hexdigest()
     return digest({
         "run_id": args.run_id, "business_date": args.business_date,
         "source_revision": args.source_revision,
@@ -136,6 +175,8 @@ def contract_identity(args: argparse.Namespace) -> str:
         "collection_fixture_sha256": fixture_hash,
         "publisher_url": args.publisher_url.rstrip("/"),
         "publisher_identity": args.publisher_identity,
+        "video_inputs": video_inputs,
+        "video_on_demand": sorted(args.video_on_demand),
         "skills": skills,
     })
 
@@ -197,6 +238,11 @@ def main() -> int:
     parser.add_argument("--publisher-url", default="")
     parser.add_argument("--publisher-identity", default="")
     parser.add_argument("--artifact-root", default=str(ROOT / "output/runs"))
+    parser.add_argument("--video-candidates", default="")
+    parser.add_argument("--video-decisions", default="")
+    parser.add_argument("--video-packages", default="")
+    parser.add_argument("--video-policy", default="")
+    parser.add_argument("--video-on-demand", action="append", default=[])
     args = parser.parse_args()
     DailyWorkflow.validate_identity(args.run_id, args.business_date)
     validate_runtime(args)
@@ -233,25 +279,41 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False))
         return 0 if projection_green else 2
 
+    existing_understanding = workflow.stage(args.run_id, "video_understanding")
+    if existing_understanding:
+        understanding = existing_understanding["payload"]
+        understanding_commit = existing_understanding
+    else:
+        understanding = run_video_understanding(args)
+        understanding_commit = workflow.commit_stage(
+            args.run_id, "video_understanding", collection_commit["output_hash"],
+            understanding, understanding["status"],
+        )
+    understanding_projection_green = publish_committed_stage(
+        args, workflow, "video_understanding", understanding, understanding_commit,
+    )
+
     existing_editorial = workflow.stage(args.run_id, "editorial")
     if existing_editorial:
         editorial_payload = existing_editorial["payload"]
         editorial_commit = existing_editorial
     else:
         editorial_payload, editorial_skills = invoke(
-            ["ai-account-editorial-director"], editorial_input(collection)
+            ["ai-account-editorial-director"], editorial_input(collection, understanding)
         )
         selected = [row for row in editorial_payload.get("topics", []) if row.get("decision") == "select"]
         for identity in editorial_skills:
             workflow.record_skill(
                 run_id=args.run_id, stage="editorial", unit_id="daily",
                 attempt=1, skill_name=identity["name"], skill_path=identity["path"],
-                skill_hash=identity["sha256"], input_hash=digest(editorial_input(collection)),
+                skill_hash=identity["sha256"],
+                input_hash=digest(editorial_input(collection, understanding)),
                 output_hash=digest(editorial_payload), status="completed",
             )
         editorial_payload["selected_count"] = len(selected)
         editorial_commit = workflow.commit_stage(
-            args.run_id, "editorial", collection_commit["output_hash"], editorial_payload, "completed",
+            args.run_id, "editorial", understanding_commit["output_hash"],
+            editorial_payload, "completed",
         )
     selected = [row for row in editorial_payload.get("topics", []) if row.get("decision") == "select"]
     editorial_projection_green = publish_committed_stage(
@@ -296,6 +358,7 @@ def main() -> int:
     unresolved = [
         stage for stage, green in (
             ("collection", projection_green),
+            ("video_understanding", understanding_projection_green),
             ("editorial", editorial_projection_green),
             ("scripts", scripts_projection_green),
         ) if not green

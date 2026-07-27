@@ -5,10 +5,40 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
-from publish_website_projection import ProjectionError, build_projection, main
+from daily_workflow import DailyWorkflow
+from publish_website_projection import (
+    ProjectionError,
+    build_projection,
+    build_workflow_projection,
+    main,
+)
 
 
 class WebsiteProjectionTest(unittest.TestCase):
+    def test_video_understanding_is_bound_to_exact_content_url(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "workflow.sqlite3"
+            flow = DailyWorkflow(path)
+            run_id = "run_20260727_080000"
+            flow.begin(run_id, "2026-07-27", 1, "contract")
+            collection = {"content_items": [{
+                "id": "c1", "content_fingerprint": "fp1", "source": "douyin",
+                "title": "title", "source_url": "https://www.douyin.com/video/1",
+            }]}
+            first = flow.commit_stage(run_id, "collection", "source", collection, "completed")
+            package = {
+                "source_url": "https://www.douyin.com/video/1",
+                "status": "completed", "caption_timeline": [{"text": "字幕"}],
+            }
+            flow.commit_stage(
+                run_id, "video_understanding", first["output_hash"],
+                {"understanding_results": [{"package": package}]}, "completed",
+            )
+            payload = build_workflow_projection(
+                path, run_id, "video_understanding", 2, "qa-private"
+            )
+            self.assertEqual(payload["collected_items"][0]["video_understanding"], package)
+
     def test_exact_production_shape_is_126_2_0(self):
         payload = build_projection(
             Path("/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar"),

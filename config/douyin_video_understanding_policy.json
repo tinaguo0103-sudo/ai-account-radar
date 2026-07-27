@@ -1,0 +1,27 @@
+{
+  "schema_version": 1,
+  "policy_id": "douyin-video-understanding-v1",
+  "target_count_min": 12,
+  "target_count_max": 20,
+  "target_duration_seconds": 1800,
+  "maximum_duration_seconds": 2700,
+  "selection_contract": {
+    "allowed_reasons": [
+      "title_value",
+      "engagement_relative",
+      "exploration"
+    ],
+    "or_semantics": true,
+    "fixed_engagement_threshold": false,
+    "view_count_inference": false,
+    "minimum_count_is_quota": false
+  },
+  "models": {
+    "caption": "vision-ocr",
+    "asr_fill": "SenseVoiceSmall+FSMN-VAD",
+    "asr_fallback": "mlx-community/whisper-large-v3",
+    "initial_runtime_excludes": [
+      "whisper-large-v3-turbo"
+    ]
+  }
+}

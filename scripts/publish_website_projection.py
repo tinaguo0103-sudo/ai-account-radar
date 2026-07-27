@@ -177,6 +177,11 @@ def build_workflow_projection(db_path: Path, run_id: str, stage: str,
     collection = payloads.get("collection", {})
     editorial = payloads.get("editorial", {})
     scripts_stage = payloads.get("scripts", {})
+    understanding_stage = payloads.get("video_understanding", {})
+    understanding_by_url = {
+        str(result.get("package", {}).get("source_url") or ""): result.get("package")
+        for result in understanding_stage.get("understanding_results", [])
+    }
     content: list[dict[str, Any]] = []
     by_identity: dict[str, dict[str, Any]] = {}
     for row in collection.get("content_items", []):
@@ -193,6 +198,9 @@ def build_workflow_projection(db_path: Path, run_id: str, stage: str,
             "source_url": str(row.get("source_url") or row.get("内容链接") or ""),
             "published_at": str(row.get("published_at") or row.get("发布时间") or ""),
             "collected_at": str(row.get("collected_at") or run["updated_at"]),
+            "video_understanding": understanding_by_url.get(
+                str(row.get("source_url") or row.get("内容链接") or "")
+            ),
         }
         content.append(item)
         by_identity[identity] = item
@@ -291,7 +299,9 @@ def main() -> int:
     parser.add_argument("--authority-identity", required=True)
     parser.add_argument("--website-url", required=True)
     parser.add_argument("--workflow-db", type=Path)
-    parser.add_argument("--stage", choices=("collection", "editorial", "scripts"))
+    parser.add_argument(
+        "--stage", choices=("collection", "video_understanding", "editorial", "scripts")
+    )
     parser.add_argument("--payload-out", type=Path)
     parser.add_argument("--build-only", action="store_true")
     args = parser.parse_args()

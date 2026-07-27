@@ -9,8 +9,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 1
-STAGES = ("collection", "editorial", "scripts")
+SCHEMA_VERSION = 2
+STAGES = ("collection", "video_understanding", "editorial", "scripts")
 
 
 def canonical(value: Any) -> str:
@@ -76,8 +76,14 @@ class DailyWorkflow:
                 "INSERT INTO workflow_meta(key,value) VALUES('schema_version',?)",
                 (str(SCHEMA_VERSION),),
             )
-        elif version["value"] != str(SCHEMA_VERSION):
+        elif version["value"] not in {"1", str(SCHEMA_VERSION)}:
             raise WorkflowConflict("workflow_schema_version_conflict")
+        elif version["value"] == "1":
+            # Existing v1 runs keep their committed three-stage revisions. Stage
+            # revisions are run-scoped, so only future runs adopt the four-stage order.
+            self.db.execute(
+                "UPDATE workflow_meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)
+            )
         columns = {row["name"] for row in self.db.execute("PRAGMA table_info(runs)")}
         if "contract_hash" not in columns:
             self.db.execute("ALTER TABLE runs ADD COLUMN contract_hash TEXT NOT NULL DEFAULT ''")
