@@ -258,6 +258,11 @@ def materialize(
             )
             results.append({"candidate_id": identity, "action": action, "package": checked,
                             "trigger": "on_demand" if identity in on_demand else "automatic"})
+            if checked["status"] == "failed":
+                failures.append({
+                    "candidate_id": identity,
+                    "failure": str(checked.get("failure") or "video_understanding_failed"),
+                })
         except VideoUnderstandingError as exc:
             failures.append({"candidate_id": identity, "failure": str(exc)})
     return {
@@ -268,7 +273,10 @@ def materialize(
         "plan": planned,
         "understanding_results": results,
         "understanding_failures": failures,
-        "completed_count": len(results),
+        "completed_count": sum(
+            row["package"]["status"] in {"completed", "completed_with_failures"}
+            for row in results
+        ),
         "failed_count": len(failures),
         "substitute_count": 0,
     }

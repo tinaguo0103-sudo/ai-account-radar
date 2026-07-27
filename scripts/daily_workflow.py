@@ -219,3 +219,18 @@ class DailyWorkflow:
         )]
         return {"run": dict(run), "stages": stages, "skill_attempts": skills,
                 "projection_receipts": receipts}
+
+    def fail_run(self, run_id: str, error: str) -> None:
+        row = self.db.execute("SELECT status FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        if not row or row["status"] in {"completed", "completed_with_failures", "completed_empty"}:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db:
+            self.db.execute(
+                "UPDATE runs SET status='failed',updated_at=? WHERE run_id=?",
+                (now, run_id),
+            )
+            self.db.execute(
+                """INSERT OR REPLACE INTO workflow_meta(key,value) VALUES(?,?)""",
+                (f"run_failure:{run_id}", canonical({"error": error, "failed_at": now})),
+            )

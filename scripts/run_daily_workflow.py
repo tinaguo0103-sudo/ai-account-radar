@@ -17,6 +17,10 @@ from active_skill_executor import ACTIVE_ROOT, file_hash, invoke
 from daily_workflow import DailyWorkflow, WorkflowConflict, digest
 from douyin_video_understanding import materialize as materialize_video_understanding
 from douyin_video_understanding import merge_candidates as merge_video_candidates
+from douyin_video_understanding_producer import (
+    produce as produce_video_understanding,
+    validate_runtime as validate_video_runtime,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_DB = ROOT / "output/state/daily_workflow.sqlite3"
@@ -91,9 +95,96 @@ def editorial_input(collection: dict[str, Any], understanding: dict[str, Any]) -
     }
 
 
+def merge_discovered_collection(
+    collection: dict[str, Any], producer_state: dict[str, Any],
+) -> dict[str, Any]:
+    value = json.loads(json.dumps(collection, ensure_ascii=False))
+    content = {
+        str(row.get("content_fingerprint") or row.get("id") or ""): row
+        for row in value.get("content_items", [])
+    }
+    candidates = {
+        str(row.get("candidate_id") or row.get("content_fingerprint") or row.get("id") or ""): row
+        for row in value.get("candidates", [])
+    }
+    packages = {
+        f"douyin:{row.get('aweme_id')}": row
+        for row in producer_state.get("packages", [])
+        if row.get("status") in {"completed", "completed_with_failures"}
+    }
+    for row in producer_state.get("raw_candidates", []):
+        identity = f"douyin:{row['aweme_id']}"
+        package = packages.get(identity, {})
+        asr_text = str(package.get("asr", {}).get("text") or "")
+        caption_text = "\n".join(
+            str(item.get("text") or "") for item in package.get("caption_timeline") or []
+        )
+        body = asr_text or caption_text
+        content.setdefault(identity, {
+            "id": identity,
+            "content_fingerprint": identity,
+            "source": "Douyin",
+            "account": str(row.get("author") or ""),
+            "title": str(row.get("title") or ""),
+            "summary": body[:300],
+            "body": body,
+            "source_url": str(row.get("source_url") or ""),
+            "published_at": str(row.get("published_at") or ""),
+            "collected_at": f"{value['business_date']}T08:00:00+08:00",
+        })
+        candidates.setdefault(identity, {
+            "candidate_id": identity,
+            "content_fingerprint": identity,
+            "title": str(row.get("title") or ""),
+            "source_url": str(row.get("source_url") or ""),
+            "source": "Douyin",
+        })
+    value["content_items"] = list(content.values())
+    value["candidates"] = list(candidates.values())
+    return value
+
+
 def run_video_understanding(
     args: argparse.Namespace, on_demand_ids: set[str] | None = None,
+    producer_state: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
+    if args.video_mode == "normal":
+        if producer_state is None:
+            produced = produce_video_understanding(args)
+        else:
+            incremental = produce_video_understanding(
+                args,
+                on_demand_ids=on_demand_ids or set(),
+                discovered_candidates=producer_state["raw_candidates"],
+                include_automatic=False,
+            )
+            produced = {
+                **producer_state,
+                "packages": producer_state["packages"] + incremental["packages"],
+                "failures": producer_state["failures"] + incremental["failures"],
+            }
+        policy = json.loads(Path(args.video_policy).read_text())
+        result = materialize_video_understanding(
+            run_id=args.run_id, business_date=args.business_date,
+            candidates=produced["candidates"], decisions=produced["decisions"],
+            packages=produced["packages"], policy=policy,
+            output_root=Path(args.artifact_root), on_demand_ids=on_demand_ids or set(),
+        )
+        result["_producer_state"] = produced
+        result["status"] = (
+            "completed_with_failures" if result["failed_count"]
+            else "completed" if result["completed_count"] else "completed_empty"
+        )
+        return result
+    if args.video_mode == "disabled":
+        return {
+            "run_id": args.run_id, "business_date": args.business_date,
+            "status": "completed_empty", "reason": "video_understanding_disabled",
+            "understanding_results": [], "understanding_failures": [],
+            "completed_count": 0, "failed_count": 0, "substitute_count": 0,
+        }
+    if args.video_mode not in {"qa-fixture", "offline-recovery"}:
+        raise RuntimeError("video_understanding_mode_invalid")
     bindings = [args.video_candidates, args.video_decisions, args.video_packages, args.video_policy]
     if not any(bindings):
         return {
@@ -197,6 +288,11 @@ def contract_identity(args: argparse.Namespace) -> str:
         "collection_fixture_sha256": fixture_hash,
         "publisher_url": args.publisher_url.rstrip("/"),
         "publisher_identity": args.publisher_identity,
+        "video_mode": args.video_mode,
+        "video_runtime_config_sha256": (
+            file_hash(Path(args.video_runtime_config).resolve())
+            if args.video_runtime_config else ""
+        ),
         "video_inputs": video_inputs,
         "video_on_demand": sorted(args.video_on_demand),
         "skills": skills,
@@ -212,6 +308,16 @@ def validate_runtime(args: argparse.Namespace) -> None:
         raise RuntimeError("website_projection_bearer_missing")
     if not os.environ.get("WEBSITE_PROJECTION_SIWC_BYPASS_BEARER", "").strip():
         raise RuntimeError("website_projection_machine_access_bearer_missing")
+    supplied = any((args.video_candidates, args.video_decisions, args.video_packages))
+    if args.video_mode == "normal":
+        if supplied:
+            raise RuntimeError("normal_video_fixture_input_forbidden")
+        if not args.video_runtime_config:
+            raise RuntimeError("video_runtime_config_missing")
+        validate_video_runtime(json.loads(Path(args.video_runtime_config).read_text()))
+    elif args.video_mode in {"qa-fixture", "offline-recovery"}:
+        if not all((args.video_candidates, args.video_decisions, args.video_packages)):
+            raise RuntimeError("video_understanding_binding_incomplete")
 
 
 def publish(args: argparse.Namespace, stage_payload: dict[str, Any], revision: int) -> tuple[str, str]:
@@ -263,8 +369,20 @@ def main() -> int:
     parser.add_argument("--video-candidates", default="")
     parser.add_argument("--video-decisions", default="")
     parser.add_argument("--video-packages", default="")
-    parser.add_argument("--video-policy", default="")
+    parser.add_argument(
+        "--video-policy",
+        default=str(ROOT / "config/douyin_video_understanding_policy.json"),
+    )
     parser.add_argument("--video-on-demand", action="append", default=[])
+    parser.add_argument(
+        "--video-mode",
+        choices=("normal", "qa-fixture", "offline-recovery", "disabled"),
+        default="normal",
+    )
+    parser.add_argument("--video-runtime-config", default=os.environ.get("DOUYIN_VIDEO_RUNTIME_CONFIG", ""))
+    parser.add_argument("--discovery-fixture", default="")
+    parser.add_argument("--cdp", default="http://127.0.0.1:9333")
+    parser.add_argument("--search-query", default="AI")
     args = parser.parse_args()
     DailyWorkflow.validate_identity(args.run_id, args.business_date)
     validate_runtime(args)
@@ -288,6 +406,12 @@ def main() -> int:
         return 0 if not unresolved else 2
 
     collection = run_collection(args)
+    precomputed_understanding = None
+    precomputed_producer_state = None
+    if args.video_mode == "normal":
+        precomputed_understanding = run_video_understanding(args)
+        precomputed_producer_state = precomputed_understanding.pop("_producer_state")
+        collection = merge_discovered_collection(collection, precomputed_producer_state)
     collection_commit = workflow.commit_stage(
         args.run_id, "collection", digest({"source_revision": args.source_revision}),
         collection, "completed_empty" if not collection["content_items"] else collection.get("status", "completed"),
@@ -313,7 +437,12 @@ def main() -> int:
     else:
         automatic_understanding = (
             existing_understanding["payload"] if existing_understanding
+            else precomputed_understanding if precomputed_understanding is not None
             else run_video_understanding(args)
+        )
+        producer_state = (
+            precomputed_producer_state
+            or automatic_understanding.pop("_producer_state", None)
         )
         editorial_payload, editorial_skills = invoke(
             ["ai-account-editorial-director"],
@@ -323,8 +452,12 @@ def main() -> int:
         editorial_on_demand = editorial_on_demand_ids(
             selected,
             automatic_understanding,
-            json.loads(Path(args.video_candidates).read_text())
-            if args.video_candidates else [],
+            (
+                [producer_state["raw_candidates"]]
+                if producer_state else
+                json.loads(Path(args.video_candidates).read_text())
+                if args.video_candidates else []
+            ),
         )
         requested_on_demand = set(args.video_on_demand)
         if existing_understanding:
@@ -332,8 +465,9 @@ def main() -> int:
             understanding_commit = existing_understanding
         else:
             understanding = run_video_understanding(
-                args, editorial_on_demand | requested_on_demand,
+                args, editorial_on_demand | requested_on_demand, producer_state,
             )
+            understanding.pop("_producer_state", None)
             understanding["editorial_on_demand_ids"] = sorted(editorial_on_demand)
             understanding_commit = workflow.commit_stage(
                 args.run_id, "video_understanding", collection_commit["output_hash"],
@@ -413,5 +547,14 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except (RuntimeError, WorkflowConflict, ValueError, json.JSONDecodeError) as error:
+        argv = sys.argv[1:]
+        if "--workflow-db" in argv and "--run-id" in argv:
+            try:
+                database = Path(argv[argv.index("--workflow-db") + 1])
+                run_id = argv[argv.index("--run-id") + 1]
+                if database.exists():
+                    DailyWorkflow(database).fail_run(run_id, str(error))
+            except (OSError, ValueError, IndexError, WorkflowConflict):
+                pass
         print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False, sort_keys=True))
         raise SystemExit(2)

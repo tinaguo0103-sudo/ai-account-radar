@@ -10,18 +10,22 @@ python3 scripts/run_daily_workflow.py \
   --business-date <SHANGHAI_DATE> \
   --source-revision <EXACT_SOURCE_REVISION> \
   --publisher-url https://ai-account-workbench-v1.le-ei.chatgpt.site \
-  --publisher-identity radar-production:daily-workflow.sqlite3
+  --publisher-identity radar-production:daily-workflow.sqlite3 \
+  --video-mode normal
 ```
 
 正式 owner-only Sites runtime 必须另外提供 `WEBSITE_PROJECTION_BEARER` 与
-`WEBSITE_PROJECTION_SIWC_BYPASS_BEARER`，只从环境读取且不得进入 Prompt、命令
+`WEBSITE_PROJECTION_SIWC_BYPASS_BEARER`；视频理解 runtime 通过
+`DOUYIN_VIDEO_RUNTIME_CONFIG` 绑定。三者只从环境读取且不得进入 Prompt、命令
 文本、Git 或日志。URL、authority identity 或任一 bearer 缺失时，统一
 入口在创建 run、采集、Skill 或 projection 写之前 fail closed。相同 completed run
 与相同 canonical contract identity 的重放只核对未决 projection；已 applied 且
 read-back green 时保持 workflow SQLite、timestamps、Skill attempts、artifacts 和
 receipts 原字节不变。
 
-该入口在同一 exact run 内依次提交并 read-back `collection -> editorial -> scripts`。
+该入口在同一 exact run 内依次提交并 read-back
+`collection -> video_understanding -> editorial -> scripts`。视频理解的安装、
+check-only、OCR/ASR 和风控边界见 `docs/ar050_video_understanding_runtime.md`。
 来源配置继续只读 `output/state/source_control.sqlite3`，每日运行权威为 ignored
 `output/state/daily_workflow.sqlite3`，网站 D1 仅保存 projection。正常调用图不读取
 或写入飞书 01/02/03/04/06，不发送 Topic Card、callback 或成功/失败通知。

@@ -140,6 +140,27 @@ class DailyWorkflowTest(unittest.TestCase):
             self.assertEqual(receipt["status"], "applied")
             self.assertEqual(receipt["detail"], "green")
 
+    def test_failed_run_is_terminal_and_completed_run_is_not_downgraded(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            flow = DailyWorkflow(Path(tmp) / "workflow.sqlite3")
+            run_id = "run_20260726_120000"
+            flow.begin(run_id, "2026-07-26", 1, "contract")
+            flow.fail_run(run_id, "verification_required")
+            self.assertEqual(flow.read_run(run_id)["run"]["status"], "failed")
+            failure = flow.db.execute(
+                "SELECT value FROM workflow_meta WHERE key=?", (f"run_failure:{run_id}",)
+            ).fetchone()
+            self.assertEqual(json.loads(failure["value"])["error"], "verification_required")
+
+            complete_id = "run_20260726_130000"
+            flow.begin(complete_id, "2026-07-26", 1, "contract")
+            flow.commit_stage(
+                complete_id, "collection", "input", {"content_items": []}, "completed_empty",
+            )
+            before = flow.read_run(complete_id)["run"]
+            flow.fail_run(complete_id, "late_failure")
+            self.assertEqual(flow.read_run(complete_id)["run"], before)
+
     def test_normal_entrypoint_has_no_feishu_or_notification_calls(self):
         source = Path(__file__).with_name("run_daily_workflow.py").read_text()
         for forbidden in ("push_today10_to_feishu", "finalize_daily_pipeline_after_editorial",

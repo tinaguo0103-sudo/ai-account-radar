@@ -119,6 +119,29 @@ class VideoUnderstandingTests(unittest.TestCase):
             self.assertEqual({row["trigger"] for row in result["understanding_results"]},
                              {"automatic", "on_demand"})
 
+    def test_failed_package_is_visible_but_not_completed(self):
+        rows = vu.merge_candidates([[candidate(1, "dynamic_search", "A")]], RUN_ID)
+        decisions = [{"candidate_id": rows[0]["id"], "selected": True, "reasons": ["title_value"]}]
+        failed = {
+            "run_id": RUN_ID,
+            "aweme_id": rows[0]["aweme_id"],
+            "source_url": rows[0]["source_url"],
+            "status": "failed",
+            "failure": "video_media_fetch_failed",
+            "substitute_count": 0,
+            "temporary_media_remaining": 0,
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            result = vu.materialize(
+                run_id=RUN_ID, business_date=DATE, candidates=rows,
+                decisions=decisions, packages=[failed], policy=self.policy,
+                output_root=Path(tmp),
+            )
+            self.assertEqual(result["completed_count"], 0)
+            self.assertEqual(result["failed_count"], 1)
+            self.assertEqual(result["understanding_results"][0]["package"]["status"], "failed")
+            self.assertEqual(result["substitute_count"], 0)
+
     def test_public_cli_replay_is_no_churn(self):
         raw = [[candidate(1, "configured_account", "A")]]
         row = vu.merge_candidates(raw, RUN_ID)[0]

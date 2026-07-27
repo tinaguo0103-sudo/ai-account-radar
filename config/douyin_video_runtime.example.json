@@ -1,0 +1,10 @@
+{
+  "ffmpeg": "/absolute/path/to/ffmpeg",
+  "vision_ocr_binary": "/absolute/path/to/compiled/douyin_video_vision_ocr",
+  "sensevoice_python": "/absolute/path/to/ignored/asr/venv/bin/python",
+  "sensevoice_model": "/absolute/path/to/iic/SenseVoiceSmall",
+  "fsmn_vad_model": "/absolute/path/to/iic/speech_fsmn_vad_zh-cn-16k-common-pytorch",
+  "whisper_python": "/absolute/path/to/ignored/mlx/venv/bin/python",
+  "whisper_model": "mlx-community/whisper-large-v3",
+  "timeout": 90
+}
