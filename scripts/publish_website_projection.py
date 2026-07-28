@@ -248,14 +248,27 @@ def build_workflow_projection(db_path: Path, run_id: str, stage: str,
             topic["generation_status"] = "failed"
             topic["generation_error"] = str(failure.get("reason") or "script_generation_failed")
     source_runs = []
+    content_source_counts: dict[str, int] = {}
+    for item in content:
+        source = str(item["source"])
+        content_source_counts[source] = content_source_counts.get(source, 0) + 1
     for row in collection.get("source_runs", []):
+        source = source_name(str(row.get("source") or ""))
+        counts = row.get("counts") if isinstance(row.get("counts"), dict) else {}
+        item_count = int(row.get("item_count") or content_source_counts.get(source, 0))
+        succeeded_count = int(row.get("succeeded_count") or counts.get("new") or item_count)
+        failed_count = int(
+            row.get("failed_count") or counts.get("failed")
+            or (1 if row.get("status") == "failed" else 0)
+        )
         source_runs.append({
             "id": str(row.get("id") or f"{run_id}:{row.get('source')}"),
-            "run_id": run_id, "source": source_name(str(row.get("source") or "")),
-            "status": str(row.get("status") or "completed"), "planned_count": int(row.get("planned_count") or row.get("item_count") or 0),
-            "succeeded_count": int(row.get("succeeded_count") or row.get("item_count") or 0),
-            "failed_count": int(row.get("failed_count") or (1 if row.get("status") == "failed" else 0)),
-            "item_count": int(row.get("item_count") or 0), "error_summary": str(row.get("error_summary") or ""),
+            "run_id": run_id, "source": source,
+            "status": str(row.get("status") or "completed"),
+            "planned_count": int(row.get("planned_count") or succeeded_count + failed_count),
+            "succeeded_count": succeeded_count,
+            "failed_count": failed_count,
+            "item_count": item_count, "error_summary": str(row.get("error_summary") or ""),
             "completed_at": str(row.get("completed_at") or run["updated_at"]),
         })
     payload = {

@@ -14,7 +14,7 @@ from pathlib import Path
 from typing import Any
 
 from active_skill_executor import ACTIVE_ROOT, file_hash, invoke
-from daily_workflow import DailyWorkflow, WorkflowConflict, digest
+from daily_workflow import DailyWorkflow, LEGACY_STAGES, STAGES, WorkflowConflict, digest
 from douyin_video_understanding import materialize as materialize_video_understanding
 from douyin_video_understanding import merge_candidates as merge_video_candidates
 from douyin_video_understanding_producer import (
@@ -29,6 +29,9 @@ ACTIVE_SKILLS = (
     "austin-no-overtime-scripting",
     "austin-voice-scriptwriter",
 )
+CURRENT_WORKFLOW: DailyWorkflow | None = None
+CURRENT_RUN_ID = ""
+CURRENT_STAGE = ""
 
 
 def read_csv(path: Path) -> list[dict[str, str]]:
@@ -39,21 +42,82 @@ def read_csv(path: Path) -> list[dict[str, str]]:
 def last_json_object(text: str) -> dict[str, Any]:
     decoder = json.JSONDecoder()
     parsed: list[dict[str, Any]] = []
-    for index, character in enumerate(text):
-        if character != "{":
-            continue
+    cursor = 0
+    while cursor < len(text):
+        index = text.find("{", cursor)
+        if index < 0:
+            break
         try:
-            value, _ = decoder.raw_decode(text[index:])
+            value, end = decoder.raw_decode(text[index:])
         except json.JSONDecodeError:
+            cursor = index + 1
             continue
         if isinstance(value, dict):
             parsed.append(value)
+        cursor = index + end
     if not parsed:
         raise RuntimeError("collection_result_json_missing")
     return parsed[-1]
 
 
+def collection_from_run_dir(
+    args: argparse.Namespace, run_dir: Path, payload: dict[str, Any],
+) -> dict[str, Any]:
+    exact_root = Path(args.artifact_root).resolve()
+    exact_dir = run_dir.resolve()
+    if exact_dir != exact_root / args.run_id:
+        raise RuntimeError("collection_run_output_path_mismatch")
+    content_path = exact_dir / "content_items.csv"
+    candidates_path = exact_dir / "today_10_topics.csv"
+    if not content_path.is_file() or not candidates_path.is_file():
+        raise RuntimeError("collection_required_artifact_missing")
+    content_items = read_csv(content_path)
+    candidates = read_csv(candidates_path)
+    if not content_items:
+        raise RuntimeError("collection_content_artifact_empty")
+    return {
+        "run_id": args.run_id,
+        "business_date": args.business_date,
+        "status": payload.get("collection_status", "completed"),
+        "content_items": content_items,
+        "candidates": candidates,
+        "source_runs": payload.get("source_outcomes", payload.get("isolated_source_failures", [])),
+        "recovered_from_exact_artifacts": bool(args.recover_daily_log),
+    }
+
+
+def recover_collection(args: argparse.Namespace) -> dict[str, Any]:
+    payload = json.loads(Path(args.recover_daily_log).resolve().read_text(encoding="utf-8"))
+    if payload.get("run_id") != args.run_id:
+        raise RuntimeError("recovery_wrong_run")
+    if payload.get("collection_status") not in {"completed", "completed_with_failures"}:
+        raise RuntimeError("recovery_collection_not_completed")
+    if payload.get("downstream_usable") is not True:
+        raise RuntimeError("recovery_downstream_not_usable")
+    return collection_from_run_dir(
+        args, Path(str(payload.get("run_output_dir") or "")), payload,
+    )
+
+
 def run_collection(args: argparse.Namespace) -> dict[str, Any]:
+    modes = [
+        bool(args.collection_fixture),
+        bool(args.collection_stdout_fixture),
+        bool(args.recover_daily_log),
+    ]
+    if sum(modes) > 1:
+        raise RuntimeError("collection_input_mode_conflict")
+    if args.recover_daily_log:
+        return recover_collection(args)
+    if args.collection_stdout_fixture:
+        payload = last_json_object(
+            Path(args.collection_stdout_fixture).read_text(encoding="utf-8")
+        )
+        if payload.get("run_id") not in {None, args.run_id}:
+            raise RuntimeError("collection_result_wrong_run")
+        return collection_from_run_dir(
+            args, Path(str(payload.get("run_output_dir") or "")), payload,
+        )
     if args.collection_fixture:
         payload = json.loads(Path(args.collection_fixture).read_text(encoding="utf-8"))
         if payload.get("run_id") != args.run_id:
@@ -68,20 +132,18 @@ def run_collection(args: argparse.Namespace) -> dict[str, Any]:
     if result.returncode != 0:
         raise RuntimeError(f"collection_failed:{result.returncode}")
     payload = last_json_object(result.stdout)
-    run_dir = Path(payload["run_output_dir"])
-    return {
-        "run_id": args.run_id,
-        "business_date": args.business_date,
-        "status": payload.get("collection_status", "completed"),
-        "content_items": read_csv(run_dir / "content_items.csv"),
-        "candidates": read_csv(run_dir / "today_10_topics.csv"),
-        "source_runs": payload.get("source_outcomes", []),
-    }
+    if payload.get("run_id") not in {None, args.run_id}:
+        raise RuntimeError("collection_result_wrong_run")
+    return collection_from_run_dir(
+        args, Path(str(payload.get("run_output_dir") or "")), payload,
+    )
 
 
-def editorial_input(collection: dict[str, Any], understanding: dict[str, Any]) -> dict[str, Any]:
+def editorial_input(
+    collection: dict[str, Any], understanding: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     bounded_results = []
-    for row in understanding.get("understanding_results", []):
+    for row in (understanding or {}).get("understanding_results", []):
         package = row.get("package") or {}
         caption_text = "\n".join(
             str(item.get("text") or "")
@@ -106,12 +168,20 @@ def editorial_input(collection: dict[str, Any], understanding: dict[str, Any]) -
             "failures": package.get("failures") or [],
             "package_sha256": package.get("package_sha256"),
         })
-    return {
+    value = {
         "task": "editorial_selection",
         "run_id": collection["run_id"],
         "business_date": collection["business_date"],
         "candidates": collection["candidates"],
-        "video_understanding": {
+        "output_contract": {
+            "run_id": "exact input run_id",
+            "topics": [{"candidate_id": "stable candidate identity", "decision": "select|observe|reject",
+                        "title": "string", "hook": "string", "structure": "string",
+                        "selection_reason": "string"}],
+        },
+    }
+    if understanding is not None:
+        value["video_understanding"] = {
             "run_id": understanding.get("run_id"),
             "business_date": understanding.get("business_date"),
             "status": understanding.get("status"),
@@ -120,14 +190,8 @@ def editorial_input(collection: dict[str, Any], understanding: dict[str, Any]) -
             "substitute_count": understanding.get("substitute_count"),
             "understanding_failures": understanding.get("understanding_failures") or [],
             "understanding_results": bounded_results,
-        },
-        "output_contract": {
-            "run_id": "exact input run_id",
-            "topics": [{"candidate_id": "stable candidate identity", "decision": "select|observe|reject",
-                        "title": "string", "hook": "string", "structure": "string",
-                        "selection_reason": "string"}],
-        },
-    }
+        }
+    return value
 
 
 def merge_discovered_collection(
@@ -352,26 +416,38 @@ def contract_identity(args: argparse.Namespace) -> str:
     if args.collection_fixture:
         fixture = Path(args.collection_fixture).resolve()
         fixture_hash = hashlib.sha256(fixture.read_bytes()).hexdigest()
+    stdout_fixture_hash = ""
+    if args.collection_stdout_fixture:
+        path = Path(args.collection_stdout_fixture).resolve()
+        stdout_fixture_hash = hashlib.sha256(path.read_bytes()).hexdigest()
+    recovery_hash = ""
+    if args.recover_daily_log:
+        path = Path(args.recover_daily_log).resolve()
+        recovery_hash = hashlib.sha256(path.read_bytes()).hexdigest()
     video_inputs = {}
-    for key in ("video_candidates", "video_decisions", "video_packages", "video_policy"):
-        value = getattr(args, key, "")
-        if value:
-            path = Path(value).resolve()
-            video_inputs[key] = hashlib.sha256(path.read_bytes()).hexdigest()
+    if not args.recover_daily_log:
+        for key in ("video_candidates", "video_decisions", "video_packages", "video_policy"):
+            value = getattr(args, key, "")
+            if value:
+                path = Path(value).resolve()
+                video_inputs[key] = hashlib.sha256(path.read_bytes()).hexdigest()
     return digest({
         "run_id": args.run_id, "business_date": args.business_date,
         "source_revision": args.source_revision,
         "source_db": str(Path(args.source_db).resolve()),
         "collection_fixture_sha256": fixture_hash,
+        "collection_stdout_fixture_sha256": stdout_fixture_hash,
+        "recovery_daily_log_sha256": recovery_hash,
         "publisher_url": args.publisher_url.rstrip("/"),
         "publisher_identity": args.publisher_identity,
-        "video_mode": args.video_mode,
+        "video_mode": "legacy-exact-artifact-recovery" if args.recover_daily_log else args.video_mode,
         "video_runtime_config_sha256": (
             file_hash(Path(args.video_runtime_config).resolve())
-            if args.video_runtime_config else ""
+            if args.video_runtime_config and not args.recover_daily_log else ""
         ),
         "video_inputs": video_inputs,
         "video_on_demand": sorted(args.video_on_demand),
+        "stage_plan": list(LEGACY_STAGES if args.recover_daily_log else STAGES),
         "skills": skills,
     })
 
@@ -385,6 +461,11 @@ def validate_runtime(args: argparse.Namespace) -> None:
         raise RuntimeError("website_projection_bearer_missing")
     if not os.environ.get("WEBSITE_PROJECTION_SIWC_BYPASS_BEARER", "").strip():
         raise RuntimeError("website_projection_machine_access_bearer_missing")
+    if getattr(args, "recover_daily_log", ""):
+        if any((args.video_candidates, args.video_decisions, args.video_packages,
+                args.discovery_fixture, args.video_on_demand)):
+            raise RuntimeError("historical_recovery_video_input_forbidden")
+        return
     supplied = any((args.video_candidates, args.video_decisions, args.video_packages))
     if args.video_mode == "normal":
         if supplied:
@@ -432,7 +513,142 @@ def publish_committed_stage(args: argparse.Namespace, workflow: DailyWorkflow,
     return status == "applied"
 
 
+def mark_projection_terminal(
+    workflow: DailyWorkflow, run_id: str, unresolved: list[str],
+) -> None:
+    statuses = []
+    for stage in unresolved:
+        committed = workflow.stage(run_id, stage)
+        if committed:
+            receipt = workflow.projection(run_id, stage, int(committed["revision"]))
+            statuses.append(str((receipt or {}).get("status") or "unknown"))
+    conflict = any(status == "conflict" for status in statuses)
+    workflow.fail(
+        run_id, "publisher",
+        ("projection_conflict:" if conflict else "projection_unresolved:") + ",".join(unresolved),
+        status="failed" if conflict else "projection_pending",
+    )
+
+
+def run_legacy_recovery(
+    args: argparse.Namespace, workflow: DailyWorkflow,
+) -> int:
+    global CURRENT_STAGE
+    existing_collection = workflow.stage(args.run_id, "collection")
+    CURRENT_STAGE = "collection"
+    if existing_collection:
+        collection = existing_collection["payload"]
+        collection_commit = existing_collection
+    else:
+        collection = run_collection(args)
+        collection_commit = workflow.commit_stage(
+            args.run_id, "collection", digest({"source_revision": args.source_revision}),
+            collection, collection.get("status", "completed"),
+        )
+    CURRENT_STAGE = "publisher:collection"
+    projection_green = publish_committed_stage(
+        args, workflow, "collection", collection, collection_commit,
+    )
+
+    existing_editorial = workflow.stage(args.run_id, "editorial")
+    CURRENT_STAGE = "editorial"
+    if existing_editorial:
+        editorial_payload = existing_editorial["payload"]
+        editorial_commit = existing_editorial
+    else:
+        editorial_request = editorial_input(collection)
+        editorial_payload, editorial_skills = invoke(
+            ["ai-account-editorial-director"], editorial_request,
+        )
+        selected = [
+            row for row in editorial_payload.get("topics", [])
+            if row.get("decision") == "select"
+        ]
+        for identity in editorial_skills:
+            workflow.record_skill(
+                run_id=args.run_id, stage="editorial", unit_id="daily",
+                attempt=1, skill_name=identity["name"], skill_path=identity["path"],
+                skill_hash=identity["sha256"], input_hash=digest(editorial_request),
+                output_hash=digest(editorial_payload), status="completed",
+            )
+        editorial_payload["selected_count"] = len(selected)
+        editorial_commit = workflow.commit_stage(
+            args.run_id, "editorial", collection_commit["output_hash"],
+            editorial_payload, "completed",
+        )
+    CURRENT_STAGE = "publisher:editorial"
+    editorial_projection_green = publish_committed_stage(
+        args, workflow, "editorial", editorial_payload, editorial_commit,
+    )
+
+    selected = [
+        row for row in editorial_payload.get("topics", [])
+        if row.get("decision") == "select"
+    ]
+    existing_scripts = workflow.stage(args.run_id, "scripts")
+    CURRENT_STAGE = "scripts"
+    if existing_scripts:
+        scripts_payload = existing_scripts["payload"]
+        scripts_commit = existing_scripts
+    else:
+        contents = {
+            str(row.get("content_fingerprint") or row.get("id")): row
+            for row in collection["content_items"]
+        }
+        scripts, failures = [], []
+        for topic in selected:
+            unit = str(topic["candidate_id"])
+            source = contents.get(unit, {})
+            try:
+                request = script_input(args.run_id, topic, source)
+                payload, identities = invoke(
+                    ["austin-no-overtime-scripting", "austin-voice-scriptwriter"],
+                    request,
+                )
+                payload = write_script_artifact(
+                    Path(args.artifact_root), args.run_id, payload,
+                )
+                scripts.append(payload)
+                for identity in identities:
+                    workflow.record_skill(
+                        run_id=args.run_id, stage="scripts", unit_id=unit, attempt=1,
+                        skill_name=identity["name"], skill_path=identity["path"],
+                        skill_hash=identity["sha256"], input_hash=digest(request),
+                        output_hash=digest(payload), status="completed",
+                    )
+            except Exception as error:
+                failures.append({"topic_id": unit, "reason": str(error)})
+        scripts_payload = {
+            "run_id": args.run_id, "scripts": scripts, "failures": failures,
+        }
+        scripts_commit = workflow.commit_stage(
+            args.run_id, "scripts", editorial_commit["output_hash"], scripts_payload,
+            "completed_with_failures" if failures else "completed",
+        )
+    CURRENT_STAGE = "publisher:scripts"
+    scripts_projection_green = publish_committed_stage(
+        args, workflow, "scripts", scripts_payload, scripts_commit,
+    )
+    unresolved = [
+        stage for stage, green in (
+            ("collection", projection_green),
+            ("editorial", editorial_projection_green),
+            ("scripts", scripts_projection_green),
+        ) if not green
+    ]
+    if unresolved:
+        mark_projection_terminal(workflow, args.run_id, unresolved)
+    else:
+        workflow.complete(args.run_id, str(scripts_commit["status"]))
+    result = workflow.read_run(args.run_id)
+    result["action"] = "completed" if not unresolved else "projection_unresolved"
+    result["unresolved_stages"] = unresolved
+    print(json.dumps(result, ensure_ascii=False))
+    return 0 if not unresolved else 2
+
+
 def main() -> int:
+    global CURRENT_WORKFLOW, CURRENT_RUN_ID, CURRENT_STAGE
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
     parser.add_argument("--business-date", required=True)
@@ -440,6 +656,8 @@ def main() -> int:
     parser.add_argument("--workflow-db", default=str(DEFAULT_DB))
     parser.add_argument("--source-revision", type=int, required=True)
     parser.add_argument("--collection-fixture", default="")
+    parser.add_argument("--collection-stdout-fixture", default="")
+    parser.add_argument("--recover-daily-log", default="")
     parser.add_argument("--publisher-url", default="")
     parser.add_argument("--publisher-identity", default="")
     parser.add_argument("--artifact-root", default=str(ROOT / "output/runs"))
@@ -465,8 +683,16 @@ def main() -> int:
     validate_runtime(args)
     exact_contract = contract_identity(args)
     workflow = DailyWorkflow(args.workflow_db)
+    CURRENT_WORKFLOW = workflow
+    CURRENT_RUN_ID = args.run_id
+    stage_plan = LEGACY_STAGES if args.recover_daily_log else STAGES
+    if args.recover_daily_log:
+        workflow.reconcile_empty_legacy_recovery_contract(
+            args.run_id, args.business_date, args.source_revision, exact_contract,
+        )
     begin_action = workflow.begin(
         args.run_id, args.business_date, args.source_revision, exact_contract,
+        stage_plan=stage_plan,
     )
     if begin_action == "completed_replay":
         completed = workflow.read_run(args.run_id)
@@ -479,9 +705,19 @@ def main() -> int:
         result = workflow.read_run(args.run_id)
         result["action"] = "noop" if not unresolved else "projection_unresolved"
         result["unresolved_stages"] = unresolved
+        if unresolved:
+            mark_projection_terminal(workflow, args.run_id, unresolved)
+            result = workflow.read_run(args.run_id)
+            result["action"] = "projection_unresolved"
+            result["unresolved_stages"] = unresolved
         print(json.dumps(result, ensure_ascii=False))
         return 0 if not unresolved else 2
+    if begin_action == "resume":
+        workflow.resume(args.run_id)
+    if args.recover_daily_log:
+        return run_legacy_recovery(args, workflow)
 
+    CURRENT_STAGE = "collection"
     existing_collection = workflow.stage(args.run_id, "collection")
     precomputed_understanding = None
     precomputed_producer_state = None
@@ -489,6 +725,7 @@ def main() -> int:
         collection = existing_collection["payload"]
         collection_commit = existing_collection
         if args.video_mode == "normal":
+            CURRENT_STAGE = "video_understanding"
             precomputed_producer_state = load_committed_producer_state(args)
             precomputed_understanding = run_video_understanding(
                 args, producer_state=precomputed_producer_state,
@@ -496,17 +733,24 @@ def main() -> int:
     else:
         collection = run_collection(args)
         if args.video_mode == "normal":
+            CURRENT_STAGE = "video_understanding"
             precomputed_understanding = run_video_understanding(args)
             precomputed_producer_state = precomputed_understanding.pop("_producer_state")
             collection = merge_discovered_collection(collection, precomputed_producer_state)
+        CURRENT_STAGE = "collection"
         collection_commit = workflow.commit_stage(
             args.run_id, "collection", digest({"source_revision": args.source_revision}),
             collection, "completed_empty" if not collection["content_items"] else collection.get("status", "completed"),
         )
+    CURRENT_STAGE = "publisher:collection"
     projection_green = publish_committed_stage(
         args, workflow, "collection", collection, collection_commit,
     )
     if not collection["content_items"]:
+        if not projection_green:
+            mark_projection_terminal(workflow, args.run_id, ["collection"])
+        else:
+            workflow.complete(args.run_id, "completed_empty")
         result = workflow.read_run(args.run_id)
         result["action"] = "completed_empty" if projection_green else "projection_unresolved"
         print(json.dumps(result, ensure_ascii=False))
@@ -514,6 +758,7 @@ def main() -> int:
 
     existing_understanding = workflow.stage(args.run_id, "video_understanding")
     existing_editorial = workflow.stage(args.run_id, "editorial")
+    CURRENT_STAGE = "video_understanding"
     if existing_editorial:
         if not existing_understanding:
             raise RuntimeError("editorial_without_video_understanding")
@@ -531,6 +776,7 @@ def main() -> int:
             precomputed_producer_state
             or automatic_understanding.pop("_producer_state", None)
         )
+        CURRENT_STAGE = "editorial"
         editorial_payload, editorial_skills = invoke(
             ["ai-account-editorial-director"],
             editorial_input(collection, automatic_understanding),
@@ -573,15 +819,18 @@ def main() -> int:
             args.run_id, "editorial", understanding_commit["output_hash"],
             editorial_payload, "completed",
         )
+    CURRENT_STAGE = "publisher:video_understanding"
     understanding_projection_green = publish_committed_stage(
         args, workflow, "video_understanding", understanding, understanding_commit,
     )
     selected = [row for row in editorial_payload.get("topics", []) if row.get("decision") == "select"]
+    CURRENT_STAGE = "publisher:editorial"
     editorial_projection_green = publish_committed_stage(
         args, workflow, "editorial", editorial_payload, editorial_commit,
     )
 
     existing_scripts = workflow.stage(args.run_id, "scripts")
+    CURRENT_STAGE = "scripts"
     if existing_scripts:
         scripts_payload = existing_scripts["payload"]
         script_commit = existing_scripts
@@ -612,6 +861,7 @@ def main() -> int:
             args.run_id, "scripts", editorial_commit["output_hash"], scripts_payload,
             "completed_with_failures" if failures else "completed",
         )
+    CURRENT_STAGE = "publisher:scripts"
     scripts_projection_green = publish_committed_stage(
         args, workflow, "scripts", scripts_payload, script_commit,
     )
@@ -626,6 +876,16 @@ def main() -> int:
     ]
     result["action"] = "completed" if not unresolved else "projection_unresolved"
     result["unresolved_stages"] = unresolved
+    if unresolved:
+        mark_projection_terminal(workflow, args.run_id, unresolved)
+        result = workflow.read_run(args.run_id)
+        result["action"] = "projection_unresolved"
+        result["unresolved_stages"] = unresolved
+    else:
+        workflow.complete(args.run_id, str(script_commit["status"]))
+        result = workflow.read_run(args.run_id)
+        result["action"] = "completed"
+        result["unresolved_stages"] = []
     print(json.dumps(result, ensure_ascii=False))
     return 0 if not unresolved else 2
 
@@ -634,23 +894,17 @@ if __name__ == "__main__":
     try:
         raise SystemExit(main())
     except KeyboardInterrupt:
-        argv = sys.argv[1:]
-        if "--workflow-db" in argv and "--run-id" in argv:
-            database = Path(argv[argv.index("--workflow-db") + 1])
-            run_id = argv[argv.index("--run-id") + 1]
-            if database.exists():
-                DailyWorkflow(database).fail_run(run_id, "workflow_interrupted")
+        if CURRENT_WORKFLOW is not None and CURRENT_RUN_ID:
+            CURRENT_WORKFLOW.fail(
+                CURRENT_RUN_ID, CURRENT_STAGE or "workflow", "workflow_interrupted",
+            )
         print(json.dumps({"ok": False, "error": "workflow_interrupted"}, sort_keys=True))
         raise SystemExit(130)
     except (RuntimeError, WorkflowConflict, ValueError, json.JSONDecodeError) as error:
-        argv = sys.argv[1:]
-        if "--workflow-db" in argv and "--run-id" in argv:
-            try:
-                database = Path(argv[argv.index("--workflow-db") + 1])
-                run_id = argv[argv.index("--run-id") + 1]
-                if database.exists():
-                    DailyWorkflow(database).fail_run(run_id, str(error))
-            except (OSError, ValueError, IndexError, WorkflowConflict):
-                pass
+        if CURRENT_WORKFLOW is not None and CURRENT_RUN_ID:
+            CURRENT_WORKFLOW.fail(
+                CURRENT_RUN_ID, CURRENT_STAGE or "workflow",
+                f"{type(error).__name__}:{error}",
+            )
         print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False, sort_keys=True))
         raise SystemExit(2)

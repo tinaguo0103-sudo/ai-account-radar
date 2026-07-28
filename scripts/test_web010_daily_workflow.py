@@ -6,7 +6,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from daily_workflow import DailyWorkflow, WorkflowConflict, digest
+from daily_workflow import DailyWorkflow, LEGACY_STAGES, WorkflowConflict, digest
 from run_daily_workflow import (
     editorial_input,
     editorial_on_demand_ids,
@@ -88,7 +88,7 @@ class DailyWorkflowTest(unittest.TestCase):
             version = upgraded.db.execute(
                 "SELECT value FROM workflow_meta WHERE key='schema_version'"
             ).fetchone()["value"]
-            self.assertEqual(version, "2")
+            self.assertEqual(version, "3")
             self.assertEqual(upgraded.stage("run_20260726_120000", "collection"), before)
 
     def test_four_stage_commit_readback_and_duplicate_noop(self):
@@ -109,6 +109,66 @@ class DailyWorkflowTest(unittest.TestCase):
             flow.commit_stage("run_20260726_120000", "editorial", enriched["output_hash"], editorial, "completed")
             flow.commit_stage("run_20260726_120000", "scripts", digest(editorial), {"scripts": []}, "completed_empty")
             self.assertEqual(len(flow.read_run("run_20260726_120000")["stages"]), 4)
+
+    def test_legacy_stage_plan_preserves_three_stage_recovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            flow = DailyWorkflow(Path(tmp) / "workflow.sqlite3")
+            run_id = "run_20260727_080141"
+            flow.begin(
+                run_id, "2026-07-27", 3, "legacy-contract",
+                stage_plan=LEGACY_STAGES,
+            )
+            collection = flow.commit_stage(
+                run_id, "collection", "source", {"content_items": [{"id": "c1"}]},
+                "completed",
+            )
+            editorial = flow.commit_stage(
+                run_id, "editorial", collection["output_hash"], {"topics": []},
+                "completed",
+            )
+            scripts = flow.commit_stage(
+                run_id, "scripts", editorial["output_hash"], {"scripts": []},
+                "completed_empty",
+            )
+            self.assertEqual(scripts["revision"], 3)
+            self.assertEqual(flow.stage_plan(run_id), LEGACY_STAGES)
+            self.assertEqual(
+                [row["stage"] for row in flow.read_run(run_id)["stages"]],
+                list(LEGACY_STAGES),
+            )
+            with self.assertRaises(ValueError):
+                flow.commit_stage(
+                    run_id, "video_understanding", collection["output_hash"], {},
+                    "completed_empty",
+                )
+
+    def test_legacy_recovery_contract_reconciles_only_empty_nonterminal_run(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            flow = DailyWorkflow(Path(tmp) / "workflow.sqlite3")
+            run_id = "run_20260727_080141"
+            flow.begin(
+                run_id, "2026-07-27", 3, "old-contract",
+                stage_plan=LEGACY_STAGES,
+            )
+            self.assertEqual(
+                flow.reconcile_empty_legacy_recovery_contract(
+                    run_id, "2026-07-27", 3, "recovery-contract",
+                ),
+                "reconciled",
+            )
+            self.assertEqual(
+                flow.read_run(run_id)["run"]["contract_hash"], "recovery-contract",
+            )
+            flow.commit_stage(
+                run_id, "collection", "source", {"content_items": [{"id": "c1"}]},
+                "completed",
+            )
+            with self.assertRaisesRegex(
+                WorkflowConflict, "legacy_recovery_contract_has_committed_state",
+            ):
+                flow.reconcile_empty_legacy_recovery_contract(
+                    run_id, "2026-07-27", 3, "another-contract",
+                )
 
     def test_conflict_wrong_date_and_stage_order(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -220,6 +280,19 @@ class DailyWorkflowTest(unittest.TestCase):
             last_json_object('child output {"rows": 2}\nfinal\\n{"run_id":"run_exact","ok":true}\\n'),
             {"run_id": "run_exact", "ok": True},
         )
+
+    def test_collection_parser_skips_nested_objects_in_pretty_result(self):
+        payload = {
+            "run_id": "run_20260727_080141",
+            "run_output_dir": "/tmp/exact",
+            "source_outcomes": [
+                {"source": "Douyin", "counts": {"new": 17, "failed": 1}},
+            ],
+        }
+        text = "progress {\"not\":\"result\"}\n" + json.dumps(
+            payload, ensure_ascii=False, indent=2,
+        ) + "\ntrailing noise"
+        self.assertEqual(last_json_object(text), payload)
 
     def test_all_four_publisher_bindings_fail_before_any_business_side_effect(self):
         script = Path(__file__).with_name("run_daily_workflow.py")
