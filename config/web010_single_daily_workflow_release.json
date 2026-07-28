@@ -1,24 +1,46 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "taskId": "WEB-010",
   "candidateOnly": true,
   "externalSchedule": {
     "existingId": "ai-rebuild",
     "schedule": "08:00 Asia/Shanghai",
-    "publicEntrypoint": "python3 scripts/run_daily_workflow.py --run-id <EXACT_RUN_ID> --business-date <SHANGHAI_DATE> --source-revision <EXACT_SOURCE_REVISION> --publisher-url https://ai-account-workbench-v1.le-ei.chatgpt.site --publisher-identity radar-production:daily-workflow.sqlite3 --video-mode normal",
-    "requiredRuntimeEnvironment": ["WEBSITE_PROJECTION_BEARER", "WEBSITE_PROJECTION_SIWC_BYPASS_BEARER", "DOUYIN_VIDEO_RUNTIME_CONFIG"],
-    "requiredProjectionBindings": ["publisher-url", "publisher-identity"],
+    "publicEntrypoint": "python3 scripts/run_daily_workflow.py --run-id <EXACT_RUN_ID> --business-date <SHANGHAI_DATE> --video-mode normal",
+    "outerAgentProtocol": [
+      "Run the public entrypoint. It completes collection_enrichment or resumes its exact local checkpoint.",
+      "When editorial is required, directly apply the active ai-account-editorial-director Skill in this outer Codex task and save the simple stage result.",
+      "When scripts are required, directly apply active austin-no-overtime-scripting and austin-voice-scriptwriter in this outer Codex task and save the simple stage result.",
+      "Run the same public entrypoint with the simple stage result files until local terminal completion.",
+      "The owner-only publisher client reads its runtime-only config and attempts one terminal snapshot. Publish pending is not a business failure."
+    ],
     "inPlaceUpdateOnly": true
   },
-  "retireAfterFirstRealFlow": [
-    {"existingId": "ai-04-rebuild", "releaseState": "keep_paused", "afterFirstRealFlow": "archive_or_delete_via_official_control_plane"},
-    {"existingId": "ai-rebuild-2", "releaseState": "keep_paused", "afterFirstRealFlow": "archive_or_delete_via_official_control_plane"}
+  "runtimeTopology": [
+    "collection_enrichment",
+    "editorial",
+    "scripts"
   ],
-  "watcher": {
-    "entrypoint": "scripts/watch_script_package_queue.py",
-    "releaseState": "remove_from_active_runtime_after_accepted_release",
-    "normalWorkflowReachable": false
-  },
-  "normalRuntimeForbiddenCalls": ["Feishu 01", "Feishu 02", "Feishu 03", "Feishu 04", "Feishu 06", "Topic Card", "callback", "notification"],
-  "stopConditions": ["publisher_binding_or_bearer_missing", "wrong_run_or_business_date", "cross_run_input", "stage_commit_readback_unknown", "active_skill_identity_unknown", "duplicate_or_conflicting_stage", "projection_unresolved_or_conflict"]
+  "normalRuntimeForbiddenCalls": [
+    "codex exec",
+    "second Agent",
+    "skill request envelope",
+    "per-stage Website POST",
+    "historical adapter",
+    "Feishu 01",
+    "Feishu 02",
+    "Feishu 03",
+    "Feishu 04",
+    "Feishu 06",
+    "Topic Card",
+    "callback",
+    "notification"
+  ],
+  "stopConditions": [
+    "wrong_run_or_business_date",
+    "cross_run_input",
+    "stable_item_write_conflict",
+    "duplicate_external_effect",
+    "unknown_external_state",
+    "secret_exposure"
+  ]
 }

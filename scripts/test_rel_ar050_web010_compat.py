@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import csv
-import hashlib
 import json
 import os
 import subprocess
@@ -17,49 +16,26 @@ from daily_workflow import DailyWorkflow
 ROOT = Path(__file__).resolve().parents[1]
 
 
-class ProjectionHandler(BaseHTTPRequestHandler):
-    projections: dict[str, dict] = {}
-    requests: list[tuple[str, str]] = []
+class TerminalProjectionHandler(BaseHTTPRequestHandler):
+    posts = 0
+    gets = 0
+    payloads: dict[str, dict] = {}
 
     def log_message(self, *_args):
         return
 
-    def _send(self, status: int, payload: dict) -> None:
-        body = json.dumps(payload).encode()
-        self.send_response(status)
+    def reply(self, code: int, value: dict):
+        body = json.dumps(value).encode()
+        self.send_response(code)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(body)))
         self.end_headers()
         self.wfile.write(body)
 
-    def do_POST(self):
-        self.__class__.requests.append(("POST", self.path))
-        length = int(self.headers.get("Content-Length") or 0)
-        payload = json.loads(self.rfile.read(length))
-        existing = self.__class__.projections.get(payload["run_id"])
-        if existing and existing["revision"] >= payload["revision"]:
-            self._send(409, {"error": "business_projection_conflict"})
-            return
-        self.__class__.projections[payload["run_id"]] = payload
-        self._send(200, self._readback(payload, "applied"))
-
-    def do_GET(self):
-        self.__class__.requests.append(("GET", self.path))
-        run_id = self.path.split("run_id=", 1)[-1]
-        payload = self.__class__.projections.get(run_id)
-        if not payload:
-            self._send(404, {"error": "business_projection_missing"})
-            return
-        self._send(200, self._readback(payload, "readback"))
-
-    @staticmethod
-    def _readback(payload: dict, status: str) -> dict:
+    def readback(self, payload: dict, status: str):
         return {
-            "ok": True,
-            "status": status,
-            "run_id": payload["run_id"],
-            "revision": payload["revision"],
-            "payload_sha256": payload["payload_sha256"],
+            "ok": True, "status": status, "run_id": payload["run_id"],
+            "revision": payload["revision"], "payload_sha256": payload["payload_sha256"],
             "authority_identity": payload["authority_identity"],
             "counts": {
                 "content": len(payload["collected_items"]),
@@ -68,24 +44,32 @@ class ProjectionHandler(BaseHTTPRequestHandler):
             },
         }
 
+    def do_POST(self):
+        self.__class__.posts += 1
+        payload = json.loads(self.rfile.read(int(self.headers["Content-Length"])))
+        self.__class__.payloads[payload["run_id"]] = payload
+        self.reply(200, self.readback(payload, "applied"))
 
-def write_json(path: Path, value) -> None:
+    def do_GET(self):
+        self.__class__.gets += 1
+        run_id = self.path.split("run_id=", 1)[-1]
+        payload = self.__class__.payloads.get(run_id)
+        if not payload:
+            self.reply(404, {"error": "business_projection_missing"})
+        else:
+            self.reply(200, self.readback(payload, "readback"))
+
+
+def write(path: Path, value) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
 
 
-def write_csv(path: Path, rows: list[dict[str, str]]) -> None:
-    path.parent.mkdir(parents=True, exist_ok=True)
-    with path.open("w", encoding="utf-8", newline="") as handle:
-        writer = csv.DictWriter(handle, fieldnames=list(rows[0]))
-        writer.writeheader()
-        writer.writerows(rows)
-
-
-class CompatibilityPublicFlowTest(unittest.TestCase):
+class PublicV2FlowTest(unittest.TestCase):
     def setUp(self):
-        ProjectionHandler.projections = {}
-        ProjectionHandler.requests = []
-        self.server = ThreadingHTTPServer(("127.0.0.1", 0), ProjectionHandler)
+        TerminalProjectionHandler.posts = 0
+        TerminalProjectionHandler.gets = 0
+        TerminalProjectionHandler.payloads = {}
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), TerminalProjectionHandler)
         self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
         self.thread.start()
 
@@ -94,157 +78,168 @@ class CompatibilityPublicFlowTest(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
 
-    def fake_codex(self, root: Path) -> Path:
-        target = root / "fake-codex"
-        target.write_text(
-            """#!/usr/bin/env python3
-import json, sys
-from pathlib import Path
-prompt = sys.stdin.read()
-out = Path(sys.argv[sys.argv.index("--output-last-message") + 1])
-topic = "douyin:7001" if "douyin:7001" in prompt else "c1"
-if "editorial_selection" in prompt:
-    value = {"run_id": "exact", "topics": [{"candidate_id": topic, "decision": "select",
-      "title": "选题", "hook": "钩子", "structure": "结构", "selection_reason": "理由"}]}
-else:
-    value = {"run_id": "exact", "topic_id": topic, "title": "脚本",
-      "hook": "钩子", "structure": "结构", "body": "完整口播稿"}
-out.write_text(json.dumps(value, ensure_ascii=False))
-""",
-            encoding="utf-8",
-        )
-        target.chmod(0o755)
-        return target
-
-    def environment(self, root: Path) -> dict[str, str]:
-        env = os.environ.copy()
-        env.update({
-            "CODEX_BIN": str(self.fake_codex(root)),
-            "WEBSITE_PROJECTION_BEARER": "qa-app",
-            "WEBSITE_PROJECTION_SIWC_BYPASS_BEARER": "qa-machine",
-            "PYTHONPYCACHEPREFIX": str(root / "pycache"),
+    def config(self, root: Path, port: int | None = None) -> Path:
+        path = root / "publisher.json"
+        write(path, {
+            "website_url": f"http://127.0.0.1:{port or self.server.server_port}",
+            "authority_identity": "qa-private:v2",
+            "app_bearer": "runtime-only-test",
+            "sites_bearer": "runtime-only-test",
         })
-        return env
+        return path
 
-    def base_command(self, root: Path, run_id: str, date: str) -> list[str]:
+    def command(self, root: Path, run_id: str, fixture: Path) -> list[str]:
         return [
             sys.executable, str(ROOT / "scripts/run_daily_workflow.py"),
-            "--run-id", run_id, "--business-date", date,
-            "--source-revision", "3", "--source-db", str(root / "source.sqlite3"),
+            "--run-id", run_id, "--business-date", "2026-07-28",
             "--workflow-db", str(root / "workflow.sqlite3"),
             "--artifact-root", str(root / "runs"),
-            "--publisher-url", f"http://127.0.0.1:{self.server.server_port}",
-            "--publisher-identity", "qa-private:compat",
+            "--collection-fixture", str(fixture), "--video-mode", "disabled",
         ]
 
-    def test_new_four_stage_public_flow_and_replay_are_exact(self):
-        with tempfile.TemporaryDirectory(prefix="rel_ar050_web010_new_") as tmp:
+    def execute(self, command: list[str], config: Path):
+        env = os.environ.copy()
+        env["WEBSITE_PUBLISHER_CONFIG"] = str(config)
+        return subprocess.run(command, text=True, capture_output=True, env=env)
+
+    def test_public_three_stage_single_publish_and_replay(self):
+        with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run_id = "run_20260728_080000"
-            candidate = {
-                "run_id": run_id, "aweme_id": "7001",
-                "source_url": "https://www.douyin.com/video/7001",
-                "author": "qa", "title": "AI workflow", "published_at": "2026-07-28",
-                "duration_seconds": 60, "discovery_source": "dynamic_search",
-                "likes": 10, "comments": 1, "favorites": 2, "shares": 1,
-                "raw_identity": "raw-7001",
-            }
-            collection = {
-                "run_id": run_id, "business_date": "2026-07-28", "status": "completed",
-                "content_items": [{
-                    "id": "douyin:7001", "content_fingerprint": "douyin:7001",
-                    "source": "Douyin", "title": "AI workflow",
-                    "source_url": candidate["source_url"],
-                }],
-                "candidates": [{"candidate_id": "douyin:7001", "title": "AI workflow"}],
-                "source_runs": [{"source": "Douyin", "status": "completed", "item_count": 1}],
-            }
-            package = {
-                "run_id": run_id, "aweme_id": "7001",
-                "source_url": candidate["source_url"], "status": "completed",
-                "caption_timeline": [{"start": 0, "end": 1, "text": "字幕", "frame_sha256": "f"}],
-                "asr": {"primary_model": "SenseVoiceSmall+FSMN-VAD", "fills": []},
-                "screen_text": [{"kind": "prompt", "text": "提示", "start": 0, "verified": True}],
-                "keyframes": [{"start": 0, "sha256": "k", "path": "keyframes/k.jpg"}],
-                "unresolved_terms": [], "failures": [], "temporary_media_remaining": 0,
-            }
-            for name, value in {
-                "collection.json": collection,
-                "candidates.json": [[candidate]],
-                "decisions.json": [{"candidate_id": "douyin:7001", "selected": True,
-                                    "reasons": ["title_value"]}],
-                "packages.json": [package],
-            }.items():
-                write_json(root / name, value)
-            command = self.base_command(root, run_id, "2026-07-28") + [
-                "--collection-fixture", str(root / "collection.json"),
-                "--video-mode", "qa-fixture",
-                "--video-candidates", str(root / "candidates.json"),
-                "--video-decisions", str(root / "decisions.json"),
-                "--video-packages", str(root / "packages.json"),
+            fixture = root / "collection.json"
+            content = [
+                {"aweme_id": str(7000 + i), "source": "Douyin",
+                 "source_url": f"https://www.douyin.com/video/{7000+i}",
+                 "title": f"AI {i}", "summary": "真实冻结理解包"}
+                for i in range(6)
             ]
-            first = subprocess.run(
-                command, text=True, capture_output=True, env=self.environment(root),
-            )
-            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
-            flow = DailyWorkflow(root / "workflow.sqlite3")
-            readback = flow.read_run(run_id)
-            self.assertEqual(
-                [row["stage"] for row in readback["stages"]],
-                ["collection", "video_understanding", "editorial", "scripts"],
-            )
-            self.assertEqual(len(readback["projection_receipts"]), 4)
-            before = (root / "workflow.sqlite3").read_bytes()
-            request_count = len(ProjectionHandler.requests)
-            second = subprocess.run(
-                command, text=True, capture_output=True, env=self.environment(root),
-            )
-            self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
-            self.assertEqual((root / "workflow.sqlite3").read_bytes(), before)
-            self.assertEqual(len(ProjectionHandler.requests), request_count)
-
-    def test_v1_exact_artifact_recovery_has_no_video_or_collection_calls(self):
-        with tempfile.TemporaryDirectory(prefix="rel_ar050_web010_v1_") as tmp:
-            root = Path(tmp)
-            run_id = "run_20260727_080141"
-            run_dir = root / "runs" / run_id
-            write_csv(run_dir / "content_items.csv", [{
-                "id": "c1", "content_fingerprint": "c1", "source": "AIHOT",
-                "title": "历史精确内容", "source_url": "https://example.test/c1",
-            }])
-            write_csv(run_dir / "today_10_topics.csv", [{
-                "candidate_id": "c1", "title": "历史精确内容",
-            }])
-            daily_log = root / "daily.json"
-            write_json(daily_log, {
-                "run_id": run_id, "collection_status": "completed_with_failures",
-                "downstream_usable": True, "run_output_dir": str(run_dir),
-                "source_outcomes": [{"source": "AIHOT", "status": "completed", "item_count": 1}],
+            write(fixture, {
+                "run_id": run_id, "business_date": "2026-07-28",
+                "content_items": content,
+                "candidates": [
+                    {"candidate_id": f"douyin:{7000+i}", "title": f"AI {i}"}
+                    for i in range(6)
+                ],
+                "source_runs": [{"source": "Douyin", "status": "completed", "item_count": 6}],
             })
-            marker = root / "forbidden-video-runtime.json"
-            command = self.base_command(root, run_id, "2026-07-27") + [
-                "--recover-daily-log", str(daily_log),
-            ]
-            legacy = DailyWorkflow(root / "workflow.sqlite3")
-            legacy.begin(
-                run_id, "2026-07-27", 3, "released-v1-contract",
-                stage_plan=("collection", "editorial", "scripts"),
-            )
-            legacy.db.close()
-            result = subprocess.run(
-                command, text=True, capture_output=True, env=self.environment(root),
-            )
+            editorial = root / "editorial.json"
+            write(editorial, {
+                "run_id": run_id, "topics": [{
+                    "candidate_id": "douyin:7000", "decision": "select",
+                    "title": "选题", "hook": "钩子", "structure": "结构",
+                    "selection_reason": "理由",
+                }],
+            })
+            scripts = root / "scripts.json"
+            write(scripts, {
+                "run_id": run_id, "scripts": [{
+                    "topic_id": "douyin:7000", "title": "稿件", "hook": "钩子",
+                    "structure": "结构", "body": "完整正文",
+                }], "failures": [],
+            })
+            command = self.command(root, run_id, fixture)
+            config = self.config(root)
+            first = self.execute(command, config)
+            self.assertEqual(json.loads(first.stdout)["action"], "editorial_required")
+            second = self.execute(command + ["--editorial-result-file", str(editorial)], config)
+            self.assertEqual(json.loads(second.stdout)["action"], "scripts_required")
+            third = self.execute(command + [
+                "--editorial-result-file", str(editorial),
+                "--scripts-result-file", str(scripts),
+            ], config)
+            self.assertEqual(third.returncode, 0, third.stderr + third.stdout)
+            result = json.loads(third.stdout)
+            self.assertEqual(result["action"], "completed")
+            self.assertEqual(TerminalProjectionHandler.posts, 1)
+            self.assertEqual(len(result["stages"]), 3)
+            self.assertEqual(len(result["items"]), 6)
+            before = (root / "workflow.sqlite3").read_bytes()
+            post_count = TerminalProjectionHandler.posts
+            replay = self.execute(command, config)
+            self.assertEqual(json.loads(replay.stdout)["action"], "noop")
+            self.assertEqual((root / "workflow.sqlite3").read_bytes(), before)
+            self.assertEqual(TerminalProjectionHandler.posts, post_count)
+
+    def test_offline_is_terminal_pending_and_replay_only_publishes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_id = "run_20260728_080000"
+            fixture = root / "collection.json"
+            write(fixture, {
+                "run_id": run_id, "business_date": "2026-07-28",
+                "content_items": [], "candidates": [], "source_runs": [],
+            })
+            offline = self.config(root, 1)
+            command = self.command(root, run_id, fixture)
+            first = self.execute(command, offline)
+            self.assertEqual(first.returncode, 0)
+            result = json.loads(first.stdout)
+            self.assertEqual(result["action"], "completed_publish_pending")
+            self.assertEqual(result["run"]["status"], "completed_empty")
+            self.assertEqual(result["run"]["publish_status"], "pending")
+            before_stages = result["stages"]
+            recovered = self.execute(command, self.config(root))
+            value = json.loads(recovered.stdout)
+            self.assertEqual(value["action"], "noop")
+            self.assertEqual(value["run"]["publish_status"], "applied")
+            self.assertEqual(value["stages"], before_stages)
+            self.assertEqual(TerminalProjectionHandler.posts, 1)
+
+    def test_historical_one_shot_maps_180_rows_without_normal_branch(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_dir = root / "run_20260727_080141"
+            run_dir.mkdir()
+            fields = ["内容指纹", "平台", "内容标题", "内容链接", "正文/字幕/简介片段"]
+            with (run_dir / "content_items.csv").open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=fields)
+                writer.writeheader()
+                writer.writerows([
+                    {"内容指纹": f"fp{i}", "平台": "AIHOT", "内容标题": f"内容{i}",
+                     "内容链接": f"https://example.test/{i}", "正文/字幕/简介片段": "正文"}
+                    for i in range(180)
+                ])
+            with (run_dir / "today_10_topics.csv").open("w", encoding="utf-8", newline="") as handle:
+                writer = csv.DictWriter(handle, fieldnames=["内容指纹", "内容标题"])
+                writer.writeheader()
+                writer.writerow({"内容指纹": "fp0", "内容标题": "内容0"})
+            log = root / "daily.json"
+            write(log, {
+                "run_id": "run_20260727_080141",
+                "collection_status": "completed_with_failures",
+                "downstream_usable": True, "run_output_dir": str(run_dir),
+            })
+            editorial = root / "editorial.json"
+            write(editorial, {"run_id": "run_20260727_080141", "topics": [{
+                "candidate_id": "legacy:fp0", "decision": "select", "title": "选题",
+                "hook": "钩子", "structure": "结构", "selection_reason": "理由",
+            }]})
+            scripts = root / "scripts.json"
+            write(scripts, {"run_id": "run_20260727_080141", "scripts": [{
+                "topic_id": "legacy:fp0", "title": "稿件", "hook": "钩子",
+                "structure": "结构", "body": "完整正文",
+            }], "failures": []})
+            env = os.environ.copy()
+            env["WEBSITE_PUBLISHER_CONFIG"] = str(self.config(root))
+            result = subprocess.run([
+                sys.executable, str(ROOT / "scripts/recover_web010_historical.py"),
+                "--run-dir", str(run_dir), "--daily-log", str(log),
+                "--workflow-db", str(root / "workflow.sqlite3"),
+                "--artifact-root", str(root / "artifacts"),
+                "--editorial-result-file", str(editorial),
+                "--scripts-result-file", str(scripts),
+            ], text=True, capture_output=True, env=env)
             self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-            readback = DailyWorkflow(root / "workflow.sqlite3").read_run(run_id)
+            flow = DailyWorkflow(root / "workflow.sqlite3").read_run("run_20260727_080141")
+            self.assertEqual(len([row for row in flow["items"] if row["status"] == "completed"]), 180)
+            payload = TerminalProjectionHandler.payloads["run_20260727_080141"]
             self.assertEqual(
-                [row["stage"] for row in readback["stages"]],
-                ["collection", "editorial", "scripts"],
+                (len(payload["collected_items"]), len(payload["topics"]), len(payload["scripts"])),
+                (180, 1, 1),
             )
-            self.assertFalse(marker.exists())
-            self.assertEqual(len(readback["projection_receipts"]), 3)
-            self.assertEqual(
-                ProjectionHandler.projections[run_id]["revision"], 3,
-            )
+            normal_source = (ROOT / "scripts/run_daily_workflow.py").read_text()
+            self.assertNotIn("内容指纹", normal_source)
+            self.assertNotIn("recover_web010_historical", normal_source)
 
 
 if __name__ == "__main__":

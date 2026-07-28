@@ -8,26 +8,20 @@
 python3 scripts/run_daily_workflow.py \
   --run-id <EXACT_RUN_ID> \
   --business-date <SHANGHAI_DATE> \
-  --source-revision <EXACT_SOURCE_REVISION> \
-  --publisher-url https://ai-account-workbench-v1.le-ei.chatgpt.site \
-  --publisher-identity radar-production:daily-workflow.sqlite3 \
   --video-mode normal
 ```
 
-正式 owner-only Sites runtime 必须另外提供 `WEBSITE_PROJECTION_BEARER` 与
-`WEBSITE_PROJECTION_SIWC_BYPASS_BEARER`；视频理解 runtime 通过
-`DOUYIN_VIDEO_RUNTIME_CONFIG` 绑定。三者只从环境读取且不得进入 Prompt、命令
-文本、Git 或日志。URL、authority identity 或任一 bearer 缺失时，统一
-入口在创建 run、采集、Skill 或 projection 写之前 fail closed。相同 completed run
-与相同 canonical contract identity 的重放只核对未决 projection；已 applied 且
-read-back green 时保持 workflow SQLite、timestamps、Skill attempts、artifacts 和
-receipts 原字节不变。
+owner-only Website 的 endpoint、authority 与 Sites headers 全部由本机 ignored
+publisher config/client 封装，不进入 automation Prompt 或业务命令。Website
+不可用时，本地业务仍以 `completed` / `completed_with_failures` 结束并记录
+`publish_status=pending`；下一次同一 08:00 任务只补发最新 terminal pending。
 
 该入口在同一 exact run 内依次提交并 read-back
-`collection -> video_understanding -> editorial -> scripts`。视频理解的安装、
+`collection_enrichment -> editorial -> scripts`。视频理解的 discovery、媒体、
+OCR/ASR、screen facts 与 keyframes 是 collection_enrichment 的 item-local checkpoint。视频理解的安装、
 check-only、OCR/ASR 和风控边界见 `docs/ar050_video_understanding_runtime.md`。
 来源配置继续只读 `output/state/source_control.sqlite3`，每日运行权威为 ignored
-`output/state/daily_workflow.sqlite3`，网站 D1 仅保存 projection。正常调用图不读取
+`output/state/daily_workflow.sqlite3`，网站 D1 仅接收一次 terminal snapshot。正常调用图不读取
 或写入飞书 01/02/03/04/06，不发送 Topic Card、callback 或成功/失败通知。
 
 `ai-04-rebuild`、`ai-rebuild-2` 在发布候选中保持 PAUSED；下一次正常 `08:00`

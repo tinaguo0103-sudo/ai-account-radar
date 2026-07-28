@@ -98,24 +98,11 @@ class ProducerTest(unittest.TestCase):
             self.assertEqual(path.read_bytes(), before)
 
     def test_normal_mode_rejects_caller_packages_before_business(self):
-        args = Namespace(
-            publisher_url="http://127.0.0.1:1",
-            publisher_identity="qa",
-            video_mode="normal",
-            video_candidates="/tmp/candidates.json",
-            video_decisions="",
-            video_packages="",
-            video_runtime_config="",
-        )
-        with mock.patch.dict(
-            "os.environ",
-            {
-                "WEBSITE_PROJECTION_BEARER": "app",
-                "WEBSITE_PROJECTION_SIWC_BYPASS_BEARER": "machine",
-            },
-        ):
-            with self.assertRaisesRegex(RuntimeError, "normal_video_fixture_input_forbidden"):
-                workflow.validate_runtime(args)
+        source = (Path(__file__).parent / "run_daily_workflow.py").read_text()
+        self.assertNotIn("--video-candidates", source)
+        self.assertNotIn("--video-decisions", source)
+        self.assertNotIn("--video-packages", source)
+        self.assertIn("--qa-frozen-packages", source)
 
     def test_product_sources_do_not_reference_prior_private_tmp_producer(self):
         root = Path(__file__).parent
@@ -154,101 +141,79 @@ class ProducerTest(unittest.TestCase):
         self.assertIn("audio_url", text)
 
     def test_discovered_video_enters_exact_collection_without_substitute(self):
-        collection = {
-            "run_id": "run_20260727_080000",
-            "business_date": "2026-07-27",
-            "content_items": [],
-            "candidates": [],
-        }
-        state = {
-            "raw_candidates": [{
+        with tempfile.TemporaryDirectory() as tmp:
+            package_path = Path(tmp) / "packages.json"
+            package_path.write_text(json.dumps([{
+                "run_id": "run_20260727_080000",
                 "aweme_id": "12345678901",
-                "author": "账号",
-                "title": "AI 工具",
                 "source_url": "https://www.douyin.com/video/12345678901",
-                "published_at": "1",
-            }],
-            "packages": [{
-                "aweme_id": "12345678901",
                 "status": "completed",
                 "asr": {"text": "当前视频语音"},
                 "caption_timeline": [],
-            }],
-        }
-        merged = workflow.merge_discovered_collection(collection, state)
-        self.assertEqual(merged["content_items"][0]["content_fingerprint"], "douyin:12345678901")
-        self.assertEqual(merged["content_items"][0]["body"], "当前视频语音")
-        self.assertEqual(merged["candidates"][0]["candidate_id"], "douyin:12345678901")
+            }]))
+            collection = {
+                "run_id": "run_20260727_080000",
+                "business_date": "2026-07-27",
+                "content_items": [{
+                    "aweme_id": "12345678901", "source": "douyin",
+                    "title": "AI 工具",
+                    "source_url": "https://www.douyin.com/video/12345678901",
+                }],
+                "candidates": [{
+                    "aweme_id": "12345678901", "source": "douyin",
+                    "title": "AI 工具",
+                    "source_url": "https://www.douyin.com/video/12345678901",
+                }],
+            }
+            args = Namespace(
+                qa_frozen_packages=str(package_path), video_mode="disabled",
+            )
+            merged = workflow.enrich(args, collection)
+            self.assertEqual(merged["content_items"][0]["item_id"], "douyin:12345678901")
+            self.assertNotIn("content_fingerprint", merged["content_items"][0])
+            self.assertEqual(
+                merged["content_items"][0]["video_understanding"]["asr"]["text"],
+                "当前视频语音",
+            )
+            self.assertEqual(merged["candidates"][0]["candidate_id"], "douyin:12345678901")
 
     def test_failed_workflow_resume_loads_exact_producer_artifacts_without_discovery(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             run_id = "run_20260727_080000"
-            producer_root = root / run_id / "video_producer"
-            producer_root.mkdir(parents=True)
-            raw = {
-                "run_id": run_id,
-                "aweme_id": "12345678901",
-                "title": "AI 工具",
-                "source_url": "https://www.douyin.com/video/12345678901",
-                "discovery_source": "recommendation",
+            authority = workflow.DailyWorkflow(root / "workflow.sqlite3")
+            authority.begin(run_id, "2026-07-27")
+            payload = {
+                "content_items": [{"item_id": "douyin:12345678901"}],
+                "candidates": [], "item_failures": [], "understanding_results": [],
             }
-            (producer_root / "discovery.json").write_text(json.dumps({
-                "status": "completed",
-                "candidates": [raw],
-            }))
-            (producer_root / "candidates.json").write_text(json.dumps([[raw]]))
-            (producer_root / "decisions.json").write_text(json.dumps([{
-                "candidate_id": "douyin:12345678901",
-                "decision": "parse",
-            }]))
-            (producer_root / "packages.json").write_text(json.dumps([{
-                "run_id": run_id,
-                "aweme_id": "12345678901",
-                "status": "completed",
-            }]))
-            state = workflow.load_committed_producer_state(Namespace(
-                artifact_root=str(root),
-                run_id=run_id,
-            ))
-            self.assertEqual(state["raw_candidates"], [raw])
-            self.assertEqual(state["packages"][0]["aweme_id"], "12345678901")
-            with mock.patch.object(
-                producer, "load_discovery",
-                side_effect=AssertionError("resume must not discover again"),
-            ):
-                self.assertEqual(len(state["packages"]), 1)
+            authority.commit_stage(run_id, "collection_enrichment", payload, "completed")
+            before = (root / "workflow.sqlite3").read_bytes()
+            self.assertEqual(
+                authority.stage(run_id, "collection_enrichment")["payload"], payload,
+            )
+            self.assertEqual((root / "workflow.sqlite3").read_bytes(), before)
 
     def test_failed_workflow_resume_rejects_cross_run_producer_package(self):
         with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            run_id = "run_20260727_080000"
-            producer_root = root / run_id / "video_producer"
-            producer_root.mkdir(parents=True)
-            raw = {
-                "run_id": run_id,
+            package_path = Path(tmp) / "packages.json"
+            package_path.write_text(json.dumps([{
+                "run_id": "run_20260726_080000",
                 "aweme_id": "12345678901",
                 "source_url": "https://www.douyin.com/video/12345678901",
-                "discovery_source": "recommendation",
-            }
-            (producer_root / "discovery.json").write_text(json.dumps({
-                "status": "completed",
-                "candidates": [raw],
-            }))
-            (producer_root / "candidates.json").write_text(json.dumps([[raw]]))
-            (producer_root / "decisions.json").write_text("[]")
-            (producer_root / "packages.json").write_text(json.dumps([{
-                "run_id": run_id,
-                "aweme_id": "99999999999",
                 "status": "completed",
             }]))
-            with self.assertRaisesRegex(
-                RuntimeError, "video_producer_recovery_package_identity_invalid",
-            ):
-                workflow.load_committed_producer_state(Namespace(
-                    artifact_root=str(root),
-                    run_id=run_id,
-                ))
+            collection = {
+                "run_id": "run_20260727_080000",
+                "business_date": "2026-07-27",
+                "content_items": [],
+                "candidates": [],
+            }
+            with self.assertRaisesRegex(RuntimeError, "video_package_run_mismatch"):
+                workflow.enrich(
+                    Namespace(qa_frozen_packages=str(package_path), video_mode="disabled"),
+                    collection,
+                )
 
     def test_discovery_failure_is_typed_and_persisted(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -1,27 +1,26 @@
 # Website business projection
 
-`scripts/publish_website_projection.py` is the only supported Radar-to-Website
-business projection entrypoint. It reads one explicit `run_id`; it never
+The daily workflow sends at most one terminal projection through
+`scripts/website_publisher_client.py`. It reads one explicit `run_id`; it never
 discovers `latest`, combines runs, or changes the Radar result.
 
-Required runtime values:
+The normal automation command contains only business workflow arguments:
 
 ```bash
-WEBSITE_PROJECTION_BEARER=<runtime-only-app-bearer> \
-WEBSITE_PROJECTION_SIWC_BYPASS_BEARER=<runtime-only-sites-machine-bearer> \
-python3 scripts/publish_website_projection.py \
+python3 scripts/run_daily_workflow.py \
   --run-id run_YYYYMMDD_HHMMSS \
-  --revision 1 \
-  --authority-identity radar-production:<released-commit> \
-  --website-url https://<owner-only-site>
+  --business-date YYYY-MM-DD
 ```
 
-The optional outer Sites bearer is required only when the owner-only access
-layer needs it. Neither credential may be written to source, arguments,
-artifacts, or logs.
+The publisher client reads `WEBSITE_PUBLISHER_CONFIG` or the ignored default
+`output/state/website_publisher.json`. That file owns the endpoint, authority
+identity, app bearer, and Sites machine bearer. These transport details never
+appear in the automation Prompt or workflow arguments.
 
-The Website commits one exact run and performs an exact read-back before
-changing `active_run_id`. Identical run/revision/hash is a no-op; an identical
-run/revision with a different hash is a conflict. A later stage uses a higher
-revision. Publisher transport or read-back failure is typed and does not change
-the Radar run result. No live automation change is part of this release.
+The Website commits one exact terminal run and performs an exact read-back.
+An identical terminal payload is a no-op. Transport or read-back failure leaves
+the local business run completed with `publish_status=pending`; the next daily
+invocation retries only that terminal publish and never repeats collection,
+enrichment, editorial, or scripting.
+
+No live automation change is part of this candidate.

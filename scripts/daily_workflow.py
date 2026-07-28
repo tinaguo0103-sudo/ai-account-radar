@@ -1,25 +1,20 @@
 #!/usr/bin/env python3
-"""SQLite authority for the single daily collection/editorial/scripts workflow."""
+"""Minimal SQLite authority for the daily personal content workflow."""
 from __future__ import annotations
 
-import hashlib
 import json
 import sqlite3
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-SCHEMA_VERSION = 3
-STAGES = ("collection", "video_understanding", "editorial", "scripts")
-LEGACY_STAGES = ("collection", "editorial", "scripts")
+SCHEMA_VERSION = 5
+STAGES = ("collection_enrichment", "editorial", "scripts")
+TERMINAL = {"completed", "completed_with_failures", "completed_empty"}
 
 
 def canonical(value: Any) -> str:
     return json.dumps(value, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-
-
-def digest(value: Any) -> str:
-    return hashlib.sha256(canonical(value).encode()).hexdigest()
 
 
 class WorkflowConflict(RuntimeError):
@@ -32,77 +27,53 @@ class DailyWorkflow:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.db = sqlite3.connect(self.path)
         self.db.row_factory = sqlite3.Row
-        self.db.execute("PRAGMA foreign_keys=ON")
         self._migrate()
 
     def _migrate(self) -> None:
+        # New installations contain only the V2 authority. Old, unused tables or
+        # columns may remain in an upgraded production database, but V2 never
+        # reads or writes them.
         self.db.executescript("""
         CREATE TABLE IF NOT EXISTS workflow_meta(
           key TEXT PRIMARY KEY, value TEXT NOT NULL
         );
-        CREATE TABLE IF NOT EXISTS runs(
+        CREATE TABLE IF NOT EXISTS daily_runs(
           run_id TEXT PRIMARY KEY, business_date TEXT NOT NULL,
-          status TEXT NOT NULL, source_revision INTEGER NOT NULL,
-          created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
-          contract_hash TEXT NOT NULL DEFAULT ''
+          status TEXT NOT NULL, publish_status TEXT NOT NULL DEFAULT 'not_ready',
+          publish_error TEXT NOT NULL DEFAULT '', publish_key TEXT NOT NULL DEFAULT '',
+          created_at TEXT NOT NULL, updated_at TEXT NOT NULL, published_at TEXT NOT NULL DEFAULT ''
         );
-        CREATE TABLE IF NOT EXISTS stages(
-          run_id TEXT NOT NULL REFERENCES runs(run_id), stage TEXT NOT NULL,
-          revision INTEGER NOT NULL, status TEXT NOT NULL,
-          input_hash TEXT NOT NULL, output_hash TEXT NOT NULL,
+        CREATE TABLE IF NOT EXISTS stage_results(
+          run_id TEXT NOT NULL, stage TEXT NOT NULL, status TEXT NOT NULL,
           payload_json TEXT NOT NULL, committed_at TEXT NOT NULL,
           PRIMARY KEY(run_id, stage)
         );
-        CREATE TABLE IF NOT EXISTS skill_attempts(
-          run_id TEXT NOT NULL, stage TEXT NOT NULL, unit_id TEXT NOT NULL,
-          attempt INTEGER NOT NULL, skill_name TEXT NOT NULL,
-          skill_path TEXT NOT NULL, skill_hash TEXT NOT NULL,
-          input_hash TEXT NOT NULL, output_hash TEXT NOT NULL,
-          status TEXT NOT NULL, fallback_used INTEGER NOT NULL DEFAULT 0,
-          created_at TEXT NOT NULL,
-          PRIMARY KEY(run_id, stage, unit_id, attempt, skill_name)
+        CREATE TABLE IF NOT EXISTS workflow_items(
+          run_id TEXT NOT NULL, item_id TEXT NOT NULL, status TEXT NOT NULL,
+          failure TEXT NOT NULL, payload_json TEXT NOT NULL,
+          PRIMARY KEY(run_id, item_id)
         );
-        CREATE TABLE IF NOT EXISTS projection_receipts(
-          run_id TEXT NOT NULL, stage TEXT NOT NULL, revision INTEGER NOT NULL,
-          payload_hash TEXT NOT NULL, status TEXT NOT NULL,
-          detail TEXT NOT NULL, updated_at TEXT NOT NULL,
-          PRIMARY KEY(run_id, stage, revision)
+        CREATE TABLE IF NOT EXISTS skill_diagnostics(
+          run_id TEXT NOT NULL, stage TEXT NOT NULL, unit_id TEXT NOT NULL,
+          skill_name TEXT NOT NULL, details_json TEXT NOT NULL, created_at TEXT NOT NULL,
+          PRIMARY KEY(run_id, stage, unit_id, skill_name)
         );
         """)
-        version = self.db.execute(
-            "SELECT value FROM workflow_meta WHERE key='schema_version'"
-        ).fetchone()
-        if not version:
-            self.db.execute(
-                "INSERT INTO workflow_meta(key,value) VALUES('schema_version',?)",
-                (str(SCHEMA_VERSION),),
-            )
-        elif version["value"] not in {"1", "2", str(SCHEMA_VERSION)}:
-            raise WorkflowConflict("workflow_schema_version_conflict")
-        elif version["value"] in {"1", "2"}:
-            self.db.execute(
-                "UPDATE workflow_meta SET value=? WHERE key='schema_version'", (str(SCHEMA_VERSION),)
-            )
-        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(runs)")}
-        if "contract_hash" not in columns:
-            self.db.execute("ALTER TABLE runs ADD COLUMN contract_hash TEXT NOT NULL DEFAULT ''")
-        if "stage_plan" not in columns:
-            self.db.execute("ALTER TABLE runs ADD COLUMN stage_plan TEXT NOT NULL DEFAULT ''")
-            self.db.execute(
-                """UPDATE runs SET stage_plan=?
-                   WHERE EXISTS(
-                     SELECT 1 FROM stages
-                     WHERE stages.run_id=runs.run_id AND stage='video_understanding'
-                   )""",
-                (canonical(STAGES),),
-            )
-            self.db.execute(
-                "UPDATE runs SET stage_plan=? WHERE stage_plan=''",
-                (canonical(LEGACY_STAGES),),
-            )
-        for name in ("failure_stage", "failure_error", "failed_at"):
+        columns = {row["name"] for row in self.db.execute("PRAGMA table_info(daily_runs)")}
+        additions = {
+            "publish_status": "TEXT NOT NULL DEFAULT 'not_ready'",
+            "publish_error": "TEXT NOT NULL DEFAULT ''",
+            "publish_key": "TEXT NOT NULL DEFAULT ''",
+            "published_at": "TEXT NOT NULL DEFAULT ''",
+        }
+        for name, definition in additions.items():
             if name not in columns:
-                self.db.execute(f"ALTER TABLE runs ADD COLUMN {name} TEXT NOT NULL DEFAULT ''")
+                self.db.execute(f"ALTER TABLE daily_runs ADD COLUMN {name} {definition}")
+        self.db.execute(
+            """INSERT INTO workflow_meta(key,value) VALUES('schema_version',?)
+               ON CONFLICT(key) DO UPDATE SET value=excluded.value""",
+            (str(SCHEMA_VERSION),),
+        )
         self.db.commit()
 
     @staticmethod
@@ -113,195 +84,27 @@ class DailyWorkflow:
         if business_date != f"{compact[:4]}-{compact[4:6]}-{compact[6:]}":
             raise ValueError("wrong_business_date")
 
-    def begin(self, run_id: str, business_date: str, source_revision: int,
-              contract_hash: str, stage_plan: tuple[str, ...] = STAGES) -> str:
+    def begin(self, run_id: str, business_date: str) -> str:
         self.validate_identity(run_id, business_date)
-        if stage_plan not in {STAGES, LEGACY_STAGES}:
-            raise ValueError("invalid_stage_plan")
-        encoded_plan = canonical(stage_plan)
-        row = self.db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        row = self.db.execute("SELECT * FROM daily_runs WHERE run_id=?", (run_id,)).fetchone()
         if row:
-            if (row["business_date"] != business_date
-                    or row["source_revision"] != source_revision
-                    or row["contract_hash"] != contract_hash
-                    or row["stage_plan"] != encoded_plan):
+            if row["business_date"] != business_date:
                 raise WorkflowConflict("run_identity_conflict")
-            return "completed_replay" if row["status"] in {
-                "completed", "completed_with_failures", "completed_empty"
-            } else "resume"
+            return "terminal_replay" if row["status"] in TERMINAL else "resume"
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute(
-            """INSERT INTO runs(
-              run_id,business_date,status,source_revision,created_at,updated_at,
-              contract_hash,stage_plan,failure_stage,failure_error,failed_at
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)""",
-            (run_id, business_date, "running", source_revision, now, now,
-             contract_hash, encoded_plan, "", "", ""),
+            """INSERT INTO daily_runs(
+              run_id,business_date,status,publish_status,publish_error,publish_key,
+              created_at,updated_at,published_at
+            ) VALUES(?,?,'running','not_ready','','',?,?, '')""",
+            (run_id, business_date, now, now),
         )
         self.db.commit()
         return "new"
 
-    def stage_plan(self, run_id: str) -> tuple[str, ...]:
-        row = self.db.execute("SELECT stage_plan FROM runs WHERE run_id=?", (run_id,)).fetchone()
-        if not row:
-            raise KeyError("run_not_found")
-        plan = tuple(json.loads(row["stage_plan"]))
-        if plan not in {STAGES, LEGACY_STAGES}:
-            raise WorkflowConflict("run_stage_plan_conflict")
-        return plan
-
-    def reconcile_empty_legacy_recovery_contract(
-        self, run_id: str, business_date: str, source_revision: int,
-        contract_hash: str,
-    ) -> str:
-        self.validate_identity(run_id, business_date)
-        row = self.db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
-        if not row:
-            return "not_found"
-        if (row["business_date"] != business_date
-                or row["source_revision"] != source_revision
-                or row["stage_plan"] != canonical(LEGACY_STAGES)):
-            raise WorkflowConflict("legacy_recovery_identity_conflict")
-        if row["status"] in {"completed", "completed_with_failures", "completed_empty"}:
-            return "terminal_noop"
-        counts = {
-            table: self.db.execute(
-                f"SELECT COUNT(*) AS count FROM {table} WHERE run_id=?", (run_id,)
-            ).fetchone()["count"]
-            for table in ("stages", "skill_attempts", "projection_receipts")
-        }
-        if any(counts.values()):
-            raise WorkflowConflict("legacy_recovery_contract_has_committed_state")
-        if row["contract_hash"] == contract_hash:
-            return "unchanged"
-        now = datetime.now(timezone.utc).isoformat()
-        self.db.execute(
-            """UPDATE runs SET contract_hash=?,status='running',updated_at=?,
-               failure_stage='',failure_error='',failed_at='' WHERE run_id=?""",
-            (contract_hash, now, run_id),
-        )
-        self.db.commit()
-        return "reconciled"
-
-    def resume(self, run_id: str) -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        self.db.execute(
-            """UPDATE runs SET status='running',updated_at=?,
-               failure_stage='',failure_error='',failed_at='' WHERE run_id=?""",
-            (now, run_id),
-        )
-        self.db.commit()
-
-    def fail(self, run_id: str, stage: str, error: str,
-             status: str = "failed") -> None:
-        now = datetime.now(timezone.utc).isoformat()
-        self.db.execute(
-            """UPDATE runs SET status=?,updated_at=?,failure_stage=?,
-               failure_error=?,failed_at=? WHERE run_id=?""",
-            (status, now, stage, error[:1000], now, run_id),
-        )
-        self.db.commit()
-
-    def complete(self, run_id: str, status: str) -> None:
-        row = self.db.execute(
-            "SELECT status,failure_stage,failure_error,failed_at FROM runs WHERE run_id=?",
-            (run_id,),
-        ).fetchone()
-        if not row:
-            raise KeyError("run_not_found")
-        if row["status"] == status and not any(
-            row[name] for name in ("failure_stage", "failure_error", "failed_at")
-        ):
-            return
-        now = datetime.now(timezone.utc).isoformat()
-        self.db.execute(
-            """UPDATE runs SET status=?,updated_at=?,failure_stage='',
-               failure_error='',failed_at='' WHERE run_id=?""",
-            (status, now, run_id),
-        )
-        self.db.commit()
-
-    def commit_stage(self, run_id: str, stage: str, input_hash: str,
-                     payload: dict[str, Any], status: str) -> dict[str, Any]:
-        stage_plan = self.stage_plan(run_id)
-        if stage not in stage_plan:
-            raise ValueError("invalid_stage")
-        position = stage_plan.index(stage)
-        if position:
-            prior = self.db.execute(
-                "SELECT status FROM stages WHERE run_id=? AND stage=?",
-                (run_id, stage_plan[position - 1]),
-            ).fetchone()
-            if not prior or prior["status"] not in {"completed", "completed_with_failures", "completed_empty"}:
-                raise WorkflowConflict("prior_stage_not_committed")
-        output_hash = digest(payload)
-        existing = self.db.execute(
-            "SELECT * FROM stages WHERE run_id=? AND stage=?", (run_id, stage)
-        ).fetchone()
-        if existing:
-            if existing["input_hash"] == input_hash and existing["output_hash"] == output_hash:
-                return {"action": "noop", **dict(existing)}
-            raise WorkflowConflict("stage_input_or_output_conflict")
-        now = datetime.now(timezone.utc).isoformat()
-        revision = position + 1
-        with self.db:
-            self.db.execute(
-                "INSERT INTO stages VALUES(?,?,?,?,?,?,?,?)",
-                (run_id, stage, revision, status, input_hash, output_hash,
-                 canonical(payload), now),
-            )
-            self.db.execute(
-                "UPDATE runs SET status=?,updated_at=? WHERE run_id=?",
-                (status if stage == "scripts" or (stage == "collection" and status == "completed_empty")
-                 else "running", now, run_id),
-            )
-        readback = self.db.execute(
-            "SELECT * FROM stages WHERE run_id=? AND stage=?", (run_id, stage)
-        ).fetchone()
-        if not readback or readback["output_hash"] != output_hash:
-            raise RuntimeError("stage_readback_unknown")
-        return {"action": "committed", **dict(readback)}
-
-    def record_skill(self, *, run_id: str, stage: str, unit_id: str,
-                     attempt: int, skill_name: str, skill_path: str,
-                     skill_hash: str, input_hash: str, output_hash: str,
-                     status: str) -> None:
-        self.db.execute(
-            """INSERT OR REPLACE INTO skill_attempts
-            VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
-            (run_id, stage, unit_id, attempt, skill_name, skill_path, skill_hash,
-             input_hash, output_hash, status, 0,
-             datetime.now(timezone.utc).isoformat()),
-        )
-        self.db.commit()
-
-    def record_projection(self, run_id: str, stage: str, revision: int,
-                          payload_hash: str, status: str, detail: str) -> None:
-        existing = self.db.execute(
-            "SELECT * FROM projection_receipts WHERE run_id=? AND stage=? AND revision=?",
-            (run_id, stage, revision),
-        ).fetchone()
-        if existing and existing["status"] == "applied":
-            if existing["payload_hash"] != payload_hash:
-                raise WorkflowConflict("applied_projection_payload_conflict")
-            return
-        self.db.execute(
-            """INSERT OR REPLACE INTO projection_receipts VALUES(?,?,?,?,?,?,?)""",
-            (run_id, stage, revision, payload_hash, status, detail,
-             datetime.now(timezone.utc).isoformat()),
-        )
-        self.db.commit()
-
-    def projection(self, run_id: str, stage: str, revision: int) -> dict[str, Any] | None:
-        row = self.db.execute(
-            "SELECT * FROM projection_receipts WHERE run_id=? AND stage=? AND revision=?",
-            (run_id, stage, revision),
-        ).fetchone()
-        return dict(row) if row else None
-
     def stage(self, run_id: str, stage: str) -> dict[str, Any] | None:
         row = self.db.execute(
-            "SELECT * FROM stages WHERE run_id=? AND stage=?", (run_id, stage)
+            "SELECT * FROM stage_results WHERE run_id=? AND stage=?", (run_id, stage)
         ).fetchone()
         if not row:
             return None
@@ -309,34 +112,127 @@ class DailyWorkflow:
         value["payload"] = json.loads(value.pop("payload_json"))
         return value
 
+    def commit_stage(
+        self, run_id: str, stage: str, payload: dict[str, Any], status: str
+    ) -> dict[str, Any]:
+        if stage not in STAGES:
+            raise ValueError("invalid_stage")
+        position = STAGES.index(stage)
+        if position and not self.stage(run_id, STAGES[position - 1]):
+            raise WorkflowConflict("prior_stage_not_committed")
+        encoded = canonical(payload)
+        existing = self.db.execute(
+            "SELECT * FROM stage_results WHERE run_id=? AND stage=?", (run_id, stage)
+        ).fetchone()
+        if existing:
+            if existing["status"] == status and existing["payload_json"] == encoded:
+                return {"action": "noop", **dict(existing)}
+            raise WorkflowConflict("stage_result_conflict")
+        now = datetime.now(timezone.utc).isoformat()
+        with self.db:
+            self.db.execute(
+                "INSERT INTO stage_results VALUES(?,?,?,?,?)",
+                (run_id, stage, status, encoded, now),
+            )
+            self.db.execute(
+                "UPDATE daily_runs SET status='running',updated_at=? WHERE run_id=?",
+                (now, run_id),
+            )
+        return {"action": "committed", **dict(self.db.execute(
+            "SELECT * FROM stage_results WHERE run_id=? AND stage=?", (run_id, stage)
+        ).fetchone())}
+
+    def store_items(self, run_id: str, rows: list[dict[str, Any]]) -> None:
+        with self.db:
+            for row in rows:
+                existing = self.db.execute(
+                    "SELECT * FROM workflow_items WHERE run_id=? AND item_id=?",
+                    (run_id, row["item_id"]),
+                ).fetchone()
+                encoded = canonical(row["payload"])
+                values = (row["status"], row.get("failure", ""), encoded)
+                if existing:
+                    if tuple(existing[key] for key in ("status", "failure", "payload_json")) != values:
+                        raise WorkflowConflict("item_write_conflict")
+                    continue
+                self.db.execute(
+                    "INSERT INTO workflow_items VALUES(?,?,?,?,?)",
+                    (run_id, row["item_id"], *values),
+                )
+
+    def record_skill_diagnostic(
+        self, run_id: str, stage: str, unit_id: str, skill_name: str,
+        details: dict[str, Any],
+    ) -> None:
+        existing = self.db.execute(
+            """SELECT * FROM skill_diagnostics
+               WHERE run_id=? AND stage=? AND unit_id=? AND skill_name=?""",
+            (run_id, stage, unit_id, skill_name),
+        ).fetchone()
+        if existing:
+            return
+        self.db.execute(
+            "INSERT INTO skill_diagnostics VALUES(?,?,?,?,?,?)",
+            (run_id, stage, unit_id, skill_name, canonical(details),
+             datetime.now(timezone.utc).isoformat()),
+        )
+        self.db.commit()
+
+    def complete(self, run_id: str, status: str, publish_key: str) -> None:
+        if status not in TERMINAL:
+            raise ValueError("invalid_terminal_status")
+        row = self.db.execute("SELECT * FROM daily_runs WHERE run_id=?", (run_id,)).fetchone()
+        if row["status"] == status and row["publish_key"] == publish_key:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute(
+            """UPDATE daily_runs SET status=?,publish_status='pending',publish_error='',
+               publish_key=?,updated_at=? WHERE run_id=?""",
+            (status, publish_key, now, run_id),
+        )
+        self.db.commit()
+
+    def mark_publish(self, run_id: str, status: str, error: str = "") -> None:
+        if status not in {"pending", "applied", "conflict"}:
+            raise ValueError("invalid_publish_status")
+        row = self.db.execute("SELECT publish_status FROM daily_runs WHERE run_id=?", (run_id,)).fetchone()
+        if row and row["publish_status"] == "applied":
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute(
+            """UPDATE daily_runs SET publish_status=?,publish_error=?,published_at=?,
+               updated_at=CASE WHEN ?='applied' THEN updated_at ELSE updated_at END
+               WHERE run_id=?""",
+            (status, error[:500], now if status == "applied" else "", status, run_id),
+        )
+        self.db.commit()
+
+    def latest_pending(self, before_date: str | None = None) -> dict[str, Any] | None:
+        clause = "AND business_date<?" if before_date else ""
+        params: tuple[Any, ...] = ("pending", before_date) if before_date else ("pending",)
+        row = self.db.execute(
+            f"""SELECT * FROM daily_runs WHERE publish_status=? AND status IN
+                ('completed','completed_with_failures','completed_empty') {clause}
+                ORDER BY business_date DESC,run_id DESC LIMIT 1""",
+            params,
+        ).fetchone()
+        return dict(row) if row else None
+
     def read_run(self, run_id: str) -> dict[str, Any]:
-        run = self.db.execute("SELECT * FROM runs WHERE run_id=?", (run_id,)).fetchone()
+        run = self.db.execute("SELECT * FROM daily_runs WHERE run_id=?", (run_id,)).fetchone()
         if not run:
             raise KeyError("run_not_found")
         stages = [dict(row) for row in self.db.execute(
-            "SELECT * FROM stages WHERE run_id=? ORDER BY revision", (run_id,)
+            """SELECT * FROM stage_results WHERE run_id=?
+               ORDER BY CASE stage WHEN 'collection_enrichment' THEN 1
+               WHEN 'editorial' THEN 2 ELSE 3 END""", (run_id,)
+        )]
+        items = [dict(row) for row in self.db.execute(
+            "SELECT * FROM workflow_items WHERE run_id=? ORDER BY item_id", (run_id,)
         )]
         skills = [dict(row) for row in self.db.execute(
-            "SELECT * FROM skill_attempts WHERE run_id=? ORDER BY stage,unit_id,attempt", (run_id,)
+            "SELECT * FROM skill_diagnostics WHERE run_id=? ORDER BY stage,unit_id,skill_name",
+            (run_id,),
         )]
-        receipts = [dict(row) for row in self.db.execute(
-            "SELECT * FROM projection_receipts WHERE run_id=? ORDER BY revision", (run_id,)
-        )]
-        return {"run": dict(run), "stages": stages, "skill_attempts": skills,
-                "projection_receipts": receipts}
-
-    def fail_run(self, run_id: str, error: str) -> None:
-        row = self.db.execute("SELECT status FROM runs WHERE run_id=?", (run_id,)).fetchone()
-        if not row or row["status"] in {"completed", "completed_with_failures", "completed_empty"}:
-            return
-        self.fail(run_id, "workflow", error)
-        row = self.db.execute(
-            "SELECT failed_at FROM runs WHERE run_id=?", (run_id,)
-        ).fetchone()
-        self.db.execute(
-            """INSERT OR REPLACE INTO workflow_meta(key,value) VALUES(?,?)""",
-            (f"run_failure:{run_id}", canonical({
-                "error": error, "failed_at": row["failed_at"],
-            })),
-        )
-        self.db.commit()
+        return {"run": dict(run), "stages": stages, "items": items,
+                "skill_diagnostics": skills}

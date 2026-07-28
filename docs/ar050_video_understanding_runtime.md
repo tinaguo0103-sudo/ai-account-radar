@@ -1,7 +1,8 @@
 # AR-050 视频理解 Runtime
 
-正常 08:00 仍只调用 `scripts/run_daily_workflow.py`。视频理解是 collection 后的内部
-stage，不创建第二个 daemon、schedule 或数据 authority。
+正常 08:00 仍只调用 `scripts/run_daily_workflow.py`。视频理解是
+`collection_enrichment` 内部能力，不是永久顶层 stage，也不创建第二个 daemon、
+schedule 或数据 authority。
 
 ## Runtime 准备
 
@@ -49,15 +50,16 @@ site-packages。
 → product-owned macOS Vision OCR
 → SenseVoice + FSMN-VAD 补缺
 → 必要时 Full Large-v3
-→ exact-run atomic package/read-back/cleanup
+→ exact-run atomic package/read-back/cleanup，提交 `collection_enrichment`
 → active editorial Skill
 → exact editorial-selected unparsed IDs on-demand parse
 → active scripting Skills
-→ Website projection。
+→ 单次 terminal Website projection。
 
-`--video-candidates/--video-decisions/--video-packages` 只允许配合显式
-`--video-mode qa-fixture` 或 `offline-recovery`。`--video-mode normal` 发现这些参数会
-fail closed，避免下一次正式运行再次依赖人工预制 JSON。
+正常公共入口不提供 `--video-candidates/--video-decisions/--video-packages`。
+`--qa-frozen-packages` 只用于隔离测试读取已冻结的真实包，不属于正式 schedule
+命令。一次性 historical recovery 使用独立 entrypoint，normal runtime 不含 legacy
+topology 分支。
 
 任何 fixed 9333 风控信号立即 source-global stop，之后导航与媒体动作均为 0。系统不
 处理验证码，不读取 Cookie/session，不切换 profile，不使用代理或指纹方案。
