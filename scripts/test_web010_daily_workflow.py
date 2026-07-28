@@ -8,6 +8,7 @@ from pathlib import Path
 
 from daily_workflow import DailyWorkflow, WorkflowConflict, digest
 from run_daily_workflow import (
+    editorial_input,
     editorial_on_demand_ids,
     last_json_object,
     write_script_artifact,
@@ -15,6 +16,40 @@ from run_daily_workflow import (
 
 
 class DailyWorkflowTest(unittest.TestCase):
+    def test_editorial_input_is_bounded_without_hiding_truncation(self):
+        value = editorial_input(
+            {
+                "run_id": "run_20260726_120000",
+                "business_date": "2026-07-26",
+                "candidates": [{"candidate_id": f"douyin:{index}"} for index in range(20)],
+            },
+            {
+                "run_id": "run_20260726_120000",
+                "business_date": "2026-07-26",
+                "status": "completed",
+                "understanding_results": [
+                    {
+                        "candidate_id": f"douyin:{index}",
+                        "trigger": "automatic",
+                        "package": {
+                            "status": "completed",
+                            "caption_timeline": [{"text": "字" * 20_000}],
+                            "asr": {"text": "音" * 20_000},
+                            "screen_text": [{"kind": "number", "value": str(item)}
+                                            for item in range(200)],
+                        },
+                    }
+                    for index in range(20)
+                ],
+            },
+        )
+        encoded = json.dumps(value, ensure_ascii=False)
+        self.assertLess(len(encoded), 1_048_576)
+        package = value["video_understanding"]["understanding_results"][0]
+        self.assertTrue(package["caption_text_truncated"])
+        self.assertTrue(package["asr_text_truncated"])
+        self.assertEqual(len(package["screen_text"]), 100)
+
     def test_editorial_selected_unparsed_video_becomes_on_demand_only(self):
         selected = [
             {"candidate_id": "douyin:automatic", "decision": "select"},

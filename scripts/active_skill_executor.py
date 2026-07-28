@@ -34,11 +34,12 @@ def invoke(skills: list[str], payload: dict[str, Any], timeout: int = 600) -> tu
         output = Path(tmp) / "result.json"
         command = [
             os.getenv("CODEX_BIN", "codex"), "exec", "--ephemeral",
-            "--output-last-message", str(output), prompt,
+            "--output-last-message", str(output), "-",
         ]
-        result = subprocess.run(command, text=True, capture_output=True, timeout=timeout)
+        result = subprocess.run(
+            command, input=prompt, text=True, capture_output=True, timeout=timeout,
+        )
         if result.returncode != 0 or not output.is_file():
             raise RuntimeError(f"active_skill_execution_failed:{result.returncode}")
         parsed = json.loads(output.read_text(encoding="utf-8"))
     return parsed, identities
-

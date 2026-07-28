@@ -180,6 +180,76 @@ class ProducerTest(unittest.TestCase):
         self.assertEqual(merged["content_items"][0]["body"], "当前视频语音")
         self.assertEqual(merged["candidates"][0]["candidate_id"], "douyin:12345678901")
 
+    def test_failed_workflow_resume_loads_exact_producer_artifacts_without_discovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_id = "run_20260727_080000"
+            producer_root = root / run_id / "video_producer"
+            producer_root.mkdir(parents=True)
+            raw = {
+                "run_id": run_id,
+                "aweme_id": "12345678901",
+                "title": "AI 工具",
+                "source_url": "https://www.douyin.com/video/12345678901",
+                "discovery_source": "recommendation",
+            }
+            (producer_root / "discovery.json").write_text(json.dumps({
+                "status": "completed",
+                "candidates": [raw],
+            }))
+            (producer_root / "candidates.json").write_text(json.dumps([[raw]]))
+            (producer_root / "decisions.json").write_text(json.dumps([{
+                "candidate_id": "douyin:12345678901",
+                "decision": "parse",
+            }]))
+            (producer_root / "packages.json").write_text(json.dumps([{
+                "run_id": run_id,
+                "aweme_id": "12345678901",
+                "status": "completed",
+            }]))
+            state = workflow.load_committed_producer_state(Namespace(
+                artifact_root=str(root),
+                run_id=run_id,
+            ))
+            self.assertEqual(state["raw_candidates"], [raw])
+            self.assertEqual(state["packages"][0]["aweme_id"], "12345678901")
+            with mock.patch.object(
+                producer, "load_discovery",
+                side_effect=AssertionError("resume must not discover again"),
+            ):
+                self.assertEqual(len(state["packages"]), 1)
+
+    def test_failed_workflow_resume_rejects_cross_run_producer_package(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_id = "run_20260727_080000"
+            producer_root = root / run_id / "video_producer"
+            producer_root.mkdir(parents=True)
+            raw = {
+                "run_id": run_id,
+                "aweme_id": "12345678901",
+                "source_url": "https://www.douyin.com/video/12345678901",
+                "discovery_source": "recommendation",
+            }
+            (producer_root / "discovery.json").write_text(json.dumps({
+                "status": "completed",
+                "candidates": [raw],
+            }))
+            (producer_root / "candidates.json").write_text(json.dumps([[raw]]))
+            (producer_root / "decisions.json").write_text("[]")
+            (producer_root / "packages.json").write_text(json.dumps([{
+                "run_id": run_id,
+                "aweme_id": "99999999999",
+                "status": "completed",
+            }]))
+            with self.assertRaisesRegex(
+                RuntimeError, "video_producer_recovery_package_identity_invalid",
+            ):
+                workflow.load_committed_producer_state(Namespace(
+                    artifact_root=str(root),
+                    run_id=run_id,
+                ))
+
     def test_discovery_failure_is_typed_and_persisted(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -194,6 +264,32 @@ class ProducerTest(unittest.TestCase):
             artifact = root / "run_20260727_080000/video_producer/discovery.failure.json"
             self.assertEqual(json.loads(artifact.read_text())["failure"], "verification_required")
             self.assertEqual(json.loads(artifact.read_text())["substitute_count"], 0)
+
+    def test_exact_discovery_replay_reuses_run_artifact_without_browser(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            run_id = "run_20260727_080000"
+            artifact = root / run_id / "video_producer/discovery.json"
+            artifact.parent.mkdir(parents=True)
+            payload = {
+                "status": "completed",
+                "candidates": [{
+                    "run_id": run_id,
+                    "aweme_id": "12345678901",
+                    "source_url": "https://www.douyin.com/video/12345678901",
+                }],
+            }
+            artifact.write_text(json.dumps(payload))
+            args = Namespace(
+                mode="normal", video_mode="normal", cdp="http://127.0.0.1:9333",
+                search_query="AI",
+            )
+            with mock.patch.object(
+                producer.subprocess, "run",
+                side_effect=AssertionError("exact replay must not use browser"),
+            ):
+                rows = producer.load_discovery(args, run_id, root)
+            self.assertEqual(rows[0]["aweme_id"], "12345678901")
 
     def test_cleanup_failure_overrides_prior_local_failure(self):
         candidate = {

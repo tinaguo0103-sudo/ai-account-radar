@@ -421,7 +421,9 @@ def process_one(
 def load_discovery(args: argparse.Namespace, run_id: str, output_root: Path) -> list[dict[str, Any]]:
     discovery_path = output_root / run_id / "video_producer" / "discovery.json"
     mode = getattr(args, "mode", "") or args.video_mode
-    if mode == "normal":
+    if discovery_path.is_file():
+        payload = json.loads(discovery_path.read_text())
+    elif mode == "normal":
         result = subprocess.run([
             "node", str(DISCOVERY), "--output", str(discovery_path),
             "--cdp", args.cdp, "--query", args.search_query,
@@ -441,6 +443,7 @@ def load_discovery(args: argparse.Namespace, run_id: str, output_root: Path) -> 
                 },
             )
             raise ProducerError(str(error or "discovery_failed"))
+        payload = json.loads(discovery_path.read_text())
     elif mode == "qa-fixture":
         if not args.discovery_fixture:
             raise ProducerError("video_discovery_fixture_missing")
@@ -448,7 +451,6 @@ def load_discovery(args: argparse.Namespace, run_id: str, output_root: Path) -> 
         atomic_json(discovery_path, payload)
     else:
         raise ProducerError("video_producer_mode_invalid")
-    payload = json.loads(discovery_path.read_text())
     if (payload.get("status") or payload.get("source_global_status")) != "completed":
         raise ProducerError("video_discovery_not_completed")
     candidates = payload.get("candidates")

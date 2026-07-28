@@ -80,12 +80,47 @@ def run_collection(args: argparse.Namespace) -> dict[str, Any]:
 
 
 def editorial_input(collection: dict[str, Any], understanding: dict[str, Any]) -> dict[str, Any]:
+    bounded_results = []
+    for row in understanding.get("understanding_results", []):
+        package = row.get("package") or {}
+        caption_text = "\n".join(
+            str(item.get("text") or "")
+            for item in package.get("caption_timeline") or []
+        )
+        asr_text = str((package.get("asr") or {}).get("text") or "")
+        bounded_results.append({
+            "candidate_id": row.get("candidate_id"),
+            "trigger": row.get("trigger"),
+            "status": package.get("status"),
+            "title": package.get("title"),
+            "author": package.get("author"),
+            "source_url": package.get("source_url"),
+            "published_at": package.get("published_at"),
+            "public_engagement": package.get("public_engagement"),
+            "caption_text": caption_text[:12_000],
+            "caption_text_truncated": len(caption_text) > 12_000,
+            "asr_text": asr_text[:12_000],
+            "asr_text_truncated": len(asr_text) > 12_000,
+            "screen_text": (package.get("screen_text") or [])[:100],
+            "unresolved_terms": package.get("unresolved_terms") or [],
+            "failures": package.get("failures") or [],
+            "package_sha256": package.get("package_sha256"),
+        })
     return {
         "task": "editorial_selection",
         "run_id": collection["run_id"],
         "business_date": collection["business_date"],
         "candidates": collection["candidates"],
-        "video_understanding": understanding,
+        "video_understanding": {
+            "run_id": understanding.get("run_id"),
+            "business_date": understanding.get("business_date"),
+            "status": understanding.get("status"),
+            "completed_count": understanding.get("completed_count"),
+            "failed_count": understanding.get("failed_count"),
+            "substitute_count": understanding.get("substitute_count"),
+            "understanding_failures": understanding.get("understanding_failures") or [],
+            "understanding_results": bounded_results,
+        },
         "output_contract": {
             "run_id": "exact input run_id",
             "topics": [{"candidate_id": "stable candidate identity", "decision": "select|observe|reject",
@@ -151,6 +186,8 @@ def run_video_understanding(
     if args.video_mode == "normal":
         if producer_state is None:
             produced = produce_video_understanding(args)
+        elif not on_demand_ids:
+            produced = producer_state
         else:
             incremental = produce_video_understanding(
                 args,
@@ -212,6 +249,46 @@ def run_video_understanding(
         else "completed" if result["completed_count"] else "completed_empty"
     )
     return result
+
+
+def load_committed_producer_state(args: argparse.Namespace) -> dict[str, Any]:
+    root = Path(args.artifact_root) / args.run_id / "video_producer"
+    required = {
+        name: root / name
+        for name in ("discovery.json", "candidates.json", "decisions.json", "packages.json")
+    }
+    if any(not path.is_file() for path in required.values()):
+        raise RuntimeError("video_producer_recovery_artifact_missing")
+    discovery = json.loads(required["discovery.json"].read_text())
+    if discovery.get("status") != "completed":
+        raise RuntimeError("video_producer_recovery_discovery_invalid")
+    candidate_batches = json.loads(required["candidates.json"].read_text())
+    decisions = json.loads(required["decisions.json"].read_text())
+    packages = json.loads(required["packages.json"].read_text())
+    if not isinstance(candidate_batches, list):
+        raise RuntimeError("video_producer_recovery_candidates_invalid")
+    raw_candidates = [
+        row for batch in candidate_batches for row in batch
+        if isinstance(batch, list)
+    ]
+    identities = {str(row.get("aweme_id") or "") for row in raw_candidates}
+    if not identities or any(str(row.get("run_id") or args.run_id) != args.run_id for row in raw_candidates):
+        raise RuntimeError("video_producer_recovery_wrong_run")
+    if any(str(row.get("aweme_id") or "") not in identities for row in packages):
+        raise RuntimeError("video_producer_recovery_package_identity_invalid")
+    return {
+        "candidates": merge_video_candidates(candidate_batches, args.run_id),
+        "raw_candidates": raw_candidates,
+        "decisions": decisions,
+        "packages": packages,
+        "failures": [
+            {
+                "candidate_id": f"douyin:{row.get('aweme_id')}",
+                "failure": row.get("failure"),
+            }
+            for row in packages if row.get("status") == "failed"
+        ],
+    }
 
 
 def editorial_on_demand_ids(
@@ -405,17 +482,27 @@ def main() -> int:
         print(json.dumps(result, ensure_ascii=False))
         return 0 if not unresolved else 2
 
-    collection = run_collection(args)
+    existing_collection = workflow.stage(args.run_id, "collection")
     precomputed_understanding = None
     precomputed_producer_state = None
-    if args.video_mode == "normal":
-        precomputed_understanding = run_video_understanding(args)
-        precomputed_producer_state = precomputed_understanding.pop("_producer_state")
-        collection = merge_discovered_collection(collection, precomputed_producer_state)
-    collection_commit = workflow.commit_stage(
-        args.run_id, "collection", digest({"source_revision": args.source_revision}),
-        collection, "completed_empty" if not collection["content_items"] else collection.get("status", "completed"),
-    )
+    if existing_collection:
+        collection = existing_collection["payload"]
+        collection_commit = existing_collection
+        if args.video_mode == "normal":
+            precomputed_producer_state = load_committed_producer_state(args)
+            precomputed_understanding = run_video_understanding(
+                args, producer_state=precomputed_producer_state,
+            )
+    else:
+        collection = run_collection(args)
+        if args.video_mode == "normal":
+            precomputed_understanding = run_video_understanding(args)
+            precomputed_producer_state = precomputed_understanding.pop("_producer_state")
+            collection = merge_discovered_collection(collection, precomputed_producer_state)
+        collection_commit = workflow.commit_stage(
+            args.run_id, "collection", digest({"source_revision": args.source_revision}),
+            collection, "completed_empty" if not collection["content_items"] else collection.get("status", "completed"),
+        )
     projection_green = publish_committed_stage(
         args, workflow, "collection", collection, collection_commit,
     )
