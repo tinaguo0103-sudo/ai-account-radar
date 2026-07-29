@@ -14,9 +14,11 @@ from pathlib import Path
 from typing import Any
 
 from daily_workflow import DailyWorkflow, WorkflowConflict, canonical
+from collected_artifact_adoption import adopt_collected_artifacts
 from douyin_video_understanding_producer import ProducerError, produce
 from publish_website_projection import ProjectionError
 from website_publisher_client import publish_terminal
+from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_ROOT = Path.home() / ".codex" / "skills"
@@ -110,6 +112,8 @@ def last_json_object(text: str) -> dict[str, Any]:
 
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
+    if args.adopt_collected_artifacts:
+        return adopt_collected_artifacts(args)
     if args.collection_fixture:
         value = read_json(args.collection_fixture)
         if value.get("run_id") != args.run_id:
@@ -276,6 +280,8 @@ def main() -> int:
     parser.add_argument("--source-db", default=str(ROOT / "output/state/source_control.sqlite3"))
     parser.add_argument("--artifact-root", type=Path, default=ROOT / "output/runs")
     parser.add_argument("--collection-fixture")
+    parser.add_argument("--adopt-collected-artifacts")
+    parser.add_argument("--adoption-log")
     parser.add_argument("--qa-frozen-packages")
     parser.add_argument("--editorial-result-file")
     parser.add_argument("--scripts-result-file")
@@ -285,7 +291,13 @@ def main() -> int:
     parser.add_argument("--discovery-fixture", default="")
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
     args = parser.parse_args()
+    workflow: DailyWorkflow | None = None
     try:
+        DailyWorkflow.validate_identity(args.run_id, args.business_date)
+        if args.video_mode == "normal":
+            readiness = check_runtime_readiness(args.video_runtime_config)
+            args.video_runtime_config = readiness["config_path"]
+            args.video_policy = readiness["policy_path"]
         workflow = DailyWorkflow(args.workflow_db)
         pending = workflow.latest_pending(args.business_date)
         if pending:
@@ -383,8 +395,27 @@ def main() -> int:
             **workflow.read_run(args.run_id),
         }, ensure_ascii=False))
         return 0
-    except (WorkflowConflict, ProducerError, ProjectionError, RuntimeError, ValueError) as error:
+    except (
+        WorkflowConflict, ProducerError, ProjectionError, RuntimeReadinessError,
+        RuntimeError, ValueError, OSError,
+    ) as error:
+        if workflow is not None:
+            workflow.mark_recoverable_failure(args.run_id, str(error))
+        else:
+            DailyWorkflow.mark_existing_recoverable_failure(
+                args.workflow_db, args.run_id, args.business_date, str(error)
+            )
         print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+        return 2
+    except Exception:
+        error = "workflow_unexpected_startup_error" if workflow is None else "workflow_unexpected_error"
+        if workflow is not None:
+            workflow.mark_recoverable_failure(args.run_id, error)
+        else:
+            DailyWorkflow.mark_existing_recoverable_failure(
+                args.workflow_db, args.run_id, args.business_date, error
+            )
+        print(json.dumps({"ok": False, "error": error}, ensure_ascii=False))
         return 2
 
 

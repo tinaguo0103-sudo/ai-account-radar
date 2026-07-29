@@ -5,7 +5,10 @@
   "externalSchedule": {
     "existingId": "ai-rebuild",
     "schedule": "08:00 Asia/Shanghai",
-    "publicEntrypoint": "python3 scripts/run_daily_workflow.py --run-id <EXACT_RUN_ID> --business-date <SHANGHAI_DATE> --video-mode normal",
+    "publicEntrypoint": "DOUYIN_VIDEO_RUNTIME_CONFIG=<OWNER_ONLY_IGNORED_CONFIG> python3 scripts/run_daily_workflow.py --run-id <EXACT_RUN_ID> --business-date <SHANGHAI_DATE> --video-mode normal",
+    "requiredRuntimeBindings": [
+      "DOUYIN_VIDEO_RUNTIME_CONFIG"
+    ],
     "outerAgentProtocol": [
       "Run the public entrypoint. It completes collection_enrichment or resumes its exact local checkpoint.",
       "When editorial is required, directly apply the active ai-account-editorial-director Skill in this outer Codex task and save the simple stage result.",

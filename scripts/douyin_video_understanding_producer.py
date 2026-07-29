@@ -33,6 +33,7 @@ USER_AGENT = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/138 Safari/537.36"
 )
+RUNTIME_CONFIG_ENV = "DOUYIN_VIDEO_RUNTIME_CONFIG"
 
 
 class ProducerError(RuntimeError):
@@ -468,13 +469,23 @@ def produce(
     discovered_candidates: list[dict[str, Any]] | None = None,
     include_automatic: bool = True,
 ) -> dict[str, Any]:
-    runtime_config = getattr(args, "runtime_config", "") or args.video_runtime_config
+    runtime_config = (
+        getattr(args, "runtime_config", "")
+        or getattr(args, "video_runtime_config", "")
+        or os.environ.get(RUNTIME_CONFIG_ENV, "")
+    )
+    if not str(runtime_config).strip():
+        raise ProducerError("video_runtime_config_missing")
     config = json.loads(Path(runtime_config).read_text())
     runtime = validate_runtime(config)
     output_root = Path(getattr(args, "output_root", "") or args.artifact_root).resolve()
     candidates = discovered_candidates or load_discovery(args, args.run_id, output_root)
     merged = merge_candidates([candidates], args.run_id)
-    policy_path = getattr(args, "video_policy", "") or getattr(args, "policy", "")
+    policy_path = (
+        getattr(args, "video_policy", "")
+        or getattr(args, "policy", "")
+        or config.get("policy_path", "")
+    )
     if not policy_path:
         raise ProducerError("video_policy_missing")
     policy = json.loads(Path(policy_path).read_text())
@@ -637,9 +648,19 @@ def main() -> int:
     try:
         if args.worker:
             return worker_main(args)
-        if not args.runtime_config:
+        args.runtime_config = (
+            args.runtime_config or os.environ.get(RUNTIME_CONFIG_ENV, "")
+        )
+        if not str(args.runtime_config).strip():
             raise ProducerError("video_runtime_config_missing")
-        runtime = validate_runtime(json.loads(Path(args.runtime_config).read_text()))
+        config = json.loads(Path(args.runtime_config).read_text())
+        policy_path = str(config.get("policy_path") or "").strip()
+        if not policy_path:
+            raise ProducerError("video_policy_missing")
+        policy = json.loads(Path(policy_path).read_text())
+        if not isinstance(policy, dict):
+            raise ProducerError("video_policy_invalid")
+        runtime = validate_runtime(config)
         if args.check_only:
             print(json.dumps({
                 "ok": True,

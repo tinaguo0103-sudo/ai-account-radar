@@ -1,4 +1,5 @@
 {
+  "policy_path": "/absolute/path/to/config/douyin_video_understanding_policy.json",
   "ffmpeg": "/absolute/path/to/ffmpeg",
   "vision_ocr_binary": "/absolute/path/to/compiled/douyin_video_vision_ocr",
   "sensevoice_python": "/absolute/path/to/ignored/asr/venv/bin/python",

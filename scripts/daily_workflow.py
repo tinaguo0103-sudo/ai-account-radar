@@ -11,6 +11,7 @@ from typing import Any
 SCHEMA_VERSION = 5
 STAGES = ("collection_enrichment", "editorial", "scripts")
 TERMINAL = {"completed", "completed_with_failures", "completed_empty"}
+RECOVERABLE_FAILURE = "failed_recoverable"
 
 
 def canonical(value: Any) -> str:
@@ -90,7 +91,17 @@ class DailyWorkflow:
         if row:
             if row["business_date"] != business_date:
                 raise WorkflowConflict("run_identity_conflict")
-            return "terminal_replay" if row["status"] in TERMINAL else "resume"
+            if row["status"] in TERMINAL:
+                return "terminal_replay"
+            if row["status"] == RECOVERABLE_FAILURE:
+                now = datetime.now(timezone.utc).isoformat()
+                self.db.execute(
+                    """UPDATE daily_runs SET status='running',publish_error='',
+                       updated_at=? WHERE run_id=?""",
+                    (now, run_id),
+                )
+                self.db.commit()
+            return "resume"
         now = datetime.now(timezone.utc).isoformat()
         self.db.execute(
             """INSERT INTO daily_runs(
@@ -101,6 +112,57 @@ class DailyWorkflow:
         )
         self.db.commit()
         return "new"
+
+    @classmethod
+    def mark_existing_recoverable_failure(
+        cls, path: Path | str, run_id: str, business_date: str, error: str
+    ) -> bool:
+        """Terminalize an existing same-run row without creating a database."""
+        target = Path(path)
+        if not target.is_file():
+            return False
+        cls.validate_identity(run_id, business_date)
+        db = sqlite3.connect(target)
+        db.row_factory = sqlite3.Row
+        try:
+            table = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='daily_runs'"
+            ).fetchone()
+            if not table:
+                return False
+            row = db.execute(
+                "SELECT business_date,status FROM daily_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if not row:
+                return False
+            if row["business_date"] != business_date:
+                raise WorkflowConflict("run_identity_conflict")
+            if row["status"] in TERMINAL:
+                return False
+            now = datetime.now(timezone.utc).isoformat()
+            db.execute(
+                """UPDATE daily_runs SET status=?,publish_status='not_ready',
+                   publish_error=?,updated_at=? WHERE run_id=?""",
+                (RECOVERABLE_FAILURE, error[:500], now, run_id),
+            )
+            db.commit()
+            return True
+        finally:
+            db.close()
+
+    def mark_recoverable_failure(self, run_id: str, error: str) -> None:
+        row = self.db.execute(
+            "SELECT status FROM daily_runs WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if not row or row["status"] in TERMINAL:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute(
+            """UPDATE daily_runs SET status=?,publish_status='not_ready',
+               publish_error=?,updated_at=? WHERE run_id=?""",
+            (RECOVERABLE_FAILURE, error[:500], now, run_id),
+        )
+        self.db.commit()
 
     def stage(self, run_id: str, stage: str) -> dict[str, Any] | None:
         row = self.db.execute(

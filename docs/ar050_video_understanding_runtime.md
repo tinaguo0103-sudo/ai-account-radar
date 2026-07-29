@@ -16,8 +16,10 @@ schedule 或数据 authority。
 2. 在 ignored venv 安装已验收的 SenseVoice/FunASR runtime，模型使用本机明确路径。
 3. 如需英文专名或词级时间轴 fallback，再配置 MLX Full Large-v3；Turbo 不属于正常
    runtime。
-4. 从 `config/douyin_video_runtime.example.json` 创建 ignored runtime config，并通过
-   `DOUYIN_VIDEO_RUNTIME_CONFIG` 指向它。配置、模型和 binary 不提交 Git。
+4. 从 `config/douyin_video_runtime.example.json` 创建唯一的 ignored owner-only
+   runtime config，通过 `DOUYIN_VIDEO_RUNTIME_CONFIG` 指向它。该 JSON 同时声明
+   `policy_path`；automation manifest、public CLI 和 producer 共用这一入口。
+   配置、模型、binary 和绝对路径值不提交 Git。
 5. 发布前 check-only：
 
    ```bash
@@ -28,6 +30,9 @@ schedule 或数据 authority。
 缺少 ffmpeg、Vision binary、SenseVoice Python、SenseVoice 模型或 FSMN-VAD 模型时，
 公共 workflow 在创建 workflow DB、采集、Skill 调用或 projection 前 typed fail。
 不自动修改 Homebrew、system Python 或下载模型。
+
+空值、空白、目录、缺失文件、不可读文件、无效 JSON、缺少 `policy_path`、policy
+无效或 deterministic runtime 不可用都会在同一 startup readiness gate 中失败。
 
 `timeout` 是单条公开媒体的总下载 deadline，不只是 socket read timeout；
 `maximum_media_bytes` 是单条临时媒体上限。任一超限只产生 candidate-local typed
