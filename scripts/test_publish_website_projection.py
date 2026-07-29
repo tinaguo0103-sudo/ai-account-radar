@@ -54,6 +54,56 @@ class WebsiteProjectionTest(unittest.TestCase):
             with self.assertRaisesRegex(ProjectionError, "workflow_terminal_not_committed"):
                 build_workflow_projection(path, run_id, "qa-private")
 
+    def test_source_ledger_is_preserved_when_legacy_source_runs_are_empty(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "workflow.sqlite3"
+            flow = DailyWorkflow(path)
+            run_id = "run_20260729_080000"
+            flow.begin(run_id, "2026-07-29")
+            collection = {
+                "content_items": [],
+                "candidates": [],
+                "source_runs": [],
+                "source_ledger": [
+                    {
+                        "source": "configured_account", "attempted": True,
+                        "status": "completed", "discovered_count": 2,
+                        "reason": "", "captured_at": "2026-07-29T00:00:00Z",
+                    },
+                    {
+                        "source": "recommendation", "attempted": True,
+                        "status": "completed_empty", "discovered_count": 0,
+                        "reason": "no_safe_visible_candidates",
+                        "captured_at": "2026-07-29T00:00:01Z",
+                    },
+                    {
+                        "source": "dynamic_search", "attempted": True,
+                        "status": "completed", "discovered_count": 16,
+                        "reason": "", "captured_at": "2026-07-29T00:00:02Z",
+                    },
+                ],
+                "understanding_results": [],
+            }
+            flow.commit_stage(run_id, "collection_enrichment", collection, "completed")
+            flow.commit_stage(run_id, "editorial", {"run_id": run_id, "topics": []}, "completed")
+            flow.commit_stage(
+                run_id, "scripts", {"run_id": run_id, "scripts": [], "failures": []},
+                "completed",
+            )
+            flow.complete(run_id, "completed", f"terminal:{run_id}")
+            payload = build_workflow_projection(path, run_id, "qa-private")
+            self.assertEqual(
+                [row["source"] for row in payload["source_runs"]],
+                ["configured_account", "recommendation", "dynamic_search"],
+            )
+            self.assertEqual(
+                [row["item_count"] for row in payload["source_runs"]], [2, 0, 16],
+            )
+            self.assertEqual(
+                payload["source_runs"][1]["error_summary"],
+                "no_safe_visible_candidates",
+            )
+
 
 if __name__ == "__main__":
     unittest.main()

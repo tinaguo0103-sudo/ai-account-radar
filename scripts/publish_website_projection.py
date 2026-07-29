@@ -120,10 +120,20 @@ def build_workflow_projection(db_path: Path, run_id: str,
     for item in content:
         source = str(item["source"])
         content_source_counts[source] = content_source_counts.get(source, 0) + 1
-    for row in collection.get("source_runs", []):
-        source = source_name(str(row.get("source") or ""))
+    source_rows = collection.get("source_runs", [])
+    if not source_rows:
+        source_rows = collection.get("source_ledger", [])
+    for row in source_rows:
+        raw_source = str(row.get("source") or "")
+        source = raw_source if raw_source in {
+            "configured_account", "recommendation", "dynamic_search",
+        } else source_name(raw_source)
         counts = row.get("counts") if isinstance(row.get("counts"), dict) else {}
-        item_count = int(row.get("item_count") or content_source_counts.get(source, 0))
+        item_count = int(
+            row.get("item_count")
+            if row.get("item_count") is not None
+            else row.get("discovered_count", content_source_counts.get(source, 0))
+        )
         succeeded_count = int(row.get("succeeded_count") or counts.get("new") or item_count)
         failed_count = int(
             row.get("failed_count") or counts.get("failed")
@@ -136,7 +146,8 @@ def build_workflow_projection(db_path: Path, run_id: str,
             "planned_count": int(row.get("planned_count") or succeeded_count + failed_count),
             "succeeded_count": succeeded_count,
             "failed_count": failed_count,
-            "item_count": item_count, "error_summary": str(row.get("error_summary") or ""),
+            "item_count": item_count,
+            "error_summary": str(row.get("error_summary") or row.get("reason") or ""),
             "completed_at": str(row.get("completed_at") or run["updated_at"]),
         })
     payload = {
