@@ -35,6 +35,11 @@ const visible = normalizeVisibleCard({
 }, "dynamic_search");
 assert.equal(visible.published_at, "");
 assert.equal(visible.published_at_display, "1周前");
+assert.deepEqual(visible.published_recency, {
+  minimum_seconds: 604800,
+  maximum_seconds: 1209600,
+  missing_reason: "",
+});
 assert.equal(visible.likes, 102);
 assert.equal(visible.comments, null);
 assert.equal(visible.favorites, null);
@@ -47,6 +52,15 @@ assert.deepEqual(ledger.map((row) => row.source), [
 ]);
 assert.equal(ledger[1].fact_complete_count, 1);
 assert.equal(ledger[2].fact_incomplete_count, 1);
+assert.equal(ledger[2].discovery_minimum_count, 1);
 assert.equal(ledger[2].query, "AI Agent");
+
+const unreadable = normalizeVisibleCard({
+  href: "https://www.douyin.com/video/7660000000000000003",
+  text: "00:31\n热\nAI demo\n@Owner\n刚刚",
+}, "recommendation");
+assert.equal(unreadable.likes, null);
+assert.equal(unreadable.fact_missing_reasons.likes, "visible_count_unparseable");
+assert.equal(unreadable.fact_missing_reasons.published_recency, "recency_unparseable");
 
 process.stdout.write("douyin video discovery facts: ok\n");

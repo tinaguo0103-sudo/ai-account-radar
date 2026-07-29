@@ -15,11 +15,14 @@ class ProducerTest(unittest.TestCase):
     def test_policy_is_or_semantics_without_fixed_engagement_threshold(self):
         rows = [
             {"aweme_id": "1", "title": "AI 工作流", "discovery_source": "recommendation",
-             "likes": 0, "comments": 0, "favorites": 0, "shares": 0},
+             "likes": 0, "comments": 0, "favorites": 0, "shares": 0,
+             "published_recency": {"minimum_seconds": 60}},
             {"aweme_id": "2", "title": "普通标题", "discovery_source": "recommendation",
-             "likes": 900, "comments": 20, "favorites": 40, "shares": 10},
+             "likes": 900, "comments": 20, "favorites": 40, "shares": 10,
+             "published_recency": {"minimum_seconds": 60}},
             {"aweme_id": "3", "title": "新角度", "discovery_source": "dynamic_search",
-             "likes": 0, "comments": 0, "favorites": 0, "shares": 0},
+             "likes": 0, "comments": 0, "favorites": 0, "shares": 0,
+             "published_recency": {"minimum_seconds": 60}},
         ]
         decisions = {row["candidate_id"]: row for row in producer.policy_decisions(rows)}
         self.assertIn("title_value", decisions["douyin:1"]["reasons"])

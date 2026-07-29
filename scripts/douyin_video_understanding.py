@@ -63,12 +63,16 @@ def merge_candidates(batches: list[list[dict[str, Any]]], run_id: str) -> list[d
                 "author": str(raw.get("author") or ""),
                 "title": str(raw.get("title") or ""),
                 "published_at": str(raw.get("published_at") or ""),
+                "published_at_display": str(raw.get("published_at_display") or ""),
+                "published_recency": raw.get("published_recency") or {},
                 "duration_seconds": max(1, int(raw.get("duration_seconds") or 1)),
                 "discovery_source": discovery,
                 "public_engagement": {
                     key: (None if raw.get(key) is None else int(raw[key]))
                     for key in ("likes", "comments", "favorites", "shares")
                 },
+                "fact_missing_reasons": raw.get("fact_missing_reasons") or {},
+                "fact_provenance": raw.get("fact_provenance") or {},
                 "raw_identity": str(raw.get("raw_identity") or digest(raw)),
             }
             if current and current["raw_identity"] != candidate["raw_identity"]:

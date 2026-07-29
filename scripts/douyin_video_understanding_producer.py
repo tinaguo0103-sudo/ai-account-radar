@@ -177,10 +177,14 @@ def policy_decisions(
     policy: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     policy = policy or {}
-    totals = sorted(
-        sum(int(row.get(key) or 0) for key in ("likes", "comments", "favorites", "shares"))
-        for row in candidates
-    )
+    eligible = [
+        row for row in candidates
+        if row.get("likes") is not None and (
+            row.get("published_at")
+            or row.get("published_recency", {}).get("minimum_seconds") is not None
+        )
+    ]
+    totals = sorted(int(row.get("likes") or 0) for row in eligible)
     percentile = float(policy.get("relative_engagement_percentile", 0.6))
     relative_floor = totals[max(0, int(len(totals) * percentile) - 1)] if totals else 0
     title_patterns = list(policy.get("title_value_patterns") or [
@@ -192,8 +196,8 @@ def policy_decisions(
     output = []
     for row in candidates:
         title_value = bool(re.search(title_expression, str(row.get("title") or ""), re.I))
-        total = sum(int(row.get(key) or 0) for key in ("likes", "comments", "favorites", "shares"))
-        engagement = bool(totals and total > 0 and total >= max(1, relative_floor))
+        total = int(row.get("likes") or 0)
+        engagement = bool(row in eligible and totals and total > 0 and total >= relative_floor)
         exploration = (
             row.get("discovery_source") == "dynamic_search"
             and not title_value and not engagement and exploration_used < exploration_limit
@@ -211,7 +215,19 @@ def policy_decisions(
             "candidate_id": f"douyin:{row['aweme_id']}",
             "selected": bool(reasons),
             "reasons": reasons,
-            "explanation": "标题价值、批内相对互动或探索任一成立；不使用双门槛或固定点赞阈值。",
+            "evidence": {
+                "likes_recency_relative": engagement,
+                "complete_interaction": engagement and all(
+                    row.get(key) is not None for key in ("comments", "favorites", "shares")
+                ),
+                "title_value": title_value,
+                "persona_fit": False,
+                "exploration": exploration,
+            },
+            "explanation": (
+                "点赞与时效证据、标题价值或探索任一成立；"
+                "不使用双门槛或固定点赞阈值，点赞证据不冒充完整互动热门。"
+            ),
         })
     return output
 

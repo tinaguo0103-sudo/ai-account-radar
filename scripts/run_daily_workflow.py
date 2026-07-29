@@ -248,12 +248,14 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
         if identity not in allowed or identity in seen:
             raise WorkflowConflict("editorial_result_identity_conflict")
         seen.add(identity)
-        if row.get("decision") not in {"select", "observe", "reject"}:
+        if row.get("decision") not in {"select", "observe", "reject", "failed"}:
             raise WorkflowConflict("editorial_result_invalid")
         if row["decision"] == "select" and not all(
             str(row.get(key) or "") for key in ("title", "hook", "structure", "selection_reason")
         ):
             raise WorkflowConflict("editorial_selected_incomplete")
+    if seen != allowed:
+        raise WorkflowConflict("editorial_result_coverage_incomplete")
 
 
 def validate_scripts(run_id: str, result: dict[str, Any], selected: set[str]) -> None:

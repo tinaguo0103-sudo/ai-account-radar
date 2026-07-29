@@ -177,8 +177,25 @@ export function normalizePageOwnedCandidate(item, source, provenance = {}) {
 function parseVisibleCount(value) {
   const text = String(value || "").trim().toLowerCase();
   const match = text.match(/^([\d.]+)\s*(万|w)?$/i);
-  if (!match) return 0;
-  return Math.round(Number(match[1]) * (match[2] ? 10000 : 1));
+  if (!match) return null;
+  const parsed = Number(match[1]) * (match[2] ? 10000 : 1);
+  return Number.isFinite(parsed) && parsed >= 0 ? Math.round(parsed) : null;
+}
+
+function visibleRecency(value) {
+  const text = String(value || "").trim();
+  const match = text.match(/^(\d+)\s*(分钟|小时|天|周|个月|月|年)前$/);
+  if (!match) return { minimum_seconds: null, maximum_seconds: null, missing_reason: "recency_unparseable" };
+  const amount = Number(match[1]);
+  const unitSeconds = {
+    "分钟": 60, "小时": 3600, "天": 86400, "周": 604800,
+    "个月": 2592000, "月": 2592000, "年": 31536000,
+  }[match[2]];
+  return {
+    minimum_seconds: amount * unitSeconds,
+    maximum_seconds: (amount + 1) * unitSeconds,
+    missing_reason: "",
+  };
 }
 
 export function normalizeVisibleCard(card, source) {
@@ -191,6 +208,10 @@ export function normalizeVisibleCard(card, source) {
   const authorIndex = lines.findIndex((item, index) => index > countIndex && item.startsWith("@"));
   const title = lines.slice(countIndex + 1, authorIndex > countIndex ? authorIndex : undefined).join(" ");
   const author = authorIndex >= 0 ? lines[authorIndex].replace(/^@/, "") : "";
+  const publishedDisplay = authorIndex >= 0 ? String(lines[authorIndex + 1] || "") : "";
+  const likesDisplay = String(lines[countIndex] || "");
+  const likes = parseVisibleCount(likesDisplay);
+  const recency = visibleRecency(publishedDisplay);
   return {
     run_id: "",
     discovery_source: source,
@@ -199,14 +220,18 @@ export function normalizeVisibleCard(card, source) {
     author,
     title,
     published_at: "",
-    published_at_display: authorIndex >= 0 ? String(lines[authorIndex + 1] || "") : "",
+    published_at_display: publishedDisplay,
+    published_recency: recency,
     duration_seconds: Math.max(1, minutes * 60 + seconds),
-    likes: parseVisibleCount(lines[countIndex]),
+    likes,
+    likes_display: likesDisplay,
     comments: null,
     favorites: null,
     shares: null,
     fact_missing_reasons: {
       published_at: "canonical_time_not_returned",
+      ...(recency.missing_reason ? { published_recency: recency.missing_reason } : {}),
+      ...(likes === null ? { likes: "visible_count_unparseable" } : {}),
       comments: "field_not_visible",
       favorites: "field_not_visible",
       shares: "field_not_visible",
@@ -230,6 +255,15 @@ function candidateCompleteness(row) {
     );
 }
 
+function discoveryMinimum(row) {
+  return Number.isFinite(row.likes)
+    && row.likes >= 0
+    && Boolean(row.published_at || (
+      Number.isFinite(row.published_recency?.minimum_seconds)
+      && Number.isFinite(row.published_recency?.maximum_seconds)
+    ));
+}
+
 function preferCandidate(current, incoming) {
   if (!current) return incoming;
   const currentOwned = current.fact_provenance?.capture === "page_owned_response";
@@ -247,6 +281,7 @@ export function buildSourceLedger(candidates, query, capturedAt) {
       query: source === "dynamic_search" ? query : "",
       captured_at: capturedAt,
       discovered_count: rows.length,
+      discovery_minimum_count: rows.filter(discoveryMinimum).length,
       fact_complete_count: rows.filter(candidateCompleteness).length,
       fact_incomplete_count: rows.filter((row) => !candidateCompleteness(row)).length,
     };
