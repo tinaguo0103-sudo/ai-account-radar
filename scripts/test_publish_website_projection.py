@@ -45,6 +45,27 @@ class WebsiteProjectionTest(unittest.TestCase):
                 1.0,
             )
 
+    def test_durable_and_canonical_video_shapes_share_projection_contract(self):
+        from publish_website_projection import normalize_video_understanding
+
+        durable = normalize_video_understanding({
+            "status": "completed",
+            "keyframes": [{"time_second": 61, "sha256": "k", "path": "k.jpg"}],
+            "screen_text": [{"kind": "tool_name", "value": "Claude", "verified": True}],
+        })
+        self.assertEqual(durable["keyframes"][0]["start"], 61)
+        self.assertEqual(durable["screen_text"][0]["text"], "Claude")
+        self.assertIsNone(durable["screen_text"][0]["start"])
+
+        canonical = normalize_video_understanding({
+            "status": "completed",
+            "keyframes": [{"start": 9, "sha256": "k2", "path": "k2.jpg"}],
+            "screen_text": [{"kind": "number", "text": "42", "start": 9}],
+        })
+        self.assertEqual(canonical["keyframes"][0]["start"], 9)
+        self.assertEqual(canonical["screen_text"][0]["text"], "42")
+        self.assertEqual(canonical["screen_text"][0]["start"], 9)
+
     def test_nonterminal_workflow_cannot_publish(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "workflow.sqlite3"

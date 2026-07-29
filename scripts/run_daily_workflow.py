@@ -410,6 +410,16 @@ def validate_scripts(run_id: str, result: dict[str, Any], selected: set[str]) ->
         seen.add(identity)
         if not all(str(row.get(key) or "") for key in ("title", "hook", "structure", "body")):
             raise WorkflowConflict("script_result_incomplete")
+    failed: set[str] = set()
+    for row in result.get("failures", []):
+        identity = str(row.get("topic_id") or "")
+        if identity not in selected or identity in seen or identity in failed:
+            raise WorkflowConflict("script_result_identity_conflict")
+        failed.add(identity)
+        if not str(row.get("reason") or ""):
+            raise WorkflowConflict("script_result_incomplete")
+    if seen | failed != selected:
+        raise WorkflowConflict("script_result_coverage_incomplete")
 
 
 def skill_diagnostics() -> list[dict[str, str]]:

@@ -5,6 +5,7 @@ from run_daily_workflow import (
     merge_video_discovery_checkpoint,
     normalize_source_ledger,
     validate_editorial,
+    validate_scripts,
 )
 
 
@@ -122,6 +123,43 @@ class SourceLedgerTests(unittest.TestCase):
         )
         self.assertEqual(len(merged["candidates"]), 2)
         self.assertEqual(len(merged["content_items"]), 2)
+
+
+class ScriptBatchCoverageTests(unittest.TestCase):
+    def test_both_batch_skills_cover_every_selected_topic(self):
+        selected = {"topic-a", "topic-b"}
+        result = {
+            "run_id": "run_20260729_120000",
+            "scripts": [
+                {
+                    "topic_id": identity, "title": f"title-{identity}",
+                    "hook": "hook", "structure": "structure", "body": "body",
+                }
+                for identity in sorted(selected)
+            ],
+            "failures": [],
+        }
+        validate_scripts("run_20260729_120000", result, selected)
+        self.assertEqual(
+            {row["topic_id"] for row in result["scripts"]}, selected,
+        )
+
+    def test_batch_identity_omission_fails_closed(self):
+        with self.assertRaisesRegex(
+            WorkflowConflict, "script_result_coverage_incomplete",
+        ):
+            validate_scripts(
+                "run_20260729_120000",
+                {
+                    "run_id": "run_20260729_120000",
+                    "scripts": [{
+                        "topic_id": "topic-a", "title": "title",
+                        "hook": "hook", "structure": "structure", "body": "body",
+                    }],
+                    "failures": [],
+                },
+                {"topic-a", "topic-b"},
+            )
 
 
 if __name__ == "__main__":

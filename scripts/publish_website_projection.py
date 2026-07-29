@@ -28,6 +28,29 @@ def source_name(platform: str) -> str:
     return "aihot"
 
 
+def normalize_video_understanding(value: Any) -> Any:
+    if not isinstance(value, dict):
+        return value
+    normalized = dict(value)
+    if "keyframes" in value:
+        normalized["keyframes"] = [
+            {**row, "start": row.get("start", row.get("time_second"))}
+            for row in value.get("keyframes", [])
+            if isinstance(row, dict)
+        ]
+    if "screen_text" in value:
+        normalized["screen_text"] = [
+            {
+                **row,
+                "text": row.get("text", row.get("value", "")),
+                "start": row.get("start", row.get("time_second")),
+            }
+            for row in value.get("screen_text", [])
+            if isinstance(row, dict)
+        ]
+    return normalized
+
+
 def build_workflow_projection(db_path: Path, run_id: str,
                               authority_identity: str) -> dict[str, Any]:
     database = sqlite3.connect(db_path)
@@ -66,8 +89,10 @@ def build_workflow_projection(db_path: Path, run_id: str,
             "source_url": str(row.get("source_url") or row.get("内容链接") or ""),
             "published_at": str(row.get("published_at") or row.get("发布时间") or ""),
             "collected_at": str(row.get("collected_at") or run["updated_at"]),
-            "video_understanding": understanding_by_url.get(
-                str(row.get("source_url") or row.get("内容链接") or "")
+            "video_understanding": normalize_video_understanding(
+                understanding_by_url.get(
+                    str(row.get("source_url") or row.get("内容链接") or "")
+                )
             ),
         }
         content.append(item)
