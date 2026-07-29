@@ -554,7 +554,11 @@ def produce(
     config = json.loads(Path(runtime_config).read_text())
     runtime = validate_runtime(config)
     output_root = Path(getattr(args, "output_root", "") or args.artifact_root).resolve()
-    candidates = discovered_candidates or load_discovery(args, args.run_id, output_root)
+    candidates = (
+        load_discovery(args, args.run_id, output_root)
+        if discovered_candidates is None
+        else discovered_candidates
+    )
     merged = merge_candidates([candidates], args.run_id)
     policy_path = (
         getattr(args, "video_policy", "")

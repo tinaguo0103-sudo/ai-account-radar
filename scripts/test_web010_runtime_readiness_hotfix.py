@@ -24,7 +24,9 @@ class RuntimeReadinessHotfixTest(unittest.TestCase):
         policy.write_text(json.dumps({
             "schema_version": 1,
             "policy_id": "qa",
+            "target_count_min": 0,
             "target_count_max": 1,
+            "target_duration_seconds": 30,
             "maximum_duration_seconds": 60,
             "selection_contract": {},
             "models": {},
@@ -55,13 +57,18 @@ class RuntimeReadinessHotfixTest(unittest.TestCase):
             "sensevoice_python": str(python),
             "sensevoice_model": str(sense),
             "fsmn_vad_model": str(vad),
-            "readiness_probe_timeout_seconds": 1,
+            "readiness_probe_timeout_seconds": 3,
         }
         config = root / "runtime.json"
         config.write_text(json.dumps(value))
         return config, value
 
-    def command(self, root: Path, config: str | None) -> subprocess.CompletedProcess[str]:
+    def command(
+        self,
+        root: Path,
+        config: str | None,
+        *extra: str,
+    ) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ)
         env.pop("DOUYIN_VIDEO_RUNTIME_CONFIG", None)
         if config is not None:
@@ -73,12 +80,42 @@ class RuntimeReadinessHotfixTest(unittest.TestCase):
                 "--business-date", "2026-07-29",
                 "--workflow-db", str(root / "workflow.sqlite3"),
                 "--artifact-root", str(root / "runs"),
+                *extra,
             ],
             cwd=SCRIPTS.parent,
             env=env,
             text=True,
             capture_output=True,
         )
+
+    def test_public_collection_handoff_never_starts_second_discovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config, _ = self.valid_runtime(root)
+            fixture = root / "collection.json"
+            fixture.write_text(json.dumps({
+                "run_id": "run_20260729_080000",
+                "business_date": "2026-07-29",
+                "status": "completed",
+                "content_items": [{
+                    "external_id": "safe-1", "source": "AIHOT",
+                    "source_url": "https://example.com/safe-1", "title": "AI workflow",
+                }],
+                "candidates": [{
+                    "candidate_id": "aihot:safe-1", "title": "AI workflow",
+                }],
+                "source_runs": [],
+            }))
+            result = self.command(
+                root, str(config), "--collection-fixture", str(fixture)
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            value = json.loads(result.stdout)
+            self.assertEqual(value["action"], "editorial_required")
+            self.assertEqual(len(value["candidates"]), 1)
+            producer = root / "runs/run_20260729_080000/video_producer"
+            self.assertFalse((producer / "discovery.json").exists())
+            self.assertEqual(json.loads((producer / "candidates.json").read_text()), [[]])
 
     def test_missing_empty_directory_and_invalid_json_fail_before_db(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -169,7 +206,7 @@ class RuntimeReadinessHotfixTest(unittest.TestCase):
                 elif case == "probe_nonzero":
                     ffmpeg.write_text("#!/bin/sh\nexit 7\n")
                 elif case == "probe_timeout":
-                    ffmpeg.write_text("#!/bin/sh\nsleep 2\n")
+                    ffmpeg.write_text("#!/bin/sh\nsleep 4\n")
                 elif case == "empty_model":
                     for child in Path(value["sensevoice_model"]).iterdir():
                         child.unlink()

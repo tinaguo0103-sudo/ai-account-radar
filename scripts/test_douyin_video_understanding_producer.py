@@ -180,6 +180,7 @@ class ProducerTest(unittest.TestCase):
                 }],
             }
             args = Namespace(
+                run_id="run_20260727_080000",
                 qa_frozen_packages=str(package_path), video_mode="disabled",
             )
             merged = workflow.enrich(args, collection)
@@ -225,9 +226,108 @@ class ProducerTest(unittest.TestCase):
             }
             with self.assertRaisesRegex(RuntimeError, "video_package_run_mismatch"):
                 workflow.enrich(
-                    Namespace(qa_frozen_packages=str(package_path), video_mode="disabled"),
+                    Namespace(
+                        run_id="run_20260727_080000",
+                        qa_frozen_packages=str(package_path), video_mode="disabled",
+                    ),
                     collection,
                 )
+
+    def test_enrichment_hands_upstream_video_candidates_to_producer(self):
+        collection = {
+            "run_id": "run_20260727_080000",
+            "business_date": "2026-07-27",
+            "content_items": [{
+                "aweme_id": "12345678901", "source": "douyin",
+                "title": "AI 工具",
+                "source_url": "https://www.douyin.com/video/12345678901",
+            }],
+            "candidates": [{
+                "candidate_id": "douyin:12345678901",
+                "run_id": "run_20260727_080000",
+                "aweme_id": "12345678901",
+                "discovery_source": "configured_account",
+                "title": "AI 工具",
+                "source_url": "https://www.douyin.com/video/12345678901",
+            }],
+        }
+        args = Namespace(
+            run_id="run_20260727_080000",
+            qa_frozen_packages="", video_mode="normal",
+        )
+        result = {"packages": [], "failures": []}
+        with mock.patch.object(workflow, "produce", return_value=result) as called:
+            merged = workflow.enrich(args, collection)
+        self.assertEqual(len(merged["candidates"]), 1)
+        self.assertEqual(
+            called.call_args.kwargs["discovered_candidates"],
+            collection["candidates"],
+        )
+
+    def test_explicit_empty_upstream_candidates_never_start_discovery(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            config = root / "runtime.json"
+            policy = root / "policy.json"
+            policy.write_text(json.dumps({
+                "schema_version": 1, "policy_id": "qa",
+                "target_count_min": 0, "target_count_max": 1,
+                "target_duration_seconds": 30,
+                "maximum_duration_seconds": 60,
+            }))
+            config.write_text(json.dumps({
+                "policy_path": str(policy),
+                "ffmpeg": "/qa/ffmpeg",
+                "vision_ocr_binary": "/qa/vision",
+                "sensevoice_python": "/qa/python",
+                "sensevoice_model": "/qa/model",
+                "fsmn_vad_model": "/qa/vad",
+            }))
+            args = Namespace(
+                run_id="run_20260727_080000", video_mode="normal",
+                video_runtime_config=str(config), video_policy=str(policy),
+                artifact_root=str(root),
+            )
+            runtime = {
+                "ffmpeg": Path("/qa/ffmpeg"),
+                "vision_ocr_binary": Path("/qa/vision"),
+                "sensevoice_python": Path("/qa/python"),
+                "sensevoice_model": Path("/qa/model"),
+                "fsmn_vad_model": Path("/qa/vad"),
+            }
+            with mock.patch.object(producer, "validate_runtime", return_value=runtime), \
+                 mock.patch.object(
+                     producer, "load_discovery",
+                     side_effect=AssertionError("explicit empty upstream must not discover"),
+                 ):
+                result = producer.produce(args, discovered_candidates=[])
+            self.assertEqual(result["candidates"], [])
+            self.assertEqual(result["packages"], [])
+
+    def test_candidate_identity_failures_are_typed(self):
+        base = {
+            "run_id": "run_20260727_080000",
+            "business_date": "2026-07-27",
+            "content_items": [{
+                "external_id": "1", "source": "AIHOT", "title": "safe",
+            }],
+        }
+        args = Namespace(
+            run_id="run_20260727_080000",
+            qa_frozen_packages="", video_mode="disabled",
+        )
+        with self.assertRaisesRegex(
+            workflow.WorkflowConflict, "collection_candidate_identity_missing"
+        ):
+            workflow.enrich(args, {**base, "candidates": [{"title": "missing"}]})
+        conflicting = [
+            {"candidate_id": "aihot:1", "title": "one"},
+            {"candidate_id": "aihot:1", "title": "two"},
+        ]
+        with self.assertRaisesRegex(
+            workflow.WorkflowConflict, "collection_candidate_identity_conflict"
+        ):
+            workflow.enrich(args, {**base, "candidates": conflicting})
 
     def test_discovery_failure_is_typed_and_persisted(self):
         with tempfile.TemporaryDirectory() as tmp:

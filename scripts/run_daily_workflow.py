@@ -147,8 +147,60 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     }
 
 
+def normalize_collection_candidates(
+    candidates: Any,
+    *,
+    item_ids: set[str],
+    run_id: str,
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+    if not isinstance(candidates, list):
+        raise WorkflowConflict("collection_candidates_invalid")
+    normalized: dict[str, dict[str, Any]] = {}
+    video_candidates: list[dict[str, Any]] = []
+    for raw in candidates:
+        if not isinstance(raw, dict):
+            raise WorkflowConflict("collection_candidate_invalid")
+        candidate = json.loads(json.dumps(raw, ensure_ascii=False))
+        if not any(
+            str(candidate.get(key) or "").strip()
+            for key in (
+                "candidate_id", "item_id", "aweme_id", "external_id",
+                "source_url", "内容链接", "local_id",
+            )
+        ):
+            raise WorkflowConflict("collection_candidate_identity_missing")
+        try:
+            identity = str(candidate.get("candidate_id") or stable_item_id(candidate))
+        except (TypeError, ValueError) as error:
+            raise WorkflowConflict("collection_candidate_identity_missing") from error
+        if identity not in item_ids:
+            raise WorkflowConflict("collection_candidate_content_mapping_missing")
+        candidate["candidate_id"] = identity
+        current = normalized.get(identity)
+        if current is not None:
+            if canonical(current) != canonical(candidate):
+                raise WorkflowConflict("collection_candidate_identity_conflict")
+            continue
+        normalized[identity] = candidate
+        has_video_identity = bool(candidate.get("aweme_id") or candidate.get("discovery_source"))
+        if has_video_identity:
+            if candidate.get("run_id") not in {None, "", run_id}:
+                raise WorkflowConflict("collection_video_candidate_wrong_run")
+            candidate["run_id"] = run_id
+            video_candidates.append(candidate)
+    return list(normalized.values()), video_candidates
+
+
 def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, Any]:
     value = json.loads(json.dumps(collection, ensure_ascii=False))
+    if value.get("run_id") != args.run_id:
+        raise WorkflowConflict("collection_wrong_run")
+    items, identity_failures = normalize_items(value.get("content_items", []))
+    candidates, video_candidates = normalize_collection_candidates(
+        value.get("candidates", []),
+        item_ids={row["item_id"] for row in items},
+        run_id=args.run_id,
+    )
     packages: list[dict[str, Any]]
     producer_failures: list[dict[str, Any]]
     if args.qa_frozen_packages:
@@ -160,7 +212,7 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
             for row in packages if row.get("status") == "failed"
         ]
     elif args.video_mode == "normal":
-        produced = produce(args)
+        produced = produce(args, discovered_candidates=video_candidates)
         packages = produced["packages"]
         producer_failures = produced["failures"]
     else:
@@ -169,24 +221,10 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         str(row.get("source_url") or ""): row for row in packages
         if row.get("status") in {"completed", "completed_with_failures"}
     }
-    for row in value.get("content_items", []):
+    for row in items:
         package = package_by_url.get(str(row.get("source_url") or row.get("内容链接") or ""))
         if package:
             row["video_understanding"] = package
-    items, identity_failures = normalize_items(value.get("content_items", []))
-    item_ids = {row["item_id"] for row in items}
-    candidates = []
-    for raw in value.get("candidates", []):
-        candidate = json.loads(json.dumps(raw, ensure_ascii=False))
-        identity = str(candidate.get("candidate_id") or "")
-        if identity not in item_ids:
-            try:
-                identity = stable_item_id(candidate)
-            except Exception:
-                continue
-        if identity in item_ids:
-            candidate["candidate_id"] = identity
-            candidates.append(candidate)
     value.update({
         "content_items": items,
         "candidates": candidates,
