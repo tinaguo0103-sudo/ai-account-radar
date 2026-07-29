@@ -8,6 +8,7 @@ import sys
 import tempfile
 import unittest
 from pathlib import Path
+from typing import Any
 
 from daily_workflow import DailyWorkflow
 from collected_artifact_adoption import adopt_collected_artifacts
@@ -18,6 +19,48 @@ ENTRYPOINT = SCRIPTS / "run_daily_workflow.py"
 
 
 class RuntimeReadinessHotfixTest(unittest.TestCase):
+    def valid_runtime(self, root: Path) -> tuple[Path, dict[str, Any]]:
+        policy = root / "policy.json"
+        policy.write_text(json.dumps({
+            "schema_version": 1,
+            "policy_id": "qa",
+            "target_count_max": 1,
+            "maximum_duration_seconds": 60,
+            "selection_contract": {},
+            "models": {},
+        }))
+        ffmpeg = root / "ffmpeg"
+        ffmpeg.write_text("#!/bin/sh\necho 'ffmpeg version qa'\n")
+        vision = root / "vision"
+        vision.write_text("#!/bin/sh\necho '[]'\n")
+        python = root / "sensevoice-python"
+        python.write_text("#!/bin/sh\necho 'sensevoice_runtime_ready'\n")
+        for path in (ffmpeg, vision, python):
+            path.chmod(0o700)
+        sense = root / "sense"
+        sense.mkdir()
+        for name in (
+            "model.pt", "config.yaml", "am.mvn", "tokens.json",
+            "chn_jpn_yue_eng_ko_spectok.bpe.model",
+        ):
+            (sense / name).write_text("qa")
+        vad = root / "vad"
+        vad.mkdir()
+        for name in ("model.pt", "config.yaml", "am.mvn"):
+            (vad / name).write_text("qa")
+        value = {
+            "policy_path": str(policy),
+            "ffmpeg": str(ffmpeg),
+            "vision_ocr_binary": str(vision),
+            "sensevoice_python": str(python),
+            "sensevoice_model": str(sense),
+            "fsmn_vad_model": str(vad),
+            "readiness_probe_timeout_seconds": 1,
+        }
+        config = root / "runtime.json"
+        config.write_text(json.dumps(value))
+        return config, value
+
     def command(self, root: Path, config: str | None) -> subprocess.CompletedProcess[str]:
         env = dict(os.environ)
         env.pop("DOUYIN_VIDEO_RUNTIME_CONFIG", None)
@@ -100,6 +143,44 @@ class RuntimeReadinessHotfixTest(unittest.TestCase):
                 json.loads(result.stdout)["error"], "video_runtime_config_unreadable"
             )
             self.assertFalse((root / "workflow.sqlite3").exists())
+
+    def test_public_adversarial_runtime_matrix_has_zero_effects(self):
+        cases = (
+            ("directory_executable", "video_ffmpeg_not_file"),
+            ("non_executable", "video_ffmpeg_not_executable"),
+            ("broken_symlink", "video_ffmpeg_broken_symlink"),
+            ("probe_nonzero", "video_ffmpeg_probe_nonzero"),
+            ("probe_timeout", "video_ffmpeg_probe_timeout"),
+            ("empty_model", "video_asr_model_required_file_missing:model.pt"),
+            ("missing_model_file", "video_asr_model_required_file_missing:tokens.json"),
+        )
+        for case, expected in cases:
+            with self.subTest(case=case), tempfile.TemporaryDirectory() as tmp:
+                root = Path(tmp)
+                config, value = self.valid_runtime(root)
+                ffmpeg = Path(value["ffmpeg"])
+                if case == "directory_executable":
+                    value["ffmpeg"] = str(root)
+                elif case == "non_executable":
+                    ffmpeg.chmod(0o600)
+                elif case == "broken_symlink":
+                    ffmpeg.unlink()
+                    ffmpeg.symlink_to(root / "missing-target")
+                elif case == "probe_nonzero":
+                    ffmpeg.write_text("#!/bin/sh\nexit 7\n")
+                elif case == "probe_timeout":
+                    ffmpeg.write_text("#!/bin/sh\nsleep 2\n")
+                elif case == "empty_model":
+                    for child in Path(value["sensevoice_model"]).iterdir():
+                        child.unlink()
+                elif case == "missing_model_file":
+                    (Path(value["sensevoice_model"]) / "tokens.json").unlink()
+                config.write_text(json.dumps(value))
+                result = self.command(root, str(config))
+                self.assertEqual(result.returncode, 2, result.stderr)
+                self.assertEqual(json.loads(result.stdout)["error"], expected)
+                self.assertFalse((root / "workflow.sqlite3").exists())
+                self.assertFalse((root / "runs").exists())
 
     def test_preexisting_run_is_terminalized_and_can_resume(self):
         with tempfile.TemporaryDirectory() as tmp:

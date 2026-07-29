@@ -78,23 +78,98 @@ def atomic_json(path: Path, payload: Any) -> None:
 
 
 def validate_runtime(config: dict[str, Any]) -> dict[str, Path]:
-    required = {
-        "ffmpeg": "video_ffmpeg_missing",
-        "vision_ocr_binary": "video_vision_runtime_missing",
-        "sensevoice_python": "video_asr_runtime_missing",
-        "sensevoice_model": "video_asr_model_missing",
-        "fsmn_vad_model": "video_vad_model_missing",
+    executables = {
+        "ffmpeg": "video_ffmpeg",
+        "vision_ocr_binary": "video_vision_runtime",
+        "sensevoice_python": "video_asr_runtime",
+    }
+    models = {
+        "sensevoice_model": (
+            "video_asr_model",
+            ("model.pt", "config.yaml", "am.mvn", "tokens.json",
+             "chn_jpn_yue_eng_ko_spectok.bpe.model"),
+        ),
+        "fsmn_vad_model": (
+            "video_vad_model",
+            ("model.pt", "config.yaml", "am.mvn"),
+        ),
     }
     output: dict[str, Path] = {}
-    for key, error in required.items():
+    for key, prefix in executables.items():
         raw = str(config.get(key) or "").strip()
         value = Path(raw).expanduser()
-        if not raw or not value.exists():
-            raise ProducerError(error)
+        if not raw:
+            raise ProducerError(f"{prefix}_missing")
+        if value.is_symlink() and not value.exists():
+            raise ProducerError(f"{prefix}_broken_symlink")
+        if not value.exists():
+            raise ProducerError(f"{prefix}_missing")
+        if not value.is_file():
+            raise ProducerError(f"{prefix}_not_file")
+        if not os.access(value, os.X_OK):
+            raise ProducerError(f"{prefix}_not_executable")
         # Virtualenv Python launchers must retain their symlink path so Python
         # discovers the venv site-packages instead of the base interpreter.
         output[key] = value.absolute() if key.endswith("_python") else value.resolve()
+    for key, (prefix, required_files) in models.items():
+        raw = str(config.get(key) or "").strip()
+        value = Path(raw).expanduser()
+        if not raw or not value.exists():
+            raise ProducerError(f"{prefix}_missing")
+        if not value.is_dir():
+            raise ProducerError(f"{prefix}_not_directory")
+        for relative in required_files:
+            required = value / relative
+            if not required.is_file() or not os.access(required, os.R_OK):
+                raise ProducerError(f"{prefix}_required_file_missing:{relative}")
+            if required.stat().st_size == 0:
+                raise ProducerError(f"{prefix}_required_file_empty:{relative}")
+        output[key] = value.resolve()
+    timeout = float(config.get("readiness_probe_timeout_seconds") or 20)
+    if timeout <= 0 or timeout > 60:
+        raise ProducerError("video_runtime_probe_timeout_invalid")
+    _probe_runtime(
+        [str(output["ffmpeg"]), "-version"],
+        timeout,
+        "video_ffmpeg",
+        lambda result: "ffmpeg version" in (result.stdout + result.stderr).lower(),
+    )
+    _probe_runtime(
+        [str(output["vision_ocr_binary"])],
+        timeout,
+        "video_vision_runtime",
+        lambda result: result.stdout.strip() == "[]",
+    )
+    _probe_runtime(
+        [
+            str(output["sensevoice_python"]), "-c",
+            "import funasr; from funasr import AutoModel; print('sensevoice_runtime_ready')",
+        ],
+        timeout,
+        "video_asr_runtime",
+        lambda result: result.stdout.strip().endswith("sensevoice_runtime_ready"),
+    )
     return output
+
+
+def _probe_runtime(
+    command: list[str],
+    timeout: float,
+    prefix: str,
+    validate_output: Any,
+) -> None:
+    try:
+        result = subprocess.run(
+            command, text=True, capture_output=True, timeout=timeout,
+        )
+    except subprocess.TimeoutExpired as error:
+        raise ProducerError(f"{prefix}_probe_timeout") from error
+    except OSError as error:
+        raise ProducerError(f"{prefix}_probe_unavailable") from error
+    if result.returncode != 0:
+        raise ProducerError(f"{prefix}_probe_nonzero")
+    if not validate_output(result):
+        raise ProducerError(f"{prefix}_probe_invalid_output")
 
 
 def policy_decisions(

@@ -35,20 +35,34 @@ class ProducerTest(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             base_python = root / "base-python"
-            base_python.write_text("")
+            base_python.write_text("#!/bin/sh\necho sensevoice_runtime_ready\n")
+            base_python.chmod(0o700)
             venv_python = root / "venv-python"
             venv_python.symlink_to(base_python)
-            files = {
-                "ffmpeg": root / "ffmpeg",
-                "vision_ocr_binary": root / "vision",
-                "sensevoice_python": venv_python,
-                "sensevoice_model": root / "sense",
-                "fsmn_vad_model": root / "vad",
-            }
-            for key, path in files.items():
-                if key != "sensevoice_python":
-                    path.touch()
-            runtime = producer.validate_runtime({key: str(path) for key, path in files.items()})
+            ffmpeg = root / "ffmpeg"
+            ffmpeg.write_text("#!/bin/sh\necho 'ffmpeg version qa'\n")
+            vision = root / "vision"
+            vision.write_text("#!/bin/sh\necho '[]'\n")
+            for path in (ffmpeg, vision):
+                path.chmod(0o700)
+            sense = root / "sense"
+            sense.mkdir()
+            for name in (
+                "model.pt", "config.yaml", "am.mvn", "tokens.json",
+                "chn_jpn_yue_eng_ko_spectok.bpe.model",
+            ):
+                (sense / name).write_text("qa")
+            vad = root / "vad"
+            vad.mkdir()
+            for name in ("model.pt", "config.yaml", "am.mvn"):
+                (vad / name).write_text("qa")
+            runtime = producer.validate_runtime({
+                "ffmpeg": str(ffmpeg),
+                "vision_ocr_binary": str(vision),
+                "sensevoice_python": str(venv_python),
+                "sensevoice_model": str(sense),
+                "fsmn_vad_model": str(vad),
+            })
             self.assertEqual(runtime["sensevoice_python"], venv_python.absolute())
             self.assertNotEqual(runtime["sensevoice_python"], base_python.resolve())
 
