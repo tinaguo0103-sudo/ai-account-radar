@@ -15,20 +15,6 @@ class ProjectionError(RuntimeError):
     pass
 
 
-def canonical(value: Any) -> Any:
-    if isinstance(value, dict):
-        return {key: canonical(value[key]) for key in sorted(value)}
-    if isinstance(value, list):
-        return [canonical(item) for item in value]
-    return value
-
-
-def digest(value: Any) -> str:
-    return hashlib.sha256(
-        json.dumps(canonical(value), ensure_ascii=False, separators=(",", ":")).encode()
-    ).hexdigest()
-
-
 def stable_id(kind: str, run_id: str, identity: str) -> str:
     return f"{kind}_{hashlib.sha256(f'{run_id}|{identity}'.encode()).hexdigest()[:24]}"
 
@@ -159,7 +145,6 @@ def build_workflow_projection(db_path: Path, run_id: str,
         "run": {"status": run["status"], "candidate_count": len(collection.get("candidates", []))},
         "source_runs": source_runs, "collected_items": content, "topics": topics, "scripts": scripts,
     }
-    payload["payload_sha256"] = digest(payload)
     return payload
 
 

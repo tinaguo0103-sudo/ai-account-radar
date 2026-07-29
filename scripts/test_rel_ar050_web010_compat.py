@@ -35,7 +35,9 @@ class TerminalProjectionHandler(BaseHTTPRequestHandler):
     def readback(self, payload: dict, status: str):
         return {
             "ok": True, "status": status, "run_id": payload["run_id"],
-            "revision": payload["revision"], "payload_sha256": payload["payload_sha256"],
+            "business_date": payload["business_date"],
+            "run_status": payload["run"]["status"],
+            "revision": payload["revision"],
             "authority_identity": payload["authority_identity"],
             "counts": {
                 "content": len(payload["collected_items"]),

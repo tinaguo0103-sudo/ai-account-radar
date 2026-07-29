@@ -19,7 +19,8 @@ class WebsiteProjectionTest(unittest.TestCase):
             flow.begin(run_id, "2026-07-27")
             package = {
                 "source_url": "https://www.douyin.com/video/1",
-                "status": "completed", "caption_timeline": [{"text": "字幕"}],
+                "status": "completed",
+                "caption_timeline": [{"start": 1.0, "text": "字幕"}],
             }
             collection = {"content_items": [{
                 "item_id": "douyin:1", "source": "douyin",
@@ -38,6 +39,11 @@ class WebsiteProjectionTest(unittest.TestCase):
                 path, run_id, "qa-private"
             )
             self.assertEqual(payload["collected_items"][0]["video_understanding"], package)
+            self.assertNotIn("payload_sha256", payload)
+            self.assertEqual(
+                payload["collected_items"][0]["video_understanding"]["caption_timeline"][0]["start"],
+                1.0,
+            )
 
     def test_nonterminal_workflow_cannot_publish(self):
         with tempfile.TemporaryDirectory() as tmp:

@@ -65,7 +65,9 @@ def publish_terminal(db_path: Path, run_id: str) -> dict[str, Any]:
         "scripts": len(payload["scripts"]),
     }
     if (
-        readback.get("payload_sha256") != payload["payload_sha256"]
+        readback.get("run_id") != payload["run_id"]
+        or readback.get("business_date") != payload["business_date"]
+        or readback.get("run_status") != payload["run"]["status"]
         or readback.get("counts") != expected
         or readback.get("authority_identity") != config["authority_identity"]
     ):
