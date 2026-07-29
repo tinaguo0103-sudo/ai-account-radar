@@ -191,6 +191,139 @@ def normalize_collection_candidates(
     return list(normalized.values()), video_candidates
 
 
+SOURCE_LEDGER_NAMES = ("configured_account", "recommendation", "dynamic_search")
+
+
+def merge_video_discovery_checkpoint(
+    collection: dict[str, Any],
+    checkpoint: dict[str, Any],
+    *,
+    run_id: str,
+) -> dict[str, Any]:
+    if checkpoint.get("status") not in {"completed", "completed_with_failures"}:
+        raise WorkflowConflict("video_discovery_checkpoint_not_completed")
+    output = json.loads(json.dumps(collection, ensure_ascii=False))
+    content = list(output.get("content_items") or [])
+    candidates = list(output.get("candidates") or [])
+    configured = [
+        row for row in candidates
+        if str(row.get("discovery_source") or "") == "configured_account"
+    ]
+    discovered = checkpoint.get("candidates")
+    if not isinstance(discovered, list):
+        raise WorkflowConflict("video_discovery_checkpoint_candidates_invalid")
+    for raw in discovered:
+        if not isinstance(raw, dict):
+            raise WorkflowConflict("video_discovery_checkpoint_candidate_invalid")
+        row = json.loads(json.dumps(raw, ensure_ascii=False))
+        if row.get("run_id") not in {None, "", run_id}:
+            raise WorkflowConflict("video_discovery_checkpoint_wrong_run")
+        if row.get("discovery_source") not in {"recommendation", "dynamic_search"}:
+            raise WorkflowConflict("video_discovery_checkpoint_source_invalid")
+        row["run_id"] = run_id
+        row["candidate_id"] = stable_item_id(row)
+        candidates.append(row)
+        content.append({
+            **row,
+            "item_id": row["candidate_id"],
+            "source": "douyin",
+            "summary": row.get("title") or "",
+        })
+    checkpoint_ledger = checkpoint.get("source_ledger")
+    if not isinstance(checkpoint_ledger, list):
+        raise WorkflowConflict("video_discovery_checkpoint_ledger_invalid")
+    discovery_rows = {
+        str(row.get("source") or ""): json.loads(json.dumps(row, ensure_ascii=False))
+        for row in checkpoint_ledger if isinstance(row, dict)
+    }
+    configured_status = str(output.get("configured_account_status") or "")
+    if configured_status not in {"completed", "completed_empty", "partial", "failed"}:
+        raise WorkflowConflict("configured_account_attempt_status_missing")
+    ledger = [{
+        "source": "configured_account",
+        "attempted": True,
+        "status": configured_status,
+        "discovered_count": len(configured),
+        "reason": str(output.get("configured_account_reason") or ""),
+        "captured_at": str(output.get("configured_account_captured_at") or ""),
+    }]
+    for source in ("recommendation", "dynamic_search"):
+        current = discovery_rows.get(source)
+        if current is None:
+            raise WorkflowConflict(f"video_discovery_checkpoint_source_missing:{source}")
+        count = sum(
+            str(row.get("discovery_source") or "") == source
+            for row in discovered
+        )
+        status = str(current.get("status") or (
+            "completed" if count else "completed_empty"
+        ))
+        reason = str(current.get("reason") or "")
+        if status in {"partial", "failed"} and not reason:
+            raise WorkflowConflict("source_ledger_reason_missing")
+        ledger.append({
+            **current,
+            "source": source,
+            "attempted": True,
+            "status": status,
+            "discovered_count": count,
+            "reason": reason,
+        })
+    output["content_items"] = content
+    output["candidates"] = candidates
+    output["source_ledger"] = ledger
+    return output
+
+
+def normalize_source_ledger(
+    collection: dict[str, Any],
+    *,
+    video_candidates: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    supplied = collection.get("source_ledger") or []
+    if not isinstance(supplied, list):
+        raise WorkflowConflict("source_ledger_invalid")
+    by_source: dict[str, dict[str, Any]] = {}
+    for raw in supplied:
+        if not isinstance(raw, dict):
+            raise WorkflowConflict("source_ledger_invalid")
+        source = str(raw.get("source") or "")
+        if source not in SOURCE_LEDGER_NAMES or source in by_source:
+            raise WorkflowConflict("source_ledger_identity_conflict")
+        attempted = raw.get("attempted")
+        status = str(raw.get("status") or "")
+        count = raw.get("discovered_count")
+        if attempted is not True or status not in {
+            "completed", "completed_empty", "partial", "failed",
+        } or not isinstance(count, int) or count < 0:
+            raise WorkflowConflict("source_ledger_contract_invalid")
+        if status == "completed_empty" and count != 0:
+            raise WorkflowConflict("source_ledger_count_conflict")
+        if status == "failed" and count != 0:
+            raise WorkflowConflict("source_ledger_count_conflict")
+        if status in {"partial", "failed"} and not str(raw.get("reason") or ""):
+            raise WorkflowConflict("source_ledger_reason_missing")
+        by_source[source] = json.loads(json.dumps(raw, ensure_ascii=False))
+    actual_counts = {
+        source: sum(
+            str(row.get("discovery_source") or "") == source
+            for row in video_candidates
+        )
+        for source in SOURCE_LEDGER_NAMES
+    }
+    for source in SOURCE_LEDGER_NAMES:
+        row = by_source.get(source)
+        if row is None:
+            raise WorkflowConflict(f"source_ledger_attempt_missing:{source}")
+        if row["discovered_count"] != actual_counts[source]:
+            raise WorkflowConflict(f"source_ledger_count_conflict:{source}")
+    if not any(row["attempted"] for row in by_source.values()):
+        raise WorkflowConflict("all_sources_unattempted")
+    if not video_candidates:
+        raise WorkflowConflict("all_sources_without_safe_candidates")
+    return [by_source[source] for source in SOURCE_LEDGER_NAMES]
+
+
 def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, Any]:
     value = json.loads(json.dumps(collection, ensure_ascii=False))
     if value.get("run_id") != args.run_id:
@@ -200,6 +333,10 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         value.get("candidates", []),
         item_ids={row["item_id"] for row in items},
         run_id=args.run_id,
+    )
+    source_ledger = (
+        normalize_source_ledger(value, video_candidates=video_candidates)
+        if "source_ledger" in value else []
     )
     packages: list[dict[str, Any]]
     producer_failures: list[dict[str, Any]]
@@ -214,7 +351,10 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
     elif args.video_mode == "normal":
         produced = produce(args, discovered_candidates=video_candidates)
         packages = produced["packages"]
-        producer_failures = produced["failures"]
+        producer_failures = [{
+            "item_id": str(row.get("item_id") or row.get("candidate_id") or ""),
+            "reason": str(row.get("reason") or row.get("failure") or "video_understanding_failed"),
+        } for row in produced["failures"]]
     else:
         packages, producer_failures = [], []
     package_by_url = {
@@ -233,6 +373,7 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
             for row in packages
         ],
         "item_failures": identity_failures + producer_failures,
+        "source_ledger": source_ledger,
         "substitute_count": 0,
     })
     return value
@@ -329,6 +470,7 @@ def main() -> int:
     parser.add_argument("--video-runtime-config", default="")
     parser.add_argument("--video-policy", default="")
     parser.add_argument("--discovery-fixture", default="")
+    parser.add_argument("--video-discovery-checkpoint", default="")
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
     args = parser.parse_args()
     workflow: DailyWorkflow | None = None
@@ -354,7 +496,17 @@ def main() -> int:
         if collection_stage:
             collection = collection_stage["payload"]
         else:
-            collection = enrich(args, collect(args))
+            collected = collect(args)
+            if args.video_discovery_checkpoint:
+                collected = merge_video_discovery_checkpoint(
+                    collected,
+                    read_json(args.video_discovery_checkpoint),
+                    run_id=args.run_id,
+                )
+            collection = enrich(args, collected)
+            completed_item_ids = {
+                str(row["item_id"]) for row in collection["content_items"]
+            }
             workflow.store_items(args.run_id, [
                 {"item_id": row["item_id"], "status": "completed", "failure": "", "payload": row}
                 for row in collection["content_items"]
@@ -362,6 +514,7 @@ def main() -> int:
                 {"item_id": row["item_id"], "status": "failed", "failure": row["reason"],
                  "payload": {"item_id": row["item_id"]}}
                 for row in collection["item_failures"]
+                if str(row["item_id"]) not in completed_item_ids
             ])
             stage_status = "completed_with_failures" if collection["item_failures"] else (
                 "completed" if collection["content_items"] else "completed_empty"

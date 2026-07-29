@@ -157,6 +157,31 @@ class ProducerTest(unittest.TestCase):
         self.assertIn("media-audio-", text)
         self.assertIn("audio_url", text)
 
+    def test_candidate_unexpected_failure_is_local_and_cleanup_remains_zero(self):
+        candidate = {
+            "aweme_id": "12345678901",
+            "source_url": "https://www.douyin.com/video/12345678901",
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "work").mkdir()
+            with mock.patch.object(
+                producer, "download", side_effect=KeyError("unexpected"),
+            ):
+                package = producer.process_one(
+                    candidate,
+                    run_id="run_20260727_080000",
+                    config={},
+                    runtime={},
+                    work_root=root / "work",
+                    keyframe_root=root / "keyframes",
+                    trigger="automatic",
+                )
+            self.assertEqual(package["status"], "failed")
+            self.assertEqual(package["failure"], "video_candidate_unexpected:KeyError")
+            self.assertEqual(package["temporary_media_remaining"], 0)
+            self.assertFalse((root / "work" / "12345678901").exists())
+
     def test_discovered_video_enters_exact_collection_without_substitute(self):
         with tempfile.TemporaryDirectory() as tmp:
             package_path = Path(tmp) / "packages.json"
@@ -178,9 +203,18 @@ class ProducerTest(unittest.TestCase):
                 }],
                 "candidates": [{
                     "aweme_id": "12345678901", "source": "douyin",
+                    "discovery_source": "configured_account",
                     "title": "AI 工具",
                     "source_url": "https://www.douyin.com/video/12345678901",
                 }],
+                "source_ledger": [
+                    {"source": "configured_account", "attempted": True, "status": "completed",
+                     "discovered_count": 1, "reason": ""},
+                    {"source": "recommendation", "attempted": True, "status": "completed_empty",
+                     "discovered_count": 0, "reason": "no_safe_visible_candidates"},
+                    {"source": "dynamic_search", "attempted": True, "status": "completed_empty",
+                     "discovered_count": 0, "reason": "no_safe_visible_candidates"},
+                ],
             }
             args = Namespace(
                 run_id="run_20260727_080000",
@@ -224,8 +258,23 @@ class ProducerTest(unittest.TestCase):
             collection = {
                 "run_id": "run_20260727_080000",
                 "business_date": "2026-07-27",
-                "content_items": [],
-                "candidates": [],
+                "content_items": [{
+                    "aweme_id": "12345678901",
+                    "source_url": "https://www.douyin.com/video/12345678901",
+                }],
+                "candidates": [{
+                    "aweme_id": "12345678901",
+                    "discovery_source": "dynamic_search",
+                    "source_url": "https://www.douyin.com/video/12345678901",
+                }],
+                "source_ledger": [
+                    {"source": "configured_account", "attempted": True, "status": "completed_empty",
+                     "discovered_count": 0, "reason": "no_current_items"},
+                    {"source": "recommendation", "attempted": True, "status": "completed_empty",
+                     "discovered_count": 0, "reason": "no_safe_visible_candidates"},
+                    {"source": "dynamic_search", "attempted": True, "status": "completed",
+                     "discovered_count": 1, "reason": ""},
+                ],
             }
             with self.assertRaisesRegex(RuntimeError, "video_package_run_mismatch"):
                 workflow.enrich(
@@ -253,6 +302,14 @@ class ProducerTest(unittest.TestCase):
                 "title": "AI 工具",
                 "source_url": "https://www.douyin.com/video/12345678901",
             }],
+            "source_ledger": [
+                {"source": "configured_account", "attempted": True, "status": "completed",
+                 "discovered_count": 1, "reason": ""},
+                {"source": "recommendation", "attempted": True, "status": "completed_empty",
+                 "discovered_count": 0, "reason": "no_safe_visible_candidates"},
+                {"source": "dynamic_search", "attempted": True, "status": "completed_empty",
+                 "discovered_count": 0, "reason": "no_safe_visible_candidates"},
+            ],
         }
         args = Namespace(
             run_id="run_20260727_080000",

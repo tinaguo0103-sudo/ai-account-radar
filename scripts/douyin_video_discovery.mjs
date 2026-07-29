@@ -278,6 +278,13 @@ export function buildSourceLedger(candidates, query, capturedAt) {
     const rows = candidates.filter((row) => row.discovery_source === source);
     return {
       source,
+      attempted: source !== "configured_account",
+      status: source === "configured_account"
+        ? "not_attempted_here"
+        : (rows.length ? "completed" : "completed_empty"),
+      reason: source === "configured_account"
+        ? "provided_by_collection_path"
+        : (rows.length ? "" : "no_safe_visible_candidates"),
       query: source === "dynamic_search" ? query : "",
       captured_at: capturedAt,
       discovered_count: rows.length,
