@@ -130,7 +130,10 @@ class PublicV2FlowTest(unittest.TestCase):
                     "candidate_id": "douyin:7000", "decision": "select",
                     "title": "选题", "hook": "钩子", "structure": "结构",
                     "selection_reason": "理由",
-                }],
+                }] + [{
+                    "candidate_id": f"douyin:{7000+i}", "decision": "observe",
+                    "selection_reason": "未达到本轮选择标准",
+                } for i in range(1, 6)],
             })
             scripts = root / "scripts.json"
             write(scripts, {
