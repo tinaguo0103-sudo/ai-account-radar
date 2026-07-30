@@ -36,6 +36,7 @@ export function parseArgs(args = process.argv.slice(2)) {
     tailRetryDelayMs: 600000,
     sourceDb: path.join(ROOT, "output/state/source_control.sqlite3"),
     checkOnly: false,
+    worksFactsProof: false,
   };
   for (let i = 0; i < args.length; i += 1) {
     const arg = args[i];
@@ -54,6 +55,7 @@ export function parseArgs(args = process.argv.slice(2)) {
     else if (arg === "--tail-retry-delay-ms") options.tailRetryDelayMs = Number(args[++i]);
     else if (arg === "--source-db") options.sourceDb = args[++i];
     else if (arg === "--check-only") options.checkOnly = true;
+    else if (arg === "--works-facts-proof") options.worksFactsProof = true;
   }
   return options;
 }
@@ -1323,6 +1325,84 @@ export function buildHomepageCardItems(rows) {
   return items;
 }
 
+export function buildWorksFactParity(rows, contentItems) {
+  const contentByUrl = new Map(contentItems.map((row) => [String(row.source_url || row["内容链接"] || ""), row]));
+  const fields = [
+    ["published_at", "create_time"],
+    ["likes", "likes"],
+    ["comments", "comments"],
+    ["favorites", "favorites"],
+    ["shares", "shares"],
+  ];
+  const items = [];
+  let supportedFields = 0;
+  let projectionMissing = 0;
+  let realZeroFields = 0;
+  for (const row of rows) {
+    for (const card of row.video_cards || []) {
+      const sourceUrl = String(card.url || card.href || "");
+      const content = contentByUrl.get(sourceUrl) || {};
+      const candidate = {
+        candidate_id: `douyin:${card.video_id}`,
+        source_url: sourceUrl,
+        published_at: content.published_at || "",
+        likes: content.likes ?? null,
+        comments: content.comments ?? null,
+        favorites: content.favorites ?? null,
+        shares: content.shares ?? null,
+        fact_missing_reasons: content.fact_missing_reasons || {},
+        fact_provenance: content.fact_provenance || {},
+      };
+      const comparisons = {};
+      for (const [target, rawKey] of fields) {
+        const rawSupported = rawKey === "create_time"
+          ? Number.isInteger(card.create_time) && card.create_time > 0
+          : card[rawKey] !== null && card[rawKey] !== undefined;
+        let expected = card[rawKey];
+        if (rawKey === "create_time" && rawSupported) {
+          expected = new Date(card.create_time * 1000).toISOString();
+        }
+        if (rawSupported) {
+          supportedFields += 1;
+          if (expected === 0) realZeroFields += 1;
+        }
+        const contentValue = content[target] ?? null;
+        const candidateValue = candidate[target] ?? null;
+        const equal = !rawSupported || (contentValue === expected && candidateValue === expected);
+        if (rawSupported && !equal) projectionMissing += 1;
+        comparisons[target] = {
+          raw_supported: rawSupported,
+          raw_value: rawSupported ? expected : null,
+          content_value: contentValue,
+          candidate_value: candidateValue,
+          parity: equal,
+          missing_reason: rawSupported ? "" : String(card.fact_missing_reasons?.[target] || "field_not_returned"),
+        };
+      }
+      items.push({
+        aweme_id: String(card.video_id || ""),
+        source_url: sourceUrl,
+        provenance: card.fact_provenance || {},
+        comparisons,
+      });
+    }
+  }
+  const eligibleComplete = items.filter((row) =>
+    ["published_at", "likes", "comments", "favorites", "shares"].every(
+      (field) => row.comparisons[field].raw_supported && row.comparisons[field].parity,
+    ));
+  return {
+    status: projectionMissing === 0 ? "passed" : "failed",
+    ordinary_work_count: items.length,
+    raw_supported_field_count: supportedFields,
+    projection_missing_count: projectionMissing,
+    parity_percent: supportedFields ? ((supportedFields - projectionMissing) * 100 / supportedFields) : null,
+    real_zero_field_count: realZeroFields,
+    complete_fact_candidate_count: eligibleComplete.length,
+    items,
+  };
+}
+
 export function validateContentItemLineage(rows, items) {
   const allowedByAccount = new Map(
     rows
@@ -1772,7 +1852,7 @@ async function main() {
     csv: "",
     stderr: "",
   };
-  if (videoLinks.length) {
+  if (videoLinks.length && !options.worksFactsProof) {
     const jsonl = path.join(options.outDir, "content_items.jsonl");
     const csv = path.join(options.outDir, "content_items.csv");
     const rawDir = path.join(options.outDir, "raw_resolver");
@@ -1806,6 +1886,13 @@ async function main() {
 
   const manualJsonl = path.join(options.outDir, "content_items_manual.jsonl");
   const newlyCollectedItems = buildHomepageCardItems(rows);
+  const worksFactParity = buildWorksFactParity(rows, newlyCollectedItems);
+  if (options.worksFactsProof) {
+    const parityPath = path.join(options.outDir, "works_fact_parity.json");
+    fs.writeFileSync(parityPath, JSON.stringify(worksFactParity, null, 2), "utf8");
+    resolverResult.skipped_reason = "works_facts_proof";
+    resolverResult.works_fact_parity = parityPath;
+  }
   persistCollectedCandidates(options.lifecycleLedger, lifecycle, newlyCollectedItems, runId);
   const backlog = materializeHistoricalBacklog(lifecycle);
   const backlogEligibleAccounts = new Set(
@@ -1914,6 +2001,7 @@ async function main() {
       isolated_artifact_failures: backlog.failures,
     },
     rows,
+    works_fact_parity: worksFactParity,
   };
   fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(output, null, 2), "utf8");
   const completedSeen = new Set(options.seenVideoIds);

@@ -9,6 +9,7 @@ import {
   accountWorksSnapshotExpression,
   buildCoverage,
   buildHomepageCardItems,
+  buildWorksFactParity,
   buildSourceRuntimeCoverage,
   checkpointPayload,
   classifyWorksResponse,
@@ -297,6 +298,17 @@ assert.deepEqual(
   ["likes", "comments", "favorites", "shares"].map((key) => factContent[key]),
   [0, 12, 3, 1],
 );
+const factParity = buildWorksFactParity([{
+  status: "success",
+  video_cards: factShape.cards,
+}], [factContent]);
+assert.equal(factParity.status, "passed");
+assert.equal(factParity.ordinary_work_count, 1);
+assert.equal(factParity.raw_supported_field_count, 5);
+assert.equal(factParity.projection_missing_count, 0);
+assert.equal(factParity.parity_percent, 100);
+assert.equal(factParity.real_zero_field_count, 1);
+assert.equal(factParity.complete_fact_candidate_count, 1);
 assert.equal(parseWorksResponseBody("", "account-1").failure_code, "douyin_works_response_body_missing");
 assert.equal(parseWorksResponseBody("{", "account-1").failure_code, "douyin_works_response_json_malformed");
 assert.equal(parseWorksResponseBody("{}", "account-1").failure_code, "douyin_works_response_schema_mismatch");
