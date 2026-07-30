@@ -1819,15 +1819,16 @@ def angle_score(item: ContentItem, scene: str) -> int:
 def score_item(item: ContentItem, scene: str) -> int:
     text = item_text(item)
     angle = hotspot_angle(item, scene) if item.source_type == "AIHOT热点" else {}
-    heat = 3
+    # Collection rows without real engagement and publication facts have
+    # unknown heat. Title/persona/exploration remain independent signals.
+    heat = 0
     account_angle = angle_score(item, scene)
     business = 5 if any(k in text for k in ["流程", "SOP", "清单", "Brief", "分镜", "Agent", "复盘", "模板", "产品", "工具", "团队"]) else 3
     diff = 5 if account_angle >= 4 else 3
     action = 5 if any(k in text for k in ["工具", "模板", "流程", "Agent", "视频", "内容", "产品", "服务", "发布", "更新"]) else 3
     cost_reverse = 4 if item.body_snippet or item.cover_text else 2
     score = round(
-        heat * 20 / 5
-        + account_angle * 20 / 5
+        account_angle * 20 / 5
         + business * 20 / 5
         + diff * 15 / 5
         + action * 15 / 5

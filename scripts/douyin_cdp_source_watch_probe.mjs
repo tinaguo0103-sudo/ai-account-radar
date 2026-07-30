@@ -932,6 +932,31 @@ function networkWorkCard(item, expectedAccountIdentity) {
   const id = String(item?.aweme_id || "");
   const authorIdentity = String(item?.author?.sec_uid || item?.author?.sec_user_id || "");
   if (!/^\d{10,}$/.test(id) || authorIdentity !== expectedAccountIdentity) return null;
+  const statistics = item?.statistics && typeof item.statistics === "object"
+    ? item.statistics : {};
+  const fact = (key) => {
+    if (!Object.prototype.hasOwnProperty.call(statistics, key)) {
+      return { value: null, missing_reason: "field_not_returned" };
+    }
+    const value = Number(statistics[key]);
+    if (!Number.isFinite(value) || value < 0) {
+      return { value: null, missing_reason: "field_invalid" };
+    }
+    return { value, missing_reason: "" };
+  };
+  const published = Number(item?.create_time);
+  const publishedValid = Number.isInteger(published) && published > 0;
+  const likes = fact("digg_count");
+  const comments = fact("comment_count");
+  const favorites = fact("collect_count");
+  const shares = fact("share_count");
+  const missing = Object.fromEntries([
+    ["published_at", publishedValid ? "" : (item?.create_time == null ? "field_not_returned" : "field_invalid")],
+    ["likes", likes.missing_reason],
+    ["comments", comments.missing_reason],
+    ["favorites", favorites.missing_reason],
+    ["shares", shares.missing_reason],
+  ].filter(([, reason]) => reason));
   return {
     id,
     video_id: id,
@@ -939,7 +964,23 @@ function networkWorkCard(item, expectedAccountIdentity) {
     url: `https://www.douyin.com/video/${id}`,
     text: String(item?.desc || "").slice(0, 1000),
     pinned: Boolean(item?.is_top === 1 || item?.is_top === true || item?.is_pinned === 1),
-    create_time: Number(item?.create_time || 0),
+    create_time: publishedValid ? published : null,
+    likes: likes.value,
+    comments: comments.value,
+    favorites: favorites.value,
+    shares: shares.value,
+    fact_missing_reasons: missing,
+    fact_provenance: {
+      capture: "configured_account_page_owned_works_response",
+      endpoint: "/aweme/v1/web/aweme/post/",
+      response_fields: {
+        published_at: "create_time",
+        likes: "statistics.digg_count",
+        comments: "statistics.comment_count",
+        favorites: "statistics.collect_count",
+        shares: "statistics.share_count",
+      },
+    },
     in_works_grid: true,
     account_identity_match: true,
   };
@@ -1235,6 +1276,9 @@ export function buildHomepageCardContentItem(row, link, index) {
   const card = cards.find((item) => item.href === link || item.url === link || link.endsWith(String(item.video_id || ""))) || {};
   const title = normalizeCardText(card.text || "");
   const body = title || `${row.account_name || "抖音对标账号"}主页发现作品：${link}`;
+  const createTime = Number(card.create_time);
+  const publishedAt = Number.isInteger(createTime) && createTime > 0
+    ? new Date(createTime * 1000).toISOString() : "";
   return {
     "来源类型": "对标视频",
     "平台": "抖音",
@@ -1244,7 +1288,7 @@ export function buildHomepageCardContentItem(row, link, index) {
     "内容形态": "short_video_homepage_card",
     "封面文字": "",
     "正文/字幕/简介片段": body,
-    "发布时间": "",
+    "发布时间": publishedAt,
     "评论区问题": "",
     "截图/OCR文本": "",
     "抓取方式": "douyin_cdp_homepage_card",
@@ -1254,6 +1298,17 @@ export function buildHomepageCardContentItem(row, link, index) {
     "正文原始长度": body.length,
     "正文是否截断": "否",
     "解析说明": "从登录态主页作品区提取标题/文案卡片；未做口播转写、评论抓取或视频理解。适合标题先筛选，人工确认后再转写。",
+    "source_url": link,
+    "aweme_id": String(card.video_id || ""),
+    "published_at": publishedAt,
+    "likes": card.likes ?? null,
+    "comments": card.comments ?? null,
+    "favorites": card.favorites ?? null,
+    "shares": card.shares ?? null,
+    "fact_missing_reasons": card.fact_missing_reasons || {},
+    "fact_provenance": card.fact_provenance || {
+      capture: "configured_account_collection",
+    },
   };
 }
 
@@ -1448,6 +1503,13 @@ export async function probeAccount(client, source, options) {
         url: `https://www.douyin.com/video/${item.id}`,
         text: item.text || "",
         pinned: Boolean(item.pinned),
+        create_time: item.create_time,
+        likes: item.likes,
+        comments: item.comments,
+        favorites: item.favorites,
+        shares: item.shares,
+        fact_missing_reasons: item.fact_missing_reasons || {},
+        fact_provenance: item.fact_provenance || {},
       })),
       discovery_counters: incremental.counters,
       extraction_diagnostics: {

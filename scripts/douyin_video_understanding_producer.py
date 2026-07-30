@@ -52,6 +52,47 @@ def compact(value: str) -> str:
     return re.sub(r"\s+", " ", value).strip()
 
 
+def normalize_candidate_shape(raw: dict[str, Any]) -> dict[str, Any]:
+    row = json.loads(json.dumps(raw, ensure_ascii=False))
+    aliases = {
+        "source_url": ("source_url", "来源链接", "内容链接"),
+        "title": ("title", "原始来源标题", "内容标题", "选题标题"),
+        "author": ("author", "账号名/公众号名", "账号", "作者"),
+        "published_at": ("published_at", "发布时间"),
+        "likes": ("likes", "点赞数"),
+        "comments": ("comments", "评论数"),
+        "favorites": ("favorites", "收藏数"),
+        "shares": ("shares", "分享数"),
+    }
+    for target, keys in aliases.items():
+        if row.get(target) not in (None, ""):
+            continue
+        for key in keys:
+            if row.get(key) not in (None, ""):
+                row[target] = row[key]
+                break
+    match = re.search(r"douyin\.com/video/(\d+)", str(row.get("source_url") or ""))
+    if not row.get("aweme_id") and match:
+        row["aweme_id"] = match.group(1)
+    if row.get("aweme_id") and not row.get("source_url"):
+        row["source_url"] = f"https://www.douyin.com/video/{row['aweme_id']}"
+    row.setdefault("discovery_source", "configured_account")
+    row.setdefault("published_at", "")
+    row.setdefault("author", "")
+    row.setdefault("title", "")
+    row.setdefault("fact_missing_reasons", {})
+    row.setdefault("fact_provenance", {"capture": "configured_account_collection"})
+    if not row.get("raw_identity"):
+        row["raw_identity"] = digest({
+            "aweme_id": row.get("aweme_id"),
+            "source_url": row.get("source_url"),
+            "title": row.get("title"),
+        })
+    if not row.get("aweme_id") or not row.get("source_url"):
+        raise ProducerError("video_candidate_identity_missing")
+    return row
+
+
 def atomic_json(path: Path, payload: Any) -> None:
     encoded = (canonical(payload) + "\n").encode()
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -177,8 +218,9 @@ def policy_decisions(
     policy: dict[str, Any] | None = None,
 ) -> list[dict[str, Any]]:
     policy = policy or {}
+    normalized_candidates = [normalize_candidate_shape(row) for row in candidates]
     eligible = [
-        row for row in candidates
+        row for row in normalized_candidates
         if row.get("likes") is not None and (
             row.get("published_at")
             or row.get("published_recency", {}).get("minimum_seconds") is not None
@@ -194,10 +236,14 @@ def policy_decisions(
     exploration_limit = int(policy.get("exploration_limit", 2))
     exploration_used = 0
     output = []
-    for row in candidates:
+    eligible_ids = {str(row["aweme_id"]) for row in eligible}
+    for row in normalized_candidates:
         title_value = bool(re.search(title_expression, str(row.get("title") or ""), re.I))
         total = int(row.get("likes") or 0)
-        engagement = bool(row in eligible and totals and total > 0 and total >= relative_floor)
+        engagement = bool(
+            str(row["aweme_id"]) in eligible_ids
+            and totals and total > 0 and total >= relative_floor
+        )
         exploration = (
             row.get("discovery_source") == "dynamic_search"
             and not title_value and not engagement and exploration_used < exploration_limit
@@ -531,7 +577,10 @@ def load_discovery_payload(
     if discovery_path.is_file():
         payload = json.loads(discovery_path.read_text())
     elif mode == "normal":
-        query = str(getattr(args, "search_query", "") or "AI 工具 人工智能")
+        query = str(
+            getattr(args, "search_query", "")
+            or "AI 工作流|AI 工具 实测|AI Agent 应用"
+        )
         result = subprocess.run([
             "node", str(DISCOVERY), "--output", str(discovery_path),
             "--cdp", args.cdp, "--query", query,
@@ -595,6 +644,7 @@ def produce(
         if discovered_candidates is None
         else discovered_candidates
     )
+    candidates = [normalize_candidate_shape(row) for row in candidates]
     merged = merge_candidates([candidates], args.run_id)
     policy_path = (
         getattr(args, "video_policy", "")

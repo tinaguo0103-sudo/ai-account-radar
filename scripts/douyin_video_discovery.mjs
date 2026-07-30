@@ -11,7 +11,12 @@ import {
 } from "./douyin_cdp_source_watch_probe.mjs";
 
 function parseArgs(argv) {
-  const out = { cdp: "http://127.0.0.1:9333", output: "", waitMs: 8000, query: "AI" };
+  const out = {
+    cdp: "http://127.0.0.1:9333",
+    output: "",
+    waitMs: 8000,
+    query: "AI 工作流|AI 工具 实测|AI Agent 应用",
+  };
   for (let i = 0; i < argv.length; i += 1) {
     const key = argv[i];
     if (key === "--cdp") out.cdp = argv[++i];
@@ -332,6 +337,7 @@ async function main() {
   const session = new FixedPageSession(options.cdp, target, { maxReattachments: 1 });
   const captured = [];
   const endpoints = new Set();
+  const queryLedger = [];
   let source = "recommendation";
   await session.open();
   session.client.on("Network.responseReceived", async ({ requestId, response, type }) => {
@@ -365,10 +371,32 @@ async function main() {
     );
     captured.push(...recommendationCards.map((card) => normalizeVisibleCard(card, "recommendation")));
     source = "dynamic_search";
-    const query = deriveSearchQuery(captured, options.query, target.url);
-    await session.send("Page.navigate", { url: `https://www.douyin.com/search/${encodeURIComponent(query)}?type=video` });
-    const searchCards = await collectVisibleFeed(session, options.waitMs, risk, "dynamic_search");
-    captured.push(...searchCards.map((card) => normalizeVisibleCard(card, "dynamic_search")));
+    const configuredQueries = String(options.query || "")
+      .split("|").map((value) => value.trim()).filter(Boolean).slice(0, 4);
+    const queries = configuredQueries.length
+      ? configuredQueries
+      : [deriveSearchQuery(captured, "AI 工具 人工智能", target.url)];
+    for (const [index, query] of queries.entries()) {
+      await risk(`dynamic_search_${index}_before_navigation`);
+      await session.send("Page.navigate", {
+        url: `https://www.douyin.com/search/${encodeURIComponent(query)}?type=video`,
+      });
+      const searchCards = await collectVisibleFeed(
+        session, options.waitMs, risk, `dynamic_search_${index}`,
+      );
+      const normalizedSearch = searchCards.map((card) => ({
+        ...normalizeVisibleCard(card, "dynamic_search"),
+        search_query: query,
+      }));
+      captured.push(...normalizedSearch);
+      queryLedger.push({
+        query,
+        attempted: true,
+        status: normalizedSearch.length ? "completed" : "completed_empty",
+        discovered_count: normalizedSearch.length,
+        reason: normalizedSearch.length ? "" : "no_safe_visible_candidates",
+      });
+    }
   } finally {
     session.close();
   }
@@ -377,7 +405,8 @@ async function main() {
   for (const row of captured) byId.set(row.aweme_id, preferCandidate(byId.get(row.aweme_id), row));
   const candidates = [...byId.values()];
   const capturedAt = new Date().toISOString();
-  const query = deriveSearchQuery(candidates, options.query, target.url);
+  const query = String(options.query || "").split("|").map((value) => value.trim())
+    .filter(Boolean).slice(0, 4).join(" | ");
   const payload = {
     schema_version: 2,
     status: "completed",
@@ -392,6 +421,7 @@ async function main() {
       return `${parsed.origin}${parsed.pathname}`;
     }).sort(),
     source_ledger: buildSourceLedger(candidates, query, capturedAt),
+    query_ledger: queryLedger,
     candidates,
   };
   writeAtomicJson(options.output, payload);

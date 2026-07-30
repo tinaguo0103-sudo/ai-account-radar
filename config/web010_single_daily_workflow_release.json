@@ -11,7 +11,7 @@
     ],
     "outerAgentProtocol": [
       "Run the public entrypoint. It completes collection_enrichment or resumes its exact local checkpoint.",
-      "When editorial is required, directly apply the active ai-account-editorial-director Skill in this outer Codex task and save the simple stage result.",
+      "When editorial is required, directly apply the active ai-account-editorial-director Skill in this outer Codex task and save the simple stage result. Cover every candidate identity exactly once. Each select, observe, reject, or failed reason must cite that candidate's own available fact, missing dimension, or content judgment; do not reuse generic batch reasons. Real engagement plus exact time or recency may support hot, while title value, persona fit, and exploration stay separate and unknown facts never reduce account quality.",
       "When scripts_required is returned, read each selected topic's joined same-run Topic Card. Keep factual constraints in generation and QA context; the candidate Voice Skill owns spoken narrative structure.",
       "In this outer Codex task, apply candidate austin-no-overtime-scripting once for the full batch and candidate austin-voice-scriptwriter once for the full batch, then save the simple stage result. Do not fabricate a measured personal saving, real client outcome, completed team result, or verified third-party statistic.",
       "Run the same public entrypoint with the simple stage result files until local terminal completion.",

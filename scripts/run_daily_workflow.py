@@ -213,14 +213,26 @@ def adapt_collection_rows(
     for raw in rows:
         row = normalize_source_fields(json.loads(json.dumps(raw, ensure_ascii=False)))
         url = source_url(row)
-        facts = facts_by_url.get(url)
+        direct_supported = any(
+            row.get(key) not in (None, "")
+            for key in ("published_at", "发布时间", "likes", "comments", "favorites", "shares")
+        )
+        if direct_supported:
+            if not row.get("published_at") and row.get("发布时间"):
+                row["published_at"] = row["发布时间"]
+            row.setdefault("fact_missing_reasons", {})
+            row.setdefault(
+                "fact_provenance",
+                {"capture": "configured_account_page_owned_works_response"},
+            )
+        facts = None if direct_supported else facts_by_url.get(url)
         if facts:
             for key, value in facts.items():
                 if key in {"source_url", "aweme_id"} or (value is not None and value != ""):
                     row[key] = value
             row["fact_missing_reasons"] = facts["fact_missing_reasons"]
             row["fact_provenance"] = facts["fact_provenance"]
-        elif "douyin.com/video/" in url:
+        elif "douyin.com/video/" in url and not direct_supported:
             row.update({
                 "discovery_source": "configured_account",
                 "published_at": str(row.get("published_at") or row.get("发布时间") or ""),
@@ -627,13 +639,24 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         package = package_by_url.get(str(row.get("source_url") or row.get("内容链接") or ""))
         if package:
             row["video_understanding"] = package
+    package_by_item = {
+        f"douyin:{row.get('aweme_id')}": row for row in packages
+        if row.get("status") in {"completed", "completed_with_failures"}
+    }
+    understanding_results = []
+    for candidate in candidates:
+        item_id = str(candidate.get("item_id") or "")
+        package = package_by_item.get(item_id)
+        if package:
+            understanding_results.append({
+                "candidate_id": str(candidate.get("candidate_id") or ""),
+                "base_item_id": item_id,
+                "package": package,
+            })
     value.update({
         "content_items": items,
         "candidates": candidates,
-        "understanding_results": [
-            {"candidate_id": f"douyin:{row.get('aweme_id')}", "package": row}
-            for row in packages
-        ],
+        "understanding_results": understanding_results,
         "item_failures": identity_failures + candidate_failures + producer_failures,
         "source_ledger": source_ledger,
         "substitute_count": 0,

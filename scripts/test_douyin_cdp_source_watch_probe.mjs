@@ -270,6 +270,33 @@ const parsedRealShape = parseWorksResponseBody(JSON.stringify(realShapeFixture.r
 assert.equal(parsedRealShape.ok, true);
 assert.equal(parsedRealShape.cards.length >= 10, true);
 assert.equal(parsedRealShape.cards[0].pinned, true);
+const factShape = parseWorksResponseBody(JSON.stringify({ aweme_list: [{
+  aweme_id: "50000000009",
+  desc: "facts",
+  author: { sec_uid: "account-1" },
+  create_time: 1785369600,
+  statistics: {
+    digg_count: 0, comment_count: 12, collect_count: 3, share_count: 1,
+  },
+}] }), "account-1");
+assert.equal(factShape.ok, true);
+assert.equal(factShape.cards[0].create_time, 1785369600);
+assert.deepEqual(
+  ["likes", "comments", "favorites", "shares"].map((key) => factShape.cards[0][key]),
+  [0, 12, 3, 1],
+);
+assert.deepEqual(factShape.cards[0].fact_missing_reasons, {});
+const factContent = buildHomepageCardItems([{
+  status: "success",
+  account_name: "account-1",
+  video_links: ["https://www.douyin.com/video/50000000009"],
+  video_cards: factShape.cards,
+}])[0];
+assert.equal(factContent.published_at, "2026-07-30T00:00:00.000Z");
+assert.deepEqual(
+  ["likes", "comments", "favorites", "shares"].map((key) => factContent[key]),
+  [0, 12, 3, 1],
+);
 assert.equal(parseWorksResponseBody("", "account-1").failure_code, "douyin_works_response_body_missing");
 assert.equal(parseWorksResponseBody("{", "account-1").failure_code, "douyin_works_response_json_malformed");
 assert.equal(parseWorksResponseBody("{}", "account-1").failure_code, "douyin_works_response_schema_mismatch");
