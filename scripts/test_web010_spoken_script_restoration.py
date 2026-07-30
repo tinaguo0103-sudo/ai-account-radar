@@ -6,6 +6,13 @@ from pathlib import Path
 import run_daily_workflow as workflow
 
 
+RELEASE_CONFIG = (
+    Path(__file__).resolve().parents[1]
+    / "config"
+    / "web010_single_daily_workflow_release.json"
+)
+
+
 class SpokenScriptRestorationTests(unittest.TestCase):
     def fixture(self):
         return {
@@ -81,6 +88,21 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("我的制作补充", encoded)
         self.assertNotIn("制作方向", encoded)
         self.assertTrue(handoff["batch_contract"]["human_supplement_excluded"])
+        self.assertTrue(
+            handoff["batch_contract"]["fact_boundaries_are_silent_generation_context"]
+        )
+        self.assertTrue(
+            handoff["batch_contract"]["plausible_hypothetical_or_composite_scenes_allowed"]
+        )
+        self.assertTrue(handoff["batch_contract"]["illustrative_experiment_data_allowed"])
+        self.assertTrue(
+            handoff["batch_contract"][
+                "fabricated_actual_client_team_or_measured_results_forbidden"
+            ]
+        )
+        self.assertTrue(
+            handoff["batch_contract"]["defensive_disclaimer_pattern_forbidden"]
+        )
 
     def test_optional_context_stays_absent_or_null(self):
         fixture = self.fixture()
@@ -130,6 +152,33 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             before = next(root.rglob("*.md")).read_bytes()
             workflow.write_script_artifacts(root, "run_20260730_120000", result["scripts"])
             self.assertEqual(next(root.rglob("*.md")).read_bytes(), before)
+
+    def test_release_prompt_keeps_boundaries_silent_and_allows_creator_scenes(self):
+        config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
+        protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
+        self.assertIn("creator content, not an audit report", protocol)
+        self.assertIn("silent generation and QA context", protocol)
+        self.assertIn("hypothetical or composite Austin-use scene", protocol)
+        self.assertIn("Illustrative numbers", protocol)
+        self.assertIn("distinct scene and narrative engine", protocol)
+
+    def test_release_prompt_forbids_defensive_body_templates_and_false_results(self):
+        config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
+        protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
+        for phrase in (
+            "我还没有所以我不会",
+            "来源没有证明",
+            "公开信息只说明",
+            "AI不是万能",
+        ):
+            self.assertIn(phrase, protocol)
+        for forbidden_claim in (
+            "measured personal saving",
+            "real client outcome",
+            "completed team result",
+            "verified third-party statistic",
+        ):
+            self.assertIn(forbidden_claim, protocol)
 
 
 if __name__ == "__main__":

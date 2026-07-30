@@ -829,6 +829,11 @@ def build_scripts_handoff(
             "missing_optional_context_must_not_be_fabricated": True,
             "human_supplement_excluded": True,
             "production_direction_excluded": True,
+            "fact_boundaries_are_silent_generation_context": True,
+            "plausible_hypothetical_or_composite_scenes_allowed": True,
+            "illustrative_experiment_data_allowed": True,
+            "fabricated_actual_client_team_or_measured_results_forbidden": True,
+            "defensive_disclaimer_pattern_forbidden": True,
         },
     }
 
