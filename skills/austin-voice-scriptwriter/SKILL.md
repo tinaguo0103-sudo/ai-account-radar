@@ -67,4 +67,4 @@ description: 将已确认的 AI 账号选题、Topic Card、制作方向补充�
 - 如果全局私有版存在 `references/private/three_round_learning.md`，可以借它理解 Austin 的节奏和判断感；其中历史固定模板不能覆盖本 Skill 的当前用户校准。
 - 私有案例只作可选发散。0 个匹配案例是正常输入，不阻断生成，也不要求每题读取或使用案例；没有合适案例时，直接从 Topic Card 构造题目独有的合理假设/复合场景。
 - `scripts/austin_voice.py` 只提供 `fallback_draft / not_style_qa` 的字段化兜底，用于格式、安全和边界检查；不得把它当成 Austin 风格质量样例。
-- 真实内容质量验收必须走 `codex exec` 调用测试 Skill / 私有 Skill，并由 PM、测试线程或用户人工看样例。
+- 当前 outer Codex 必须在同一上下文直接通读完整正文并完成质量检查，不启动新进程或其他 Agent。后续 PM、Independent QA 和用户仍需独立阅读匿名全文；它们是验收角色，不是本 Skill 需要调用的运行时。

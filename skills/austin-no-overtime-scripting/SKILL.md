@@ -1,100 +1,76 @@
 ---
 name: austin-no-overtime-scripting
-description: 将奥斯汀AI账号已确认选题、04工作流实验命题卡、Topic Card或制作方向补充，编排成完整口播稿与制作执行包。适用于 AI业务定调、真实工作流改造、AI导演工作流、非技术Agent实战、AI汽车与品牌增长现场、AI项目复盘。默认调用 austin-voice-scriptwriter 生成真人口播全文，并输出单一 Markdown 主文档；飞书 06 完整脚本与制作包只保存轻量记录，不存在中间 Brief 层。不得用于自动发布、自动剪辑或替用户最终决定观点。
+description: 将 WEB-010 已确认选题的 same-run rich Topic Card 编排为 spoken-only 批次输入，并由当前 outer Codex 在同一上下文应用 austin-voice-scriptwriter，返回简单完整口播结果。不负责完整制作包、外部队列、表格回写、发布或启动其他进程。
 ---
 
-# Austin不加班脚本Skill
+# Austin不加班脚本 Skill
 
-这个 Skill 现在只做一件事：把已经选中的 `04` 选题和人工补充方向，转成一份能直接进入拍摄准备的完整执行包。
+本 Skill 在 WEB-010 正常链只负责一件事：把同一 run 已选中的 rich Topic Cards
+整理成一个口播批次，让当前 outer Codex 直接写出每题完整正文。
 
-默认输出一个平铺 Markdown 主文档，文件名由运行器生成，形如 `YYYY-MM-DD_选题标题_完整脚本与制作包.md`。
+## 正常运行模型
 
-飞书 `06 完整脚本与制作包` 保存状态、核心观点、开头钩子、飞书文档/文件夹入口、本地文档入口、文档同步状态、素材提醒、发布前核验和 QA，不再存在 `05` 中间层。完整内容统一输出到本地 Markdown 主文档，不要塞进飞书长字段。
+- 唯一 AI owner 是当前 outer Codex。
+- 本 Skill 每个批次应用一次，`austin-voice-scriptwriter` 每个批次应用一次。
+- 两份 Skill 都在当前上下文直接读取和执行，不启动新进程或其他 Agent。
+- 每题独立成稿，但整个批次只返回一次简单结果。
+- 输出只包含 `topic_id/title/hook/structure/body` 和 item-local failures。
 
-## 职责边界
+本节是 WEB-010 `scripts_required` 的完整执行合同。历史完整制作包、外部队列、表格索引和
+单条 runner 已退出正常运行，也不是本 Skill 可执行的资源路径。
 
-1. `04 分析与选题` 负责选题判断、切入点、工作流痛点、AI介入点、验证方式和证据线索。
-2. 交互式选题卡负责让用户勾选要推进的题；第二张补充卡负责补“这条想怎么讲、用什么案例、不要讲什么”。
-3. `austin-voice-scriptwriter` 负责写接近 Austin 真人口播习惯的全文。
-4. 本 Skill 负责把口播全文编排成执行包：视频结构、分段口播、录屏/素材清单、剪辑交接、发布包草稿、QA。
-5. 正式链路不写任何中间 Brief 表或中间索引表。
-6. `06 完整脚本与制作包` 是正式制作包记录表；完整内容以本地 Markdown 为准，飞书只保存摘要和路径。
+## 输入
 
-## 核心原则
+每个 selected topic 使用 public handoff 已提供的 same-run facts：
 
-1. 不要从短标题重新理解选题，必须承接 `04 工作流实验命题卡` 和人工制作补充。
-2. 不要再生成 `script_outline_brief.md` 作为默认中间产物；旧函数只为历史兼容保留。
-3. 输出必须摘要先行：用户打开文档第一屏就能看到生产判断、钩子、待办、核验点和边界。
-4. 口播全文要优先由 `austin-voice-scriptwriter` 生成；本 Skill 不重新塞一套口播风格规则。
-5. 当前选题检索、对标表达拆解和概念浅显解释只作为素材输入，不能覆盖 Austin 稳定口播结构。
-6. 不要强制指定用户必须使用某个案例或资产；案例只能作为“可选参考”或“建议素材”。
-7. 公开事实和可拍素材要分开：官网、公示、公告是事实依据；自己的截图、字段表、失败样例、人工修正点才是制作证据。
-8. 如果公开资料可检索，Codex 使用本 Skill 时应先主动检索和引用；搜不到或无法核验时才标为缺口。
-9. 涉及产品能力、平台规则、价格、政策、数据、汽车功能边界时，必须进入“发布前核验”。
-10. `暂无`、`待补实验动作`、`待补旧流程痛点` 等占位内容不能当成真实字段；缺关键字段就标记 blocked。
-11. 执行包要保留真实失败、人工修正和边界提醒，不要把 AI 写成一次就全对。
-12. `如果当天/今天没有生成 06`、`没有完整生成到最后一步`、`选题系统复盘` 这类内部状态边界只能放在“发布前核验”“QA 风险与防错”“发布前提醒”，不得进入开头钩子、拍摄前待办、视频结构、口播、分段执行、录屏素材、剪辑交接或发布包草稿。
-13. `沉淀资产` 是内部抽象词，不能出现在用户可见创作内容里，包括开头钩子、标题、封面大字、简介、置顶评论、口播、素材清单、分段方案和 QA 通过原因。改成人话：`有没有留下来`、`下次还能不能用`、`路径有没有串起来`、`后面能不能复用`、`资料有没有变成下次能用的东西`。
-14. 遇到知识库、RAG、Agent、TTS、Voice Agent、工作流系统、AI 工具等概念/工具型选题，先在内部做生成前判断：用户原来怎么解决、旧方式在真实工作里卡在哪里、为什么现在需要引入这个概念/工具/工作流、这个概念用人话怎么解释、当前工具或热点只是哪个落地案例、最后怎么回到用户自己的工作流和证据。
-15. 上一条是素材组织方法，不是口播模板。不要把它变成固定段落顺序、固定开头、固定句式或每条都必须显性出现的检查清单；用户举的具体替代工具、配音评价维度等例子只能帮助理解，不能写死进 Skill。
-16. 仓库 deterministic fallback 只做格式、安全和字段兜底，不代表最终 Austin 风格质量验收。真实质量验收必须看本机测试 Skill / 私有 Skill 的实际输出和人工样例。
+- topic identity、title、hook、structure、selection reason；
+- unique judgment、persona fit；
+- source title/summary/URL、公开事实和 provenance；
+- pain、old workflow、AI intervention、experiment、validation；
+- available/missing evidence、fact boundary、cannot-claim；
+- 存在时的 caption、ASR、screen facts、keyframes 和 unresolved。
 
-## 工作流
+不读取或要求 human supplement、production direction、完整制作包字段或历史 run 替代。
+optional facts 缺失时保持缺失，不从模型记忆或其他 topic 补齐。
 
-1. 将输入映射成 Topic Card。
-2. 校验完整执行包是否可用，得到 `pass/revise/blocked`。
-   - `blocked`：必填字段缺失，不能可靠生成。
-   - `revise`：缺独有判断、缺任何可展示证据，或脚本/执行包本身不成立。
-   - `pass`：脚本和执行包已可进入拍摄准备；具体补拍素材、录屏、发布前事实核验只作为提醒，不因为这些提醒降级成 `revise`。
-3. 判断制作模板：`Skill公开型`、`热点业务转译型`、`认知定调型`、`真实工作流改造型`、`Agent实战型`、`项目复盘型`。
-4. 概念/工具型选题先整理“旧方式 -> 真实卡点 -> 为什么需要它 -> 人话解释 -> 当前案例 -> 回到本人工作流”的内部素材，只给口播生成做参考，不要求逐条覆盖。
-5. 读取全局私有 `austin-voice-scriptwriter`，生成口播全文；需要测试仓库脱敏镜像时必须显式设置 `AUSTIN_VOICE_SCRIPT_SKILL_DIR`。
-6. 生成单一 Markdown 主文档，由运行器保存为平铺文件名；口播和分段执行方案不得强行套统一六段、统一“三个动作”或固定章节名。
-7. 飞书 `06 完整脚本与制作包` 写记录字段：关联选题、脚本状态、推荐模板、核心观点、开头钩子、飞书文档、飞书文件夹、文档同步状态、文档同步错误、本地文档、素材提醒、发布前核验、QA结果、是否可拍、版本。
-8. 不自动拆拍摄、剪辑、发布任务；任务拆分以后单独设计，不恢复 `05` 中间层。
+## 批次工作流
 
-## 输出文档
+1. 将每题 rich Topic Card 压缩成写作材料，不改变 identity，不合并不同题。
+2. 把事实约束放在静默生成/QA context，不机械写入口播。
+3. 在当前上下文应用 candidate `austin-voice-scriptwriter` 的题目驱动规则，为每题写
+   `title/hook/structure/body`。
+4. 当前 outer Codex 直接通读全批次，检查身份覆盖、题目独有场景、动作、后果、提词器
+   可读性、事实边界和批次模板重复；不委托新的执行者。
+5. 只提交 schema-valid simple result。单题无法安全成稿时记录 item-local failure，其余题
+   继续。
 
-Markdown 主文档必须按这个顺序写：
+## 编排原则
 
-1. `一屏结论`：生产判断、推荐模板、核心观点、开头钩子、拍摄前待办、发布前核验、本条边界。
-2. `视频结构`：按时间线写完整结构，不是散点清单。
-3. `搜索与表达融合`：如有检索素材，写清来源、表达模式、保留/丢弃和融合方式；无检索素材时不强行编造。
-4. `口播全文`：直接可读、可改、可放进提词器。
-5. `分段执行方案`：时间、段落、真人口播、画面/录屏、剪辑重点、QA。
-6. `录屏与素材清单`：已有证据、待补素材、用途、优先级、状态。
-7. `剪辑交接`：结果闪现、前后对比、字幕重点、真人切回、节奏停顿。
-8. `发布包草稿`：标题、封面大字、置顶评论。
-9. `QA`：`pass/revise/blocked`、原因和拍摄/发布前提醒。
+- 不从短标题重新理解选题；必须承接 rich Topic Card 的判断与 same-run facts。
+- Voice Skill 负责口播风格，本 Skill 不复制问句、步骤、开头或结尾模板。
+- private style/case context 只作可选发散；0 case match 是正常输入。
+- reasonable hypothetical/composite scene 和 illustrative data 可以进入写作材料，但不能
+  冒充真实客户、团队、本人实测或第三方验证结果。
+- 来源、事实缺失和不能声称用于后台约束；不把口播写成审核说明。
+- 不生成素材、镜头、剪辑、发布、QA 包或完整制作包。
 
-不要恢复 00-08 多文件散包。不要把完整内容塞进飞书长文本；飞书只作为索引和状态台，完整阅读入口是本地 Markdown。
+## 结果检查
 
-用户可见文案清洗要求：
+当前 outer Codex 在同一上下文直接完成：
 
-- `开头钩子候选`、`视频结构`、`口播全文`、`分段执行方案`、`录屏与素材清单`、`剪辑交接`、`发布包草稿` 只能写可拍、可剪、可发布的内容。
-- 内部状态边界只保留在 `发布前核验`、`QA 风险与防错` 或 `发布前提醒`；如果该边界不帮助发布前判断，可以直接删掉。
-- QA 不能自称已经通过 PM、测试线程或用户验收；测试/返修阶段只能写草稿、待 PM 验收、待 QA。
+- selected topic 与 script identity exact coverage；
+- 五题或多题并排结构检查；
+- unsupported actual-result 检查；
+- private wording leakage 检查；
+- simple schema 校验；
+- public submit 后 exact replay no-churn 检查。
 
-## 资源使用
+质量判断必须阅读全文，字符数、问句数、步骤数和关键词只能作为诊断。
 
-- 批量生成：本机轻量 watcher `scripts/watch_script_package_queue.py --interval-minutes 5 --limit 2 --max-age-days 5` 扫描近 5 天待生成队列；空队列不调用 Codex，有待生成记录时才运行 `scripts/codex_script_package_runner.py --write-feishu --limit 2 --max-age-days 5`，由本机 `codex exec` 调用全局私有 Skill 生成完整包。
-- 从指定 `04` 记录立即生成单条执行包：运行 `scripts/codex_script_package_runner.py --write-feishu --record-id <04_record_id>`。
-- 只校验 Topic Card：运行 `scripts/validate_topic_card.py`。
-- 汇总某天本地执行包：运行 `scripts/merge_daily_index.py`。
-- 调整 Austin 真人口播风格：修改独立 Skill `austin-voice-scriptwriter`。
-- 需要字段映射细节：读 `integrations/feishu_bitable_mapping.md`。
+## 禁止
 
-## 运行时规则
-
-- 生产默认读取全局私有版：`/Users/congcong/.codex/skills/austin-no-overtime-scripting`。
-- 仓库版本是公开脱敏镜像，只用于 Git、迁移、同步和显式测试。
-- 生产脚本如果找不到全局私有版，应直接失败；不要静默回退仓库镜像。
-- 需要测试仓库镜像时，显式设置 `AUSTIN_SCRIPT_SKILL_DIR=skills/austin-no-overtime-scripting`。
-- 全局私有版可以在 `references/private/` 保存真实项目、敏感案例、内部表达偏好；这些内容不要提交到 Git。
-
-## 安全边界
-
-- 不要自动发布、自动剪辑、自动创建最终任务。
-- 不要把完整脚本当成事实核验完成的发布稿。
-- 不要把建议案例写成已经发生的真实案例。
-- 不要声称工具能力已经验证，除非输入里有可展示证据。
+- 不启动新的 Codex 进程、第二 Agent、daemon 或后台任务。
+- 不进入外部队列、表格回写、通知、卡片或发布路径。
+- 不恢复 human supplement、production direction 或完整制作包。
+- 不使用旧 run、latest、历史脚本或 deterministic draft 替代当前结果。
+- 不新增 per-script runtime state、identity service、permission gate、receipt 或第二 authority。

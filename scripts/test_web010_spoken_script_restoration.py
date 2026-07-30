@@ -11,6 +11,18 @@ RELEASE_CONFIG = (
     / "config"
     / "web010_single_daily_workflow_release.json"
 )
+VOICE_SKILL = (
+    Path(__file__).resolve().parents[1]
+    / "skills"
+    / "austin-voice-scriptwriter"
+    / "SKILL.md"
+)
+NO_OVERTIME_SKILL = (
+    Path(__file__).resolve().parents[1]
+    / "skills"
+    / "austin-no-overtime-scripting"
+    / "SKILL.md"
+)
 
 
 class SpokenScriptRestorationTests(unittest.TestCase):
@@ -154,12 +166,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             self.assertEqual(next(root.rglob("*.md")).read_bytes(), before)
 
     def test_candidate_voice_skill_owns_optional_narrative_contract(self):
-        skill = (
-            Path(__file__).resolve().parents[1]
-            / "skills"
-            / "austin-voice-scriptwriter"
-            / "SKILL.md"
-        ).read_text(encoding="utf-8")
+        skill = VOICE_SKILL.read_text(encoding="utf-8")
         self.assertIn("连续问题只是可选手法，不规定数量", skill)
         self.assertIn("也可以完全不编号", skill)
         self.assertIn("只有当不确定性或责任边界本身就是这条题的冲突时", skill)
@@ -168,6 +175,24 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("0 个匹配案例是正常输入", skill)
         self.assertNotIn("用 3-5 个连续问题把痛点拆开", skill)
         self.assertNotIn("结尾必须有边界", skill)
+
+    def test_candidate_skill_set_has_one_outer_spoken_only_runtime(self):
+        voice = VOICE_SKILL.read_text(encoding="utf-8")
+        no_overtime = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
+        combined = "\n".join((voice, no_overtime))
+        for forbidden_entrypoint in (
+            "codex exec",
+            "watch_script_package_queue.py",
+            "codex_script_package_runner.py",
+            "--write-feishu",
+        ):
+            self.assertNotIn(forbidden_entrypoint, combined)
+        self.assertIn("唯一 AI owner 是当前 outer Codex", no_overtime)
+        self.assertIn("本 Skill 每个批次应用一次", no_overtime)
+        self.assertIn("austin-voice-scriptwriter` 每个批次应用一次", no_overtime)
+        self.assertIn("输出只包含 `topic_id/title/hook/structure/body`", no_overtime)
+        self.assertIn("0 case match 是正常输入", no_overtime)
+        self.assertIn("同一上下文直接通读完整正文并完成质量检查", voice)
 
     def test_release_prompt_delegates_style_instead_of_copying_skill_rules(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
@@ -190,6 +215,14 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             "verified third-party statistic",
         ):
             self.assertIn(forbidden_claim, protocol)
+        for forbidden_entrypoint in (
+            "codex exec",
+            "watcher",
+            "codex_script_package_runner.py",
+            "--write-feishu",
+            "Feishu",
+        ):
+            self.assertNotIn(forbidden_entrypoint, protocol)
 
 
 if __name__ == "__main__":
