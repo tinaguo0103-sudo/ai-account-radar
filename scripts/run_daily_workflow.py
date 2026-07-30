@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import argparse
+import csv
+import datetime as dt
 import hashlib
 import json
 import re
@@ -15,7 +17,12 @@ from typing import Any
 
 from daily_workflow import DailyWorkflow, WorkflowConflict, canonical
 from collected_artifact_adoption import adopt_collected_artifacts
-from douyin_video_understanding_producer import ProducerError, produce
+from douyin_video_understanding_producer import (
+    ProducerError,
+    atomic_json,
+    load_discovery_payload,
+    produce,
+)
 from publish_website_projection import ProjectionError
 from website_publisher_client import publish_terminal
 from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
@@ -46,13 +53,32 @@ def canonical_url(raw: str) -> str:
     )
 
 
+def source_url(row: dict[str, Any]) -> str:
+    for key in ("source_url", "内容链接", "来源链接"):
+        value = canonical_url(str(row.get(key) or ""))
+        if value:
+            return value
+    return ""
+
+
+def normalize_source_fields(row: dict[str, Any]) -> dict[str, Any]:
+    value = source_url(row)
+    if value:
+        row["source_url"] = value
+    match = re.search(r"douyin\.com/video/(\d+)", value)
+    if match and not str(row.get("aweme_id") or "").strip():
+        row["aweme_id"] = match.group(1)
+    return row
+
+
 def stable_item_id(row: dict[str, Any]) -> str:
+    normalize_source_fields(row)
     existing = str(row.get("item_id") or "").strip()
     if existing:
         return existing
     aweme_id = str(row.get("aweme_id") or "").strip()
     if not aweme_id:
-        url = str(row.get("source_url") or row.get("内容链接") or "")
+        url = source_url(row)
         match = re.search(r"douyin\.com/video/(\d+)", url)
         aweme_id = match.group(1) if match else ""
     if aweme_id:
@@ -61,7 +87,7 @@ def stable_item_id(row: dict[str, Any]) -> str:
     if external:
         source = str(row.get("source") or row.get("平台") or "external").strip().lower()
         return f"{source}:{external}"
-    url = canonical_url(str(row.get("source_url") or row.get("内容链接") or ""))
+    url = source_url(row)
     if url:
         return f"url:{url}"
     local_id = str(row.get("local_id") or "").strip()
@@ -73,21 +99,150 @@ def stable_item_id(row: dict[str, Any]) -> str:
 
 def normalize_items(rows: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], list[dict[str, str]]]:
     accepted: dict[str, dict[str, Any]] = {}
-    conflicts: set[str] = set()
     failures: list[dict[str, str]] = []
+    conflicted: set[str] = set()
     for raw in rows:
         row = json.loads(json.dumps(raw, ensure_ascii=False))
+        normalize_source_fields(row)
         identity = stable_item_id(row)
         row["item_id"] = identity
+        if identity in conflicted:
+            continue
         current = accepted.get(identity)
         if current is None:
             accepted[identity] = row
+        elif identity.startswith(("douyin:", "url:")):
+            accepted[identity] = merge_candidate_rows(current, row)
         elif canonical(current) != canonical(row):
-            conflicts.add(identity)
-    for identity in sorted(conflicts):
-        accepted.pop(identity, None)
-        failures.append({"item_id": identity, "reason": "stable_item_conflict"})
+            accepted.pop(identity, None)
+            conflicted.add(identity)
+            failures.append({"item_id": identity, "reason": "stable_item_conflict"})
+        else:
+            accepted[identity] = current
     return [accepted[key] for key in sorted(accepted)], failures
+
+
+def page_owned_items(value: Any) -> list[dict[str, Any]]:
+    output: list[dict[str, Any]] = []
+    if isinstance(value, dict):
+        items = value.get("item_list")
+        if isinstance(items, list):
+            output.extend(row for row in items if isinstance(row, dict))
+        for child in value.values():
+            output.extend(page_owned_items(child))
+    elif isinstance(value, list):
+        for child in value:
+            output.extend(page_owned_items(child))
+    return output
+
+
+def normalize_page_owned_facts(item: dict[str, Any], raw_path: Path) -> dict[str, Any]:
+    aweme_id = str(item.get("aweme_id") or "")
+    statistics = item.get("statistics") if isinstance(item.get("statistics"), dict) else {}
+    video = item.get("video") if isinstance(item.get("video"), dict) else {}
+    create_time = item.get("create_time")
+    published_at = ""
+    if isinstance(create_time, int) and create_time > 0:
+        published_at = dt.datetime.fromtimestamp(
+            create_time, tz=dt.timezone.utc,
+        ).isoformat().replace("+00:00", "Z")
+    facts: dict[str, Any] = {}
+    missing: dict[str, str] = {}
+    for field, raw_field in (
+        ("likes", "digg_count"),
+        ("comments", "comment_count"),
+        ("favorites", "collect_count"),
+        ("shares", "share_count"),
+    ):
+        raw = statistics.get(raw_field)
+        if isinstance(raw, (int, float)) and raw >= 0:
+            facts[field] = int(raw)
+        else:
+            facts[field] = None
+            missing[field] = "field_not_returned"
+    if not published_at:
+        missing["published_at"] = "field_not_returned"
+    duration = video.get("duration")
+    return {
+        "aweme_id": aweme_id,
+        "source_url": f"https://www.douyin.com/video/{aweme_id}" if aweme_id else "",
+        "published_at": published_at,
+        "duration_seconds": (
+            max(1, round(float(duration) / 1000))
+            if isinstance(duration, (int, float)) and duration > 0 else None
+        ),
+        **facts,
+        "fact_missing_reasons": missing,
+        "fact_provenance": {
+            "capture": "configured_account_page_owned_payload",
+            "artifact": str(raw_path.name),
+            "response_fields": {
+                "published_at": "create_time",
+                "likes": "statistics.digg_count",
+                "comments": "statistics.comment_count",
+                "favorites": "statistics.collect_count",
+                "shares": "statistics.share_count",
+                "duration_seconds": "video.duration",
+            },
+        },
+    }
+
+
+def configured_account_facts(run_dir: Path) -> dict[str, dict[str, Any]]:
+    raw_root = run_dir / "sources" / "douyin" / "raw_resolver"
+    output: dict[str, dict[str, Any]] = {}
+    for path in sorted(raw_root.glob("*.json")) if raw_root.is_dir() else []:
+        try:
+            payload = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        for item in page_owned_items(payload):
+            facts = normalize_page_owned_facts(item, path)
+            if facts["source_url"]:
+                output[facts["source_url"]] = facts
+    return output
+
+
+def adapt_collection_rows(
+    rows: list[dict[str, Any]],
+    *,
+    run_dir: Path,
+) -> list[dict[str, Any]]:
+    facts_by_url = configured_account_facts(run_dir)
+    output = []
+    for raw in rows:
+        row = normalize_source_fields(json.loads(json.dumps(raw, ensure_ascii=False)))
+        url = source_url(row)
+        facts = facts_by_url.get(url)
+        if facts:
+            for key, value in facts.items():
+                if key in {"source_url", "aweme_id"} or (value is not None and value != ""):
+                    row[key] = value
+            row["fact_missing_reasons"] = facts["fact_missing_reasons"]
+            row["fact_provenance"] = facts["fact_provenance"]
+        elif "douyin.com/video/" in url:
+            row.update({
+                "discovery_source": "configured_account",
+                "published_at": str(row.get("published_at") or row.get("发布时间") or ""),
+                "likes": None,
+                "comments": None,
+                "favorites": None,
+                "shares": None,
+                "fact_missing_reasons": {
+                    "published_at": (
+                        "" if row.get("published_at") else "page_owned_payload_not_available"
+                    ),
+                    "likes": "page_owned_payload_not_available",
+                    "comments": "page_owned_payload_not_available",
+                    "favorites": "page_owned_payload_not_available",
+                    "shares": "page_owned_payload_not_available",
+                },
+                "fact_provenance": {"capture": "configured_account_collection"},
+            })
+        if "douyin.com/video/" in url:
+            row["discovery_source"] = "configured_account"
+        output.append(row)
+    return output
 
 
 def last_json_object(text: str) -> dict[str, Any]:
@@ -113,7 +268,30 @@ def last_json_object(text: str) -> dict[str, Any]:
 
 def collect(args: argparse.Namespace) -> dict[str, Any]:
     if args.adopt_collected_artifacts:
-        return adopt_collected_artifacts(args)
+        value = adopt_collected_artifacts(args)
+        run_dir = Path(args.adopt_collected_artifacts).resolve()
+        value["content_items"] = adapt_collection_rows(
+            value["content_items"], run_dir=run_dir,
+        )
+        value["candidates"] = adapt_collection_rows(
+            value["candidates"], run_dir=run_dir,
+        )
+        configured_count = sum(
+            str(row.get("discovery_source") or "") == "configured_account"
+            for row in value["candidates"]
+        )
+        value.update({
+            "configured_account_status": (
+                "partial" if value["status"] == "completed_with_failures"
+                else ("completed" if configured_count else "completed_empty")
+            ),
+            "configured_account_reason": (
+                "account_failures_isolated"
+                if value["status"] == "completed_with_failures" else ""
+            ),
+            "configured_account_captured_at": args.business_date,
+        })
+        return value
     if args.collection_fixture:
         value = read_json(args.collection_fixture)
         if value.get("run_id") != args.run_id:
@@ -134,61 +312,145 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
     exact = Path(args.artifact_root).resolve() / args.run_id
     if run_dir != exact:
         raise WorkflowConflict("collection_run_path_mismatch")
-    import csv
     with (run_dir / "content_items.csv").open(encoding="utf-8-sig", newline="") as handle:
-        content = list(csv.DictReader(handle))
+        content = adapt_collection_rows(list(csv.DictReader(handle)), run_dir=run_dir)
     with (run_dir / "today_10_topics.csv").open(encoding="utf-8-sig", newline="") as handle:
-        candidates = list(csv.DictReader(handle))
+        candidates = adapt_collection_rows(list(csv.DictReader(handle)), run_dir=run_dir)
+    configured_count = sum(
+        str(row.get("discovery_source") or "") == "configured_account"
+        for row in candidates
+    )
+    configured_status = (
+        "partial" if str(value.get("collection_status") or "").endswith("_with_failures")
+        else ("completed" if configured_count else "completed_empty")
+    )
     return {
         "run_id": args.run_id, "business_date": args.business_date,
         "status": value.get("collection_status", "completed"),
         "content_items": content, "candidates": candidates,
         "source_runs": value.get("source_outcomes", []),
+        "configured_account_status": configured_status,
+        "configured_account_reason": (
+            "account_failures_isolated" if configured_status == "partial" else ""
+        ),
+        "configured_account_captured_at": str(value.get("generated_at") or ""),
     }
+
+
+def candidate_angle(candidate: dict[str, Any]) -> str:
+    for key in (
+        "主题聚类ID", "topic_cluster_id", "我的选题标题", "可发布标题",
+        "原始来源标题", "title",
+    ):
+        value = re.sub(r"\s+", " ", str(candidate.get(key) or "")).strip()
+        if value:
+            return value
+    return ""
+
+
+def merge_candidate_rows(current: dict[str, Any], incoming: dict[str, Any]) -> dict[str, Any]:
+    output = dict(current)
+    for key in sorted(set(current) | set(incoming)):
+        left, right = current.get(key), incoming.get(key)
+        left_empty = left is None or left == ""
+        right_empty = right is None or right == ""
+        if left_empty and not right_empty:
+            output[key] = right
+        elif not left_empty and not right_empty and left != right:
+            output[key] = min((left, right), key=lambda value: canonical(value))
+    return output
 
 
 def normalize_collection_candidates(
     candidates: Any,
     *,
-    item_ids: set[str],
+    items: list[dict[str, Any]],
     run_id: str,
-) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
+) -> tuple[list[dict[str, Any]], list[dict[str, Any]], list[dict[str, str]]]:
     if not isinstance(candidates, list):
         raise WorkflowConflict("collection_candidates_invalid")
     normalized: dict[str, dict[str, Any]] = {}
-    video_candidates: list[dict[str, Any]] = []
-    for raw in candidates:
+    video_by_item: dict[str, dict[str, Any]] = {}
+    failures: list[dict[str, str]] = []
+    conflicted: set[str] = set()
+    item_ids = {str(row["item_id"]) for row in items}
+    item_by_url = {
+        source_url(row): str(row["item_id"]) for row in items if source_url(row)
+    }
+    for index, raw in enumerate(candidates):
         if not isinstance(raw, dict):
-            raise WorkflowConflict("collection_candidate_invalid")
-        candidate = json.loads(json.dumps(raw, ensure_ascii=False))
-        if not any(
-            str(candidate.get(key) or "").strip()
-            for key in (
-                "candidate_id", "item_id", "aweme_id", "external_id",
-                "source_url", "内容链接", "local_id",
-            )
-        ):
-            raise WorkflowConflict("collection_candidate_identity_missing")
+            failures.append({
+                "item_id": f"candidate-row:{index}",
+                "reason": "collection_candidate_invalid",
+            })
+            continue
+        candidate = normalize_source_fields(json.loads(json.dumps(raw, ensure_ascii=False)))
+        url = source_url(candidate)
+        explicit_candidate = str(candidate.get("candidate_id") or "")
+        mapped_item = str(
+            candidate.get("item_id")
+            or item_by_url.get(url)
+            or (explicit_candidate if explicit_candidate in item_ids else "")
+        )
         try:
-            identity = str(candidate.get("candidate_id") or stable_item_id(candidate))
+            if not mapped_item:
+                mapped_item = stable_item_id(candidate)
         except (TypeError, ValueError) as error:
-            raise WorkflowConflict("collection_candidate_identity_missing") from error
-        if identity not in item_ids:
-            raise WorkflowConflict("collection_candidate_content_mapping_missing")
+            failures.append({
+                "item_id": f"candidate-row:{index}",
+                "reason": f"collection_candidate_identity_missing:{type(error).__name__}",
+            })
+            continue
+        if mapped_item not in item_ids:
+            failures.append({
+                "item_id": f"candidate-row:{index}",
+                "reason": "collection_candidate_content_mapping_missing",
+            })
+            continue
+        angle = candidate_angle(candidate)
+        if not angle:
+            failures.append({
+                "item_id": mapped_item,
+                "reason": "collection_candidate_angle_missing",
+            })
+            continue
+        identity = str(
+            candidate.get("candidate_id")
+            or f"{mapped_item}::angle:{urllib.parse.quote(angle, safe='')}"
+        )
         candidate["candidate_id"] = identity
+        candidate["item_id"] = mapped_item
+        candidate.setdefault("merged_input_count", 1)
+        if identity in conflicted:
+            continue
         current = normalized.get(identity)
         if current is not None:
-            if canonical(current) != canonical(candidate):
-                raise WorkflowConflict("collection_candidate_identity_conflict")
+            if candidate_angle(current) != angle:
+                normalized.pop(identity, None)
+                video_by_item.pop(mapped_item, None)
+                conflicted.add(identity)
+                failures.append({
+                    "item_id": identity,
+                    "reason": "collection_candidate_identity_conflict",
+                })
+                continue
+            merged = merge_candidate_rows(current, candidate)
+            merged["merged_input_count"] = int(current.get("merged_input_count") or 1) + 1
+            normalized[identity] = merged
             continue
         normalized[identity] = candidate
         has_video_identity = bool(candidate.get("aweme_id") or candidate.get("discovery_source"))
         if has_video_identity:
             if candidate.get("run_id") not in {None, "", run_id}:
-                raise WorkflowConflict("collection_video_candidate_wrong_run")
+                normalized.pop(identity, None)
+                failures.append({
+                    "item_id": identity,
+                    "reason": "collection_video_candidate_wrong_run",
+                })
+                continue
             candidate["run_id"] = run_id
-            video_candidates.append(candidate)
-    return list(normalized.values()), video_candidates
+            video_by_item.setdefault(mapped_item, candidate)
+    return list(normalized.values()), list(video_by_item.values()), failures
 
 
 SOURCE_LEDGER_NAMES = ("configured_account", "recommendation", "dynamic_search")
@@ -205,10 +467,10 @@ def merge_video_discovery_checkpoint(
     output = json.loads(json.dumps(collection, ensure_ascii=False))
     content = list(output.get("content_items") or [])
     candidates = list(output.get("candidates") or [])
-    configured = [
-        row for row in candidates
+    configured = {
+        stable_item_id(row): row for row in candidates
         if str(row.get("discovery_source") or "") == "configured_account"
-    ]
+    }
     discovered = checkpoint.get("candidates")
     if not isinstance(discovered, list):
         raise WorkflowConflict("video_discovery_checkpoint_candidates_invalid")
@@ -329,9 +591,9 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
     if value.get("run_id") != args.run_id:
         raise WorkflowConflict("collection_wrong_run")
     items, identity_failures = normalize_items(value.get("content_items", []))
-    candidates, video_candidates = normalize_collection_candidates(
+    candidates, video_candidates, candidate_failures = normalize_collection_candidates(
         value.get("candidates", []),
-        item_ids={row["item_id"] for row in items},
+        items=items,
         run_id=args.run_id,
     )
     source_ledger = (
@@ -372,7 +634,7 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
             {"candidate_id": f"douyin:{row.get('aweme_id')}", "package": row}
             for row in packages
         ],
-        "item_failures": identity_failures + producer_failures,
+        "item_failures": identity_failures + candidate_failures + producer_failures,
         "source_ledger": source_ledger,
         "substitute_count": 0,
     })
@@ -463,6 +725,30 @@ def write_script_artifacts(root: Path, run_id: str, scripts: list[dict[str, Any]
         target.write_text(text, encoding="utf-8")
 
 
+def collection_checkpoint_path(args: argparse.Namespace) -> Path:
+    return Path(args.artifact_root).resolve() / args.run_id / "workflow_collection.json"
+
+
+def collect_with_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
+    path = collection_checkpoint_path(args)
+    if path.is_file():
+        value = read_json(path)
+        if (
+            value.get("run_id") != args.run_id
+            or value.get("business_date") != args.business_date
+        ):
+            raise WorkflowConflict("collection_checkpoint_wrong_run")
+        return value
+    value = collect(args)
+    if (
+        value.get("run_id") != args.run_id
+        or value.get("business_date") != args.business_date
+    ):
+        raise WorkflowConflict("collection_checkpoint_wrong_run")
+    atomic_json(path, value)
+    return value
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--run-id", required=True)
@@ -481,6 +767,7 @@ def main() -> int:
     parser.add_argument("--video-policy", default="")
     parser.add_argument("--discovery-fixture", default="")
     parser.add_argument("--video-discovery-checkpoint", default="")
+    parser.add_argument("--search-query", default="AI 工具 人工智能")
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
     args = parser.parse_args()
     workflow: DailyWorkflow | None = None
@@ -506,11 +793,17 @@ def main() -> int:
         if collection_stage:
             collection = collection_stage["payload"]
         else:
-            collected = collect(args)
+            collected = collect_with_checkpoint(args)
             if args.video_discovery_checkpoint:
                 collected = merge_video_discovery_checkpoint(
                     collected,
                     read_json(args.video_discovery_checkpoint),
+                    run_id=args.run_id,
+                )
+            elif args.video_mode == "normal":
+                collected = merge_video_discovery_checkpoint(
+                    collected,
+                    load_discovery_payload(args, args.run_id, Path(args.artifact_root).resolve()),
                     run_id=args.run_id,
                 )
             collection = enrich(args, collected)

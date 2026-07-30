@@ -51,25 +51,14 @@ def adopt_collected_artifacts(args: Namespace) -> dict[str, Any]:
     candidates = rows["today_10_topics.csv"]
     if not content or len(content) != len(breakdowns):
         raise WorkflowConflict("adoption_csv_identity_conflict")
-    content_by_artifact_identity: dict[str, str] = {}
     for row in content:
-        artifact_identity = str(row.get("内容指纹") or "").strip()
-        if not artifact_identity or artifact_identity in content_by_artifact_identity:
-            raise WorkflowConflict("adoption_content_identity_conflict")
         row["source_url"] = str(row.get("内容链接") or "")
         row["title"] = str(row.get("内容标题") or "")
         row["source"] = str(row.get("平台") or row.get("来源类型") or "")
-        row["item_id"] = f"adopted:{artifact_identity}"
-        content_by_artifact_identity[artifact_identity] = row["item_id"]
     for row in candidates:
-        artifact_identity = str(row.get("内容指纹") or "").strip()
-        candidate_id = content_by_artifact_identity.get(artifact_identity)
-        if not candidate_id:
-            raise WorkflowConflict("adoption_candidate_content_mapping_missing")
         row["source_url"] = str(row.get("来源链接") or "")
         row["title"] = str(row.get("可发布标题") or row.get("我的选题标题") or "")
         row["source"] = str(row.get("平台") or row.get("来源类型") or "")
-        row["candidate_id"] = candidate_id
     return {
         "run_id": args.run_id,
         "business_date": args.business_date,

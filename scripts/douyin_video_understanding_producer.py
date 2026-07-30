@@ -521,15 +521,20 @@ def process_one(
     return package
 
 
-def load_discovery(args: argparse.Namespace, run_id: str, output_root: Path) -> list[dict[str, Any]]:
+def load_discovery_payload(
+    args: argparse.Namespace,
+    run_id: str,
+    output_root: Path,
+) -> dict[str, Any]:
     discovery_path = output_root / run_id / "video_producer" / "discovery.json"
     mode = getattr(args, "mode", "") or args.video_mode
     if discovery_path.is_file():
         payload = json.loads(discovery_path.read_text())
     elif mode == "normal":
+        query = str(getattr(args, "search_query", "") or "AI 工具 人工智能")
         result = subprocess.run([
             "node", str(DISCOVERY), "--output", str(discovery_path),
-            "--cdp", args.cdp, "--query", args.search_query,
+            "--cdp", args.cdp, "--query", query,
         ], text=True, capture_output=True)
         if result.returncode:
             try:
@@ -561,7 +566,11 @@ def load_discovery(args: argparse.Namespace, run_id: str, output_root: Path) -> 
         raise ProducerError("video_discovery_candidates_invalid")
     for row in candidates:
         row["run_id"] = run_id
-    return candidates
+    return payload
+
+
+def load_discovery(args: argparse.Namespace, run_id: str, output_root: Path) -> list[dict[str, Any]]:
+    return load_discovery_payload(args, run_id, output_root)["candidates"]
 
 
 def produce(

@@ -102,12 +102,14 @@ class RuntimeReadinessHotfixTest(unittest.TestCase):
                     "source_url": "https://example.com/safe-1", "title": "AI workflow",
                 }],
                 "candidates": [{
-                    "candidate_id": "aihot:safe-1", "title": "AI workflow",
+                    "candidate_id": "aihot:safe-1", "item_id": "aihot:safe-1",
+                    "title": "AI workflow",
                 }],
                 "source_runs": [],
             }))
             result = self.command(
-                root, str(config), "--collection-fixture", str(fixture)
+                root, str(config), "--collection-fixture", str(fixture),
+                "--video-mode", "disabled",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             value = json.loads(result.stdout)
@@ -115,7 +117,7 @@ class RuntimeReadinessHotfixTest(unittest.TestCase):
             self.assertEqual(len(value["candidates"]), 1)
             producer = root / "runs/run_20260729_080000/video_producer"
             self.assertFalse((producer / "discovery.json").exists())
-            self.assertEqual(json.loads((producer / "candidates.json").read_text()), [[]])
+            self.assertFalse((producer / "candidates.json").exists())
 
     def test_missing_empty_directory_and_invalid_json_fail_before_db(self):
         with tempfile.TemporaryDirectory() as tmp:

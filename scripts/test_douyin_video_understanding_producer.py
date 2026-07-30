@@ -227,7 +227,11 @@ class ProducerTest(unittest.TestCase):
                 merged["content_items"][0]["video_understanding"]["asr"]["text"],
                 "当前视频语音",
             )
-            self.assertEqual(merged["candidates"][0]["candidate_id"], "douyin:12345678901")
+            self.assertTrue(
+                merged["candidates"][0]["candidate_id"].startswith(
+                    "douyin:12345678901::angle:",
+                ),
+            )
 
     def test_failed_workflow_resume_loads_exact_producer_artifacts_without_discovery(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -266,6 +270,7 @@ class ProducerTest(unittest.TestCase):
                     "aweme_id": "12345678901",
                     "discovery_source": "dynamic_search",
                     "source_url": "https://www.douyin.com/video/12345678901",
+                    "title": "AI workflow",
                 }],
                 "source_ledger": [
                     {"source": "configured_account", "attempted": True, "status": "completed_empty",
@@ -319,10 +324,10 @@ class ProducerTest(unittest.TestCase):
         with mock.patch.object(workflow, "produce", return_value=result) as called:
             merged = workflow.enrich(args, collection)
         self.assertEqual(len(merged["candidates"]), 1)
-        self.assertEqual(
-            called.call_args.kwargs["discovered_candidates"],
-            collection["candidates"],
-        )
+        handed_off = called.call_args.kwargs["discovered_candidates"]
+        self.assertEqual(len(handed_off), 1)
+        self.assertEqual(handed_off[0]["candidate_id"], "douyin:12345678901")
+        self.assertEqual(handed_off[0]["item_id"], "douyin:12345678901")
 
     def test_explicit_empty_upstream_candidates_never_start_discovery(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -376,18 +381,22 @@ class ProducerTest(unittest.TestCase):
             run_id="run_20260727_080000",
             qa_frozen_packages="", video_mode="disabled",
         )
-        with self.assertRaisesRegex(
-            workflow.WorkflowConflict, "collection_candidate_identity_missing"
-        ):
-            workflow.enrich(args, {**base, "candidates": [{"title": "missing"}]})
+        result = workflow.enrich(args, {**base, "candidates": [{"title": "missing"}]})
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(
+            result["item_failures"][0]["reason"],
+            "collection_candidate_content_mapping_missing",
+        )
         conflicting = [
-            {"candidate_id": "aihot:1", "title": "one"},
-            {"candidate_id": "aihot:1", "title": "two"},
+            {"candidate_id": "aihot:1", "item_id": "aihot:1", "title": "one"},
+            {"candidate_id": "aihot:1", "item_id": "aihot:1", "title": "two"},
         ]
-        with self.assertRaisesRegex(
-            workflow.WorkflowConflict, "collection_candidate_identity_conflict"
-        ):
-            workflow.enrich(args, {**base, "candidates": conflicting})
+        result = workflow.enrich(args, {**base, "candidates": conflicting})
+        self.assertEqual(result["candidates"], [])
+        self.assertEqual(
+            result["item_failures"][0]["reason"],
+            "collection_candidate_identity_conflict",
+        )
 
     def test_discovery_failure_is_typed_and_persisted(self):
         with tempfile.TemporaryDirectory() as tmp:
