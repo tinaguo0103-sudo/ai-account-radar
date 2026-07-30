@@ -12,7 +12,9 @@
     "outerAgentProtocol": [
       "Run the public entrypoint. It completes collection_enrichment or resumes its exact local checkpoint.",
       "When editorial is required, directly apply the active ai-account-editorial-director Skill in this outer Codex task and save the simple stage result.",
-      "When scripts are required, directly apply active austin-no-overtime-scripting and austin-voice-scriptwriter in this outer Codex task and save the simple stage result.",
+      "When scripts_required is returned, read every selected_topics rich context field before writing. Missing optional context stays unknown and must not be fabricated.",
+      "Read the approved private style references and the bounded Feishu 06 exemplars recvoh7TvgV7zl, recvq436FKeSCB, and recvqg9FJ4Rxk4 as style and structure references only; never copy their facts or private text into diagnostics.",
+      "Directly apply active austin-no-overtime-scripting once for the full batch, then active austin-voice-scriptwriter once for the full batch. Preserve distinct narrative skeletons and fact/judgment/test/cannot-claim boundaries in the simple stage result.",
       "Run the same public entrypoint with the simple stage result files until local terminal completion.",
       "The owner-only publisher client reads its runtime-only config and attempts one terminal snapshot. Publish pending is not a business failure."
     ],

@@ -39,6 +39,35 @@ description: 将奥斯汀AI账号已确认选题、04工作流实验命题卡、
 15. 上一条是素材组织方法，不是口播模板。不要把它变成固定段落顺序、固定开头、固定句式或每条都必须显性出现的检查清单；用户举的具体替代工具、配音评价维度等例子只能帮助理解，不能写死进 Skill。
 16. 仓库 deterministic fallback 只做格式、安全和字段兜底，不代表最终 Austin 风格质量验收。真实质量验收必须看本机测试 Skill / 私有 Skill 的实际输出和人工样例。
 
+## WEB-010 Rich Scripting Handoff
+
+WEB-010 批量输入中的每个 `selected_topics[]` 是该选题唯一可用的业务上下文。先逐条读取，
+再把整批交给 `austin-voice-scriptwriter` 一次生成，不得只拿标题重新理解选题。
+
+- `selection_reason` 与 `persona_fit` 决定 Austin 为什么愿意讲，不是来源事实。
+- `source_facts`、公开互动、时效和 provenance 是可陈述事实；未知字段保持未知。
+- `fact_boundary` 与 `cannot_claim` 必须进入执行包的本条边界和发布前核验，并约束口播。
+- `video_understanding` 只使用 completed 内容；ASR、屏幕文字、关键帧和 unresolved 要区分
+  已取得事实与待核验信息。
+- `production_direction`、`human_supplement` 只有非空时才能作为本人方向或现场。
+- approved private references 与历史优质稿只用于观察节奏、判断习惯和结构变化，不能为
+  当前选题补事实、经历、客户、测试结果或 Austin 本人现场。
+
+每条先选择适合材料的叙事动力，例如一个判断转折、一个责任冲突、一次流程复盘或一个
+待验证实验。不同题目不得因为同批生成而共享开场、章节名、固定三步、过渡句或结尾骨架。
+输入没有 Austin 亲历现场时，使用“我会怎么判断/建议怎么验证”的明确提案语气，不能写成
+“我最近做过/我们团队已经/客户结果证明”。
+
+执行包中明确分开四类内容：
+
+1. 来源已经支持的事实；
+2. Austin 的判断和取舍；
+3. 尚未执行的建议测试或拍摄动作；
+4. 发布前必须核验或不能声称的边界。
+
+缺少可支撑题目独有判断的必要上下文时，该候选可 `revise/blocked`，其他候选继续，不得用
+历史稿、模型记忆或通用工作流场景替代。
+
 ## 工作流
 
 1. 将输入映射成 Topic Card。

@@ -684,6 +684,131 @@ def validate_scripts(run_id: str, result: dict[str, Any], selected: set[str]) ->
         raise WorkflowConflict("script_result_coverage_incomplete")
 
 
+def first_present(rows: list[dict[str, Any]], keys: tuple[str, ...]) -> Any:
+    for row in rows:
+        for key in keys:
+            value = row.get(key)
+            if value not in (None, "", [], {}):
+                return value
+    return None
+
+
+def video_understanding_summary(package: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not package or package.get("status") not in {"completed", "completed_with_failures"}:
+        return None
+    asr = package.get("asr") if isinstance(package.get("asr"), dict) else {}
+    keyframes = package.get("keyframes") if isinstance(package.get("keyframes"), list) else []
+    screen_facts = package.get("screen_text")
+    if not isinstance(screen_facts, list):
+        screen_facts = package.get("screen_facts")
+    if not isinstance(screen_facts, list):
+        screen_facts = []
+    return {
+        "status": package.get("status"),
+        "caption_timeline": package.get("caption_timeline") or [],
+        "asr_supplement": asr.get("text") or None,
+        "screen_facts": [
+            {
+                key: row.get(key)
+                for key in ("kind", "value", "text", "time_second", "start", "verified")
+                if row.get(key) is not None
+            }
+            for row in screen_facts
+            if isinstance(row, dict)
+        ],
+        "keyframes": [
+            {
+                key: row.get(key)
+                for key in ("time_second", "start", "sha256")
+                if row.get(key) is not None
+            }
+            for row in keyframes
+            if isinstance(row, dict)
+        ],
+        "unresolved": package.get("unresolved_terms") or package.get("unresolved") or [],
+        "failures": package.get("failures") or [],
+    }
+
+
+def build_scripts_handoff(
+    run_id: str,
+    business_date: str,
+    collection: dict[str, Any],
+    editorial: dict[str, Any],
+) -> dict[str, Any]:
+    candidates = {
+        str(row.get("candidate_id") or ""): row
+        for row in collection.get("candidates", [])
+        if str(row.get("candidate_id") or "")
+    }
+    understanding = {
+        str(row.get("candidate_id") or ""): row.get("package")
+        for row in collection.get("understanding_results", [])
+        if str(row.get("candidate_id") or "")
+    }
+    selected_topics = []
+    for topic in editorial.get("topics", []):
+        if topic.get("decision") != "select":
+            continue
+        topic_id = str(topic.get("candidate_id") or "")
+        candidate = candidates.get(topic_id, {})
+        context_rows = [topic, candidate]
+        source_facts = {
+            key: candidate.get(key)
+            for key in (
+                "source_url", "aweme_id", "external_id", "title", "summary", "author",
+                "duration_seconds", "published_at", "published_at_display",
+                "published_recency", "likes", "likes_display", "comments", "favorites",
+                "shares", "discovery_source", "search_query", "captured_at",
+                "fact_provenance", "fact_missing_reasons",
+            )
+            if candidate.get(key) is not None
+        }
+        selected_topics.append({
+            "topic_id": topic_id,
+            "title": topic.get("title"),
+            "hook": topic.get("hook"),
+            "structure": topic.get("structure"),
+            "selection_reason": topic.get("selection_reason"),
+            "persona_fit": first_present(
+                context_rows,
+                ("persona_fit", "persona_reason", "我的账号为什么能讲", "人设匹配"),
+            ),
+            "source_facts": source_facts,
+            "fact_boundary": first_present(
+                context_rows,
+                ("fact_boundary", "fact_boundary_note", "事实边界"),
+            ),
+            "cannot_claim": first_present(
+                context_rows,
+                ("cannot_claim", "cannot_claim_notes", "不能声称的部分"),
+            ),
+            "video_understanding": video_understanding_summary(understanding.get(topic_id)),
+            "production_direction": first_present(
+                context_rows,
+                ("production_direction", "制作方向", "我的思考点", "重点体现"),
+            ),
+            "human_supplement": first_present(
+                context_rows,
+                ("human_supplement", "我的制作补充", "制作方向补充"),
+            ),
+        })
+    return {
+        "ok": True,
+        "action": "scripts_required",
+        "run_id": run_id,
+        "business_date": business_date,
+        "selected_topics": selected_topics,
+        "skill_names": list(SKILLS[1:]),
+        "batch_contract": {
+            "one_outer_ai_owner": True,
+            "one_batch_invocation_per_skill": True,
+            "private_references_are_style_only": True,
+            "missing_optional_context_must_not_be_fabricated": True,
+        },
+    }
+
+
 def skill_diagnostics() -> list[dict[str, str]]:
     output = []
     for name in SKILLS:
@@ -852,14 +977,9 @@ def main() -> int:
         if scripts_stage:
             scripts = scripts_stage["payload"]
         elif not args.scripts_result_file and selected:
-            print(json.dumps({
-                "ok": True, "action": "scripts_required", "run_id": args.run_id,
-                "business_date": args.business_date,
-                "selected_topics": [
-                    row for row in editorial["topics"] if row.get("decision") == "select"
-                ],
-                "skill_names": list(SKILLS[1:]),
-            }, ensure_ascii=False))
+            print(json.dumps(build_scripts_handoff(
+                args.run_id, args.business_date, collection, editorial
+            ), ensure_ascii=False))
             return 0
         else:
             scripts = read_json(args.scripts_result_file) if selected else {
