@@ -176,6 +176,23 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("用 3-5 个连续问题把痛点拆开", skill)
         self.assertNotIn("结尾必须有边界", skill)
 
+    def test_candidate_voice_skill_keeps_provenance_silent_and_attribution_natural(self):
+        skill = VOICE_SKILL.read_text(encoding="utf-8")
+        silent_context_fixtures = (
+            "公开信息里提到",
+            "根据来源",
+            "资料显示",
+            "目前可验证",
+        )
+        self.assertIn("provenance、source verification、missing evidence 和 cannot-claim", skill)
+        self.assertIn("静默生成与 QA", skill)
+        self.assertIn("不要换一组同义词继续解释核验", skill)
+        for fixture in silent_context_fixtures:
+            self.assertIn(fixture, skill)
+        self.assertIn("视频里的作者说，他凌晨四点看到成片", skill)
+        self.assertIn("这是人物归属，不是来源", skill)
+        self.assertIn("直接讲已经支持的事实、判断、场景、动作和后果", skill)
+
     def test_candidate_skill_set_has_one_outer_spoken_only_runtime(self):
         voice = VOICE_SKILL.read_text(encoding="utf-8")
         no_overtime = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
