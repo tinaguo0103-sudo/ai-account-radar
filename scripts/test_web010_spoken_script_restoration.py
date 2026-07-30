@@ -153,25 +153,36 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             workflow.write_script_artifacts(root, "run_20260730_120000", result["scripts"])
             self.assertEqual(next(root.rglob("*.md")).read_bytes(), before)
 
-    def test_release_prompt_keeps_boundaries_silent_and_allows_creator_scenes(self):
-        config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
-        protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
-        self.assertIn("creator content, not an audit report", protocol)
-        self.assertIn("silent generation and QA context", protocol)
-        self.assertIn("hypothetical or composite Austin-use scene", protocol)
-        self.assertIn("Illustrative numbers", protocol)
-        self.assertIn("distinct scene and narrative engine", protocol)
+    def test_candidate_voice_skill_owns_optional_narrative_contract(self):
+        skill = (
+            Path(__file__).resolve().parents[1]
+            / "skills"
+            / "austin-voice-scriptwriter"
+            / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn("连续问题只是可选手法，不规定数量", skill)
+        self.assertIn("也可以完全不编号", skill)
+        self.assertIn("只有当不确定性或责任边界本身就是这条题的冲突时", skill)
+        self.assertIn("合理假设/复合场景和示例数据", skill)
+        self.assertIn("以本节为准", skill)
+        self.assertIn("0 个匹配案例是正常输入", skill)
+        self.assertNotIn("用 3-5 个连续问题把痛点拆开", skill)
+        self.assertNotIn("结尾必须有边界", skill)
 
-    def test_release_prompt_forbids_defensive_body_templates_and_false_results(self):
+    def test_release_prompt_delegates_style_instead_of_copying_skill_rules(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
-        for phrase in (
+        self.assertIn("candidate Voice Skill owns spoken narrative structure", protocol)
+        self.assertIn("candidate austin-no-overtime-scripting once", protocol)
+        self.assertIn("candidate austin-voice-scriptwriter once", protocol)
+        for duplicated_detail in (
+            "hypothetical or composite Austin-use scene",
+            "Illustrative numbers",
+            "distinct scene and narrative engine",
             "我还没有所以我不会",
-            "来源没有证明",
-            "公开信息只说明",
             "AI不是万能",
         ):
-            self.assertIn(phrase, protocol)
+            self.assertNotIn(duplicated_detail, protocol)
         for forbidden_claim in (
             "measured personal saving",
             "real client outcome",
