@@ -684,6 +684,155 @@ def validate_scripts(run_id: str, result: dict[str, Any], selected: set[str]) ->
         raise WorkflowConflict("script_result_coverage_incomplete")
 
 
+def first_context_value(rows: list[dict[str, Any]], *keys: str) -> Any:
+    for row in rows:
+        for key in keys:
+            value = row.get(key)
+            if value not in (None, "", [], {}):
+                return value
+    return None
+
+
+def compact_video_understanding(package: dict[str, Any] | None) -> dict[str, Any] | None:
+    if not package or package.get("status") not in {"completed", "completed_with_failures"}:
+        return None
+    asr = package.get("asr") if isinstance(package.get("asr"), dict) else {}
+    screen_rows = package.get("screen_facts")
+    if not isinstance(screen_rows, list):
+        screen_rows = package.get("screen_text")
+    if not isinstance(screen_rows, list):
+        screen_rows = []
+    keyframes = package.get("keyframes")
+    if not isinstance(keyframes, list):
+        keyframes = []
+    return {
+        "status": package.get("status"),
+        "caption_timeline": package.get("caption_timeline") or [],
+        "asr_supplement": asr.get("text") or package.get("asr_supplement") or None,
+        "screen_facts": [
+            {
+                key: row.get(key)
+                for key in ("kind", "value", "text", "time_second", "start", "verified")
+                if row.get(key) is not None
+            }
+            for row in screen_rows
+            if isinstance(row, dict)
+        ],
+        "keyframes": [
+            {
+                key: row.get(key)
+                for key in ("time_second", "start", "sha256")
+                if row.get(key) is not None
+            }
+            for row in keyframes
+            if isinstance(row, dict)
+        ],
+        "unresolved": package.get("unresolved_terms") or package.get("unresolved") or [],
+    }
+
+
+def build_scripts_handoff(
+    run_id: str,
+    business_date: str,
+    collection: dict[str, Any],
+    editorial: dict[str, Any],
+) -> dict[str, Any]:
+    candidates = {
+        str(row.get("candidate_id") or ""): row
+        for row in collection.get("candidates", [])
+        if str(row.get("candidate_id") or "")
+    }
+    items = {
+        str(row.get("item_id") or ""): row
+        for row in collection.get("content_items", [])
+        if str(row.get("item_id") or "")
+    }
+    understanding = {
+        str(row.get("candidate_id") or ""): row.get("package")
+        for row in collection.get("understanding_results", [])
+        if str(row.get("candidate_id") or "")
+    }
+    selected_topics = []
+    for topic in editorial.get("topics", []):
+        if topic.get("decision") != "select":
+            continue
+        topic_id = str(topic.get("candidate_id") or "")
+        candidate = candidates.get(topic_id)
+        if candidate is None:
+            raise WorkflowConflict("scripts_context_candidate_missing")
+        item = items.get(str(candidate.get("item_id") or topic_id), {})
+        rows = [topic, candidate, item]
+        source_rows = [candidate, item]
+        selected_topics.append({
+            "topic_id": topic_id,
+            "title": topic.get("title"),
+            "hook": topic.get("hook"),
+            "structure": topic.get("structure"),
+            "selection_reason": topic.get("selection_reason"),
+            "unique_judgment": first_context_value(
+                rows, "unique_judgment", "我的独家判断", "我的思考点", "主编判断摘要",
+            ),
+            "persona_fit": first_context_value(
+                rows, "persona_fit", "persona_reason", "我的账号为什么能讲", "人设匹配",
+            ),
+            "source": {
+                key: first_context_value(source_rows, *aliases)
+                for key, aliases in {
+                    "title": ("source_title", "来源标题", "title", "内容标题"),
+                    "summary": ("source_summary", "来源摘要", "summary", "内容摘要", "描述"),
+                    "url": ("source_url", "来源链接", "内容链接", "canonical_url"),
+                    "author": ("author", "作者", "账号"),
+                    "published_at": ("published_at", "发布时间"),
+                    "publication_display": ("published_at_display", "发布时间展示"),
+                    "recency": ("published_recency", "recency"),
+                    "likes": ("likes", "点赞数"),
+                    "comments": ("comments", "评论数"),
+                    "favorites": ("favorites", "收藏数"),
+                    "shares": ("shares", "分享数"),
+                    "provenance": ("fact_provenance", "provenance", "事实来源"),
+                    "missing_reasons": ("fact_missing_reasons", "missing_reasons", "事实缺失原因"),
+                }.items()
+                if first_context_value(source_rows, *aliases) is not None
+            },
+            "workflow_context": {
+                key: first_context_value(rows, *aliases)
+                for key, aliases in {
+                    "pain": ("pain", "我的工作流痛点", "痛点"),
+                    "old_workflow": ("old_workflow", "旧流程痛点", "旧流程"),
+                    "ai_intervention": ("ai_intervention", "AI介入点"),
+                    "experiment": ("experiment", "我要做的实验"),
+                    "validation": ("validation", "验证方式"),
+                    "available_evidence": ("available_evidence", "可展示证据", "市场验证依据"),
+                    "missing_evidence": ("missing_evidence", "需要补的证据", "证据缺口"),
+                }.items()
+                if first_context_value(rows, *aliases) is not None
+            },
+            "fact_boundary": first_context_value(
+                rows, "fact_boundary", "fact_boundary_note", "事实边界",
+            ),
+            "cannot_claim": first_context_value(
+                rows, "cannot_claim", "cannot_claim_notes", "不能声称的部分",
+            ),
+            "video_understanding": compact_video_understanding(understanding.get(topic_id)),
+        })
+    return {
+        "ok": True,
+        "action": "scripts_required",
+        "run_id": run_id,
+        "business_date": business_date,
+        "selected_topics": selected_topics,
+        "skill_names": list(SKILLS[1:]),
+        "batch_contract": {
+            "one_outer_ai_owner": True,
+            "one_batch_invocation_per_skill": True,
+            "independent_body_per_topic": True,
+            "missing_optional_context_must_not_be_fabricated": True,
+            "human_supplement_excluded": True,
+            "production_direction_excluded": True,
+        },
+    }
+
+
 def skill_diagnostics() -> list[dict[str, str]]:
     output = []
     for name in SKILLS:
@@ -852,14 +1001,10 @@ def main() -> int:
         if scripts_stage:
             scripts = scripts_stage["payload"]
         elif not args.scripts_result_file and selected:
-            print(json.dumps({
-                "ok": True, "action": "scripts_required", "run_id": args.run_id,
-                "business_date": args.business_date,
-                "selected_topics": [
-                    row for row in editorial["topics"] if row.get("decision") == "select"
-                ],
-                "skill_names": list(SKILLS[1:]),
-            }, ensure_ascii=False))
+            print(json.dumps(
+                build_scripts_handoff(args.run_id, args.business_date, collection, editorial),
+                ensure_ascii=False,
+            ))
             return 0
         else:
             scripts = read_json(args.scripts_result_file) if selected else {

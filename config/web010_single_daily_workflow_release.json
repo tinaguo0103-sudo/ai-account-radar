@@ -12,7 +12,8 @@
     "outerAgentProtocol": [
       "Run the public entrypoint. It completes collection_enrichment or resumes its exact local checkpoint.",
       "When editorial is required, directly apply the active ai-account-editorial-director Skill in this outer Codex task and save the simple stage result.",
-      "When scripts are required, directly apply active austin-no-overtime-scripting and austin-voice-scriptwriter in this outer Codex task and save the simple stage result.",
+      "When scripts_required is returned, read each selected topic's joined same-run Topic Card. Treat fact boundaries as writing constraints, not a checklist to recite, and never invent missing personal scenes or results.",
+      "In this outer Codex task, apply active austin-no-overtime-scripting once for the full batch and active austin-voice-scriptwriter once for the full batch. Write each topic independently without a shared question pattern, three-step skeleton, or generic AI-boundary ending, then save the simple stage result.",
       "Run the same public entrypoint with the simple stage result files until local terminal completion.",
       "The owner-only publisher client reads its runtime-only config and attempts one terminal snapshot. Publish pending is not a business failure."
     ],
