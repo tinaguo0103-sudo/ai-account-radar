@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import sys
 import uuid
 from dataclasses import dataclass
 from datetime import datetime
@@ -214,13 +215,17 @@ def run_cli(
     if args.install_public and not args.yes:
         parser.error("confirmation_required")
 
-    result = sync_skill(
-        skill_name=skill_name,
-        source=args.repo_skill_dir,
-        active=args.global_skill_dir,
-        backup_root=args.backup_root,
-        dry_run=not args.install_public,
-    )
+    try:
+        result = sync_skill(
+            skill_name=skill_name,
+            source=args.repo_skill_dir,
+            active=args.global_skill_dir,
+            backup_root=args.backup_root,
+            dry_run=not args.install_public,
+        )
+    except Exception:
+        print("error=skill_sync_failed", file=sys.stderr)
+        return 1
     print(f"action={result.action}")
     print(f"managed_files={result.managed_files}")
     print(f"private_files={result.private_files}")

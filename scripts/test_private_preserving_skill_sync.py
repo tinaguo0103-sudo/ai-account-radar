@@ -15,9 +15,12 @@ import sync_austin_voice_scriptwriter_skill as voice_cli
 
 
 ROOT = Path(__file__).resolve().parents[1]
-SCRIPTS = (
-    ROOT / "scripts" / "sync_austin_scripting_skill.py",
-    ROOT / "scripts" / "sync_austin_voice_scriptwriter_skill.py",
+CLI_MODULES = (
+    ("sync_austin_scripting_skill", scripting_cli),
+    ("sync_austin_voice_scriptwriter_skill", voice_cli),
+)
+SCRIPTS = tuple(
+    ROOT / "scripts" / f"{module_name}.py" for module_name, _ in CLI_MODULES
 )
 
 
@@ -192,9 +195,11 @@ class PrivatePreservingSkillSyncTests(unittest.TestCase):
 
                 original_default = sync.sync_skill.__kwdefaults__["replace"]
                 sync.sync_skill.__kwdefaults__["replace"] = fail_second_replace
+                output = io.StringIO()
+                errors = io.StringIO()
                 try:
-                    with self.assertRaisesRegex(OSError, "injected_replace_failure"):
-                        cli_module.main(
+                    with contextlib.redirect_stdout(output), contextlib.redirect_stderr(errors):
+                        result = cli_module.main(
                             [
                                 "--repo-skill-dir",
                                 str(source),
@@ -208,6 +213,9 @@ class PrivatePreservingSkillSyncTests(unittest.TestCase):
                         )
                 finally:
                     sync.sync_skill.__kwdefaults__["replace"] = original_default
+                self.assertEqual(result, 1)
+                self.assertEqual(output.getvalue(), "")
+                self.assertEqual(errors.getvalue(), "error=skill_sync_failed\n")
                 self.assertEqual(snapshot(active), original)
                 self.assertEqual(len([p for p in backups.iterdir() if p.is_dir()]), 1)
                 self.assertEqual(
@@ -236,6 +244,68 @@ class PrivatePreservingSkillSyncTests(unittest.TestCase):
             shutil.copytree(backup, recovered)
             self.assertEqual(snapshot(recovered), original)
 
+    def test_helper_first_replace_failure_preserves_original_and_cleans_residue(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, active, backups = self.fixture(root)
+            original = snapshot(active)
+
+            def fail_first_replace(src: Path, dst: Path) -> None:
+                raise OSError("injected_first_replace_failure")
+
+            with self.assertRaisesRegex(OSError, "injected_first_replace_failure"):
+                sync.sync_skill(
+                    skill_name="fixture",
+                    source=source,
+                    active=active,
+                    backup_root=backups,
+                    dry_run=False,
+                    replace=fail_first_replace,
+                )
+            self.assertEqual(snapshot(active), original)
+            self.assertEqual(len([p for p in backups.iterdir() if p.is_dir()]), 1)
+            self.assertEqual(
+                [
+                    p.name
+                    for p in active.parent.iterdir()
+                    if p.name.startswith(f".{active.name}.")
+                ],
+                [],
+            )
+
+    def test_helper_parent_fsync_failure_rolls_back_original(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            source, active, backups = self.fixture(root)
+            original = snapshot(active)
+            original_fsync = sync._fsync_directory
+
+            def fail_fsync(path: Path) -> None:
+                raise OSError("injected_parent_fsync_failure")
+
+            sync._fsync_directory = fail_fsync
+            try:
+                with self.assertRaisesRegex(OSError, "injected_parent_fsync_failure"):
+                    sync.sync_skill(
+                        skill_name="fixture",
+                        source=source,
+                        active=active,
+                        backup_root=backups,
+                        dry_run=False,
+                    )
+            finally:
+                sync._fsync_directory = original_fsync
+            self.assertEqual(snapshot(active), original)
+            self.assertEqual(len([p for p in backups.iterdir() if p.is_dir()]), 1)
+            self.assertEqual(
+                [
+                    p.name
+                    for p in active.parent.iterdir()
+                    if p.name.startswith(f".{active.name}.")
+                ],
+                [],
+            )
+
     def test_no_backup_flag_fails_safe_without_writes(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -252,6 +322,9 @@ class PrivatePreservingSkillSyncTests(unittest.TestCase):
             )
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("no_backup_not_supported", result.stderr)
+            self.assertNotIn(str(root), result.stdout + result.stderr)
+            self.assertNotIn("references/private", result.stdout + result.stderr)
+            self.assertNotIn("examples/private", result.stdout + result.stderr)
             self.assertEqual(snapshot(root), before)
 
     def test_cli_output_is_private_safe(self):
@@ -281,6 +354,87 @@ class PrivatePreservingSkillSyncTests(unittest.TestCase):
             self.assertNotIn("persona.md", text)
             self.assertNotIn("private-persona", text)
             self.assertIn("private_files=2", text)
+
+    def test_both_formal_clis_sanitize_subprocess_filesystem_failures(self):
+        failure_cases = (
+            "private_directory_unreadable",
+            "private_file_unreadable",
+            "filesystem_failure",
+        )
+        driver = """
+import pathlib
+import sys
+
+import private_preserving_skill_sync as sync
+import {module_name} as cli
+
+source = pathlib.Path(sys.argv[1])
+active = pathlib.Path(sys.argv[2])
+backups = pathlib.Path(sys.argv[3])
+failure_kind = sys.argv[4]
+original_files = sync._files
+
+def fail_private_read(root):
+    if root == active:
+        if failure_kind == "private_directory_unreadable":
+            raise PermissionError(13, "denied", str(root / "references" / "private"))
+        if failure_kind == "private_file_unreadable":
+            raise PermissionError(
+                13,
+                "denied",
+                str(root / "examples" / "private" / "confidential.bin"),
+            )
+        raise OSError(5, "filesystem failure", str(root / "private-material"))
+    return original_files(root)
+
+sync._files = fail_private_read
+raise SystemExit(
+    cli.main(
+        [
+            "--repo-skill-dir",
+            str(source),
+            "--global-skill-dir",
+            str(active),
+            "--backup-root",
+            str(backups),
+            "--install-public",
+            "--yes",
+        ]
+    )
+)
+"""
+        for module_name, _ in CLI_MODULES:
+            for failure_name in failure_cases:
+                with self.subTest(module=module_name, failure=failure_name):
+                    with tempfile.TemporaryDirectory() as tmp:
+                        root = Path(tmp)
+                        source, active, backups = self.fixture(root)
+                        before = snapshot(active)
+                        result = subprocess.run(
+                            [
+                                sys.executable,
+                                "-c",
+                                driver.format(module_name=module_name),
+                                str(source),
+                                str(active),
+                                str(backups),
+                                failure_name,
+                            ],
+                            cwd=ROOT / "scripts",
+                            check=False,
+                            capture_output=True,
+                            text=True,
+                        )
+                        self.assertEqual(result.returncode, 1)
+                        self.assertEqual(result.stdout, "")
+                        self.assertEqual(result.stderr, "error=skill_sync_failed\n")
+                        self.assertNotIn(str(root), result.stdout + result.stderr)
+                        self.assertNotIn("references/private", result.stdout + result.stderr)
+                        self.assertNotIn("examples/private", result.stdout + result.stderr)
+                        self.assertNotIn("confidential.bin", result.stdout + result.stderr)
+                        self.assertNotIn("Traceback", result.stdout + result.stderr)
+                        self.assertEqual(snapshot(active), before)
+                        self.assertFalse(backups.exists())
 
 
 if __name__ == "__main__":
