@@ -98,28 +98,47 @@ def build_workflow_projection(db_path: Path, run_id: str,
         content.append(item)
         by_identity[identity] = item
     topics: list[dict[str, Any]] = []
+    candidates_by_identity = {
+        str(row.get("candidate_id") or ""): row
+        for row in collection.get("candidates", [])
+        if str(row.get("candidate_id") or "")
+    }
     for row in editorial.get("topics", []):
-        if row.get("decision") != "select":
-            continue
         identity = str(row.get("candidate_id") or "")
-        item = by_identity.get(identity)
+        candidate = candidates_by_identity.get(identity, {})
+        decision = str(row.get("decision") or "")
+        if decision not in {"select", "observe", "reject", "failed"}:
+            raise ProjectionError("topic_decision_invalid")
+        representative_item_id = str(
+            candidate.get("representative_item_id")
+            or candidate.get("item_id")
+            or identity
+        )
+        item = by_identity.get(representative_item_id)
         if not item:
             raise ProjectionError("topic_content_mapping_missing")
         topics.append({
             "id": stable_id("topic", run_id, identity), "run_id": run_id,
-            "content_id": item["id"], "title": str(row.get("title") or ""),
+            "content_id": item["id"], "title": str(
+                row.get("title") or candidate.get("event_name") or candidate.get("title") or item["title"]
+            ),
             "source": item["source"], "brief": item["summary"],
-            "reason": str(row.get("selection_reason") or ""), "status": "selected",
+            "reason": str(row.get("selection_reason") or ""), "status": decision,
             "updated_at": run["updated_at"], "selection_reason": str(row.get("selection_reason") or ""),
             "hook": str(row.get("hook") or ""), "content_structure": str(row.get("structure") or ""),
-            "source_url": item["source_url"], "generation_status": "not_generated",
+            "source_url": item["source_url"],
+            "generation_status": "not_generated" if decision == "select" else "not_applicable",
             "generation_error": "",
+            "trend_event_id": str(candidate.get("trend_event_id") or identity),
+            "sources": candidate.get("sources") or [],
+            "cluster_synthesis": candidate.get("cluster_synthesis") or {},
+            "traffic_opportunity": candidate.get("traffic_opportunity") or {},
+            "persona_stability": candidate.get("persona_stability") or {},
+            "differentiation": candidate.get("differentiation") or {},
         })
     topic_by_identity = {
         str(row.get("candidate_id")): topic
-        for row, topic in zip(
-            [row for row in editorial.get("topics", []) if row.get("decision") == "select"], topics
-        )
+        for row, topic in zip(editorial.get("topics", []), topics)
     }
     scripts: list[dict[str, Any]] = []
     for row in scripts_stage.get("scripts", []):

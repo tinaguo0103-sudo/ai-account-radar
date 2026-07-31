@@ -75,6 +75,85 @@ class WebsiteProjectionTest(unittest.TestCase):
             with self.assertRaisesRegex(ProjectionError, "workflow_terminal_not_committed"):
                 build_workflow_projection(path, run_id, "qa-private")
 
+    def test_hotspot_topic_projects_structured_sources_and_cluster_synthesis(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "workflow.sqlite3"
+            flow = DailyWorkflow(path)
+            run_id = "run_20260731_080000"
+            flow.begin(run_id, "2026-07-31")
+            event_id = "trend:event-one"
+            collection = {
+                "content_items": [{
+                    "item_id": "douyin:1", "source": "douyin", "title": "source",
+                    "source_url": "https://www.douyin.com/video/1",
+                }],
+                "candidates": [{
+                    "candidate_id": event_id, "trend_event_id": event_id,
+                    "representative_item_id": "douyin:1",
+                    "sources": [
+                        {
+                            "source_id": "source-1",
+                            "url": "https://www.douyin.com/video/1",
+                            "source_role": "traffic_signal",
+                            "understanding_status": "analyzed",
+                        },
+                        {
+                            "source_id": "source-2",
+                            "url": "https://example.test/official",
+                            "source_role": "original_or_official",
+                            "understanding_status": "metadata_only",
+                        },
+                    ],
+                    "cluster_synthesis": {"event_name": "same event"},
+                    "traffic_opportunity": {"status": "evidence_present"},
+                    "persona_stability": {"status": "reviewable"},
+                    "differentiation": {"primary_angle": "Austin angle"},
+                }, {
+                    "candidate_id": "trend:observe", "trend_event_id": "trend:observe",
+                    "representative_item_id": "douyin:1",
+                    "event_name": "observed event",
+                    "sources": [{
+                        "source_id": "source-3",
+                        "url": "https://www.douyin.com/video/1",
+                        "source_role": "independent_view",
+                        "understanding_status": "metadata_only",
+                    }],
+                }],
+                "source_runs": [],
+                "understanding_results": [],
+            }
+            flow.commit_stage(run_id, "collection_enrichment", collection, "completed")
+            flow.commit_stage(run_id, "editorial", {
+                "run_id": run_id,
+                "topics": [{
+                    "candidate_id": event_id, "decision": "select",
+                    "title": "title", "selection_reason": "reason",
+                    "hook": "hook", "structure": "structure",
+                }, {
+                    "candidate_id": "trend:observe", "decision": "observe",
+                    "selection_reason": "evidence is still limited",
+                }],
+            }, "completed")
+            flow.commit_stage(run_id, "scripts", {
+                "run_id": run_id,
+                "scripts": [{
+                    "topic_id": event_id, "title": "title", "hook": "hook",
+                    "structure": "structure", "body": "body",
+                }],
+                "failures": [],
+            }, "completed")
+            flow.complete(run_id, "completed", f"terminal:{run_id}")
+            topics = build_workflow_projection(path, run_id, "qa-private")["topics"]
+            self.assertEqual(len(topics), 2)
+            topic = topics[0]
+            self.assertEqual(topic["trend_event_id"], event_id)
+            self.assertEqual(len(topic["sources"]), 2)
+            self.assertEqual(topic["cluster_synthesis"]["event_name"], "same event")
+            self.assertEqual(topic["differentiation"]["primary_angle"], "Austin angle")
+            self.assertEqual(topics[1]["status"], "observe")
+            self.assertEqual(topics[1]["generation_status"], "not_applicable")
+            self.assertEqual(topics[1]["title"], "observed event")
+
     def test_source_ledger_is_preserved_when_legacy_source_runs_are_empty(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "workflow.sqlite3"

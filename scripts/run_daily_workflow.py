@@ -27,6 +27,11 @@ from douyin_video_understanding_producer import (
     produce,
 )
 from publish_website_projection import ProjectionError
+from trend_hotspot_cards import (
+    attach_understanding,
+    build_hotspot_cards,
+    representative_candidates,
+)
 from website_publisher_client import publish_terminal
 from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
 
@@ -713,7 +718,7 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
     if value.get("run_id") != args.run_id:
         raise WorkflowConflict("collection_wrong_run")
     items, identity_failures = normalize_items(value.get("content_items", []))
-    candidates, video_candidates, candidate_failures = normalize_collection_candidates(
+    legacy_candidates, video_candidates, candidate_failures = normalize_collection_candidates(
         value.get("candidates", []),
         items=items,
         run_id=args.run_id,
@@ -721,6 +726,15 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
     source_ledger = (
         normalize_source_ledger(value, video_candidates=video_candidates)
         if "source_ledger" in value else []
+    )
+    hotspot_cards = build_hotspot_cards(
+        legacy_candidates,
+        items=items,
+        run_id=args.run_id,
+    )
+    representative_video_candidates = representative_candidates(
+        hotspot_cards,
+        video_candidates,
     )
     packages: list[dict[str, Any]]
     producer_failures: list[dict[str, Any]]
@@ -733,7 +747,7 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
             for row in packages if row.get("status") == "failed"
         ]
     elif args.video_mode == "normal":
-        produced = produce(args, discovered_candidates=video_candidates)
+        produced = produce(args, discovered_candidates=representative_video_candidates)
         packages = produced["packages"]
         producer_failures = [{
             "item_id": str(row.get("item_id") or row.get("candidate_id") or ""),
@@ -749,23 +763,19 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         package = package_by_url.get(str(row.get("source_url") or row.get("内容链接") or ""))
         if package:
             row["video_understanding"] = package
-    package_by_item = {
-        f"douyin:{row.get('aweme_id')}": row for row in packages
-        if row.get("status") in {"completed", "completed_with_failures"}
-    }
-    understanding_results = []
-    for candidate in candidates:
-        item_id = str(candidate.get("item_id") or "")
-        package = package_by_item.get(item_id)
-        if package:
-            understanding_results.append({
-                "candidate_id": str(candidate.get("candidate_id") or ""),
-                "base_item_id": item_id,
-                "package": package,
-            })
+    hotspot_cards, understanding_results = attach_understanding(
+        hotspot_cards,
+        packages,
+        producer_failures,
+    )
     value.update({
         "content_items": items,
-        "candidates": candidates,
+        "legacy_candidates": legacy_candidates,
+        "legacy_candidate_count": len(legacy_candidates),
+        "candidates": hotspot_cards,
+        "hotspot_cards": hotspot_cards,
+        "hotspot_card_count": len(hotspot_cards),
+        "representative_source_count": len(representative_video_candidates),
         "understanding_results": understanding_results,
         "item_failures": identity_failures + candidate_failures + producer_failures,
         "source_ledger": source_ledger,
@@ -829,6 +839,17 @@ def first_context_value(rows: list[dict[str, Any]], *keys: str) -> Any:
 def compact_video_understanding(package: dict[str, Any] | None) -> dict[str, Any] | None:
     if not package or package.get("status") not in {"completed", "completed_with_failures"}:
         return None
+    representatives = package.get("representative_packages")
+    if isinstance(representatives, list):
+        return {
+            "status": package.get("status"),
+            "cluster_synthesis": package.get("cluster_synthesis") or {},
+            "representative_sources": [
+                compact_video_understanding(row)
+                for row in representatives
+                if isinstance(row, dict)
+            ],
+        }
     asr = package.get("asr") if isinstance(package.get("asr"), dict) else {}
     screen_rows = package.get("screen_facts")
     if not isinstance(screen_rows, list):
@@ -898,6 +919,7 @@ def build_scripts_handoff(
         source_rows = [candidate, item]
         selected_topics.append({
             "topic_id": topic_id,
+            "trend_event_id": candidate.get("trend_event_id") or topic_id,
             "title": topic.get("title"),
             "hook": topic.get("hook"),
             "structure": topic.get("structure"),
@@ -946,6 +968,23 @@ def build_scripts_handoff(
             "cannot_claim": first_context_value(
                 rows, "cannot_claim", "cannot_claim_notes", "不能声称的部分",
             ),
+            "traffic_opportunity": candidate.get("traffic_opportunity"),
+            "persona_stability": candidate.get("persona_stability"),
+            "differentiation": candidate.get("differentiation"),
+            "cluster_synthesis": candidate.get("cluster_synthesis"),
+            "sources": [
+                {
+                    key: source.get(key)
+                    for key in (
+                        "source_id", "url", "platform", "author", "title",
+                        "published_at", "published_display", "engagement",
+                        "source_role", "understanding_status",
+                    )
+                    if source.get(key) not in (None, "", [], {})
+                }
+                for source in candidate.get("sources", [])
+                if isinstance(source, dict)
+            ],
             "video_understanding": compact_video_understanding(understanding.get(topic_id)),
         })
     return {

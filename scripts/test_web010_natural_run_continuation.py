@@ -223,6 +223,7 @@ class NaturalRunContinuationTest(unittest.TestCase):
             handoff_path = Path(first_lines[-1]["handoff_path"])
             handoff = json.loads(handoff_path.read_text())
             self.assertEqual(len(handoff["candidates"]), 6)
+            candidate_ids = [candidate["candidate_id"] for candidate in handoff["candidates"]]
             status_command = [
                 sys.executable,
                 str(ROOT / "scripts" / "run_daily_workflow.py"),
@@ -244,14 +245,14 @@ class NaturalRunContinuationTest(unittest.TestCase):
             write_json(editorial, {
                 "run_id": RUN_ID,
                 "topics": [{
-                    "candidate_id": "douyin:8000",
+                    "candidate_id": candidate_ids[0],
                     "decision": "select",
                     "title": "AI workflow",
                     "hook": "具体冲突",
                     "structure": "场景到动作",
                     "selection_reason": "候选包含明确工作流事实",
                 }] + [{
-                    "candidate_id": f"douyin:{8000 + index}",
+                    "candidate_id": candidate_ids[index],
                     "decision": "observe",
                     "selection_reason": f"候选 {index} 的证据密度较低",
                 } for index in range(1, 6)],
@@ -266,7 +267,7 @@ class NaturalRunContinuationTest(unittest.TestCase):
             write_json(scripts, {
                 "run_id": RUN_ID,
                 "scripts": [{
-                    "topic_id": "douyin:8000",
+                    "topic_id": candidate_ids[0],
                     "title": "AI workflow",
                     "hook": "具体冲突",
                     "structure": "场景到动作",

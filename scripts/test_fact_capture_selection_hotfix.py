@@ -86,13 +86,17 @@ class FactCaptureSelectionHotfixTests(unittest.TestCase):
         ) as produced:
             enriched = workflow.enrich(args, base)
         self.assertEqual(produced.call_count, 1)
-        self.assertEqual(len(enriched["understanding_results"]), 2)
+        self.assertEqual(len(enriched["understanding_results"]), 1)
         self.assertEqual(
             {row["base_item_id"] for row in enriched["understanding_results"]},
             {"douyin:7667000000000000003"},
         )
         self.assertEqual(
-            len({row["candidate_id"] for row in enriched["understanding_results"]}), 2,
+            enriched["candidates"][0]["legacy_candidate_ids"],
+            [
+                "douyin:7667000000000000003::angle:angle-a",
+                "douyin:7667000000000000003::angle:angle-b",
+            ],
         )
 
     def test_static_heat_no_longer_contributes_to_score(self):

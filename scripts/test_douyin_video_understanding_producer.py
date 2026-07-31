@@ -228,9 +228,11 @@ class ProducerTest(unittest.TestCase):
                 "当前视频语音",
             )
             self.assertTrue(
-                merged["candidates"][0]["candidate_id"].startswith(
-                    "douyin:12345678901::angle:",
-                ),
+                merged["candidates"][0]["candidate_id"].startswith("trend:"),
+            )
+            self.assertEqual(
+                merged["candidates"][0]["legacy_candidate_ids"],
+                ["douyin:12345678901::angle:AI%20%E5%B7%A5%E5%85%B7"],
             )
 
     def test_failed_workflow_resume_loads_exact_producer_artifacts_without_discovery(self):

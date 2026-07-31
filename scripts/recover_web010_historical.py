@@ -10,6 +10,8 @@ import sys
 import tempfile
 from pathlib import Path
 
+from trend_hotspot_cards import build_hotspot_cards
+
 ROOT = Path(__file__).resolve().parents[1]
 EXACT_RUN = "run_20260727_080141"
 EXACT_DATE = "2026-07-27"
@@ -18,6 +20,25 @@ EXACT_DATE = "2026-07-27"
 def rows(path: Path) -> list[dict[str, str]]:
     with path.open(encoding="utf-8-sig", newline="") as handle:
         return list(csv.DictReader(handle))
+
+
+def remap_result(
+    source_path: str,
+    output_path: Path,
+    identity_map: dict[str, str],
+    *,
+    collection_key: str,
+    identity_key: str,
+) -> Path:
+    payload = json.loads(Path(source_path).read_text(encoding="utf-8"))
+    for row in payload.get(collection_key, []):
+        identity = str(row.get(identity_key) or "")
+        mapped = identity_map.get(identity)
+        if not mapped:
+            raise SystemExit("historical_result_identity_conflict")
+        row[identity_key] = mapped
+    output_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+    return output_path
 
 
 def main() -> int:
@@ -66,9 +87,23 @@ def main() -> int:
         if legacy in identities:
             candidates.append({
                 "candidate_id": f"legacy:{legacy}",
+                "item_id": f"legacy:{legacy}",
                 "title": str(row.get("内容标题") or row.get("来源标题") or ""),
                 "summary": str(row.get("来源内容") or ""),
+                "source_url": next(
+                    (
+                        item["source_url"] for item in converted
+                        if item["item_id"] == f"legacy:{legacy}"
+                    ),
+                    "",
+                ),
             })
+    hotspot_cards = build_hotspot_cards(candidates, items=converted, run_id=EXACT_RUN)
+    identity_map = {
+        legacy_id: card["candidate_id"]
+        for card in hotspot_cards
+        for legacy_id in card.get("legacy_candidate_ids", [])
+    }
     fixture = {
         "run_id": EXACT_RUN, "business_date": EXACT_DATE,
         "status": log["collection_status"], "content_items": converted,
@@ -85,9 +120,23 @@ def main() -> int:
             "--collection-fixture", str(path), "--video-mode", "disabled",
         ]
         if args.editorial_result_file:
-            command.extend(["--editorial-result-file", args.editorial_result_file])
+            mapped_editorial = remap_result(
+                args.editorial_result_file,
+                Path(tmp) / "editorial.json",
+                identity_map,
+                collection_key="topics",
+                identity_key="candidate_id",
+            )
+            command.extend(["--editorial-result-file", str(mapped_editorial)])
         if args.scripts_result_file:
-            command.extend(["--scripts-result-file", args.scripts_result_file])
+            mapped_scripts = remap_result(
+                args.scripts_result_file,
+                Path(tmp) / "scripts.json",
+                identity_map,
+                collection_key="scripts",
+                identity_key="topic_id",
+            )
+            command.extend(["--scripts-result-file", str(mapped_scripts)])
         result = subprocess.run(command, text=True)
         return result.returncode
 
