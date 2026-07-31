@@ -300,6 +300,8 @@ class ProducerTest(unittest.TestCase):
                 "aweme_id": "12345678901", "source": "douyin",
                 "title": "AI 工具",
                 "source_url": "https://www.douyin.com/video/12345678901",
+                "likes": 100,
+                "published_at": "2026-07-27T00:00:00Z",
             }],
             "candidates": [{
                 "candidate_id": "douyin:12345678901",
@@ -308,6 +310,8 @@ class ProducerTest(unittest.TestCase):
                 "discovery_source": "configured_account",
                 "title": "AI 工具",
                 "source_url": "https://www.douyin.com/video/12345678901",
+                "likes": 100,
+                "published_at": "2026-07-27T00:00:00Z",
             }],
             "source_ledger": [
                 {"source": "configured_account", "attempted": True, "status": "completed",

@@ -126,8 +126,10 @@ class NormalEntrypointDiscoveryTests(unittest.TestCase):
                 "content_items": [content(url)],
                 "candidates": [
                     {
-                        **candidate(url, "configured", "Configured angle"),
+                        **candidate(url, "configured", "Configured AI angle"),
                         "discovery_source": "configured_account",
+                        "likes": 1000,
+                        "published_at": "2026-07-30T04:00:00Z",
                     },
                 ],
                 "configured_account_status": "completed",
@@ -143,7 +145,7 @@ class NormalEntrypointDiscoveryTests(unittest.TestCase):
                     "source_url": "https://www.douyin.com/video/22345678901",
                     "title": "Dynamic AI",
                     "author": "creator",
-                    "likes": 0,
+                    "likes": 1000,
                     "comments": None,
                     "favorites": None,
                     "shares": None,
@@ -174,7 +176,16 @@ class NormalEntrypointDiscoveryTests(unittest.TestCase):
                 ],
             }
             produced = {
-                "packages": [],
+                "packages": [{
+                    "run_id": RUN_ID,
+                    "aweme_id": aweme_id,
+                    "source_url": source_url,
+                    "status": "completed",
+                    "caption_timeline": [{"text": title}],
+                } for aweme_id, source_url, title in (
+                    ("12345678901", url, "Configured AI angle"),
+                    ("22345678901", "https://www.douyin.com/video/22345678901", "Dynamic AI"),
+                )],
                 "failures": [],
             }
             argv = [

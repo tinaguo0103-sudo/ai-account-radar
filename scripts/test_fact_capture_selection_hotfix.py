@@ -68,6 +68,8 @@ class FactCaptureSelectionHotfixTests(unittest.TestCase):
                     "主题聚类ID": angle,
                     "title": "AI",
                     "discovery_source": "configured_account",
+                    "likes": 100,
+                    "published_at": "2026-07-30T00:00:00Z",
                 }
                 for angle in ("angle-a", "angle-b")
             ],

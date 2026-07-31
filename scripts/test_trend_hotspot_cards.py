@@ -5,8 +5,11 @@ import unittest
 from trend_hotspot_cards import (
     attach_understanding,
     build_hotspot_cards,
+    complete_editorial_ledger,
+    editorial_candidates,
     representative_candidates,
     select_representative_sources,
+    validate_candidate_specific_decisions,
 )
 
 
@@ -126,6 +129,83 @@ class TrendHotspotCardsTest(unittest.TestCase):
         selected = representative_candidates(cards, rows)
         self.assertEqual(len(selected), 3)
         self.assertLess(len(selected), len(rows))
+
+    def test_only_relative_traffic_and_broad_persona_fit_reach_deep_read(self):
+        high = candidate("1", "AI工作台", "AI工作台实战", likes=900)
+        low = candidate("2", "AI工作台小技巧", "AI工作台小技巧", likes=1)
+        metadata = candidate("3", "Agent工作流", "Agent工作流", likes=None)
+        cards = build_hotspot_cards([high, low, metadata], items=items([high, low, metadata]), run_id=RUN_ID)
+        by_name = {row["event_name"]: row for row in cards}
+        self.assertEqual(by_name["AI工作台"]["qualification"]["status"], "qualified")
+        self.assertEqual(by_name["AI工作台小技巧"]["qualification"]["status"], "signal_only")
+        self.assertIn("互动事实缺失", by_name["Agent工作流"]["qualification"]["traffic_reason"])
+        selected = representative_candidates(cards, [high, low, metadata])
+        self.assertEqual([row["source_url"] for row in selected], [high["source_url"]])
+
+    def test_douyin_platform_aliases_share_one_relative_traffic_pool(self):
+        low = candidate("1", "低互动工作流", "低互动工作流", platform="抖音", likes=10)
+        middle = candidate("2", "中互动工作流", "中互动工作流", platform="douyin", likes=500)
+        high = candidate("3", "高互动工作流", "高互动工作流", platform="抖音", likes=900)
+        cards = build_hotspot_cards(
+            [low, middle, high],
+            items=items([low, middle, high]),
+            run_id=RUN_ID,
+        )
+        by_name = {row["event_name"]: row for row in cards}
+        self.assertEqual(
+            by_name["低互动工作流"]["qualification"]["relative_basis"]["platform_observation_counts"],
+            {"douyin": 3},
+        )
+        self.assertEqual(by_name["低互动工作流"]["qualification"]["status"], "signal_only")
+        self.assertEqual(by_name["高互动工作流"]["qualification"]["status"], "qualified")
+
+    def test_single_complete_source_synthesis_uses_understanding_not_only_title(self):
+        row = candidate("1", "AI材料工作流", "AI材料工作流", likes=900)
+        cards = build_hotspot_cards([row], items=items([row]), run_id=RUN_ID)
+        packages = [{
+            "status": "completed",
+            "source_url": row["source_url"],
+            "title": row["title"],
+            "caption_timeline": [{"start": 0, "text": "先识别写作意图，再搭建逻辑"}],
+            "asr": {"text": "<|zh|>素材数据和政策文件要分开校验。"},
+            "screen_text": [{"kind": "tool_name", "value": "豆包"}],
+            "keyframes": [{"time_second": 0, "sha256": "abc"}],
+            "unresolved_terms": [],
+        }]
+        cards, results = attach_understanding(cards, packages, [])
+        synthesis = cards[0]["cluster_synthesis"]
+        self.assertEqual(cards[0]["review_stage"], "ready_for_editorial")
+        self.assertEqual(synthesis["actual_understanding_source_count"], 1)
+        self.assertIn("先识别写作意图", " ".join(synthesis["scenes_actions_consequences"]))
+        self.assertEqual(synthesis["primary_angle"], "")
+        self.assertEqual(len(editorial_candidates(cards)), 1)
+        self.assertEqual(len(results), 1)
+
+    def test_candidate_specific_editorial_contract_and_ledger_stages(self):
+        row = candidate("1", "AI验收工作流", "AI验收工作流", likes=900)
+        cards = build_hotspot_cards([row], items=items([row]), run_id=RUN_ID)
+        cards, _ = attach_understanding(cards, [{
+            "status": "completed", "source_url": row["source_url"],
+            "title": row["title"], "asr": {"text": "先生成，再逐项验收交付结果。"},
+        }], [])
+        topic = {
+            "candidate_id": cards[0]["candidate_id"], "decision": "select",
+            "title": "真正卡住AI工作流的是验收", "hook": "生成很快，交付为什么还是卡住？",
+            "structure": "生成冲突 -> 验收动作 -> 交付后果",
+            "selection_reason": "900次可见点赞且输入给出了逐项验收动作，适合讲交付责任。",
+            "unique_judgment": "AI把生成时间压缩了，却把交付验收的责任集中到了使用者身上。",
+            "evidence_source_ids": [row["source_url"]],
+            "decision_basis": {
+                "traffic": "900次可见点赞", "content": "逐项验收动作",
+                "persona": "Austin可讲交付责任", "differentiation": "不讲工具清单，讲责任转移",
+            },
+        }
+        validate_candidate_specific_decisions([topic], cards)
+        ledger = complete_editorial_ledger(cards, [topic])
+        self.assertEqual(ledger[0]["review_stage"], "recommended")
+        invalid = {**topic, "unique_judgment": "换成自己的语言"}
+        with self.assertRaisesRegex(ValueError, "editorial_primary_angle_not_concrete"):
+            validate_candidate_specific_decisions([invalid], cards)
 
     def test_legacy_repeated_angle_becomes_event_cards_without_cross_event_merge(self):
         rows = [

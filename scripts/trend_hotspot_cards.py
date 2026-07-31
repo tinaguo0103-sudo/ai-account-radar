@@ -4,12 +4,20 @@ import hashlib
 import json
 import re
 from collections import defaultdict
+from datetime import datetime, timezone
+from statistics import median
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
 
 MAX_REPRESENTATIVES = 5
 DEFAULT_REPRESENTATIVES = 3
+GENERIC_ANGLE_PHRASES = (
+    "换成自己的语言",
+    "放进真实场景",
+    "不照搬表达",
+    "吸收它的选题承诺",
+)
 
 
 def _text(value: Any) -> str:
@@ -260,11 +268,174 @@ def _differentiation_stage(candidates: list[dict[str, Any]]) -> dict[str, Any]:
         if common and common not in mainstream:
             mainstream.append(common)
     return {
-        "status": "reviewable" if angles else "needs_editorial_judgment",
-        "primary_angle": angles[0] if angles else "",
-        "alternative_angles": angles[1:3],
+        "status": "hypotheses_available" if angles else "needs_deep_read",
+        "primary_angle": "",
+        "alternative_angles": [],
+        "angle_hypotheses": angles[:3],
         "mainstream_angles": mainstream[:3],
+        "pre_read_only": True,
     }
+
+
+def _source_age_seconds(source: dict[str, Any], run_id: str) -> float | None:
+    recency = source.get("recency")
+    if isinstance(recency, dict):
+        values = [
+            recency.get("minimum_seconds"),
+            recency.get("maximum_seconds"),
+        ]
+        numeric = [float(value) for value in values if isinstance(value, (int, float))]
+        if numeric:
+            return max(numeric)
+    published = _text(source.get("published_at"))
+    match = re.search(r"run_(\d{8})_", run_id)
+    if published and match:
+        try:
+            captured = datetime.strptime(match.group(1), "%Y%m%d").replace(tzinfo=timezone.utc)
+            value = datetime.fromisoformat(published.replace("Z", "+00:00"))
+            return max(0.0, (captured - value.astimezone(timezone.utc)).total_seconds())
+        except ValueError:
+            pass
+    display = _text(source.get("published_display"))
+    if display in {"今天", "刚刚"}:
+        return 0.0
+    units = {"分钟": 60, "小时": 3600, "天": 86400, "周": 604800, "月": 2592000}
+    relative = re.search(r"(\d+)\s*(分钟|小时|天|周|月)前", display)
+    if relative:
+        return float(int(relative.group(1)) * units[relative.group(2)])
+    return None
+
+
+def _platform_key(value: Any) -> str:
+    platform = _text(value).casefold()
+    if platform in {"douyin", "抖音"}:
+        return "douyin"
+    return platform or "unknown"
+
+
+def _persona_qualification(card: dict[str, Any]) -> tuple[bool, str]:
+    reasons = card.get("persona_stability", {}).get("reasons") or []
+    if reasons:
+        return True, _text(reasons[0])
+    text = " ".join(
+        [card.get("event_name", "")]
+        + [source.get("title", "") for source in card.get("sources", [])]
+        + [source.get("summary", "") for source in card.get("sources", [])]
+    ).casefold()
+    markers = (
+        "agent", "skill", "workflow", "work", "codex", "claude", "trae",
+        "工作流", "工作台", "工具", "实战", "教程", "材料", "公文", "办公",
+        "项目", "开发", "编程", "内容", "视频", "财务", "企业", "自动化",
+    )
+    if re.search(r"\bai\b", text):
+        return True, "可自然连接到 AI 的判断、行动或实验"
+    matched = next((marker for marker in markers if marker in text), "")
+    if matched:
+        return True, f"可自然连接到 {matched} 的判断、行动或实验"
+    return False, "当前公开材料尚未显示 Austin 能自然提供的判断、行动或实验"
+
+
+def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    likes_by_platform: dict[str, list[float]] = defaultdict(list)
+    ages: list[float] = []
+    for card in cards:
+        for source in card.get("sources", []):
+            likes = source.get("engagement", {}).get("likes")
+            if isinstance(likes, (int, float)) and not isinstance(likes, bool):
+                likes_by_platform[_platform_key(source.get("platform"))].append(float(likes))
+            age = _source_age_seconds(source, str(card.get("run_id") or ""))
+            if age is not None:
+                ages.append(age)
+    median_age = median(ages) if ages else None
+    for card in cards:
+        platform_percentiles: list[float] = []
+        visible_likes: list[float] = []
+        source_ages: list[float] = []
+        for source in card.get("sources", []):
+            likes = source.get("engagement", {}).get("likes")
+            platform = _platform_key(source.get("platform"))
+            if isinstance(likes, (int, float)) and not isinstance(likes, bool):
+                values = likes_by_platform.get(platform, [])
+                visible_likes.append(float(likes))
+                if values:
+                    platform_percentiles.append(
+                        sum(value <= float(likes) for value in values) / len(values)
+                    )
+            age = _source_age_seconds(source, str(card.get("run_id") or ""))
+            if age is not None:
+                source_ages.append(age)
+        strongest_percentile = max(platform_percentiles, default=0.0)
+        freshest_age = min(source_ages) if source_ages else None
+        freshness_percentile = (
+            sum(value >= freshest_age for value in ages) / len(ages)
+            if freshest_age is not None and ages else 0.0
+        )
+        stale_outlier = bool(
+            freshest_age is not None and median_age is not None and median_age > 0
+            and freshest_age > median_age * 4
+        )
+        traffic = card.get("traffic_opportunity", {})
+        multi_source = (
+            int(traffic.get("independent_source_count") or 0) >= 2
+            and int(traffic.get("time_source_count") or 0) >= 1
+        )
+        official_with_time = any(
+            source.get("source_role") == "original_or_official"
+            and (source.get("published_at") or source.get("published_display") or source.get("recency"))
+            for source in card.get("sources", [])
+        )
+        relative_opportunity = bool(
+            visible_likes and not stale_outlier
+            and (
+                strongest_percentile >= 0.75
+                or (strongest_percentile > 0.5 and freshness_percentile >= 0.5)
+            )
+        )
+        traffic_qualified = relative_opportunity or multi_source or official_with_time
+        persona_qualified, persona_reason = _persona_qualification(card)
+        eligible = traffic_qualified and persona_qualified
+        if relative_opportunity:
+            traffic_reason = (
+                f"最强来源可见点赞 {int(max(visible_likes))}，"
+                f"处于同平台当日有事实信号的相对前 {max(1, round((1 - strongest_percentile) * 100))}%"
+            )
+        elif multi_source:
+            traffic_reason = (
+                f"{int(traffic.get('independent_source_count') or 0)} 个独立来源在同一时间窗指向同一事件"
+            )
+        elif official_with_time:
+            traffic_reason = "存在带时间的原始或官方事件信号"
+        elif stale_outlier:
+            traffic_reason = "互动可见，但发布时间相对本批信号明显过旧，不冒充今日流量机会"
+        elif visible_likes:
+            traffic_reason = (
+                f"可见点赞 {int(max(visible_likes))}，但未进入同平台当日相对高潜信号"
+            )
+        else:
+            traffic_reason = "互动事实缺失，保留为热点线索，不据此评判账号质量"
+        hypotheses = card.get("differentiation", {}).get("angle_hypotheses") or []
+        card["qualification"] = {
+            "status": "qualified" if eligible else "signal_only",
+            "eligible_for_deep_read": eligible,
+            "traffic_state": "qualified" if traffic_qualified else "insufficient",
+            "traffic_reason": traffic_reason,
+            "persona_state": "fit" if persona_qualified else "insufficient",
+            "persona_reason": persona_reason,
+            "angle_hypotheses": hypotheses,
+            "angle_hypotheses_are_non_blocking": True,
+            "relative_basis": {
+                "platform_observation_counts": {
+                    key: len(value) for key, value in sorted(likes_by_platform.items())
+                },
+                "strongest_like_percentile": round(strongest_percentile, 4),
+                "freshness_percentile": round(freshness_percentile, 4),
+            },
+        }
+        card["representative_source_ids"] = (
+            select_representative_sources(card.get("sources", [])) if eligible else []
+        )
+        card["review_stage"] = "qualified_for_deep_read" if eligible else "signal_only"
+    return cards
 
 
 def build_hotspot_cards(
@@ -297,13 +468,9 @@ def build_hotspot_cards(
         strongest = _strongest_source_id(source_rows)
         for source in source_rows:
             source["source_role"] = _source_role(source, strongest_id=strongest)
-        representative_ids = select_representative_sources(source_rows)
         event_id = _event_id(run_id, descriptor)
         label = _event_label(next(iter(deduped.values()))) or event_id
-        representative_source = next(
-            (row for row in source_rows if row["source_id"] in representative_ids),
-            source_rows[0],
-        )
+        representative_source = source_rows[0]
         card = {
             "candidate_id": event_id,
             "trend_event_id": event_id,
@@ -315,7 +482,7 @@ def build_hotspot_cards(
             "source_url": representative_source["url"],
             "source_count": len(source_rows),
             "sources": source_rows,
-            "representative_source_ids": representative_ids,
+            "representative_source_ids": [],
             "traffic_opportunity": _traffic_stage(source_rows),
             "persona_stability": _persona_stage(rows),
             "differentiation": _differentiation_stage(rows),
@@ -327,7 +494,7 @@ def build_hotspot_cards(
             "merged_input_count": len(rows),
         }
         cards.append(card)
-    return cards
+    return qualify_hotspot_cards(cards)
 
 
 def representative_candidates(
@@ -338,6 +505,8 @@ def representative_candidates(
     output = []
     seen: set[str] = set()
     for card in cards:
+        if not card.get("qualification", {}).get("eligible_for_deep_read"):
+            continue
         for source_id in card.get("representative_source_ids", []):
             row = by_source.get(str(source_id))
             if row is not None and source_id not in seen:
@@ -365,6 +534,7 @@ def attach_understanding(
     understanding_results = []
     for card in cards:
         understood = []
+        representative_set = set(card.get("representative_source_ids", []))
         for source in card["sources"]:
             package = package_by_source.get(source["url"])
             if package and package.get("status") in {"completed", "completed_with_failures"}:
@@ -376,7 +546,6 @@ def attach_understanding(
                 if item_failure:
                     source["understanding_status"] = "failed"
                     source["understanding_failure"] = item_failure
-        representative_set = set(card.get("representative_source_ids", []))
         representative_understood = [
             package for package in understood
             if _canonical_url(package.get("source_url")) in {
@@ -384,23 +553,35 @@ def attach_understanding(
                 if source["source_id"] in representative_set
             }
         ]
+        requested = len(representative_set)
+        completed = len(representative_understood)
+        failed = sum(
+            source["understanding_status"] == "failed"
+            for source in card["sources"]
+            if source["source_id"] in representative_set
+        )
+        if not card.get("qualification", {}).get("eligible_for_deep_read"):
+            deep_status = "not_qualified"
+            card["review_stage"] = "signal_only"
+        elif completed and failed:
+            deep_status = "completed_with_failures"
+            card["review_stage"] = "ready_for_editorial"
+        elif completed:
+            deep_status = "completed"
+            card["review_stage"] = "ready_for_editorial"
+        else:
+            deep_status = "understanding_failed"
+            card["review_stage"] = "understanding_failed"
         card["deep_read"] = {
-            "requested_count": len(representative_set),
-            "completed_count": len(representative_understood),
-            "failed_count": sum(
-                source["understanding_status"] == "failed"
-                for source in card["sources"]
-                if source["source_id"] in representative_set
-            ),
-            "status": (
-                "completed" if representative_understood
-                else "insufficient_evidence"
-            ),
+            "requested_count": requested,
+            "completed_count": completed,
+            "failed_count": failed,
+            "status": deep_status,
             "information_gain_stop": True,
             "max_sources": MAX_REPRESENTATIVES,
         }
         card["cluster_synthesis"] = synthesize_card(card, representative_understood)
-        if representative_understood:
+        if understood:
             understanding_results.append({
                 "candidate_id": card["candidate_id"],
                 "base_item_id": card["representative_item_id"],
@@ -411,6 +592,7 @@ def attach_understanding(
                     ),
                     "source_url": card["source_url"],
                     "representative_packages": representative_understood,
+                    "available_packages": understood,
                     "cluster_synthesis": card["cluster_synthesis"],
                 },
             })
@@ -423,14 +605,48 @@ def synthesize_card(
 ) -> dict[str, Any]:
     scenes: list[str] = []
     unresolved: list[str] = []
+    representative_findings: list[dict[str, Any]] = []
     for package in representative_packages:
-        text = _text(package.get("title"))
-        if text and text not in scenes:
-            scenes.append(text)
+        captions = [
+            _text(row.get("text"))
+            for row in package.get("caption_timeline", []) or []
+            if isinstance(row, dict) and _text(row.get("text"))
+        ]
+        asr = package.get("asr") if isinstance(package.get("asr"), dict) else {}
+        asr_text = re.sub(r"<\|[^|]+\|>", "", _text(asr.get("text")))
+        asr_sentences = [
+            _text(value)[:220]
+            for value in re.split(r"[\u3002！？!?]", asr_text)
+            if len(_text(value)) >= 8
+        ][:3]
+        screen_facts = [
+            _text(row.get("text") or row.get("value"))
+            for row in package.get("screen_text", []) or []
+            if isinstance(row, dict) and _text(row.get("text") or row.get("value"))
+        ][:8]
+        for text in captions[:3] + asr_sentences[:2] + screen_facts[:3]:
+            if text and text not in scenes:
+                scenes.append(text)
         for value in package.get("unresolved_terms", []) or []:
             normalized = _text(value)
             if normalized and normalized not in unresolved:
                 unresolved.append(normalized)
+        representative_findings.append({
+            "source_url": _canonical_url(package.get("source_url")),
+            "title": _text(package.get("title")),
+            "caption_excerpts": captions[:3],
+            "asr_excerpts": asr_sentences[:3],
+            "screen_facts": screen_facts,
+            "keyframe_count": len(package.get("keyframes", []) or []),
+            "unresolved": [
+                _text(value) for value in package.get("unresolved_terms", []) or []
+                if _text(value)
+            ],
+            "failures": [
+                _text(value) for value in package.get("failures", []) or []
+                if _text(value)
+            ],
+        })
     differentiation = card.get("differentiation", {})
     return {
         "event_name": card["event_name"],
@@ -451,8 +667,11 @@ def synthesize_card(
         ],
         "scenes_actions_consequences": scenes[:5],
         "persona_connection": card.get("persona_stability"),
-        "primary_angle": differentiation.get("primary_angle", ""),
-        "alternative_angles": differentiation.get("alternative_angles", []),
+        "primary_angle": "",
+        "alternative_angles": [],
+        "pre_read_angle_hypotheses": differentiation.get("angle_hypotheses", []),
+        "representative_findings": representative_findings,
+        "actual_understanding_source_count": len(representative_findings),
         "unresolved": unresolved,
         "source_index": [
             {
@@ -464,6 +683,104 @@ def synthesize_card(
             for source in card["sources"]
         ],
     }
+
+
+def editorial_candidates(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    return [
+        card for card in cards
+        if card.get("review_stage") == "ready_for_editorial"
+    ]
+
+
+def validate_candidate_specific_decisions(
+    topics: list[dict[str, Any]],
+    candidates: list[dict[str, Any]],
+) -> None:
+    by_id = {str(row.get("candidate_id") or ""): row for row in candidates}
+    reasons: set[str] = set()
+    for topic in topics:
+        identity = _text(topic.get("candidate_id"))
+        candidate = by_id.get(identity)
+        if candidate is None:
+            raise ValueError("editorial_result_identity_conflict")
+        reason = _text(topic.get("selection_reason"))
+        normalized_reason = reason.casefold()
+        if not reason:
+            raise ValueError("editorial_candidate_reason_missing")
+        if normalized_reason in reasons:
+            raise ValueError("editorial_candidate_reason_reused")
+        reasons.add(normalized_reason)
+        source_ids = topic.get("evidence_source_ids")
+        allowed_sources = {
+            str(source.get("source_id") or "") for source in candidate.get("sources", [])
+        }
+        if not isinstance(source_ids, list) or not source_ids or any(
+            str(value) not in allowed_sources for value in source_ids
+        ):
+            raise ValueError("editorial_candidate_evidence_source_invalid")
+        basis = topic.get("decision_basis")
+        if not isinstance(basis, dict) or any(
+            not _text(basis.get(key))
+            for key in ("traffic", "content", "persona", "differentiation")
+        ):
+            raise ValueError("editorial_candidate_basis_incomplete")
+        if topic.get("decision") == "select":
+            angle = _text(topic.get("unique_judgment"))
+            if not angle or any(phrase in angle for phrase in GENERIC_ANGLE_PHRASES):
+                raise ValueError("editorial_primary_angle_not_concrete")
+
+
+def complete_editorial_ledger(
+    cards: list[dict[str, Any]],
+    judged_topics: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    judged = {str(row.get("candidate_id") or ""): row for row in judged_topics}
+    output: list[dict[str, Any]] = []
+    for card in cards:
+        identity = str(card.get("candidate_id") or "")
+        if identity in judged:
+            row = json.loads(json.dumps(judged[identity], ensure_ascii=False))
+            row["review_stage"] = (
+                "recommended" if row.get("decision") == "select"
+                else "observed_after_deep_read" if row.get("decision") == "observe"
+                else "unsuitable" if row.get("decision") == "reject"
+                else "understanding_failed"
+            )
+            output.append(row)
+            continue
+        review_stage = str(card.get("review_stage") or "signal_only")
+        if review_stage == "understanding_failed":
+            failed_sources = [
+                source for source in card.get("sources", [])
+                if source.get("understanding_status") == "failed"
+            ]
+            reason = "; ".join(
+                _text(source.get("understanding_failure")) for source in failed_sources
+                if _text(source.get("understanding_failure"))
+            ) or "代表源理解失败，不使用历史或其他来源替代"
+            decision = "failed"
+            stage = "understanding_failed"
+        else:
+            qualification = card.get("qualification", {})
+            reason = "; ".join(filter(None, [
+                _text(qualification.get("traffic_reason")),
+                _text(qualification.get("persona_reason")),
+            ]))
+            decision = "signal"
+            stage = "signal_only"
+        output.append({
+            "candidate_id": identity,
+            "decision": decision,
+            "review_stage": stage,
+            "title": _text(card.get("event_name") or card.get("title")),
+            "hook": "",
+            "structure": "",
+            "selection_reason": reason,
+            "unique_judgment": "",
+            "evidence_source_ids": [],
+            "decision_basis": {},
+        })
+    return output
 
 
 def cards_json(cards: list[dict[str, Any]]) -> str:

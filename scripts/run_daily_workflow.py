@@ -30,7 +30,10 @@ from publish_website_projection import ProjectionError
 from trend_hotspot_cards import (
     attach_understanding,
     build_hotspot_cards,
+    complete_editorial_ledger,
+    editorial_candidates,
     representative_candidates,
+    validate_candidate_specific_decisions,
 )
 from website_publisher_client import publish_terminal
 from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
@@ -768,11 +771,14 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         packages,
         producer_failures,
     )
+    qualified_editorial_candidates = editorial_candidates(hotspot_cards)
     value.update({
         "content_items": items,
         "legacy_candidates": legacy_candidates,
         "legacy_candidate_count": len(legacy_candidates),
         "candidates": hotspot_cards,
+        "editorial_candidates": qualified_editorial_candidates,
+        "editorial_candidate_count": len(qualified_editorial_candidates),
         "hotspot_cards": hotspot_cards,
         "hotspot_card_count": len(hotspot_cards),
         "representative_source_count": len(representative_video_candidates),
@@ -1239,23 +1245,56 @@ def main() -> int:
             )
             workflow.commit_stage(args.run_id, "collection_enrichment", collection, stage_status)
         editorial_stage = workflow.stage(args.run_id, "editorial")
+        editorial_handoff = collection.get("editorial_candidates", [])
+        if args.video_mode == "disabled" and not args.qa_frozen_packages:
+            # Explicit three-stage recovery/test mode has no video-enrichment
+            # stage. Production normal mode never takes this path.
+            editorial_handoff = collection.get("candidates", [])
         if editorial_stage:
             editorial = editorial_stage["payload"]
-        elif not collection["candidates"]:
-            editorial = {"run_id": args.run_id, "topics": []}
-            workflow.commit_stage(args.run_id, "editorial", editorial, "completed_empty")
+        elif not editorial_handoff:
+            editorial = {
+                "run_id": args.run_id,
+                "topics": complete_editorial_ledger(
+                    collection.get("hotspot_cards", []),
+                    [],
+                ),
+            }
+            workflow.commit_stage(args.run_id, "editorial", editorial, "completed")
         elif not args.editorial_result_file:
             workflow.mark_waiting(args.run_id)
             emit_handoff(args, {
                 "ok": True, "action": "editorial_required", "run_id": args.run_id,
-                "business_date": args.business_date, "candidates": collection["candidates"],
-                "candidate_count": len(collection["candidates"]), "skill_name": SKILLS[0],
+                "business_date": args.business_date, "candidates": editorial_handoff,
+                "candidate_count": len(editorial_handoff), "skill_name": SKILLS[0],
+                "complete_hotspot_card_count": len(collection.get("hotspot_cards", [])),
+                "required_output_contract": {
+                    "decisions": ["select", "observe", "reject", "failed"],
+                    "candidate_specific_fields": [
+                        "selection_reason", "evidence_source_ids", "decision_basis",
+                    ],
+                    "select_requires": ["title", "hook", "structure", "unique_judgment"],
+                },
                 "stage": "editorial", "status": "waiting",
             })
             return 0
         else:
-            editorial = read_json(args.editorial_result_file)
-            validate_editorial(args.run_id, editorial, collection["candidates"])
+            judged_editorial = read_json(args.editorial_result_file)
+            validate_editorial(args.run_id, judged_editorial, editorial_handoff)
+            if not (args.video_mode == "disabled" and not args.qa_frozen_packages):
+                try:
+                    validate_candidate_specific_decisions(
+                        judged_editorial["topics"], editorial_handoff,
+                    )
+                except ValueError as error:
+                    raise WorkflowConflict(str(error)) from None
+            editorial = {
+                **judged_editorial,
+                "topics": complete_editorial_ledger(
+                    collection.get("hotspot_cards", []),
+                    judged_editorial["topics"],
+                ),
+            }
             workflow.record_skill_diagnostic(
                 args.run_id, "editorial", "daily", SKILLS[0],
                 {"provenance": skill_diagnostics()[0]},

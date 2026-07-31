@@ -100,17 +100,24 @@ def build_workflow_projection(db_path: Path, run_id: str,
     topics: list[dict[str, Any]] = []
     candidates_by_identity = {
         str(row.get("candidate_id") or ""): row
-        for row in collection.get("candidates", [])
+        for row in (collection.get("hotspot_cards") or collection.get("candidates", []))
         if str(row.get("candidate_id") or "")
+    }
+    content_by_url = {
+        str(row.get("source_url") or ""): row for row in content
+        if str(row.get("source_url") or "")
     }
     for row in editorial.get("topics", []):
         identity = str(row.get("candidate_id") or "")
         candidate = candidates_by_identity.get(identity, {})
         decision = str(row.get("decision") or "")
-        if decision not in {"select", "observe", "reject", "failed"}:
+        if decision not in {"select", "observe", "reject", "failed", "signal"}:
             raise ProjectionError("topic_decision_invalid")
         differentiation = json.loads(json.dumps(candidate.get("differentiation") or {}))
         cluster_synthesis = json.loads(json.dumps(candidate.get("cluster_synthesis") or {}))
+        cluster_synthesis["review_stage"] = str(
+            row.get("review_stage") or candidate.get("review_stage") or ""
+        )
         primary_angle = str(
             row.get("unique_judgment")
             or differentiation.get("primary_angle")
@@ -129,6 +136,11 @@ def build_workflow_projection(db_path: Path, run_id: str,
         item = by_identity.get(representative_item_id)
         if not item:
             raise ProjectionError("topic_content_mapping_missing")
+        sources = json.loads(json.dumps(candidate.get("sources") or []))
+        for source in sources:
+            source_item = content_by_url.get(str(source.get("url") or ""))
+            if source_item:
+                source["content_id"] = source_item["id"]
         topics.append({
             "id": stable_id("topic", run_id, identity), "run_id": run_id,
             "content_id": item["id"], "title": str(
@@ -142,7 +154,7 @@ def build_workflow_projection(db_path: Path, run_id: str,
             "generation_status": "not_generated" if decision == "select" else "not_applicable",
             "generation_error": "",
             "trend_event_id": str(candidate.get("trend_event_id") or identity),
-            "sources": candidate.get("sources") or [],
+            "sources": sources,
             "cluster_synthesis": cluster_synthesis,
             "traffic_opportunity": candidate.get("traffic_opportunity") or {},
             "persona_stability": candidate.get("persona_stability") or {},
@@ -209,7 +221,10 @@ def build_workflow_projection(db_path: Path, run_id: str,
     payload = {
         "run_id": run_id, "business_date": run["business_date"], "revision": 1,
         "stage": "scripts", "authority_identity": authority_identity, "updated_at": run["updated_at"],
-        "run": {"status": run["status"], "candidate_count": len(collection.get("candidates", []))},
+        "run": {
+            "status": run["status"],
+            "candidate_count": len(collection.get("hotspot_cards") or collection.get("candidates", [])),
+        },
         "source_runs": source_runs, "collected_items": content, "topics": topics, "scripts": scripts,
     }
     return payload
