@@ -109,6 +109,18 @@ def build_workflow_projection(db_path: Path, run_id: str,
         decision = str(row.get("decision") or "")
         if decision not in {"select", "observe", "reject", "failed"}:
             raise ProjectionError("topic_decision_invalid")
+        differentiation = json.loads(json.dumps(candidate.get("differentiation") or {}))
+        cluster_synthesis = json.loads(json.dumps(candidate.get("cluster_synthesis") or {}))
+        primary_angle = str(
+            row.get("unique_judgment")
+            or differentiation.get("primary_angle")
+            or cluster_synthesis.get("primary_angle")
+            or row.get("selection_reason")
+            or ""
+        ).strip()
+        if decision == "select" and primary_angle:
+            differentiation["primary_angle"] = primary_angle
+            cluster_synthesis["primary_angle"] = primary_angle
         representative_item_id = str(
             candidate.get("representative_item_id")
             or candidate.get("item_id")
@@ -131,10 +143,10 @@ def build_workflow_projection(db_path: Path, run_id: str,
             "generation_error": "",
             "trend_event_id": str(candidate.get("trend_event_id") or identity),
             "sources": candidate.get("sources") or [],
-            "cluster_synthesis": candidate.get("cluster_synthesis") or {},
+            "cluster_synthesis": cluster_synthesis,
             "traffic_opportunity": candidate.get("traffic_opportunity") or {},
             "persona_stability": candidate.get("persona_stability") or {},
-            "differentiation": candidate.get("differentiation") or {},
+            "differentiation": differentiation,
         })
     topic_by_identity = {
         str(row.get("candidate_id")): topic

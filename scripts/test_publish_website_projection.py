@@ -107,7 +107,7 @@ class WebsiteProjectionTest(unittest.TestCase):
                     "cluster_synthesis": {"event_name": "same event"},
                     "traffic_opportunity": {"status": "evidence_present"},
                     "persona_stability": {"status": "reviewable"},
-                    "differentiation": {"primary_angle": "Austin angle"},
+                    "differentiation": {"primary_angle": ""},
                 }, {
                     "candidate_id": "trend:observe", "trend_event_id": "trend:observe",
                     "representative_item_id": "douyin:1",
@@ -129,6 +129,7 @@ class WebsiteProjectionTest(unittest.TestCase):
                     "candidate_id": event_id, "decision": "select",
                     "title": "title", "selection_reason": "reason",
                     "hook": "hook", "structure": "structure",
+                    "unique_judgment": "Austin 从交付责任切入",
                 }, {
                     "candidate_id": "trend:observe", "decision": "observe",
                     "selection_reason": "evidence is still limited",
@@ -149,7 +150,14 @@ class WebsiteProjectionTest(unittest.TestCase):
             self.assertEqual(topic["trend_event_id"], event_id)
             self.assertEqual(len(topic["sources"]), 2)
             self.assertEqual(topic["cluster_synthesis"]["event_name"], "same event")
-            self.assertEqual(topic["differentiation"]["primary_angle"], "Austin angle")
+            self.assertEqual(
+                topic["differentiation"]["primary_angle"],
+                "Austin 从交付责任切入",
+            )
+            self.assertEqual(
+                topic["cluster_synthesis"]["primary_angle"],
+                "Austin 从交付责任切入",
+            )
             self.assertEqual(topics[1]["status"], "observe")
             self.assertEqual(topics[1]["generation_status"], "not_applicable")
             self.assertEqual(topics[1]["title"], "observed event")
