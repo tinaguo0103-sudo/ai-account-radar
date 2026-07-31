@@ -6,6 +6,7 @@ from trend_hotspot_cards import (
     attach_understanding,
     build_hotspot_cards,
     complete_editorial_ledger,
+    deep_read_counts,
     editorial_candidates,
     representative_candidates,
     select_representative_sources,
@@ -158,6 +159,75 @@ class TrendHotspotCardsTest(unittest.TestCase):
         )
         self.assertEqual(by_name["低互动工作流"]["qualification"]["status"], "signal_only")
         self.assertEqual(by_name["高互动工作流"]["qualification"]["status"], "qualified")
+
+    def test_official_with_time_only_remains_signal_not_failure(self):
+        official = candidate("1", "Gemini Robotics ER 2", "Gemini Robotics ER 2", platform="AIHOT")
+        official.update({
+            "source_url": "https://deepmind.google/discover/blog/gemini-robotics-er-2/",
+            "published_at": "2026-07-31T02:00:00Z",
+            "published_at_display": "今天",
+            "likes": None,
+        })
+        cards = build_hotspot_cards([official], items=items([official]), run_id=RUN_ID)
+        cards, _ = attach_understanding(cards, [], [])
+        card = cards[0]
+        self.assertEqual(card["qualification"]["status"], "signal_only")
+        self.assertEqual(card["qualification"]["authenticity_state"], "official_with_time")
+        self.assertEqual(card["deep_read"]["status"], "not_qualified")
+        self.assertEqual(card["review_stage"], "signal_only")
+
+    def test_eligible_without_attempt_cannot_be_understanding_failure(self):
+        low = candidate("1", "低互动工作流", "低互动工作流", likes=1)
+        high = candidate("2", "高互动工作流", "高互动工作流", likes=900)
+        cards = build_hotspot_cards([low, high], items=items([low, high]), run_id=RUN_ID)
+        cards, _ = attach_understanding(cards, [], [])
+        card = next(row for row in cards if row["event_name"] == "高互动工作流")
+        self.assertEqual(card["qualification"]["status"], "qualified")
+        self.assertEqual(card["deep_read"]["attempted_count"], 0)
+        self.assertEqual(card["deep_read"]["status"], "not_attempted")
+        self.assertEqual(card["review_stage"], "signal_only")
+
+    def test_real_typed_deep_read_failure_is_understanding_failed(self):
+        low = candidate("1", "低互动工作流", "低互动工作流", likes=1)
+        high = candidate("2", "高互动工作流", "高互动工作流", likes=900)
+        cards = build_hotspot_cards([low, high], items=items([low, high]), run_id=RUN_ID)
+        cards, _ = attach_understanding(cards, [], [{
+            "item_id": high["item_id"], "reason": "media_unavailable",
+        }])
+        card = next(row for row in cards if row["event_name"] == "高互动工作流")
+        self.assertEqual(card["deep_read"]["attempted_count"], 1)
+        self.assertEqual(card["deep_read"]["failed_count"], 1)
+        self.assertEqual(card["deep_read"]["status"], "understanding_failed")
+        self.assertEqual(card["review_stage"], "understanding_failed")
+
+    def test_deep_read_counts_reconcile_attempt_completion_failure_and_editorial(self):
+        low = candidate("1", "低互动工作流", "低互动工作流", likes=1)
+        completed = candidate("2", "高互动工作流", "高互动工作流", likes=900)
+        failed = candidate("3", "多源工作流", "多源工作流", likes=800)
+        cards = build_hotspot_cards(
+            [low, completed, failed],
+            items=items([low, completed, failed]),
+            run_id=RUN_ID,
+        )
+        cards, _ = attach_understanding(cards, [{
+            "status": "completed", "source_url": completed["source_url"],
+            "title": completed["title"], "asr": {"text": "展示完整工作流动作。"},
+        }], [{"item_id": failed["item_id"], "reason": "media_unavailable"}])
+        self.assertEqual(deep_read_counts(cards), {
+            "high_potential_total": 2,
+            "deep_read_attempted_total": 2,
+            "deep_read_completed_total": 1,
+            "deep_read_failed_total": 1,
+            "editorial_candidate_total": 1,
+        })
+
+    def test_missing_facts_are_non_punitive_signal(self):
+        metadata = candidate("1", "Agent工作流", "Agent工作流", likes=None)
+        cards = build_hotspot_cards([metadata], items=items([metadata]), run_id=RUN_ID)
+        card = cards[0]
+        self.assertEqual(card["qualification"]["status"], "signal_only")
+        self.assertEqual(card["sources"][0]["account_role"], "auxiliary_signal")
+        self.assertNotEqual(card["review_stage"], "unsuitable")
 
     def test_single_complete_source_synthesis_uses_understanding_not_only_title(self):
         row = candidate("1", "AI材料工作流", "AI材料工作流", likes=900)

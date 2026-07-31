@@ -391,7 +391,9 @@ def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 or (strongest_percentile > 0.5 and freshness_percentile >= 0.5)
             )
         )
-        traffic_qualified = relative_opportunity or multi_source or official_with_time
+        # An official, recent publication proves that an event is authentic and
+        # timely. It does not, by itself, prove a traffic opportunity.
+        traffic_qualified = relative_opportunity or multi_source
         persona_qualified, persona_reason = _persona_qualification(card)
         eligible = traffic_qualified and persona_qualified
         if relative_opportunity:
@@ -404,7 +406,10 @@ def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 f"{int(traffic.get('independent_source_count') or 0)} 个独立来源在同一时间窗指向同一事件"
             )
         elif official_with_time:
-            traffic_reason = "存在带时间的原始或官方事件信号"
+            traffic_reason = (
+                "存在带时间的原始或官方事件信号，但缺少相对互动或多源佐证，"
+                "保留为热点线索"
+            )
         elif stale_outlier:
             traffic_reason = "互动可见，但发布时间相对本批信号明显过旧，不冒充今日流量机会"
         elif visible_likes:
@@ -423,6 +428,10 @@ def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "persona_reason": persona_reason,
             "angle_hypotheses": hypotheses,
             "angle_hypotheses_are_non_blocking": True,
+            "authenticity_state": (
+                "official_with_time" if official_with_time else "not_established_by_official_time"
+            ),
+            "official_time_is_not_traffic_qualification": True,
             "relative_basis": {
                 "platform_observation_counts": {
                     key: len(value) for key, value in sorted(likes_by_platform.items())
@@ -531,6 +540,11 @@ def attach_understanding(
         )
         for row in failures
     }
+    failure_by_source = {
+        _canonical_url(row.get("source_url")): _text(row.get("reason") or row.get("failure"))
+        for row in failures
+        if _canonical_url(row.get("source_url"))
+    }
     understanding_results = []
     for card in cards:
         understood = []
@@ -542,7 +556,10 @@ def attach_understanding(
                 source["understanding_failure"] = ""
                 understood.append(package)
             else:
-                item_failure = failure_by_item.get(source.get("item_id", ""), "")
+                item_failure = (
+                    failure_by_item.get(source.get("item_id", ""), "")
+                    or failure_by_source.get(source.get("url", ""), "")
+                )
                 if item_failure:
                     source["understanding_status"] = "failed"
                     source["understanding_failure"] = item_failure
@@ -560,23 +577,34 @@ def attach_understanding(
             for source in card["sources"]
             if source["source_id"] in representative_set
         )
+        attempted = completed + failed
         if not card.get("qualification", {}).get("eligible_for_deep_read"):
             deep_status = "not_qualified"
+            deep_reason = "not_high_potential"
             card["review_stage"] = "signal_only"
         elif completed and failed:
             deep_status = "completed_with_failures"
+            deep_reason = "representative_sources_partially_completed"
             card["review_stage"] = "ready_for_editorial"
         elif completed:
             deep_status = "completed"
+            deep_reason = "representative_sources_completed"
             card["review_stage"] = "ready_for_editorial"
-        else:
+        elif attempted and failed:
             deep_status = "understanding_failed"
+            deep_reason = "typed_representative_failure"
             card["review_stage"] = "understanding_failed"
+        else:
+            deep_status = "not_attempted"
+            deep_reason = "no_supported_deep_read_attempt"
+            card["review_stage"] = "signal_only"
         card["deep_read"] = {
             "requested_count": requested,
+            "attempted_count": attempted,
             "completed_count": completed,
             "failed_count": failed,
             "status": deep_status,
+            "reason": deep_reason,
             "information_gain_stop": True,
             "max_sources": MAX_REPRESENTATIVES,
         }
@@ -597,6 +625,37 @@ def attach_understanding(
                 },
             })
     return cards, understanding_results
+
+
+def deep_read_counts(cards: list[dict[str, Any]]) -> dict[str, int]:
+    high_potential = [
+        card for card in cards
+        if card.get("qualification", {}).get("eligible_for_deep_read")
+    ]
+    attempted = [
+        card for card in high_potential
+        if int(card.get("deep_read", {}).get("attempted_count") or 0) > 0
+    ]
+    completed = [
+        card for card in attempted
+        if int(card.get("deep_read", {}).get("completed_count") or 0) > 0
+    ]
+    failed = [
+        card for card in attempted
+        if card.get("deep_read", {}).get("status") == "understanding_failed"
+    ]
+    summary = {
+        "high_potential_total": len(high_potential),
+        "deep_read_attempted_total": len(attempted),
+        "deep_read_completed_total": len(completed),
+        "deep_read_failed_total": len(failed),
+        "editorial_candidate_total": len(editorial_candidates(cards)),
+    }
+    if summary["deep_read_completed_total"] + summary["deep_read_failed_total"] > summary["deep_read_attempted_total"]:
+        raise ValueError("deep_read_count_conflict")
+    if summary["editorial_candidate_total"] != summary["deep_read_completed_total"]:
+        raise ValueError("editorial_deep_read_count_conflict")
+    return summary
 
 
 def synthesize_card(

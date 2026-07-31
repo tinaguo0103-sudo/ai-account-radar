@@ -31,6 +31,7 @@ from trend_hotspot_cards import (
     attach_understanding,
     build_hotspot_cards,
     complete_editorial_ledger,
+    deep_read_counts,
     editorial_candidates,
     representative_candidates,
     validate_candidate_specific_decisions,
@@ -772,6 +773,7 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         producer_failures,
     )
     qualified_editorial_candidates = editorial_candidates(hotspot_cards)
+    deep_read_summary = deep_read_counts(hotspot_cards)
     value.update({
         "content_items": items,
         "legacy_candidates": legacy_candidates,
@@ -782,6 +784,8 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         "hotspot_cards": hotspot_cards,
         "hotspot_card_count": len(hotspot_cards),
         "representative_source_count": len(representative_video_candidates),
+        "deep_read_summary": deep_read_summary,
+        **deep_read_summary,
         "understanding_results": understanding_results,
         "item_failures": identity_failures + candidate_failures + producer_failures,
         "source_ledger": source_ledger,
@@ -1268,6 +1272,7 @@ def main() -> int:
                 "business_date": args.business_date, "candidates": editorial_handoff,
                 "candidate_count": len(editorial_handoff), "skill_name": SKILLS[0],
                 "complete_hotspot_card_count": len(collection.get("hotspot_cards", [])),
+                "deep_read_summary": collection.get("deep_read_summary", {}),
                 "required_output_contract": {
                     "decisions": ["select", "observe", "reject", "failed"],
                     "candidate_specific_fields": [
