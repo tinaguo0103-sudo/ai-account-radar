@@ -205,7 +205,9 @@ class NormalEntrypointDiscoveryTests(unittest.TestCase):
             self.assertEqual(load_discovery.call_count, 1)
             result = json.loads(output.getvalue().strip().splitlines()[-1])
             self.assertEqual(result["action"], "editorial_required")
-            self.assertEqual(len(result["candidates"]), 2)
+            self.assertEqual(result["candidate_count"], 2)
+            handoff = json.loads(Path(result["handoff_path"]).read_text())
+            self.assertEqual(len(handoff["candidates"]), 2)
 
 
 if __name__ == "__main__":

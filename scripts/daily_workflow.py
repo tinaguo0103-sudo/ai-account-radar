@@ -12,6 +12,7 @@ SCHEMA_VERSION = 5
 STAGES = ("collection_enrichment", "editorial", "scripts")
 TERMINAL = {"completed", "completed_with_failures", "completed_empty"}
 RECOVERABLE_FAILURE = "failed_recoverable"
+WAITING = "waiting"
 
 
 def canonical(value: Any) -> str:
@@ -96,9 +97,9 @@ class DailyWorkflow:
             if row["status"] == RECOVERABLE_FAILURE:
                 now = datetime.now(timezone.utc).isoformat()
                 self.db.execute(
-                    """UPDATE daily_runs SET status='running',publish_error='',
+                    """UPDATE daily_runs SET status=?,publish_error='',
                        updated_at=? WHERE run_id=?""",
-                    (now, run_id),
+                    (WAITING, now, run_id),
                 )
                 self.db.commit()
             return "resume"
@@ -107,11 +108,52 @@ class DailyWorkflow:
             """INSERT INTO daily_runs(
               run_id,business_date,status,publish_status,publish_error,publish_key,
               created_at,updated_at,published_at
-            ) VALUES(?,?,'running','not_ready','','',?,?, '')""",
-            (run_id, business_date, now, now),
+            ) VALUES(?,?,?,'not_ready','','',?,?, '')""",
+            (run_id, business_date, WAITING, now, now),
         )
         self.db.commit()
         return "new"
+
+    @classmethod
+    def read_business_date(
+        cls, path: Path | str, business_date: str
+    ) -> dict[str, Any] | None:
+        """Read the unique exact-date run without creating or migrating a database."""
+        target = Path(path)
+        if not target.is_file():
+            return None
+        try:
+            datetime.fromisoformat(business_date)
+        except ValueError:
+            raise ValueError("wrong_business_date") from None
+        db = sqlite3.connect(f"file:{target.resolve()}?mode=ro", uri=True)
+        db.row_factory = sqlite3.Row
+        try:
+            table = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='daily_runs'"
+            ).fetchone()
+            if not table:
+                return None
+            rows = db.execute(
+                "SELECT * FROM daily_runs WHERE business_date=? ORDER BY run_id",
+                (business_date,),
+            ).fetchall()
+            if len(rows) > 1:
+                raise WorkflowConflict("multiple_runs_for_business_date")
+            if not rows:
+                return None
+            run = dict(rows[0])
+            stages = [
+                row["stage"] for row in db.execute(
+                    """SELECT stage FROM stage_results WHERE run_id=?
+                       ORDER BY CASE stage WHEN 'collection_enrichment' THEN 1
+                       WHEN 'editorial' THEN 2 ELSE 3 END""",
+                    (run["run_id"],),
+                )
+            ]
+            return {"run": run, "committed_stages": stages}
+        finally:
+            db.close()
 
     @classmethod
     def mark_existing_recoverable_failure(
@@ -164,6 +206,22 @@ class DailyWorkflow:
         )
         self.db.commit()
 
+    def mark_waiting(self, run_id: str) -> None:
+        row = self.db.execute(
+            "SELECT status FROM daily_runs WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if not row or row["status"] in TERMINAL:
+            return
+        if row["status"] == WAITING:
+            return
+        now = datetime.now(timezone.utc).isoformat()
+        self.db.execute(
+            """UPDATE daily_runs SET status=?,publish_status='not_ready',
+               publish_error='',updated_at=? WHERE run_id=?""",
+            (WAITING, now, run_id),
+        )
+        self.db.commit()
+
     def stage(self, run_id: str, stage: str) -> dict[str, Any] | None:
         row = self.db.execute(
             "SELECT * FROM stage_results WHERE run_id=? AND stage=?", (run_id, stage)
@@ -197,8 +255,8 @@ class DailyWorkflow:
                 (run_id, stage, status, encoded, now),
             )
             self.db.execute(
-                "UPDATE daily_runs SET status='running',updated_at=? WHERE run_id=?",
-                (now, run_id),
+                "UPDATE daily_runs SET status=?,updated_at=? WHERE run_id=?",
+                (WAITING, now, run_id),
             )
         return {"action": "committed", **dict(self.db.execute(
             "SELECT * FROM stage_results WHERE run_id=? AND stage=?", (run_id, stage)

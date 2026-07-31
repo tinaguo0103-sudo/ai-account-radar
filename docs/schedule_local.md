@@ -11,6 +11,19 @@ python3 scripts/run_daily_workflow.py \
   --video-mode normal
 ```
 
+Codex heartbeat 的单回合执行窗口是有界的。正式候选仍只保留既有
+`ai-rebuild` 和同一个 fixed task，但在 08:00-09:55 之间每 5 分钟唤醒一次：
+首次唤醒创建当天唯一 exact run，后续唤醒只查询
+`daily_workflow.sqlite3` 中该业务日期的唯一 run，并续接已提交 checkpoint。
+public CLI 在长阶段开始前把状态写为 `waiting`，通过同一 workflow 进程锁拒绝并发
+重复，并把完整下一步写入 run-scoped `workflow_handoff.json`。stdout 只返回小型
+摘要与 handoff 路径。长子进程仍在运行时，后续唤醒只得到
+`waiting_stage_process`；子进程完成后，下次唤醒才进入主编或脚本阶段。
+
+该续接窗口不是第二个 schedule、watcher 或业务 authority。当天 run terminal 后，
+剩余唤醒均为只读状态检查或 exact noop；已完成采集、浏览器、媒体、Skill 和已应用
+Website POST 不会重复。
+
 owner-only Website 的 endpoint、authority 与 Sites headers 全部由本机 ignored
 publisher config/client 封装，不进入 automation Prompt 或业务命令。Website
 不可用时，本地业务仍以 `completed` / `completed_with_failures` 结束并记录

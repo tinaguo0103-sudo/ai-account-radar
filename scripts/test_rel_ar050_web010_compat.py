@@ -66,6 +66,10 @@ def write(path: Path, value) -> None:
     path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
 
 
+def last_json(output: str) -> dict:
+    return json.loads(output.strip().splitlines()[-1])
+
+
 class PublicV2FlowTest(unittest.TestCase):
     def setUp(self):
         TerminalProjectionHandler.posts = 0
@@ -145,23 +149,24 @@ class PublicV2FlowTest(unittest.TestCase):
             command = self.command(root, run_id, fixture)
             config = self.config(root)
             first = self.execute(command, config)
-            self.assertEqual(json.loads(first.stdout)["action"], "editorial_required")
+            self.assertEqual(last_json(first.stdout)["action"], "editorial_required")
             second = self.execute(command + ["--editorial-result-file", str(editorial)], config)
-            self.assertEqual(json.loads(second.stdout)["action"], "scripts_required")
+            self.assertEqual(last_json(second.stdout)["action"], "scripts_required")
             third = self.execute(command + [
                 "--editorial-result-file", str(editorial),
                 "--scripts-result-file", str(scripts),
             ], config)
             self.assertEqual(third.returncode, 0, third.stderr + third.stdout)
-            result = json.loads(third.stdout)
+            result = last_json(third.stdout)
             self.assertEqual(result["action"], "completed")
             self.assertEqual(TerminalProjectionHandler.posts, 1)
-            self.assertEqual(len(result["stages"]), 3)
-            self.assertEqual(len(result["items"]), 6)
+            self.assertEqual(result["candidate_count"], 6)
+            self.assertEqual(result["selected_count"], 1)
+            self.assertEqual(result["script_count"], 1)
             before = (root / "workflow.sqlite3").read_bytes()
             post_count = TerminalProjectionHandler.posts
             replay = self.execute(command, config)
-            self.assertEqual(json.loads(replay.stdout)["action"], "noop")
+            self.assertEqual(last_json(replay.stdout)["action"], "noop")
             self.assertEqual((root / "workflow.sqlite3").read_bytes(), before)
             self.assertEqual(TerminalProjectionHandler.posts, post_count)
 
@@ -178,16 +183,19 @@ class PublicV2FlowTest(unittest.TestCase):
             command = self.command(root, run_id, fixture)
             first = self.execute(command, offline)
             self.assertEqual(first.returncode, 0)
-            result = json.loads(first.stdout)
+            result = last_json(first.stdout)
             self.assertEqual(result["action"], "completed_publish_pending")
-            self.assertEqual(result["run"]["status"], "completed_empty")
-            self.assertEqual(result["run"]["publish_status"], "pending")
-            before_stages = result["stages"]
+            self.assertEqual(result["status"], "completed_empty")
+            self.assertEqual(result["publish_status"], "pending")
+            before_stages = DailyWorkflow(root / "workflow.sqlite3").read_run(run_id)["stages"]
             recovered = self.execute(command, self.config(root))
-            value = json.loads(recovered.stdout)
+            value = last_json(recovered.stdout)
             self.assertEqual(value["action"], "noop")
-            self.assertEqual(value["run"]["publish_status"], "applied")
-            self.assertEqual(value["stages"], before_stages)
+            self.assertEqual(value["publish_status"], "applied")
+            self.assertEqual(
+                DailyWorkflow(root / "workflow.sqlite3").read_run(run_id)["stages"],
+                before_stages,
+            )
             self.assertEqual(TerminalProjectionHandler.posts, 1)
 
     def test_historical_one_shot_maps_180_rows_without_normal_branch(self):

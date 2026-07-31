@@ -1,22 +1,28 @@
 {
-  "schemaVersion": 2,
+  "schemaVersion": 3,
   "taskId": "WEB-010",
   "candidateOnly": true,
   "externalSchedule": {
     "existingId": "ai-rebuild",
-    "schedule": "08:00 Asia/Shanghai",
+    "schedule": "08:00 start plus 5-minute same-task continuation window through 09:55 Asia/Shanghai",
+    "continuationRRuleCandidate": "FREQ=DAILY;BYHOUR=8,9;BYMINUTE=0,5,10,15,20,25,30,35,40,45,50,55;BYSECOND=0",
     "publicEntrypoint": "DOUYIN_VIDEO_RUNTIME_CONFIG=<OWNER_ONLY_IGNORED_CONFIG> python3 scripts/run_daily_workflow.py --run-id <EXACT_RUN_ID> --business-date <SHANGHAI_DATE> --video-mode normal",
+    "statusEntrypoint": "python3 scripts/run_daily_workflow.py --business-date <SHANGHAI_DATE> --status-only",
     "requiredRuntimeBindings": [
       "DOUYIN_VIDEO_RUNTIME_CONFIG"
     ],
     "outerAgentProtocol": [
-      "Run the public entrypoint. It completes collection_enrichment or resumes its exact local checkpoint.",
+      "Every wake first uses the read-only status entrypoint. If the exact business date has no run, create one exact run only inside the continuation window. Otherwise reuse the one run_id returned by the workflow SQLite authority; never create a second run.",
+      "Run the public entrypoint for that exact run. Read the final compact stdout summary and the exact run-scoped workflow_handoff.json it names; do not depend on one large stdout payload.",
+      "When the public entrypoint reports waiting_stage or waiting_stage_process, end only this bounded outer turn. The same ai-rebuild heartbeat and fixed task wakes again in five minutes, reuses the exact run, and lets the process lock either report truthful waiting or resume the latest committed checkpoint.",
       "When editorial is required, directly apply the active ai-account-editorial-director Skill in this outer Codex task and save the simple stage result. Cover every candidate identity exactly once. Each select, observe, reject, or failed reason must cite that candidate's own available fact, missing dimension, or content judgment; do not reuse generic batch reasons. Real engagement plus exact time or recency may support hot, while title value, persona fit, and exploration stay separate and unknown facts never reduce account quality.",
       "When scripts_required is returned, read each selected topic's joined same-run Topic Card. Keep factual constraints in generation and QA context; the candidate Voice Skill owns spoken narrative structure.",
       "In this outer Codex task, apply candidate austin-no-overtime-scripting once for the full batch and candidate austin-voice-scriptwriter once for the full batch, then save the simple stage result. Do not fabricate a measured personal saving, real client outcome, completed team result, or verified third-party statistic.",
       "Run the same public entrypoint with the simple stage result files until local terminal completion.",
-      "The owner-only publisher client reads its runtime-only config and attempts one terminal snapshot. Publish pending is not a business failure."
+      "The owner-only publisher client reads its runtime-only config and attempts one terminal snapshot. Publish pending is not a business failure. Later continuation wakes return terminal noop and never repeat completed upstream stages, Skills, or an applied Website POST."
     ],
+    "singleAutomationContinuation": true,
+    "maximumOuterTurnMinutes": 5,
     "inPlaceUpdateOnly": true
   },
   "runtimeTopology": [

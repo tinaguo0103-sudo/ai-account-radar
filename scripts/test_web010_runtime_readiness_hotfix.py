@@ -112,9 +112,11 @@ class RuntimeReadinessHotfixTest(unittest.TestCase):
                 "--video-mode", "disabled",
             )
             self.assertEqual(result.returncode, 0, result.stderr)
-            value = json.loads(result.stdout)
+            value = json.loads(result.stdout.strip().splitlines()[-1])
             self.assertEqual(value["action"], "editorial_required")
-            self.assertEqual(len(value["candidates"]), 1)
+            self.assertEqual(value["candidate_count"], 1)
+            handoff = json.loads(Path(value["handoff_path"]).read_text())
+            self.assertEqual(len(handoff["candidates"]), 1)
             producer = root / "runs/run_20260729_080000/video_producer"
             self.assertFalse((producer / "discovery.json").exists())
             self.assertFalse((producer / "candidates.json").exists())
@@ -239,7 +241,7 @@ class RuntimeReadinessHotfixTest(unittest.TestCase):
                 readback.begin("run_20260729_080000", "2026-07-29"), "resume"
             )
             self.assertEqual(
-                readback.read_run("run_20260729_080000")["run"]["status"], "running"
+                readback.read_run("run_20260729_080000")["run"]["status"], "waiting"
             )
 
     def test_exact_artifact_adoption_recognizes_counts(self):

@@ -5,11 +5,14 @@ from __future__ import annotations
 import argparse
 import csv
 import datetime as dt
+import fcntl
 import hashlib
 import json
+import os
 import re
 import subprocess
 import sys
+import tempfile
 import urllib.parse
 import uuid
 from pathlib import Path
@@ -38,6 +41,113 @@ SKILLS = (
 
 def read_json(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+class WorkflowExecutionLock:
+    """Process-local serialization for the one workflow authority."""
+
+    def __init__(self, workflow_db: Path):
+        self.path = workflow_db.resolve().with_name(f".{workflow_db.name}.lock")
+        self.handle: Any | None = None
+
+    def acquire(self) -> bool:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        self.handle = self.path.open("a+b")
+        try:
+            fcntl.flock(self.handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            self.handle.close()
+            self.handle = None
+            return False
+        return True
+
+    def release(self) -> None:
+        if self.handle is None:
+            return
+        fcntl.flock(self.handle.fileno(), fcntl.LOCK_UN)
+        self.handle.close()
+        self.handle = None
+
+
+def workflow_handoff_path(args: argparse.Namespace) -> Path:
+    return Path(args.artifact_root).resolve() / args.run_id / "workflow_handoff.json"
+
+
+def atomic_replace_json(path: Path, value: dict[str, Any]) -> bool:
+    encoded = (canonical(value) + "\n").encode()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    if path.is_file() and path.read_bytes() == encoded:
+        return False
+    descriptor, temporary = tempfile.mkstemp(prefix=f".{path.name}.", dir=path.parent)
+    try:
+        with os.fdopen(descriptor, "wb") as handle:
+            handle.write(encoded)
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+        directory = os.open(path.parent, os.O_RDONLY)
+        try:
+            os.fsync(directory)
+        finally:
+            os.close(directory)
+    finally:
+        Path(temporary).unlink(missing_ok=True)
+    if path.read_bytes() != encoded:
+        raise WorkflowConflict("workflow_handoff_readback_unknown")
+    return True
+
+
+def handoff_summary(document: dict[str, Any], path: Path) -> dict[str, Any]:
+    summary = {
+        "ok": bool(document.get("ok", True)),
+        "action": str(document.get("action") or ""),
+        "run_id": str(document.get("run_id") or ""),
+        "business_date": str(document.get("business_date") or ""),
+        "handoff_path": str(path),
+    }
+    for key in (
+        "stage", "status", "publish_status", "candidate_count",
+        "selected_count", "script_count", "item_failure_count",
+    ):
+        if key in document:
+            summary[key] = document[key]
+    return summary
+
+
+def emit_handoff(args: argparse.Namespace, value: dict[str, Any]) -> dict[str, Any]:
+    path = workflow_handoff_path(args)
+    document = {
+        "schema_version": 1,
+        "run_id": args.run_id,
+        "business_date": args.business_date,
+        **value,
+    }
+    atomic_replace_json(path, document)
+    summary = handoff_summary(document, path)
+    print(json.dumps(summary, ensure_ascii=False), flush=True)
+    return summary
+
+
+def emit_busy_handoff(args: argparse.Namespace) -> dict[str, Any]:
+    path = workflow_handoff_path(args)
+    stage = "collection_enrichment"
+    if path.is_file():
+        document = read_json(path)
+        if (
+            document.get("run_id") == args.run_id
+            and document.get("business_date") == args.business_date
+        ):
+            stage = str(document.get("stage") or stage)
+    summary = handoff_summary({
+        "run_id": args.run_id,
+        "business_date": args.business_date,
+        "ok": True,
+        "action": "waiting_stage_process",
+        "stage": stage,
+        "status": "waiting",
+    }, path)
+    print(json.dumps(summary, ensure_ascii=False), flush=True)
+    return summary
 
 
 def canonical_url(raw: str) -> str:
@@ -926,10 +1036,38 @@ def collect_with_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     return value
 
 
+def terminal_handoff(
+    workflow: DailyWorkflow, run_id: str, business_date: str, action: str
+) -> dict[str, Any]:
+    row = workflow.read_run(run_id)["run"]
+    collection = workflow.stage(run_id, "collection_enrichment") or {"payload": {}}
+    editorial = workflow.stage(run_id, "editorial") or {"payload": {}}
+    scripts = workflow.stage(run_id, "scripts") or {"payload": {}}
+    return {
+        "ok": True,
+        "action": action,
+        "run_id": run_id,
+        "business_date": business_date,
+        "status": row["status"],
+        "publish_status": row["publish_status"],
+        "candidate_count": len(collection["payload"].get("candidates", [])),
+        "selected_count": sum(
+            item.get("decision") == "select"
+            for item in editorial["payload"].get("topics", [])
+        ),
+        "script_count": len(scripts["payload"].get("scripts", [])),
+        "item_failure_count": (
+            len(collection["payload"].get("item_failures", []))
+            + len(scripts["payload"].get("failures", []))
+        ),
+    }
+
+
 def main() -> int:
     parser = argparse.ArgumentParser()
-    parser.add_argument("--run-id", required=True)
+    parser.add_argument("--run-id")
     parser.add_argument("--business-date", required=True)
+    parser.add_argument("--status-only", action="store_true")
     parser.add_argument("--workflow-db", type=Path, default=ROOT / "output/state/daily_workflow.sqlite3")
     parser.add_argument("--source-db", default=str(ROOT / "output/state/source_control.sqlite3"))
     parser.add_argument("--artifact-root", type=Path, default=ROOT / "output/runs")
@@ -948,28 +1086,89 @@ def main() -> int:
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
     args = parser.parse_args()
     workflow: DailyWorkflow | None = None
+    execution_lock: WorkflowExecutionLock | None = None
+    if args.status_only:
+        try:
+            status = DailyWorkflow.read_business_date(args.workflow_db, args.business_date)
+            if status is None:
+                print(json.dumps({
+                    "ok": True,
+                    "action": "no_run_for_business_date",
+                    "business_date": args.business_date,
+                }, ensure_ascii=False))
+                return 0
+            args.run_id = status["run"]["run_id"]
+            path = workflow_handoff_path(args)
+            result = {
+                "ok": True,
+                "action": "run_status",
+                "run_id": args.run_id,
+                "business_date": args.business_date,
+                "status": status["run"]["status"],
+                "publish_status": status["run"]["publish_status"],
+                "committed_stages": status["committed_stages"],
+                "handoff_path": str(path),
+            }
+            if path.is_file():
+                handoff = read_json(path)
+                if (
+                    handoff.get("run_id") == args.run_id
+                    and handoff.get("business_date") == args.business_date
+                ):
+                    result["next_action"] = handoff.get("action")
+            print(json.dumps(result, ensure_ascii=False))
+            return 0
+        except (WorkflowConflict, ValueError, OSError, json.JSONDecodeError) as error:
+            print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+            return 2
+    if not args.run_id:
+        print(json.dumps({"ok": False, "error": "run_id_required"}, ensure_ascii=False))
+        return 2
     try:
         DailyWorkflow.validate_identity(args.run_id, args.business_date)
         if args.video_mode == "normal":
             readiness = check_runtime_readiness(args.video_runtime_config)
             args.video_runtime_config = readiness["config_path"]
             args.video_policy = readiness["policy_path"]
+        execution_lock = WorkflowExecutionLock(args.workflow_db)
+        if not execution_lock.acquire():
+            emit_busy_handoff(args)
+            return 0
         workflow = DailyWorkflow(args.workflow_db)
-        pending = workflow.latest_pending(args.business_date)
-        if pending:
-            publish(workflow, args.workflow_db, pending["run_id"])
         mode = workflow.begin(args.run_id, args.business_date)
+        if mode == "new":
+            pending = workflow.latest_pending(args.business_date)
+            if pending:
+                publish(workflow, args.workflow_db, pending["run_id"])
         if mode == "terminal_replay":
             row = workflow.read_run(args.run_id)["run"]
             if row["publish_status"] == "pending":
                 publish(workflow, args.workflow_db, args.run_id)
-            print(json.dumps({"ok": True, "action": "noop", **workflow.read_run(args.run_id)},
-                             ensure_ascii=False))
+                emit_handoff(
+                    args,
+                    terminal_handoff(
+                        workflow, args.run_id, args.business_date, "completed",
+                    ),
+                )
+            summary = handoff_summary(
+                terminal_handoff(
+                    workflow, args.run_id, args.business_date, "noop",
+                ),
+                workflow_handoff_path(args),
+            )
+            print(json.dumps(summary, ensure_ascii=False), flush=True)
             return 0
         collection_stage = workflow.stage(args.run_id, "collection_enrichment")
         if collection_stage:
             collection = collection_stage["payload"]
         else:
+            workflow.mark_waiting(args.run_id)
+            emit_handoff(args, {
+                "ok": True,
+                "action": "waiting_stage",
+                "stage": "collection_enrichment",
+                "status": "waiting",
+            })
             collected = collect_with_checkpoint(args)
             if args.video_discovery_checkpoint:
                 collected = merge_video_discovery_checkpoint(
@@ -1007,11 +1206,13 @@ def main() -> int:
             editorial = {"run_id": args.run_id, "topics": []}
             workflow.commit_stage(args.run_id, "editorial", editorial, "completed_empty")
         elif not args.editorial_result_file:
-            print(json.dumps({
+            workflow.mark_waiting(args.run_id)
+            emit_handoff(args, {
                 "ok": True, "action": "editorial_required", "run_id": args.run_id,
                 "business_date": args.business_date, "candidates": collection["candidates"],
-                "skill_name": SKILLS[0],
-            }, ensure_ascii=False))
+                "candidate_count": len(collection["candidates"]), "skill_name": SKILLS[0],
+                "stage": "editorial", "status": "waiting",
+            })
             return 0
         else:
             editorial = read_json(args.editorial_result_file)
@@ -1029,10 +1230,16 @@ def main() -> int:
         if scripts_stage:
             scripts = scripts_stage["payload"]
         elif not args.scripts_result_file and selected:
-            print(json.dumps(
-                build_scripts_handoff(args.run_id, args.business_date, collection, editorial),
-                ensure_ascii=False,
-            ))
+            workflow.mark_waiting(args.run_id)
+            handoff = build_scripts_handoff(
+                args.run_id, args.business_date, collection, editorial,
+            )
+            handoff.update({
+                "selected_count": len(selected),
+                "stage": "scripts",
+                "status": "waiting",
+            })
+            emit_handoff(args, handoff)
             return 0
         else:
             scripts = read_json(args.scripts_result_file) if selected else {
@@ -1058,11 +1265,15 @@ def main() -> int:
         )
         workflow.complete(args.run_id, status, f"terminal:{args.run_id}")
         publish_status = publish(workflow, args.workflow_db, args.run_id)
-        print(json.dumps({
-            "ok": True,
-            "action": "completed" if publish_status == "applied" else "completed_publish_pending",
-            **workflow.read_run(args.run_id),
-        }, ensure_ascii=False))
+        emit_handoff(
+            args,
+            terminal_handoff(
+                workflow,
+                args.run_id,
+                args.business_date,
+                "completed" if publish_status == "applied" else "completed_publish_pending",
+            ),
+        )
         return 0
     except (
         WorkflowConflict, ProducerError, ProjectionError, RuntimeReadinessError,
@@ -1070,22 +1281,43 @@ def main() -> int:
     ) as error:
         if workflow is not None:
             workflow.mark_recoverable_failure(args.run_id, str(error))
+            try:
+                emit_handoff(args, {
+                    "ok": False,
+                    "action": "failed_recoverable",
+                    "status": "failed_recoverable",
+                    "error": str(error),
+                })
+            except Exception:
+                print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
         else:
             DailyWorkflow.mark_existing_recoverable_failure(
                 args.workflow_db, args.run_id, args.business_date, str(error)
             )
-        print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
+            print(json.dumps({"ok": False, "error": str(error)}, ensure_ascii=False))
         return 2
     except Exception:
         error = "workflow_unexpected_startup_error" if workflow is None else "workflow_unexpected_error"
         if workflow is not None:
             workflow.mark_recoverable_failure(args.run_id, error)
+            try:
+                emit_handoff(args, {
+                    "ok": False,
+                    "action": "failed_recoverable",
+                    "status": "failed_recoverable",
+                    "error": error,
+                })
+            except Exception:
+                print(json.dumps({"ok": False, "error": error}, ensure_ascii=False))
         else:
             DailyWorkflow.mark_existing_recoverable_failure(
                 args.workflow_db, args.run_id, args.business_date, error
             )
-        print(json.dumps({"ok": False, "error": error}, ensure_ascii=False))
+            print(json.dumps({"ok": False, "error": error}, ensure_ascii=False))
         return 2
+    finally:
+        if execution_lock is not None:
+            execution_lock.release()
 
 
 if __name__ == "__main__":
