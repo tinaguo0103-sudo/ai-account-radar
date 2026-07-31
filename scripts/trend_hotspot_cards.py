@@ -783,10 +783,12 @@ def validate_candidate_specific_decisions(
             for key in ("traffic", "content", "persona", "differentiation")
         ):
             raise ValueError("editorial_candidate_basis_incomplete")
-        if topic.get("decision") == "select":
+        if topic.get("decision") in {"select", "observe", "reject"}:
             angle = _text(topic.get("unique_judgment"))
             if not angle or any(phrase in angle for phrase in GENERIC_ANGLE_PHRASES):
                 raise ValueError("editorial_primary_angle_not_concrete")
+            if angle.casefold() == normalized_reason:
+                raise ValueError("editorial_primary_angle_reason_not_distinct")
 
 
 def complete_editorial_ledger(
@@ -799,6 +801,14 @@ def complete_editorial_ledger(
         identity = str(card.get("candidate_id") or "")
         if identity in judged:
             row = json.loads(json.dumps(judged[identity], ensure_ascii=False))
+            differentiation = json.loads(json.dumps(card.get("differentiation") or {}))
+            cluster_synthesis = json.loads(json.dumps(card.get("cluster_synthesis") or {}))
+            if row.get("decision") in {"select", "observe", "reject"}:
+                primary_angle = _text(row.get("unique_judgment"))
+                differentiation["primary_angle"] = primary_angle
+                cluster_synthesis["primary_angle"] = primary_angle
+            row["differentiation"] = differentiation
+            row["cluster_synthesis"] = cluster_synthesis
             row["review_stage"] = (
                 "recommended" if row.get("decision") == "select"
                 else "observed_after_deep_read" if row.get("decision") == "observe"

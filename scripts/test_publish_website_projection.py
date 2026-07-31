@@ -133,6 +133,18 @@ class WebsiteProjectionTest(unittest.TestCase):
                 }, {
                     "candidate_id": "trend:observe", "decision": "observe",
                     "selection_reason": "evidence is still limited",
+                    "unique_judgment": (
+                        "Finance teams should automate reconciliation traces while "
+                        "keeping judgment with accountable reviewers."
+                    ),
+                    "differentiation": {"primary_angle": (
+                        "Finance teams should automate reconciliation traces while "
+                        "keeping judgment with accountable reviewers."
+                    )},
+                    "cluster_synthesis": {"primary_angle": (
+                        "Finance teams should automate reconciliation traces while "
+                        "keeping judgment with accountable reviewers."
+                    )},
                 }],
             }, "completed")
             flow.commit_stage(run_id, "scripts", {
@@ -161,6 +173,14 @@ class WebsiteProjectionTest(unittest.TestCase):
             self.assertEqual(topics[1]["status"], "observe")
             self.assertEqual(topics[1]["generation_status"], "not_applicable")
             self.assertEqual(topics[1]["title"], "observed event")
+            self.assertEqual(
+                topics[1]["differentiation"]["primary_angle"],
+                topics[1]["cluster_synthesis"]["primary_angle"],
+            )
+            self.assertNotEqual(
+                topics[1]["selection_reason"],
+                topics[1]["differentiation"]["primary_angle"],
+            )
 
     def test_source_ledger_is_preserved_when_legacy_source_runs_are_empty(self):
         with tempfile.TemporaryDirectory() as tmp:

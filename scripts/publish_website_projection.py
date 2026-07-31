@@ -113,8 +113,12 @@ def build_workflow_projection(db_path: Path, run_id: str,
         decision = str(row.get("decision") or "")
         if decision not in {"select", "observe", "reject", "failed", "signal"}:
             raise ProjectionError("topic_decision_invalid")
-        differentiation = json.loads(json.dumps(candidate.get("differentiation") or {}))
-        cluster_synthesis = json.loads(json.dumps(candidate.get("cluster_synthesis") or {}))
+        differentiation = json.loads(json.dumps(
+            row.get("differentiation") or candidate.get("differentiation") or {}
+        ))
+        cluster_synthesis = json.loads(json.dumps(
+            row.get("cluster_synthesis") or candidate.get("cluster_synthesis") or {}
+        ))
         cluster_synthesis["review_stage"] = str(
             row.get("review_stage") or candidate.get("review_stage") or ""
         )
@@ -122,10 +126,9 @@ def build_workflow_projection(db_path: Path, run_id: str,
             row.get("unique_judgment")
             or differentiation.get("primary_angle")
             or cluster_synthesis.get("primary_angle")
-            or row.get("selection_reason")
             or ""
         ).strip()
-        if decision == "select" and primary_angle:
+        if decision in {"select", "observe", "reject"} and primary_angle:
             differentiation["primary_angle"] = primary_angle
             cluster_synthesis["primary_angle"] = primary_angle
         representative_item_id = str(

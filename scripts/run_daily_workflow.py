@@ -1278,7 +1278,16 @@ def main() -> int:
                     "candidate_specific_fields": [
                         "selection_reason", "evidence_source_ids", "decision_basis",
                     ],
-                    "select_requires": ["title", "hook", "structure", "unique_judgment"],
+                    "judged_requires": ["unique_judgment"],
+                    "primary_angle_contract": {
+                        "applies_to": ["select", "observe", "reject"],
+                        "must_cover": [
+                            "concrete_conflict", "affected_party",
+                            "action_or_experiment", "consequence",
+                        ],
+                        "selection_reason_is_separate": True,
+                    },
+                    "select_requires": ["title", "hook", "structure"],
                 },
                 "stage": "editorial", "status": "waiting",
             })

@@ -253,10 +253,17 @@ class TrendHotspotCardsTest(unittest.TestCase):
 
     def test_candidate_specific_editorial_contract_and_ledger_stages(self):
         row = candidate("1", "AI验收工作流", "AI验收工作流", likes=900)
-        cards = build_hotspot_cards([row], items=items([row]), run_id=RUN_ID)
+        observed_row = candidate("2", "财务Agent对账", "财务Agent开始自动对账", likes=700)
+        cards = build_hotspot_cards(
+            [row, observed_row], items=items([row, observed_row]), run_id=RUN_ID,
+        )
         cards, _ = attach_understanding(cards, [{
             "status": "completed", "source_url": row["source_url"],
             "title": row["title"], "asr": {"text": "先生成，再逐项验收交付结果。"},
+        }, {
+            "status": "completed", "source_url": observed_row["source_url"],
+            "title": observed_row["title"],
+            "asr": {"text": "自动下载回单并标记异常，财务人员复核后再入账。"},
         }], [])
         topic = {
             "candidate_id": cards[0]["candidate_id"], "decision": "select",
@@ -270,12 +277,45 @@ class TrendHotspotCardsTest(unittest.TestCase):
                 "persona": "Austin可讲交付责任", "differentiation": "不讲工具清单，讲责任转移",
             },
         }
-        validate_candidate_specific_decisions([topic], cards)
-        ledger = complete_editorial_ledger(cards, [topic])
+        observed_topic = {
+            "candidate_id": cards[1]["candidate_id"], "decision": "observe",
+            "selection_reason": "对账动作可信，但客户规模与替代财务判断的说法尚无支持。",
+            "unique_judgment": "财务Agent应先把回单下载、异常标记和复核留痕串成动作链，而不是替代财务人员作最终判断。",
+            "evidence_source_ids": [observed_row["source_url"]],
+            "decision_basis": {
+                "traffic": "700次可见点赞", "content": "包含对账与复核动作",
+                "persona": "Austin可讲AI如何进入财务工作流",
+                "differentiation": "区分动作自动化与专业判断责任",
+            },
+        }
+        validate_candidate_specific_decisions([topic, observed_topic], cards)
+        ledger = complete_editorial_ledger(cards, [topic, observed_topic])
         self.assertEqual(ledger[0]["review_stage"], "recommended")
+        self.assertEqual(ledger[1]["review_stage"], "observed_after_deep_read")
+        self.assertEqual(
+            ledger[1]["differentiation"]["primary_angle"],
+            observed_topic["unique_judgment"],
+        )
+        self.assertEqual(
+            ledger[1]["cluster_synthesis"]["primary_angle"],
+            observed_topic["unique_judgment"],
+        )
+        self.assertNotEqual(
+            ledger[1]["selection_reason"],
+            ledger[1]["differentiation"]["primary_angle"],
+        )
         invalid = {**topic, "unique_judgment": "换成自己的语言"}
         with self.assertRaisesRegex(ValueError, "editorial_primary_angle_not_concrete"):
             validate_candidate_specific_decisions([invalid], cards)
+        missing_observe_angle = {**observed_topic, "unique_judgment": ""}
+        with self.assertRaisesRegex(ValueError, "editorial_primary_angle_not_concrete"):
+            validate_candidate_specific_decisions([topic, missing_observe_angle], cards)
+        reused_reason = {
+            **observed_topic,
+            "unique_judgment": observed_topic["selection_reason"],
+        }
+        with self.assertRaisesRegex(ValueError, "editorial_primary_angle_reason_not_distinct"):
+            validate_candidate_specific_decisions([topic, reused_reason], cards)
 
     def test_legacy_repeated_angle_becomes_event_cards_without_cross_event_merge(self):
         rows = [
