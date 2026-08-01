@@ -3,12 +3,59 @@ from __future__ import annotations
 import json
 import tempfile
 import unittest
+from argparse import Namespace
 from pathlib import Path
 
-from run_daily_workflow import merge_exact_today_new_rows, normalize_page_owned_facts
+from run_daily_workflow import (
+    collect_with_checkpoint,
+    merge_exact_today_new_rows,
+    normalize_page_owned_facts,
+)
 
 
 class TodayHotspotRecallTest(unittest.TestCase):
+    def test_checkpoint_recovery_promotes_today_new_without_mutating_checkpoint(self):
+        run_id = "run_20260801_080215"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / run_id
+            (run_dir / "sources").mkdir(parents=True)
+            checkpoint = {
+                "run_id": run_id,
+                "business_date": "2026-08-01",
+                "content_items": [{"id": "existing", "source_url": "https://example.com/old"}],
+                "candidates": [],
+            }
+            checkpoint_path = run_dir / "workflow_collection.json"
+            checkpoint_path.write_text(
+                json.dumps(checkpoint, ensure_ascii=False, indent=2), encoding="utf-8",
+            )
+            original = checkpoint_path.read_bytes()
+            row = {
+                "候选时态": "today_new",
+                "首次发现批次": run_id,
+                "运行批次": run_id,
+                "内容标题": "DeepSeek V4 正式版",
+                "内容链接": "https://www.douyin.com/video/1",
+            }
+            (run_dir / "sources" / "current_run_rows.jsonl").write_text(
+                json.dumps(row, ensure_ascii=False), encoding="utf-8",
+            )
+
+            recovered = collect_with_checkpoint(Namespace(
+                artifact_root=str(root), run_id=run_id, business_date="2026-08-01",
+            ))
+            normal = merge_exact_today_new_rows(
+                checkpoint, run_dir=run_dir, run_id=run_id,
+            )
+
+            self.assertEqual(checkpoint_path.read_bytes(), original)
+            self.assertEqual(recovered, normal)
+            self.assertEqual(recovered["today_new_promotion"]["encountered_count"], 1)
+            self.assertEqual(recovered["today_new_promotion"]["promoted_count"], 1)
+            self.assertEqual(len(recovered["content_items"]), 2)
+            self.assertEqual(len(recovered["candidates"]), 1)
+
     def test_exact_today_new_is_promoted_before_legacy_filter(self):
         run_id = "run_20260801_080215"
         with tempfile.TemporaryDirectory() as directory:

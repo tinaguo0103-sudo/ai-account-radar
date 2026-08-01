@@ -1176,7 +1176,9 @@ def collect_with_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
             or value.get("business_date") != args.business_date
         ):
             raise WorkflowConflict("collection_checkpoint_wrong_run")
-        return value
+        return merge_exact_today_new_rows(
+            value, run_dir=path.parent, run_id=args.run_id,
+        )
     value = collect(args)
     if (
         value.get("run_id") != args.run_id
