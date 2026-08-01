@@ -42,24 +42,13 @@ def publish_terminal(db_path: Path, run_id: str) -> dict[str, Any]:
     previous_sites = os.environ.get("WEBSITE_PROJECTION_SIWC_BYPASS_BEARER")
     os.environ["WEBSITE_PROJECTION_BEARER"] = config["app_bearer"]
     os.environ["WEBSITE_PROJECTION_SIWC_BYPASS_BEARER"] = config["sites_bearer"]
-    request_ledger = {"precondition_get": 0, "terminal_post": 0, "readback_get": 0}
     try:
         try:
-            request_ledger["precondition_get"] += 1
-            existing = request_json("GET", f"{endpoint}?run_id={run_id}")
+            result = request_json("POST", endpoint, payload)
         except ProjectionError as error:
-            if str(error) != "business_projection_missing":
+            if str(error) != "business_projection_conflict":
                 raise
-            existing = None
-        if existing:
-            payload["refresh_precondition"] = {
-                "business_date": existing.get("business_date"),
-                "authority_identity": existing.get("authority_identity"),
-                "projected_at": existing.get("projected_at"),
-            }
-        request_ledger["terminal_post"] += 1
-        result = request_json("POST", endpoint, payload)
-        request_ledger["readback_get"] += 1
+            result = request_json("GET", f"{endpoint}?run_id={run_id}")
         readback = request_json("GET", f"{endpoint}?run_id={run_id}")
     finally:
         if previous_app is None:
@@ -83,7 +72,4 @@ def publish_terminal(db_path: Path, run_id: str) -> dict[str, Any]:
         or readback.get("authority_identity") != config["authority_identity"]
     ):
         raise ProjectionError("business_projection_readback_mismatch")
-    return {
-        "result": result, "readback": readback, "payload": payload,
-        "request_ledger": request_ledger,
-    }
+    return {"result": result, "readback": readback, "payload": payload}
