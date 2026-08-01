@@ -191,6 +191,37 @@ class TrendHotspotCardsTest(unittest.TestCase):
         self.assertEqual({card["event_name"] for card in cards}, {"Claude Code"})
         self.assertNotEqual(cards[0]["trend_event_id"], cards[1]["trend_event_id"])
 
+    def test_seedance_version_does_not_merge_release_work_and_test(self):
+        rows = [
+            candidate("1", "Seedance 2.5", "Seedance 2.5正式发布，新增连续生成"),
+            candidate("2", "Seedance 2.5", "原创AI动漫《世界开关》先导预告 #seedance25"),
+            candidate("3", "Seedance 2.5", "Seedance 2.5 30秒连续生成实测"),
+        ]
+        cards = build_hotspot_cards(rows, items=items(rows), run_id=RUN_ID)
+        self.assertEqual(len(cards), 3)
+        self.assertEqual({card["source_count"] for card in cards}, {1})
+
+    def test_seedance_same_named_work_release_and_explicit_test_can_merge(self):
+        rows = [
+            candidate("1", "Seedance 2.5", "《世界开关》先导片 #seedance25"),
+            candidate("2", "Seedance 2.5", "Seedance 2.5 独立作品《世界开关》发布"),
+            candidate("3", "Seedance 2.5", "Seedance 2.5正式发布，新增连续生成"),
+            candidate("4", "Seedance 2.5", "小云雀发布 Seedance 2.5 正式版"),
+            candidate("5", "Seedance 2.5", "Seedance 2.5 30秒连续生成实测"),
+            candidate("6", "Seedance 2.5", "小云雀 30秒连续生成实测 #seedance25"),
+        ]
+        cards = build_hotspot_cards(rows, items=items(rows), run_id=RUN_ID)
+        self.assertEqual(len(cards), 3)
+        self.assertEqual(sorted(card["source_count"] for card in cards), [2, 2, 2])
+
+    def test_seedance_entity_only_mentions_remain_separate_signals(self):
+        rows = [
+            candidate("1", "Seedance 2.5", "Seedance 2.5 的镜头美学"),
+            candidate("2", "Seedance 2.5", "Seedance 2.5 的商业影响"),
+        ]
+        cards = build_hotspot_cards(rows, items=items(rows), run_id=RUN_ID)
+        self.assertEqual(len(cards), 2)
+
     def test_official_with_time_only_remains_signal_not_failure(self):
         official = candidate("1", "Gemini Robotics ER 2", "Gemini Robotics ER 2", platform="AIHOT")
         official.update({

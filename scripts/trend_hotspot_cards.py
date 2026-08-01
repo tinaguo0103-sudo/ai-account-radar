@@ -21,12 +21,43 @@ GENERIC_ANGLE_PHRASES = (
 EVENT_ANCHOR_PATTERNS = (
     (r"deepseek\s*v?4", "DeepSeek V4"),
     (r"minimax\s*h3", "MiniMax H3"),
-    (r"seedance\s*2[.．]?5", "Seedance 2.5"),
     (r"trae\s*work", "TRAE Work"),
     (r"obsidian.*(?:5|五).*skill", "Obsidian 5 Skills"),
     (r"(?:长期记忆|long[- ]?term memory)", "Agent 长期记忆"),
     (r"(?:动画|动漫).*(?:配音|声音|voice)|(?:配音|声音|voice).*(?:动画|动漫)", "animated-voiceover"),
 )
+
+SEEDANCE_ENTITY_PATTERN = r"seedance\s*2[.．]?5|seedance\s*25"
+SEEDANCE_TEST_PATTERN = re.compile(
+    r"(?:[\w\u4e00-\u9fff]{0,20})(?:实测|测试|测评|案例|演示)", re.IGNORECASE
+)
+
+
+def _normalized_event_phrase(value: str) -> str:
+    value = re.sub(r"#[^\s#]+", " ", value)
+    value = re.sub(SEEDANCE_ENTITY_PATTERN, " ", value, flags=re.IGNORECASE)
+    value = re.sub(r"[^\w\u4e00-\u9fff]+", " ", value)
+    return _text(value).casefold()
+
+
+def _seedance_event_descriptor(source_text: str, source_url: str) -> str:
+    """Keep the model version as an entity, never as the event identity."""
+    work_match = re.search(r"《([^》]{2,60})》", source_text)
+    if work_match:
+        return f"seedance 2.5|independent_work:{_normalized_event_phrase(work_match.group(1))}"
+
+    test_match = SEEDANCE_TEST_PATTERN.search(source_text)
+    if test_match:
+        phrase = _normalized_event_phrase(test_match.group(0))
+        if phrase:
+            return f"seedance 2.5|test_demo_review:{phrase}"
+
+    if re.search(r"发布|正式上线|上新|更新|升级|新功能", source_text):
+        return "seedance 2.5|release_feature_announcement:model_release"
+
+    # An entity-only mention is a signal, not evidence that two rows describe
+    # the same event. Its canonical source keeps unrelated mentions separate.
+    return f"seedance 2.5|entity_signal:{source_url or _normalized_event_phrase(source_text)}"
 
 
 def _text(value: Any) -> str:
@@ -76,6 +107,11 @@ def _event_descriptor(candidate: dict[str, Any]) -> str:
         _text(_first(candidate, key))
         for key in ("原始来源标题", "source_title", "内容标题", "title", "正文/字幕/简介片段")
     ).casefold()
+    source_url = _canonical_url(
+        _first(candidate, "source_url", "来源链接", "内容链接", "canonical_url")
+    )
+    if re.search(SEEDANCE_ENTITY_PATTERN, source_text, flags=re.IGNORECASE):
+        return _seedance_event_descriptor(source_text, source_url)
     for pattern, anchor in EVENT_ANCHOR_PATTERNS:
         if re.search(pattern, source_text, flags=re.IGNORECASE):
             return anchor.casefold()
