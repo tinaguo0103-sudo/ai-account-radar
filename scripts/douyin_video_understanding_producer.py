@@ -664,34 +664,6 @@ def produce(
     } if include_automatic else set()
     selected = automatic | (on_demand_ids or set())
     by_id = {f"douyin:{row['aweme_id']}": row for row in candidates}
-    mode = getattr(args, "mode", "") or args.video_mode
-    if mode == "normal" and selected:
-        producer_root = output_root / args.run_id / "video_producer"
-        resolver_input = producer_root / (
-            "media_resolver_input.json" if include_automatic
-            else f"media_resolver_input_{digest(sorted(selected))[:16]}.json"
-        )
-        resolver_output = producer_root / (
-            "media_resolver.json" if include_automatic
-            else f"media_resolver_{digest(sorted(selected))[:16]}.json"
-        )
-        atomic_json(resolver_input, [by_id[identity] for identity in sorted(selected) if identity in by_id])
-        if not resolver_output.is_file():
-            resolution = subprocess.run([
-                "node", str(MEDIA_RESOLVER), "--cdp", args.cdp,
-                "--input", str(resolver_input), "--output", str(resolver_output),
-            ], text=True, capture_output=True)
-            if resolution.returncode:
-                try:
-                    error = json.loads(resolution.stdout).get("error")
-                except (ValueError, AttributeError):
-                    error = "media_resolution_failed"
-                raise ProducerError(str(error or "media_resolution_failed"))
-        resolved = json.loads(resolver_output.read_text())
-        if resolved.get("status") != "completed":
-            raise ProducerError("media_resolution_not_completed")
-        for candidate in resolved.get("candidates") or []:
-            by_id[f"douyin:{candidate['aweme_id']}"] = candidate
     work_root = output_root / args.run_id / "video_producer" / "work"
     keyframe_root = output_root / args.run_id / "video_understanding" / "keyframes"
     checkpoint_root = output_root / args.run_id / "video_understanding" / "packages"
@@ -711,6 +683,51 @@ def produce(
         }
         if set(aggregate_by_id) != selected:
             raise ProducerError("video_package_checkpoint_identity_conflict")
+    checkpoint_by_id: dict[str, dict[str, Any]] = {}
+    for identity in sorted(selected - set(aggregate_by_id)):
+        candidate = by_id.get(identity)
+        if not candidate:
+            continue
+        checkpoint = checkpoint_root / f"{candidate['aweme_id']}.json"
+        if not checkpoint.is_file():
+            continue
+        package = json.loads(checkpoint.read_text())
+        if (
+            package.get("run_id") != args.run_id
+            or package.get("aweme_id") != candidate["aweme_id"]
+            or package.get("source_url") != candidate["source_url"]
+        ):
+            raise ProducerError("video_package_checkpoint_identity_conflict")
+        checkpoint_by_id[identity] = package
+    unresolved = selected - set(aggregate_by_id) - set(checkpoint_by_id)
+    mode = getattr(args, "mode", "") or args.video_mode
+    if mode == "normal" and unresolved:
+        producer_root = output_root / args.run_id / "video_producer"
+        resolver_input = producer_root / (
+            "media_resolver_input.json" if include_automatic
+            else f"media_resolver_input_{digest(sorted(selected))[:16]}.json"
+        )
+        resolver_output = producer_root / (
+            "media_resolver.json" if include_automatic
+            else f"media_resolver_{digest(sorted(selected))[:16]}.json"
+        )
+        atomic_json(resolver_input, [by_id[identity] for identity in sorted(unresolved) if identity in by_id])
+        if not resolver_output.is_file():
+            resolution = subprocess.run([
+                "node", str(MEDIA_RESOLVER), "--cdp", args.cdp,
+                "--input", str(resolver_input), "--output", str(resolver_output),
+            ], text=True, capture_output=True)
+            if resolution.returncode:
+                try:
+                    error = json.loads(resolution.stdout).get("error")
+                except (ValueError, AttributeError):
+                    error = "media_resolution_failed"
+                raise ProducerError(str(error or "media_resolution_failed"))
+        resolved = json.loads(resolver_output.read_text())
+        if resolved.get("status") != "completed":
+            raise ProducerError("media_resolution_not_completed")
+        for candidate in resolved.get("candidates") or []:
+            by_id[f"douyin:{candidate['aweme_id']}"] = candidate
     work_root.mkdir(parents=True, exist_ok=True)
     packages = []
     cleanup_blocked = False
@@ -728,14 +745,8 @@ def produce(
         checkpoint = checkpoint_root / f"{candidate['aweme_id']}.json"
         if identity in aggregate_by_id:
             package = aggregate_by_id[identity]
-        elif checkpoint.is_file():
-            package = json.loads(checkpoint.read_text())
-            if (
-                package.get("run_id") != args.run_id
-                or package.get("aweme_id") != candidate["aweme_id"]
-                or package.get("source_url") != candidate["source_url"]
-            ):
-                raise ProducerError("video_package_checkpoint_identity_conflict")
+        elif identity in checkpoint_by_id:
+            package = checkpoint_by_id[identity]
         else:
             package = process_one(
                 candidate,
