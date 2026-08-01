@@ -28,9 +28,7 @@ EVENT_ANCHOR_PATTERNS = (
 )
 
 SEEDANCE_ENTITY_PATTERN = r"seedance\s*2[.．]?5|seedance\s*25"
-SEEDANCE_TEST_PATTERN = re.compile(
-    r"(?:[\w\u4e00-\u9fff]{0,20})(?:实测|测试|测评|案例|演示)", re.IGNORECASE
-)
+SEEDANCE_TEST_PATTERN = re.compile(r"实测|测试|测评|案例|演示", re.IGNORECASE)
 
 
 def _normalized_event_phrase(value: str) -> str:
@@ -40,17 +38,32 @@ def _normalized_event_phrase(value: str) -> str:
     return _text(value).casefold()
 
 
+def _seedance_experiment_anchor(source_text: str) -> str:
+    facts: list[str] = []
+    duration = re.search(r"(\d{1,3})\s*(秒|分钟)", source_text)
+    if duration:
+        seconds = int(duration.group(1)) * (60 if duration.group(2) == "分钟" else 1)
+        facts.append(f"duration_{seconds}s")
+    if "连续生成" in source_text:
+        facts.append("action_continuous_generation")
+    if re.search(r"(?:角色|人物)一致性(?:检查|验证|测试)?", source_text):
+        facts.append("objective_character_consistency")
+    if re.search(r"首尾帧.*运镜|运镜.*首尾帧", source_text):
+        facts.append("objective_first_last_frame_camera_motion")
+    return "|".join(facts)
+
+
 def _seedance_event_descriptor(source_text: str, source_url: str) -> str:
     """Keep the model version as an entity, never as the event identity."""
     work_match = re.search(r"《([^》]{2,60})》", source_text)
     if work_match:
         return f"seedance 2.5|independent_work:{_normalized_event_phrase(work_match.group(1))}"
 
-    test_match = SEEDANCE_TEST_PATTERN.search(source_text)
-    if test_match:
-        phrase = _normalized_event_phrase(test_match.group(0))
-        if phrase:
-            return f"seedance 2.5|test_demo_review:{phrase}"
+    if SEEDANCE_TEST_PATTERN.search(source_text):
+        experiment = _seedance_experiment_anchor(source_text)
+        if experiment:
+            return f"seedance 2.5|test_demo_review:{experiment}"
+        return f"seedance 2.5|test_demo_review:{source_url or _normalized_event_phrase(source_text)}"
 
     if re.search(r"发布|正式上线|上新|更新|升级|新功能", source_text):
         return "seedance 2.5|release_feature_announcement:model_release"

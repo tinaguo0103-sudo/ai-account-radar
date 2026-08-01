@@ -214,6 +214,39 @@ class TrendHotspotCardsTest(unittest.TestCase):
         self.assertEqual(len(cards), 3)
         self.assertEqual(sorted(card["source_count"] for card in cards), [2, 2, 2])
 
+    def test_seedance_experiment_anchor_ignores_voice_brand_synonym_and_order(self):
+        rows = [
+            candidate(
+                "1", "Seedance 2.5",
+                "我用 Seedance 2.5 实测30秒连续生成：角色一致性检查",
+            ),
+            candidate(
+                "2", "Seedance 2.5",
+                "小云雀 Seedance 2.5 角色一致性检查，30秒连续生成测试",
+            ),
+            candidate(
+                "3", "Seedance 2.5",
+                "Seedance 2.5 测评：连续生成30秒，验证人物一致性",
+            ),
+        ]
+        cards = build_hotspot_cards(rows, items=items(rows), run_id=RUN_ID)
+        self.assertEqual(len(cards), 1)
+        self.assertEqual(cards[0]["source_count"], 3)
+
+    def test_seedance_different_experiment_objectives_do_not_merge(self):
+        rows = [
+            candidate(
+                "1", "Seedance 2.5",
+                "Seedance 2.5 30秒连续生成实测：角色一致性检查",
+            ),
+            candidate(
+                "2", "Seedance 2.5",
+                "Seedance 2.5 30秒连续生成测试：首尾帧运镜测试",
+            ),
+        ]
+        cards = build_hotspot_cards(rows, items=items(rows), run_id=RUN_ID)
+        self.assertEqual(len(cards), 2)
+
     def test_seedance_entity_only_mentions_remain_separate_signals(self):
         rows = [
             candidate("1", "Seedance 2.5", "Seedance 2.5 的镜头美学"),
