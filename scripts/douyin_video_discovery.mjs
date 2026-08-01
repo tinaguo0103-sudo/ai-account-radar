@@ -108,6 +108,13 @@ function deriveSearchQuery(candidates, fallback, currentUrl) {
   return query;
 }
 
+export const DEFAULT_QUERY_PORTFOLIO = [
+  { role: "today_release", query: "AI 新模型 发布 更新" },
+  { role: "real_test", query: "AI 实测 失败 对比" },
+  { role: "workflow_change", query: "AI 工作流 任务 改变" },
+  { role: "creator_business", query: "AI 创作者 业务 现场" },
+];
+
 function numericFact(container, key) {
   if (!container || !Object.prototype.hasOwnProperty.call(container, key)) {
     return { value: null, missing_reason: "field_not_returned" };
@@ -373,10 +380,11 @@ async function main() {
     source = "dynamic_search";
     const configuredQueries = String(options.query || "")
       .split("|").map((value) => value.trim()).filter(Boolean).slice(0, 4);
-    const queries = configuredQueries.length
-      ? configuredQueries
-      : [deriveSearchQuery(captured, "AI 工具 人工智能", target.url)];
-    for (const [index, query] of queries.entries()) {
+    const queryEntries = configuredQueries.length
+      ? configuredQueries.map((query) => ({ role: "caller_supplied", query }))
+      : DEFAULT_QUERY_PORTFOLIO;
+    for (const [index, entry] of queryEntries.entries()) {
+      const { role, query } = entry;
       await risk(`dynamic_search_${index}_before_navigation`);
       await session.send("Page.navigate", {
         url: `https://www.douyin.com/search/${encodeURIComponent(query)}?type=video`,
@@ -390,6 +398,7 @@ async function main() {
       }));
       captured.push(...normalizedSearch);
       queryLedger.push({
+        role,
         query,
         attempted: true,
         status: normalizedSearch.length ? "completed" : "completed_empty",

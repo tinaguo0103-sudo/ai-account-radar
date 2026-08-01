@@ -5,7 +5,6 @@ import json
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
-from statistics import median
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -17,6 +16,16 @@ GENERIC_ANGLE_PHRASES = (
     "放进真实场景",
     "不照搬表达",
     "吸收它的选题承诺",
+)
+
+EVENT_ANCHOR_PATTERNS = (
+    (r"deepseek\s*v?4", "DeepSeek V4"),
+    (r"minimax\s*h3", "MiniMax H3"),
+    (r"seedance\s*2[.．]?5", "Seedance 2.5"),
+    (r"trae\s*work", "TRAE Work"),
+    (r"obsidian.*(?:5|五).*skill", "Obsidian 5 Skills"),
+    (r"(?:长期记忆|long[- ]?term memory)", "Agent 长期记忆"),
+    (r"(?:动画|动漫).*(?:配音|声音|voice)|(?:配音|声音|voice).*(?:动画|动漫)", "animated-voiceover"),
 )
 
 
@@ -63,6 +72,13 @@ def _event_descriptor(candidate: dict[str, Any]) -> str:
     if explicit:
         return explicit
     event = _event_label(candidate)
+    source_text = " ".join(
+        _text(_first(candidate, key))
+        for key in ("原始来源标题", "source_title", "内容标题", "title", "正文/字幕/简介片段")
+    ).casefold()
+    for pattern, anchor in EVENT_ANCHOR_PATTERNS:
+        if re.search(pattern, source_text, flags=re.IGNORECASE):
+            return anchor.casefold()
     core_problem = _text(
         _first(candidate, "core_audience_problem", "真实用户问题", "选题命题")
     )
@@ -313,6 +329,18 @@ def _platform_key(value: Any) -> str:
     return platform or "unknown"
 
 
+def _recency_cohort(age_seconds: float | None) -> str:
+    if age_seconds is None:
+        return "unknown"
+    if age_seconds <= 2 * 86400:
+        return "0_2d"
+    if age_seconds <= 7 * 86400:
+        return "3_7d"
+    if age_seconds <= 30 * 86400:
+        return "8_30d"
+    return "31d_plus"
+
+
 def _persona_qualification(card: dict[str, Any]) -> tuple[bool, str]:
     reasons = card.get("persona_stability", {}).get("reasons") or []
     if reasons:
@@ -336,44 +364,33 @@ def _persona_qualification(card: dict[str, Any]) -> tuple[bool, str]:
 
 
 def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    likes_by_platform: dict[str, list[float]] = defaultdict(list)
-    ages: list[float] = []
+    likes_by_cohort: dict[tuple[str, str], list[float]] = defaultdict(list)
     for card in cards:
         for source in card.get("sources", []):
             likes = source.get("engagement", {}).get("likes")
-            if isinstance(likes, (int, float)) and not isinstance(likes, bool):
-                likes_by_platform[_platform_key(source.get("platform"))].append(float(likes))
             age = _source_age_seconds(source, str(card.get("run_id") or ""))
-            if age is not None:
-                ages.append(age)
-    median_age = median(ages) if ages else None
+            cohort = _recency_cohort(age)
+            source["recency_cohort"] = cohort
+            if isinstance(likes, (int, float)) and not isinstance(likes, bool):
+                likes_by_cohort[(_platform_key(source.get("platform")), cohort)].append(float(likes))
     for card in cards:
-        platform_percentiles: list[float] = []
+        cohort_percentiles: list[float] = []
         visible_likes: list[float] = []
-        source_ages: list[float] = []
+        cohorts: set[str] = set()
         for source in card.get("sources", []):
             likes = source.get("engagement", {}).get("likes")
             platform = _platform_key(source.get("platform"))
+            cohort = str(source.get("recency_cohort") or "unknown")
+            cohorts.add(cohort)
             if isinstance(likes, (int, float)) and not isinstance(likes, bool):
-                values = likes_by_platform.get(platform, [])
+                values = likes_by_cohort.get((platform, cohort), [])
                 visible_likes.append(float(likes))
                 if values:
-                    platform_percentiles.append(
+                    cohort_percentiles.append(
                         sum(value <= float(likes) for value in values) / len(values)
                     )
-            age = _source_age_seconds(source, str(card.get("run_id") or ""))
-            if age is not None:
-                source_ages.append(age)
-        strongest_percentile = max(platform_percentiles, default=0.0)
-        freshest_age = min(source_ages) if source_ages else None
-        freshness_percentile = (
-            sum(value >= freshest_age for value in ages) / len(ages)
-            if freshest_age is not None and ages else 0.0
-        )
-        stale_outlier = bool(
-            freshest_age is not None and median_age is not None and median_age > 0
-            and freshest_age > median_age * 4
-        )
+        strongest_percentile = max(cohort_percentiles, default=0.0)
+        recent_signal = bool(cohorts & {"0_2d", "3_7d"})
         traffic = card.get("traffic_opportunity", {})
         multi_source = (
             int(traffic.get("independent_source_count") or 0) >= 2
@@ -384,22 +401,16 @@ def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
             and (source.get("published_at") or source.get("published_display") or source.get("recency"))
             for source in card.get("sources", [])
         )
-        relative_opportunity = bool(
-            visible_likes and not stale_outlier
-            and (
-                strongest_percentile >= 0.75
-                or (strongest_percentile > 0.5 and freshness_percentile >= 0.5)
-            )
-        )
+        relative_opportunity = bool(visible_likes and strongest_percentile > 0.5)
         # An official, recent publication proves that an event is authentic and
         # timely. It does not, by itself, prove a traffic opportunity.
-        traffic_qualified = relative_opportunity or multi_source
+        traffic_qualified = recent_signal and (relative_opportunity or multi_source)
         persona_qualified, persona_reason = _persona_qualification(card)
         eligible = traffic_qualified and persona_qualified
         if relative_opportunity:
             traffic_reason = (
                 f"最强来源可见点赞 {int(max(visible_likes))}，"
-                f"处于同平台当日有事实信号的相对前 {max(1, round((1 - strongest_percentile) * 100))}%"
+                f"处于同平台同龄内容的相对前 {max(1, round((1 - strongest_percentile) * 100))}%"
             )
         elif multi_source:
             traffic_reason = (
@@ -410,11 +421,14 @@ def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
                 "存在带时间的原始或官方事件信号，但缺少相对互动或多源佐证，"
                 "保留为热点线索"
             )
-        elif stale_outlier:
-            traffic_reason = "互动可见，但发布时间相对本批信号明显过旧，不冒充今日流量机会"
+        elif visible_likes and not recent_signal:
+            traffic_reason = (
+                f"可见点赞 {int(max(visible_likes))}，但不属于今日或近期 cohort，"
+                "保留历史信号而不占用今日深读预算"
+            )
         elif visible_likes:
             traffic_reason = (
-                f"可见点赞 {int(max(visible_likes))}，但未进入同平台当日相对高潜信号"
+                f"可见点赞 {int(max(visible_likes))}，但未进入同平台同龄内容的相对高潜信号"
             )
         else:
             traffic_reason = "互动事实缺失，保留为热点线索，不据此评判账号质量"
@@ -428,16 +442,25 @@ def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "persona_reason": persona_reason,
             "angle_hypotheses": hypotheses,
             "angle_hypotheses_are_non_blocking": True,
+            "recency_cohorts": sorted(cohorts),
+            "traffic_comparison_contract": "same_platform_same_recency_cohort",
             "authenticity_state": (
                 "official_with_time" if official_with_time else "not_established_by_official_time"
             ),
             "official_time_is_not_traffic_qualification": True,
             "relative_basis": {
                 "platform_observation_counts": {
-                    key: len(value) for key, value in sorted(likes_by_platform.items())
+                    platform: sum(
+                        len(value) for (pool_platform, _), value in likes_by_cohort.items()
+                        if pool_platform == platform
+                    )
+                    for platform in sorted({key[0] for key in likes_by_cohort})
+                },
+                "platform_recency_observation_counts": {
+                    f"{platform}:{cohort}": len(value)
+                    for (platform, cohort), value in sorted(likes_by_cohort.items())
                 },
                 "strongest_like_percentile": round(strongest_percentile, 4),
-                "freshness_percentile": round(freshness_percentile, 4),
             },
         }
         card["representative_source_ids"] = (

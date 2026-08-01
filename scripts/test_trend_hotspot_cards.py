@@ -160,6 +160,37 @@ class TrendHotspotCardsTest(unittest.TestCase):
         self.assertEqual(by_name["低互动工作流"]["qualification"]["status"], "signal_only")
         self.assertEqual(by_name["高互动工作流"]["qualification"]["status"], "qualified")
 
+    def test_old_viral_item_does_not_raise_recent_cohort_bar(self):
+        recent_low = candidate("1", "两天新工具", "两天新工具", likes=20)
+        recent_high = candidate("2", "两天新模型", "两天新模型", likes=80)
+        old_viral = candidate("3", "月级老爆款", "月级老爆款", likes=100000)
+        recent_low["published_at_display"] = "2天前"
+        recent_high["published_at_display"] = "1天前"
+        old_viral["published_at_display"] = "2月前"
+        cards = build_hotspot_cards(
+            [recent_low, recent_high, old_viral],
+            items=items([recent_low, recent_high, old_viral]),
+            run_id=RUN_ID,
+        )
+        by_name = {row["event_name"]: row for row in cards}
+        self.assertEqual(by_name["两天新模型"]["qualification"]["status"], "qualified")
+        self.assertEqual(
+            by_name["两天新模型"]["qualification"]["recency_cohorts"], ["0_2d"],
+        )
+        self.assertEqual(
+            by_name["月级老爆款"]["qualification"]["recency_cohorts"], ["31d_plus"],
+        )
+
+    def test_event_specific_anchor_splits_animated_voiceover_and_obsidian_skills(self):
+        voice = candidate("1", "Claude Code", "用 Claude Code 做动画配音")
+        obsidian = candidate("2", "Claude Code", "Obsidian 5 Skills 工作流")
+        cards = build_hotspot_cards(
+            [voice, obsidian], items=items([voice, obsidian]), run_id=RUN_ID,
+        )
+        self.assertEqual(len(cards), 2)
+        self.assertEqual({card["event_name"] for card in cards}, {"Claude Code"})
+        self.assertNotEqual(cards[0]["trend_event_id"], cards[1]["trend_event_id"])
+
     def test_official_with_time_only_remains_signal_not_failure(self):
         official = candidate("1", "Gemini Robotics ER 2", "Gemini Robotics ER 2", platform="AIHOT")
         official.update({

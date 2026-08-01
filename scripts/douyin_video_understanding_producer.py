@@ -577,14 +577,14 @@ def load_discovery_payload(
     if discovery_path.is_file():
         payload = json.loads(discovery_path.read_text())
     elif mode == "normal":
-        query = str(
-            getattr(args, "search_query", "")
-            or "AI 工作流|AI 工具 实测|AI Agent 应用"
-        )
-        result = subprocess.run([
+        command = [
             "node", str(DISCOVERY), "--output", str(discovery_path),
-            "--cdp", args.cdp, "--query", query,
-        ], text=True, capture_output=True)
+            "--cdp", args.cdp,
+        ]
+        query = str(getattr(args, "search_query", "") or "").strip()
+        if query:
+            command.extend(["--query", query])
+        result = subprocess.run(command, text=True, capture_output=True)
         if result.returncode:
             try:
                 error = json.loads(result.stdout).get("error")

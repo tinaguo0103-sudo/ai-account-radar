@@ -259,6 +259,9 @@ def normalize_page_owned_facts(item: dict[str, Any], raw_path: Path) -> dict[str
     aweme_id = str(item.get("aweme_id") or "")
     statistics = item.get("statistics") if isinstance(item.get("statistics"), dict) else {}
     video = item.get("video") if isinstance(item.get("video"), dict) else {}
+    play_addr = video.get("play_addr") if isinstance(video.get("play_addr"), dict) else {}
+    playable_urls = play_addr.get("url_list") if isinstance(play_addr.get("url_list"), list) else []
+    playable_url = next((str(value) for value in playable_urls if str(value).startswith("http")), "")
     create_time = item.get("create_time")
     published_at = ""
     if isinstance(create_time, int) and create_time > 0:
@@ -290,6 +293,8 @@ def normalize_page_owned_facts(item: dict[str, Any], raw_path: Path) -> dict[str
             max(1, round(float(duration) / 1000))
             if isinstance(duration, (int, float)) and duration > 0 else None
         ),
+        "playable_url": playable_url,
+        "media_identity": str(play_addr.get("uri") or ""),
         **facts,
         "fact_missing_reasons": missing,
         "fact_provenance": {
@@ -318,7 +323,14 @@ def configured_account_facts(run_dir: Path) -> dict[str, dict[str, Any]]:
         for item in page_owned_items(payload):
             facts = normalize_page_owned_facts(item, path)
             if facts["source_url"]:
-                output[facts["source_url"]] = facts
+                current = output.get(facts["source_url"], {})
+                output[facts["source_url"]] = {
+                    **current,
+                    **{
+                        key: value for key, value in facts.items()
+                        if value not in (None, "", [], {}) or key not in current
+                    },
+                }
     return output
 
 
@@ -345,6 +357,11 @@ def adapt_collection_rows(
                 {"capture": "configured_account_page_owned_works_response"},
             )
         facts = None if direct_supported else facts_by_url.get(url)
+        captured = facts_by_url.get(url)
+        if captured:
+            for key in ("playable_url", "media_identity", "duration_seconds"):
+                if captured.get(key) not in (None, ""):
+                    row[key] = captured[key]
         if facts:
             for key, value in facts.items():
                 if key in {"source_url", "aweme_id"} or (value is not None and value != ""):
@@ -373,6 +390,89 @@ def adapt_collection_rows(
         if "douyin.com/video/" in url:
             row["discovery_source"] = "configured_account"
         output.append(row)
+    return output
+
+
+def merge_exact_today_new_rows(
+    collection: dict[str, Any],
+    *,
+    run_dir: Path,
+    run_id: str,
+) -> dict[str, Any]:
+    """Promote exact-run new works before legacy topic filtering can drop them."""
+    source_path = run_dir / "sources" / "current_run_rows.jsonl"
+    if not source_path.is_file():
+        return collection
+    page_owned_by_url = configured_account_facts(run_dir)
+    content = list(collection.get("content_items") or [])
+    candidates = list(collection.get("candidates") or [])
+    known_content_urls = {source_url(row) for row in content if source_url(row)}
+    known_candidate_urls = {source_url(row) for row in candidates if source_url(row)}
+    exclusions: list[dict[str, str]] = []
+    encountered = 0
+    promoted = 0
+    already_present = 0
+    for index, line in enumerate(source_path.read_text(encoding="utf-8").splitlines()):
+        if not line.strip():
+            continue
+        try:
+            raw = json.loads(line)
+        except json.JSONDecodeError:
+            exclusions.append({
+                "item_id": f"today-new-row:{index}",
+                "reason": "today_new_row_invalid_json",
+            })
+            continue
+        if raw.get("候选时态") != "today_new":
+            continue
+        encountered += 1
+        if raw.get("首次发现批次") != run_id or raw.get("运行批次") != run_id:
+            exclusions.append({
+                "item_id": f"today-new-row:{index}",
+                "reason": "today_new_wrong_run",
+            })
+            continue
+        row = normalize_source_fields(json.loads(json.dumps(raw, ensure_ascii=False)))
+        url = source_url(row)
+        if not url:
+            exclusions.append({
+                "item_id": f"today-new-row:{index}",
+                "reason": "today_new_identity_missing",
+            })
+            continue
+        captured = page_owned_by_url.get(url, {})
+        for key in ("playable_url", "media_identity", "duration_seconds"):
+            if captured.get(key) not in (None, ""):
+                row[key] = captured[key]
+        angle = candidate_angle(row)
+        row.update({
+            "run_id": run_id,
+            "item_id": stable_item_id(row),
+            "candidate_id": f"{stable_item_id(row)}::angle:{urllib.parse.quote(angle, safe='')}",
+            "discovery_source": "configured_account",
+            "today_new": True,
+            "source_title": str(row.get("内容标题") or row.get("title") or ""),
+            "source_summary": str(row.get("正文/字幕/简介片段") or row.get("summary") or ""),
+        })
+        if url not in known_content_urls:
+            content.append(row)
+            known_content_urls.add(url)
+        if url not in known_candidate_urls:
+            candidates.append(row)
+            known_candidate_urls.add(url)
+            promoted += 1
+        else:
+            already_present += 1
+    output = json.loads(json.dumps(collection, ensure_ascii=False))
+    output["content_items"] = content
+    output["candidates"] = candidates
+    output["today_new_promotion"] = {
+        "source": "exact_run_current_rows",
+        "encountered_count": encountered,
+        "promoted_count": promoted,
+        "already_present_count": already_present,
+        "exclusions": exclusions,
+    }
     return output
 
 
@@ -422,7 +522,9 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             ),
             "configured_account_captured_at": args.business_date,
         })
-        return value
+        return merge_exact_today_new_rows(
+            value, run_dir=run_dir, run_id=args.run_id,
+        )
     if args.collection_fixture:
         value = read_json(args.collection_fixture)
         if value.get("run_id") != args.run_id:
@@ -455,7 +557,7 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         "partial" if str(value.get("collection_status") or "").endswith("_with_failures")
         else ("completed" if configured_count else "completed_empty")
     )
-    return {
+    return merge_exact_today_new_rows({
         "run_id": args.run_id, "business_date": args.business_date,
         "status": value.get("collection_status", "completed"),
         "content_items": content, "candidates": candidates,
@@ -465,13 +567,13 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
             "account_failures_isolated" if configured_status == "partial" else ""
         ),
         "configured_account_captured_at": str(value.get("generated_at") or ""),
-    }
+    }, run_dir=run_dir, run_id=args.run_id)
 
 
 def candidate_angle(candidate: dict[str, Any]) -> str:
     for key in (
         "主题聚类ID", "topic_cluster_id", "我的选题标题", "可发布标题",
-        "原始来源标题", "title",
+        "原始来源标题", "内容标题", "source_title", "title",
     ):
         value = re.sub(r"\s+", " ", str(candidate.get(key) or "")).strip()
         if value:
@@ -1131,7 +1233,7 @@ def main() -> int:
     parser.add_argument("--video-policy", default="")
     parser.add_argument("--discovery-fixture", default="")
     parser.add_argument("--video-discovery-checkpoint", default="")
-    parser.add_argument("--search-query", default="AI 工具 人工智能")
+    parser.add_argument("--search-query", default="")
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
     args = parser.parse_args()
     workflow: DailyWorkflow | None = None
