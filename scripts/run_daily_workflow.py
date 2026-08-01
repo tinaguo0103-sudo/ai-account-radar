@@ -10,6 +10,7 @@ import hashlib
 import json
 import os
 import re
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -47,9 +48,75 @@ SKILLS = (
     "austin-voice-scriptwriter",
 )
 
+REPLAY_INPUT_TARGETS = {
+    "collection_checkpoint": "workflow_collection.json",
+    "today_new_rows": "sources/current_run_rows.jsonl",
+    "discovery_checkpoint": "video_producer/discovery.json",
+    "video_packages": "video_producer/packages.json",
+}
+REPLAY_RESULT_ROLES = {
+    "editorial_result": "editorial_result_file",
+    "scripts_result": "scripts_result_file",
+}
+
 
 def read_json(path: str | Path) -> Any:
     return json.loads(Path(path).read_text(encoding="utf-8"))
+
+
+def prepare_replay_inputs(args: argparse.Namespace) -> None:
+    if not args.replay_inputs:
+        return
+    root = Path(args.replay_inputs).resolve()
+    manifest_path = root / "manifest.json"
+    try:
+        manifest = read_json(manifest_path)
+    except (OSError, json.JSONDecodeError) as error:
+        raise WorkflowConflict("replay_inputs_manifest_invalid") from error
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("schema_version") != 1
+        or manifest.get("run_id") != args.run_id
+        or manifest.get("business_date") != args.business_date
+        or not isinstance(manifest.get("files"), list)
+    ):
+        raise WorkflowConflict("replay_inputs_manifest_invalid")
+    required = set(REPLAY_INPUT_TARGETS) | set(REPLAY_RESULT_ROLES)
+    by_role: dict[str, Path] = {}
+    for entry in manifest["files"]:
+        if not isinstance(entry, dict):
+            raise WorkflowConflict("replay_inputs_manifest_invalid")
+        role = str(entry.get("role") or "")
+        relative = Path(str(entry.get("path") or ""))
+        if role not in required or role in by_role or relative.is_absolute() or ".." in relative.parts:
+            raise WorkflowConflict("replay_inputs_manifest_invalid")
+        unresolved_source = root / relative
+        source = unresolved_source.resolve()
+        if root not in source.parents or unresolved_source.is_symlink() or not source.is_file():
+            raise WorkflowConflict(f"replay_input_missing:{role}")
+        actual = hashlib.sha256(source.read_bytes()).hexdigest()
+        if actual != str(entry.get("sha256") or ""):
+            raise WorkflowConflict(f"replay_input_hash_mismatch:{role}")
+        by_role[role] = source
+    missing = required - set(by_role)
+    if missing:
+        raise WorkflowConflict(f"replay_input_missing:{sorted(missing)[0]}")
+    run_dir = Path(args.artifact_root).resolve() / args.run_id
+    for role, relative in REPLAY_INPUT_TARGETS.items():
+        source = by_role[role]
+        target = run_dir / relative
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if target.exists():
+            if not target.is_file() or target.read_bytes() != source.read_bytes():
+                raise WorkflowConflict(f"replay_input_target_conflict:{role}")
+            continue
+        shutil.copyfile(source, target)
+    for role, attribute in REPLAY_RESULT_ROLES.items():
+        current = str(getattr(args, attribute) or "")
+        expected = str(by_role[role])
+        if current and Path(current).resolve() != by_role[role]:
+            raise WorkflowConflict(f"replay_input_result_conflict:{role}")
+        setattr(args, attribute, expected)
 
 
 class WorkflowExecutionLock:
@@ -1235,6 +1302,7 @@ def main() -> int:
     parser.add_argument("--video-policy", default="")
     parser.add_argument("--discovery-fixture", default="")
     parser.add_argument("--video-discovery-checkpoint", default="")
+    parser.add_argument("--replay-inputs", default="")
     parser.add_argument("--search-query", default="")
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
     args = parser.parse_args()
@@ -1283,6 +1351,7 @@ def main() -> int:
             readiness = check_runtime_readiness(args.video_runtime_config)
             args.video_runtime_config = readiness["config_path"]
             args.video_policy = readiness["policy_path"]
+        prepare_replay_inputs(args)
         execution_lock = WorkflowExecutionLock(args.workflow_db)
         if not execution_lock.acquire():
             emit_busy_handoff(args)
