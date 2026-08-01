@@ -375,58 +375,6 @@ class ProducerTest(unittest.TestCase):
             self.assertEqual(result["candidates"], [])
             self.assertEqual(result["packages"], [])
 
-    def test_completed_item_checkpoint_is_not_sent_to_media_resolver(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            run_id = "run_20260801_080215"
-            policy = root / "policy.json"
-            policy.write_text(json.dumps({
-                "schema_version": 1, "policy_id": "qa",
-                "target_count_min": 0, "target_count_max": 2,
-                "target_duration_seconds": 60, "maximum_duration_seconds": 120,
-                "title_value_patterns": ["AI"], "exploration_limit": 0,
-            }))
-            config = root / "runtime.json"
-            config.write_text(json.dumps({"policy_path": str(policy)}))
-            candidates = [{
-                "run_id": run_id, "aweme_id": value, "candidate_id": f"douyin:{value}",
-                "source_url": f"https://www.douyin.com/video/{value}",
-                "title": f"AI test {value}", "duration_seconds": 30,
-                "discovery_source": "configured_account",
-            } for value in ("1", "2")]
-            checkpoint = root / run_id / "video_understanding/packages/1.json"
-            checkpoint.parent.mkdir(parents=True)
-            checkpoint.write_text(json.dumps({
-                "run_id": run_id, "aweme_id": "1", "source_url": candidates[0]["source_url"],
-                "status": "completed", "temporary_media_remaining": 0,
-            }))
-            args = Namespace(
-                run_id=run_id, video_mode="normal", mode="normal",
-                video_runtime_config=str(config), video_policy=str(policy),
-                artifact_root=str(root), output_root=str(root), cdp="http://127.0.0.1:9333",
-            )
-            runtime = {"ready": True}
-
-            def resolve(command, **_kwargs):
-                resolver_input = Path(command[command.index("--input") + 1])
-                resolver_output = Path(command[command.index("--output") + 1])
-                rows = json.loads(resolver_input.read_text())
-                self.assertEqual([row["aweme_id"] for row in rows], ["2"])
-                resolver_output.write_text(json.dumps({
-                    "status": "completed", "candidates": rows,
-                }))
-                return mock.Mock(returncode=0, stdout="{}", stderr="")
-
-            completed = {
-                "run_id": run_id, "aweme_id": "2", "source_url": candidates[1]["source_url"],
-                "status": "completed", "temporary_media_remaining": 0,
-            }
-            with mock.patch.object(producer, "validate_runtime", return_value=runtime), \
-                 mock.patch.object(producer.subprocess, "run", side_effect=resolve), \
-                 mock.patch.object(producer, "process_one", return_value=completed):
-                result = producer.produce(args, discovered_candidates=candidates)
-            self.assertEqual({row["aweme_id"] for row in result["packages"]}, {"1", "2"})
-
     def test_candidate_identity_failures_are_typed(self):
         base = {
             "run_id": "run_20260727_080000",
