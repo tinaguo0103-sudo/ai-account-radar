@@ -7,7 +7,13 @@ from pathlib import Path
 
 from daily_workflow import DailyWorkflow
 from publish_website_projection import ProjectionError, build_workflow_projection
-from refresh_website_scripts import authority_snapshot, run_refresh, validate_override
+from refresh_website_scripts import (
+    ScriptRefreshPostWriteError,
+    ScriptRefreshPreconditionError,
+    authority_snapshot,
+    run_refresh,
+    validate_override,
+)
 
 
 RUN_ID = "run_20260802_104213"
@@ -64,8 +70,13 @@ def api_rows(payload):
          "script_id": next((item["id"] for item in payload["scripts"] if item["topic_id"] ==
                             next((topic["id"] for topic in payload["topics"] if topic["content_id"] == row["id"]), "")), None)}
         for row in payload["collected_items"]]
-    topics = [copy.deepcopy(row) | {"business_date": payload["business_date"],
-              "script_id": next((item["id"] for item in payload["scripts"] if item["topic_id"] == row["id"]), None)}
+    content_by_id = {row["id"]: row for row in payload["collected_items"]}
+    topics = [copy.deepcopy(row) | {
+              "business_date": payload["business_date"],
+              "review_stage": (row.get("cluster_synthesis") or {}).get("review_stage") or None,
+              "script_id": next((item["id"] for item in payload["scripts"] if item["topic_id"] == row["id"]), None),
+              "source_title": content_by_id[row["content_id"]]["title"],
+              "source_body": content_by_id[row["content_id"]].get("body", "")}
               for row in payload["topics"]]
     scripts = [{key: row.get(key) for key in (
         "id", "run_id", "topic_id", "script_version", "title", "hook", "content_structure",
@@ -214,10 +225,13 @@ class ScriptRefreshTests(unittest.TestCase):
                 value["authority_identity"] = "other-authority"
             return value
 
-        with self.assertRaisesRegex(ProjectionError, "script_refresh_projection_precondition_mismatch"):
+        with self.assertRaisesRegex(
+            ScriptRefreshPreconditionError, "script_refresh_projection_precondition_mismatch",
+        ) as captured:
             run_refresh(self.db, RUN_ID, DATE, self.artifact,
                         config=CONFIG, request_fn=request)
         self.assertEqual(self.website.posts, 0)
+        self.assertEqual(captured.exception.request_ledger["terminal_post"], 0)
 
     def test_content_and_topic_precondition_drift_fail_before_post(self):
         for resource, expected in (
@@ -235,31 +249,61 @@ class ScriptRefreshTests(unittest.TestCase):
                     value["page"]["total"] -= 1
                 return value
 
-            with self.subTest(resource=resource), self.assertRaisesRegex(ProjectionError, expected):
+            with self.subTest(resource=resource), self.assertRaisesRegex(
+                ScriptRefreshPreconditionError, expected,
+            ) as captured:
                 run_refresh(self.db, RUN_ID, DATE, self.artifact,
                             config=CONFIG, request_fn=request)
             self.assertEqual(website.posts, 0)
+            self.assertEqual(captured.exception.request_ledger["terminal_post"], 0)
+
+    def test_same_identity_business_drift_fails_before_post(self):
+        mutations = (
+            ("content", "title", "script_refresh_content_precondition_drift"),
+            ("topics", "selection_reason", "script_refresh_topic_precondition_drift"),
+        )
+        for resource, field, expected in mutations:
+            website = FakeWebsite(self.old_payload, self.website.payloads["run_20260801_080000"])
+            original = website.request
+
+            def request(method, url, payload=None, *, resource=resource, field=field):
+                value = original(method, url, payload)
+                if method == "GET" and f"/api/{resource}?" in url:
+                    key = "items" if resource == "content" else resource
+                    value[key][0][field] = "QA_DRIFT_SENTINEL"
+                return value
+
+            with self.subTest(resource=resource), self.assertRaisesRegex(
+                ScriptRefreshPreconditionError, expected,
+            ) as captured:
+                run_refresh(self.db, RUN_ID, DATE, self.artifact,
+                            config=CONFIG, request_fn=request)
+            self.assertEqual(website.posts, 0)
+            self.assertEqual(captured.exception.request_ledger["terminal_post"], 0)
 
     def test_readback_content_topic_and_history_drift_are_typed(self):
         mutations = {
-            "script_refresh_content_drift": lambda resource, rows: [
+            "content_mismatch": lambda resource, rows: [
                 ({**row, "title": "drift"} if resource == "content" and row.get("run_id") == RUN_ID else row)
                 for row in rows],
-            "script_refresh_topic_drift": lambda resource, rows: [
+            "topic_mismatch": lambda resource, rows: [
                 ({**row, "title": "drift"} if resource == "topics" and row.get("run_id") == RUN_ID else row)
                 for row in rows],
-            "script_refresh_historical_run_drift": lambda resource, rows: [
+            "historical_run_mismatch": lambda resource, rows: [
                 ({**row, "title": "drift"} if row.get("run_id") != RUN_ID else row) for row in rows],
-            "script_refresh_script_readback_mismatch": lambda resource, rows: [
+            "script_readback_mismatch": lambda resource, rows: [
                 ({**row, "body": "drift"} if resource == "scripts" and row.get("run_id") == RUN_ID else row)
                 for row in rows],
         }
         for reason, mutation in mutations.items():
             website = FakeWebsite(self.old_payload, self.website.payloads["run_20260801_080000"])
             website.mutate_readback = mutation
-            with self.subTest(reason=reason), self.assertRaisesRegex(ProjectionError, reason):
+            with self.subTest(reason=reason), self.assertRaisesRegex(
+                ScriptRefreshPostWriteError, f"script_refresh_post_write_unknown:{reason}",
+            ) as captured:
                 run_refresh(self.db, RUN_ID, DATE, self.artifact,
                             config=CONFIG, request_fn=website.request)
+            self.assertEqual(captured.exception.request_ledger["terminal_post"], 1)
 
 
 if __name__ == "__main__":
