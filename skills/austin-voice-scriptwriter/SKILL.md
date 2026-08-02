@@ -28,9 +28,8 @@ description: 将已确认的 AI 账号选题、Topic Card、制作方向补充�
 9. 前后对比、人工判断和内容边界都按题选用。只有当不确定性或责任边界本身就是这条题的冲突时，才自然说出来；不要把 `AI 不是万能`、`最后还是人判断` 或来源免责声明写成固定结尾。
 10. 不同题必须有不同的开场、问题密度、动作组织和结尾动力。完成后并排检查，不能共享强制问句链、编号骨架、转场句或边界收尾。
 
-本节是当前用户校准后的主规则。`references/private/three_round_learning.md`、
-`references/public_voice_style.md` 或历史样稿里的固定问句、三/四步动作和通用边界结尾
-只能作为历史节奏参考；与本节冲突时，以本节为准。
+本节是当前用户校准后的主规则。`references/public_voice_style.md` 或历史样稿里的固定问句、
+三/四步动作和通用边界结尾只能作为历史节奏参考；与本节冲突时，以本节为准。
 
 ## 来源与核验只留在后台
 
@@ -78,7 +77,9 @@ description: 将已确认的 AI 账号选题、Topic Card、制作方向补充�
 ## 资源
 
 - 需要更完整的公开安全风格规则时，读 `references/public_voice_style.md`。
-- 如果全局私有版存在 `references/private/three_round_learning.md`，可以借它理解 Austin 的节奏和判断感；其中历史固定模板不能覆盖本 Skill 的当前用户校准。
+- 正常口播生成不定位、不读取 `references/private/three_round_learning.md`，也不把其中的三轮、
+  三步或数字骨架加入写作上下文。只有用户明确要求历史风格研究、历史版本对照或旧方法诊断时，
+  才可把该文件作为历史资料定位和读取；研究结果不能自动变成后续正常生成合同。
 - 私有案例只作可选发散。0 个匹配案例是正常输入，不阻断生成，也不要求每题读取或使用案例；没有合适案例时，直接从 Topic Card 构造题目独有的合理假设/复合场景。
 - `scripts/austin_voice.py` 只提供 `fallback_draft / not_style_qa` 的字段化兜底，用于格式、安全和边界检查；不得把它当成 Austin 风格质量样例。
 - 当前 outer Codex 必须在同一上下文直接通读完整正文并完成质量检查，不启动新进程或其他 Agent。后续 PM、Independent QA 和用户仍需独立阅读匿名全文；它们是验收角色，不是本 Skill 需要调用的运行时。

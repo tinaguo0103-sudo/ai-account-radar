@@ -262,6 +262,32 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("多选题仍是一次 batch", skill)
         self.assertIn("每题都必须", skill)
 
+    def test_normal_generation_excludes_legacy_three_round_reference(self):
+        voice = VOICE_SKILL.read_text(encoding="utf-8")
+        self.assertIn(
+            "正常口播生成不定位、不读取 `references/private/three_round_learning.md`",
+            voice,
+        )
+        self.assertNotIn("可以借它理解 Austin 的节奏和判断感", voice)
+        self.assertIn("只有用户明确要求历史风格研究", voice)
+        self.assertIn("历史版本对照或旧方法诊断", voice)
+
+    def test_three_round_calibration_is_a_context_boundary_not_a_number_gate(self):
+        sources = "\n".join((
+            VOICE_SKILL.read_text(encoding="utf-8"),
+            NO_OVERTIME_SKILL.read_text(encoding="utf-8"),
+            SPOKEN_BODY_METHOD.read_text(encoding="utf-8"),
+        ))
+        for forbidden_gate in (
+            "禁止数字3",
+            "禁止三",
+            "三的出现次数",
+            "数字3不得出现",
+        ):
+            self.assertNotIn(forbidden_gate, sources)
+        self.assertIn("动作可以拆成两步、三步、四步", sources)
+        self.assertIn("是否编号只看这条内容是否因此更清楚", sources)
+
     def test_release_prompt_delegates_style_instead_of_copying_skill_rules(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
