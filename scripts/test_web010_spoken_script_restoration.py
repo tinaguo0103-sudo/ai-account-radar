@@ -288,6 +288,26 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("动作可以拆成两步、三步、四步", sources)
         self.assertIn("是否编号只看这条内容是否因此更清楚", sources)
 
+    def test_corrected_skill_structure_matches_continuous_task_body(self):
+        skill = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
+        self.assertIn("同步复读并更新该题的", skill)
+        self.assertIn("structure 与最终", skill)
+        structure = (
+            "Skill收藏焦虑 -> 从重复任务建立旧流程基线 -> 同材料接手并中途改brief -> "
+            "关键结论回链 -> 按交接与返工成本决定去留"
+        )
+        body_semantics = {
+            "从重复任务建立旧流程基线": "这个旧流程，就是我的基线。",
+            "同材料接手并中途改brief": "等它做到一半，我会把真实变化丢进去",
+            "关键结论回链": "我会随手点开一条最关键、也最容易写错的结论",
+            "按交接与返工成本决定去留": "整个过程，我只记真实发生的成本。",
+        }
+        corrected_body_fixture = " ".join(body_semantics.values())
+        self.assertNotIn("文档任务三轮实测", structure)
+        for structure_step, body_evidence in body_semantics.items():
+            self.assertIn(structure_step, structure)
+            self.assertIn(body_evidence, corrected_body_fixture)
+
     def test_release_prompt_delegates_style_instead_of_copying_skill_rules(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
