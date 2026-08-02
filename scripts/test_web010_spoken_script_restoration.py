@@ -23,6 +23,13 @@ NO_OVERTIME_SKILL = (
     / "austin-no-overtime-scripting"
     / "SKILL.md"
 )
+SPOKEN_BODY_METHOD = (
+    Path(__file__).resolve().parents[1]
+    / "skills"
+    / "austin-no-overtime-scripting"
+    / "prompts"
+    / "spoken_body_method.md"
+)
 
 
 class SpokenScriptRestorationTests(unittest.TestCase):
@@ -210,6 +217,50 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("输出只包含 `topic_id/title/hook/structure/body`", no_overtime)
         self.assertIn("0 case match 是正常输入", no_overtime)
         self.assertIn("同一上下文直接通读完整正文并完成质量检查", voice)
+
+    def test_each_topic_runs_the_complete_spoken_body_method(self):
+        skill = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
+        method = SPOKEN_BODY_METHOD.read_text(encoding="utf-8")
+        self.assertIn("逐题聚焦", skill)
+        self.assertIn("分段规划语义", skill)
+        self.assertIn("完整正文起草", skill)
+        self.assertIn("提词器视角复读", skill)
+        self.assertIn("逐题内容 QA 和必要重写", skill)
+        self.assertIn("完成一题再进入下一题", skill)
+        self.assertIn("3-5 分钟是语义完整度参考", method)
+        self.assertIn("scene、conflict、old workflow", method)
+        self.assertIn("identity exact coverage", method)
+        self.assertNotIn("字符下限", method)
+
+    def test_complete_method_keeps_simple_output_and_retired_paths_unreachable(self):
+        sources = "\n".join((
+            NO_OVERTIME_SKILL.read_text(encoding="utf-8"),
+            SPOKEN_BODY_METHOD.read_text(encoding="utf-8"),
+        ))
+        self.assertIn("只返回每题 `title/hook/structure/body`", sources)
+        self.assertIn("不创建额外用户产物", sources)
+        for forbidden_entrypoint in (
+            "codex exec",
+            "watch_script_package_queue.py",
+            "codex_script_package_runner.py",
+            "--write-feishu",
+        ):
+            self.assertNotIn(forbidden_entrypoint, sources)
+        for forced_template in (
+            "开头8秒必须",
+            "中段实操最多3步",
+            "必须出现人工修正点或AI边界",
+            "结尾必须回到真人判断",
+        ):
+            self.assertNotIn(forced_template, sources)
+
+    def test_multi_topic_batch_does_not_collapse_topics_into_one_summary(self):
+        skill = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
+        method = SPOKEN_BODY_METHOD.read_text(encoding="utf-8")
+        self.assertIn("不得先把多题压成一组摘要", skill)
+        self.assertIn("不要把五题先压成摘要", method)
+        self.assertIn("多选题仍是一次 batch", skill)
+        self.assertIn("每题都必须", skill)
 
     def test_release_prompt_delegates_style_instead_of_copying_skill_rules(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
