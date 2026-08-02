@@ -4,6 +4,7 @@ from run_daily_workflow import (
     WorkflowConflict,
     merge_video_discovery_checkpoint,
     normalize_source_ledger,
+    stable_item_id,
     validate_editorial,
     validate_scripts,
 )
@@ -58,14 +59,27 @@ class SourceLedgerTests(unittest.TestCase):
 
     def candidates(self):
         return [
-            {"discovery_source": "configured_account"},
-            {"discovery_source": "configured_account"},
-            {"discovery_source": "dynamic_search"},
+            {"item_id": "douyin:1", "discovery_source": "configured_account",
+             "discovery_sources": ["configured_account"]},
+            {"item_id": "douyin:2", "discovery_source": "configured_account",
+             "discovery_sources": ["configured_account"]},
+            {"item_id": "douyin:3", "discovery_source": "dynamic_search",
+             "discovery_sources": ["dynamic_search"]},
         ]
+
+    def collection(self, ledger=None):
+        return {
+            "source_ledger": ledger or self.ledger(),
+            "source_local_identities": {
+                "configured_account": ["douyin:1", "douyin:2"],
+                "recommendation": [],
+                "dynamic_search": ["douyin:3"],
+            },
+        }
 
     def test_source_local_empty_and_partial_keep_safe_survivors(self):
         rows = normalize_source_ledger(
-            {"source_ledger": self.ledger()},
+            self.collection(),
             video_candidates=self.candidates(),
         )
         self.assertEqual([row["discovered_count"] for row in rows], [2, 0, 1])
@@ -75,7 +89,7 @@ class SourceLedgerTests(unittest.TestCase):
             WorkflowConflict, "source_ledger_attempt_missing:recommendation",
         ):
             normalize_source_ledger(
-                {"source_ledger": [self.ledger()[0], self.ledger()[2]]},
+                self.collection([self.ledger()[0], self.ledger()[2]]),
                 video_candidates=self.candidates(),
             )
 
@@ -86,8 +100,96 @@ class SourceLedgerTests(unittest.TestCase):
             WorkflowConflict, "source_ledger_count_conflict:configured_account",
         ):
             normalize_source_ledger(
-                {"source_ledger": ledger}, video_candidates=self.candidates(),
+                self.collection(ledger), video_candidates=self.candidates(),
             )
+
+    def test_cross_source_overlap_keeps_both_ledgers_and_one_global_candidate(self):
+        collection = {
+            "content_items": [{"aweme_id": "1", "source_url": "https://www.douyin.com/video/1"}],
+            "candidates": [{
+                "aweme_id": "1", "source_url": "https://www.douyin.com/video/1",
+                "discovery_source": "configured_account", "title": "configured",
+            }],
+            "configured_account_status": "completed", "configured_account_reason": "",
+        }
+        checkpoint = {
+            "status": "completed",
+            "candidates": [{
+                "run_id": "", "aweme_id": "1", "source_url": "https://www.douyin.com/video/1",
+                "discovery_source": "dynamic_search", "title": "dynamic",
+            }],
+            "source_ledger": [
+                {"source": "recommendation", "status": "completed_empty", "reason": "none"},
+                {"source": "dynamic_search", "status": "completed", "reason": ""},
+            ],
+        }
+        merged = merge_video_discovery_checkpoint(collection, checkpoint, run_id="run_20260802_104213")
+        from run_daily_workflow import normalize_collection_candidates, normalize_items
+        items, _ = normalize_items(merged["content_items"])
+        _, videos, _ = normalize_collection_candidates(
+            merged["candidates"], items=items, run_id="run_20260802_104213",
+        )
+        rows = normalize_source_ledger(merged, video_candidates=videos)
+        self.assertEqual([row["discovered_count"] for row in rows], [1, 0, 1])
+        self.assertEqual(len(videos), 1)
+        self.assertEqual(videos[0]["discovery_sources"], ["configured_account", "dynamic_search"])
+
+    def test_same_source_duplicate_fails_closed(self):
+        checkpoint = {
+            "status": "completed",
+            "candidates": [{
+                "run_id": "", "aweme_id": "2", "source_url": "https://www.douyin.com/video/2",
+                "discovery_source": "dynamic_search",
+            }] * 2,
+            "source_ledger": [
+                {"source": "recommendation", "status": "completed_empty", "reason": "none"},
+                {"source": "dynamic_search", "status": "completed", "reason": ""},
+            ],
+        }
+        with self.assertRaisesRegex(WorkflowConflict, "source_ledger_source_duplicate:dynamic_search"):
+            merge_video_discovery_checkpoint({
+                "content_items": [], "candidates": [],
+                "configured_account_status": "completed_empty", "configured_account_reason": "",
+            }, checkpoint, run_id="run_20260802_104213")
+
+    def test_missing_source_identity_fails_closed(self):
+        collection = self.collection()
+        collection["source_local_identities"]["dynamic_search"] = []
+        with self.assertRaisesRegex(WorkflowConflict, "source_ledger_count_conflict:dynamic_search"):
+            normalize_source_ledger(collection, video_candidates=self.candidates())
+
+    def test_cross_source_overlap_replay_is_deterministic(self):
+        collection = {
+            "content_items": [{"aweme_id": "1", "source_url": "https://www.douyin.com/video/1"}],
+            "candidates": [{
+                "aweme_id": "1", "source_url": "https://www.douyin.com/video/1",
+                "discovery_source": "configured_account", "title": "configured",
+            }],
+            "configured_account_status": "completed", "configured_account_reason": "",
+        }
+        checkpoint = {
+            "status": "completed",
+            "candidates": [
+                {
+                    "run_id": "", "aweme_id": "2", "source_url": "https://www.douyin.com/video/2",
+                    "discovery_source": "dynamic_search", "title": "second",
+                },
+                {
+                    "run_id": "", "aweme_id": "1", "source_url": "https://www.douyin.com/video/1",
+                    "discovery_source": "dynamic_search", "title": "overlap",
+                },
+            ],
+            "source_ledger": [
+                {"source": "recommendation", "status": "completed_empty", "reason": "none"},
+                {"source": "dynamic_search", "status": "completed", "reason": ""},
+            ],
+        }
+        first = merge_video_discovery_checkpoint(collection, checkpoint, run_id="run_20260802_104213")
+        second = merge_video_discovery_checkpoint(collection, checkpoint, run_id="run_20260802_104213")
+        self.assertEqual(first, second)
+        self.assertEqual(first["source_local_identities"]["dynamic_search"], ["douyin:1", "douyin:2"])
+        overlap = next(row for row in first["candidates"] if stable_item_id(row) == "douyin:1")
+        self.assertEqual(overlap["discovery_sources"], ["configured_account", "dynamic_search"])
 
     def test_public_handoff_merges_configured_and_partial_discovery(self):
         collection = {

@@ -652,6 +652,12 @@ def merge_candidate_rows(current: dict[str, Any], incoming: dict[str, Any]) -> d
     output = dict(current)
     for key in sorted(set(current) | set(incoming)):
         left, right = current.get(key), incoming.get(key)
+        if key == "discovery_sources":
+            output[key] = sorted({
+                str(value) for values in (left, right)
+                if isinstance(values, list) for value in values if str(value)
+            })
+            continue
         left_empty = left is None or left == ""
         right_empty = right is None or right == ""
         if left_empty and not right_empty:
@@ -767,10 +773,18 @@ def merge_video_discovery_checkpoint(
     output = json.loads(json.dumps(collection, ensure_ascii=False))
     content = list(output.get("content_items") or [])
     candidates = list(output.get("candidates") or [])
-    configured = {
-        stable_item_id(row): row for row in candidates
-        if str(row.get("discovery_source") or "") == "configured_account"
+    source_local_identities: dict[str, list[str]] = {
+        source: [] for source in SOURCE_LEDGER_NAMES
     }
+    routes_by_identity: dict[str, set[str]] = {}
+    for row in candidates:
+        if str(row.get("discovery_source") or "") != "configured_account":
+            continue
+        identity = stable_item_id(row)
+        if identity in source_local_identities["configured_account"]:
+            raise WorkflowConflict("source_ledger_source_duplicate:configured_account")
+        source_local_identities["configured_account"].append(identity)
+        routes_by_identity.setdefault(identity, set()).add("configured_account")
     discovered = checkpoint.get("candidates")
     if not isinstance(discovered, list):
         raise WorkflowConflict("video_discovery_checkpoint_candidates_invalid")
@@ -784,6 +798,11 @@ def merge_video_discovery_checkpoint(
             raise WorkflowConflict("video_discovery_checkpoint_source_invalid")
         row["run_id"] = run_id
         row["candidate_id"] = stable_item_id(row)
+        source = str(row["discovery_source"])
+        if row["candidate_id"] in source_local_identities[source]:
+            raise WorkflowConflict(f"source_ledger_source_duplicate:{source}")
+        source_local_identities[source].append(row["candidate_id"])
+        routes_by_identity.setdefault(row["candidate_id"], set()).add(source)
         candidates.append(row)
         content.append({
             **row,
@@ -801,11 +820,14 @@ def merge_video_discovery_checkpoint(
     configured_status = str(output.get("configured_account_status") or "")
     if configured_status not in {"completed", "completed_empty", "partial", "failed"}:
         raise WorkflowConflict("configured_account_attempt_status_missing")
+    for row in candidates:
+        identity = stable_item_id(row)
+        row["discovery_sources"] = sorted(routes_by_identity.get(identity, set()))
     ledger = [{
         "source": "configured_account",
         "attempted": True,
         "status": configured_status,
-        "discovered_count": len(configured),
+        "discovered_count": len(source_local_identities["configured_account"]),
         "reason": str(output.get("configured_account_reason") or ""),
         "captured_at": str(output.get("configured_account_captured_at") or ""),
     }]
@@ -834,6 +856,10 @@ def merge_video_discovery_checkpoint(
     output["content_items"] = content
     output["candidates"] = candidates
     output["source_ledger"] = ledger
+    output["source_local_identities"] = {
+        source: sorted(identities)
+        for source, identities in source_local_identities.items()
+    }
     return output
 
 
@@ -866,19 +892,34 @@ def normalize_source_ledger(
         if status in {"partial", "failed"} and not str(raw.get("reason") or ""):
             raise WorkflowConflict("source_ledger_reason_missing")
         by_source[source] = json.loads(json.dumps(raw, ensure_ascii=False))
-    actual_counts = {
-        source: sum(
-            str(row.get("discovery_source") or "") == source
-            for row in video_candidates
-        )
-        for source in SOURCE_LEDGER_NAMES
-    }
+    supplied_identities = collection.get("source_local_identities")
+    if not isinstance(supplied_identities, dict):
+        raise WorkflowConflict("source_ledger_identities_missing")
+    source_identities: dict[str, set[str]] = {}
+    for source in SOURCE_LEDGER_NAMES:
+        values = supplied_identities.get(source)
+        if not isinstance(values, list) or any(not isinstance(value, str) or not value for value in values):
+            raise WorkflowConflict(f"source_ledger_identities_invalid:{source}")
+        if len(values) != len(set(values)):
+            raise WorkflowConflict(f"source_ledger_source_duplicate:{source}")
+        source_identities[source] = set(values)
     for source in SOURCE_LEDGER_NAMES:
         row = by_source.get(source)
         if row is None:
             raise WorkflowConflict(f"source_ledger_attempt_missing:{source}")
-        if row["discovered_count"] != actual_counts[source]:
+        if row["discovered_count"] != len(source_identities[source]):
             raise WorkflowConflict(f"source_ledger_count_conflict:{source}")
+    global_identities = {str(row.get("item_id") or "") for row in video_candidates}
+    if "" in global_identities or global_identities != set().union(*source_identities.values()):
+        raise WorkflowConflict("source_ledger_global_identity_conflict")
+    for row in video_candidates:
+        identity = str(row["item_id"])
+        expected_sources = sorted(
+            source for source, identities in source_identities.items()
+            if identity in identities
+        )
+        if row.get("discovery_sources") != expected_sources:
+            raise WorkflowConflict("source_ledger_provenance_conflict")
     if not any(row["attempted"] for row in by_source.values()):
         raise WorkflowConflict("all_sources_unattempted")
     if not video_candidates:

@@ -204,6 +204,7 @@ class ProducerTest(unittest.TestCase):
                 "candidates": [{
                     "aweme_id": "12345678901", "source": "douyin",
                     "discovery_source": "configured_account",
+                    "discovery_sources": ["configured_account"],
                     "title": "AI 工具",
                     "source_url": "https://www.douyin.com/video/12345678901",
                 }],
@@ -215,6 +216,11 @@ class ProducerTest(unittest.TestCase):
                     {"source": "dynamic_search", "attempted": True, "status": "completed_empty",
                      "discovered_count": 0, "reason": "no_safe_visible_candidates"},
                 ],
+                "source_local_identities": {
+                    "configured_account": ["douyin:12345678901"],
+                    "recommendation": [],
+                    "dynamic_search": [],
+                },
             }
             args = Namespace(
                 run_id="run_20260727_080000",
@@ -271,6 +277,7 @@ class ProducerTest(unittest.TestCase):
                 "candidates": [{
                     "aweme_id": "12345678901",
                     "discovery_source": "dynamic_search",
+                    "discovery_sources": ["dynamic_search"],
                     "source_url": "https://www.douyin.com/video/12345678901",
                     "title": "AI workflow",
                 }],
@@ -282,6 +289,11 @@ class ProducerTest(unittest.TestCase):
                     {"source": "dynamic_search", "attempted": True, "status": "completed",
                      "discovered_count": 1, "reason": ""},
                 ],
+                "source_local_identities": {
+                    "configured_account": [],
+                    "recommendation": [],
+                    "dynamic_search": ["douyin:12345678901"],
+                },
             }
             with self.assertRaisesRegex(RuntimeError, "video_package_run_mismatch"):
                 workflow.enrich(
@@ -308,6 +320,7 @@ class ProducerTest(unittest.TestCase):
                 "run_id": "run_20260727_080000",
                 "aweme_id": "12345678901",
                 "discovery_source": "configured_account",
+                "discovery_sources": ["configured_account"],
                 "title": "AI 工具",
                 "source_url": "https://www.douyin.com/video/12345678901",
                 "likes": 100,
@@ -321,6 +334,11 @@ class ProducerTest(unittest.TestCase):
                 {"source": "dynamic_search", "attempted": True, "status": "completed_empty",
                  "discovered_count": 0, "reason": "no_safe_visible_candidates"},
             ],
+            "source_local_identities": {
+                "configured_account": ["douyin:12345678901"],
+                "recommendation": [],
+                "dynamic_search": [],
+            },
         }
         args = Namespace(
             run_id="run_20260727_080000",
