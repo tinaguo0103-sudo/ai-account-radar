@@ -51,9 +51,11 @@ def normalize_video_understanding(value: Any) -> Any:
     return normalized
 
 
-def build_workflow_projection(db_path: Path, run_id: str,
-                              authority_identity: str) -> dict[str, Any]:
-    database = sqlite3.connect(db_path)
+def build_workflow_projection(
+    db_path: Path, run_id: str, authority_identity: str,
+    scripts_override: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    database = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)
     database.row_factory = sqlite3.Row
     run = database.execute("SELECT * FROM daily_runs WHERE run_id=?", (run_id,)).fetchone()
     rows = database.execute(
@@ -66,7 +68,7 @@ def build_workflow_projection(db_path: Path, run_id: str,
     payloads = {row["stage"]: json.loads(row["payload_json"]) for row in rows}
     collection = payloads.get("collection_enrichment", {})
     editorial = payloads.get("editorial", {})
-    scripts_stage = payloads.get("scripts", {})
+    scripts_stage = scripts_override if scripts_override is not None else payloads.get("scripts", {})
     understanding_by_url = {
         str(result.get("package", {}).get("source_url") or ""): result.get("package")
         for result in collection.get("understanding_results", [])
@@ -230,6 +232,7 @@ def build_workflow_projection(db_path: Path, run_id: str,
         },
         "source_runs": source_runs, "collected_items": content, "topics": topics, "scripts": scripts,
     }
+    database.close()
     return payload
 
 
