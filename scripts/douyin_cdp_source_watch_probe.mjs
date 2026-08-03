@@ -255,12 +255,50 @@ export async function probeSourcesWithTailRetry(client, sources, options, probe 
   }
   const retryRows = rows.filter(isTransientAccountFailure);
   if (!sharedRuntimeFailure && !riskSignal && retryRows.length) {
-    await sleep(Math.max(0, options.tailRetryDelayMs));
+    const readiness = await options.riskCheck?.();
+    const preRetryRisk = typeof readiness === "string"
+      ? readiness
+      : String(readiness?.riskSignal || "");
+    const readinessFailure = typeof readiness === "object"
+      ? String(readiness?.readinessFailure || "")
+      : "";
+    if (preRetryRisk) {
+      riskSignal = preRetryRisk;
+    } else if (readinessFailure) {
+      for (const failed of retryRows) {
+        failed.tail_retry_status = "not_attempted_browser_readiness_failure";
+        failed.tail_retry_reason = readinessFailure;
+        failed.extraction_diagnostics = {
+          ...(failed.extraction_diagnostics || {}),
+          tail_retry_status: readinessFailure,
+        };
+      }
+    } else {
+      await sleep(Math.max(0, options.tailRetryDelayMs));
+    }
+    if (riskSignal || readinessFailure) {
+      return { rows, sharedRuntimeFailure, riskSignal };
+    }
     for (const [retryIndex, failed] of retryRows.entries()) {
-      const preRetryRisk = await options.riskCheck?.();
-      if (preRetryRisk) {
-        riskSignal = String(preRetryRisk);
+      const retryReadiness = await options.riskCheck?.();
+      const retryRisk = typeof retryReadiness === "string"
+        ? retryReadiness
+        : String(retryReadiness?.riskSignal || "");
+      const retryReadinessFailure = typeof retryReadiness === "object"
+        ? String(retryReadiness?.readinessFailure || "")
+        : "";
+      if (retryRisk) {
+        riskSignal = retryRisk;
         break;
+      }
+      if (retryReadinessFailure) {
+        failed.tail_retry_status = "not_attempted_browser_readiness_failure";
+        failed.tail_retry_reason = retryReadinessFailure;
+        failed.extraction_diagnostics = {
+          ...(failed.extraction_diagnostics || {}),
+          tail_retry_status: retryReadinessFailure,
+        };
+        continue;
       }
       const source = sources.find((item) => String(item.account_name || item.name || "") === failed.account_name);
       const retried = await probe(client, source, options);
@@ -335,6 +373,27 @@ export async function runDouyinPreflightWithRecheck(
     preflight_attempts: attempts.length,
     rechecked: attempts.length > 1,
     elapsed_ms: Math.max(0, Date.now() - startedAt),
+  };
+}
+
+export async function tailRetryReadinessCheck(
+  run = runDouyinPreflight,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  delayMs = 1200,
+) {
+  const current = await runDouyinPreflightWithRecheck(run, sleep, delayMs);
+  if (current.ok) return { riskSignal: "", readinessFailure: "", preflight: current };
+  if (explicitVerificationState(current)) {
+    return {
+      riskSignal: String(current.login_state || current.status || "verification_required"),
+      readinessFailure: "",
+      preflight: current,
+    };
+  }
+  return {
+    riskSignal: "",
+    readinessFailure: String(current.status || "browser_readiness_failed"),
+    preflight: current,
   };
 }
 
@@ -1880,10 +1939,7 @@ async function main() {
         notificationStatus,
       );
     };
-    options.riskCheck = async () => {
-      const current = runDouyinPreflight();
-      return current.ok ? "" : (current.login_state || current.status);
-    };
+    options.riskCheck = async () => tailRetryReadinessCheck();
     const probed = await probeSourcesWithTailRetry(pageClient, sources, options);
     rows = [...invalidRows, ...probed.rows];
     sharedRuntimeFailure = probed.sharedRuntimeFailure;

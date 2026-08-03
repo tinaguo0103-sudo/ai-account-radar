@@ -37,6 +37,7 @@ import {
   isTransientAccountFailure,
   sourceGlobalRisk,
   runDouyinPreflightWithRecheck,
+  tailRetryReadinessCheck,
   validateDouyinSourceIdentity,
   validateFullAccountLimitArgs,
   validateContentItemLineage,
@@ -180,6 +181,78 @@ const inconclusivePreflight = await runDouyinPreflightWithRecheck(
 );
 assert.equal(inconclusivePreflight.status, "browser_readiness_inconclusive");
 assert.equal(inconclusivePreflight.preflight_attempts, 2);
+
+const inconclusiveTailReadiness = await tailRetryReadinessCheck(
+  () => ({ ok: false, status: "browser_readiness_inconclusive", login_state: "indeterminate" }),
+  async () => {},
+  0,
+);
+assert.equal(inconclusiveTailReadiness.riskSignal, "");
+assert.equal(inconclusiveTailReadiness.readinessFailure, "browser_readiness_inconclusive");
+const challengeTailReadiness = await tailRetryReadinessCheck(
+  () => ({ ok: false, status: "verification_required", login_state: "verification_required" }),
+  async () => {},
+  0,
+);
+assert.equal(challengeTailReadiness.riskSignal, "verification_required");
+assert.equal(challengeTailReadiness.readinessFailure, "");
+
+const transientSource = [source("transient-indeterminate")];
+const transientSleeps = [];
+const transientCheckpoints = [];
+const transientIndeterminate = await probeSourcesWithTailRetry(
+  {},
+  transientSource,
+  {
+    batchSize: 5,
+    accountPacingMs: 0,
+    batchCooldownMs: 0,
+    tailRetryDelayMs: 600000,
+    riskCheck: async () => inconclusiveTailReadiness,
+    onCheckpoint: async (rows, signal) => transientCheckpoints.push({
+      signal,
+      statuses: rows.map((row) => row.status),
+    }),
+  },
+  async (_client, row) => ({
+    account_name: row.account_name,
+    status: "failed",
+    failure_reason: "douyin_works_response_timeout",
+    extraction_diagnostics: { failure_code: "douyin_works_response_timeout" },
+    video_links: [],
+  }),
+  async (ms) => transientSleeps.push(ms),
+);
+assert.equal(transientIndeterminate.riskSignal, "");
+assert.deepEqual(transientSleeps, []);
+assert.equal(transientIndeterminate.rows[0].status, "failed");
+assert.equal(transientIndeterminate.rows[0].tail_retry_status, "not_attempted_browser_readiness_failure");
+assert.equal(transientIndeterminate.rows[0].tail_retry_reason, "browser_readiness_inconclusive");
+assert.equal(transientCheckpoints.some((row) => row.signal), false);
+assert.equal(transientIndeterminate.rows.some((row) => row.status === "not_attempted_waiting_manual_verification"), false);
+
+const transientChallengeSleeps = [];
+const transientChallenge = await probeSourcesWithTailRetry(
+  {},
+  [source("transient-challenge")],
+  {
+    batchSize: 5,
+    accountPacingMs: 0,
+    batchCooldownMs: 0,
+    tailRetryDelayMs: 600000,
+    riskCheck: async () => challengeTailReadiness,
+  },
+  async (_client, row) => ({
+    account_name: row.account_name,
+    status: "failed",
+    failure_reason: "douyin_works_response_timeout",
+    extraction_diagnostics: { failure_code: "douyin_works_response_timeout" },
+    video_links: [],
+  }),
+  async (ms) => transientChallengeSleeps.push(ms),
+);
+assert.equal(transientChallenge.riskSignal, "verification_required");
+assert.deepEqual(transientChallengeSleeps, []);
 
 const completedIds = new Set(["source_risk-1", "source_risk-2"]);
 const resumeOrder = [];
