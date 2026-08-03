@@ -759,6 +759,11 @@ def normalize_collection_candidates(
     return list(normalized.values()), list(video_by_item.values()), failures
 
 
+def editorial_handoff_candidates(collection: dict[str, Any]) -> list[dict[str, Any]]:
+    """Return the deeply read candidates owned by the editorial stage."""
+    return collection.get("editorial_candidates") or collection.get("candidates", [])
+
+
 SOURCE_LEDGER_NAMES = ("configured_account", "recommendation", "dynamic_search")
 
 
@@ -1008,6 +1013,9 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
     if result.get("run_id") != run_id or not isinstance(result.get("topics"), list):
         raise WorkflowConflict("editorial_result_invalid")
     allowed = {str(row.get("candidate_id")) for row in candidates}
+    identities = [str(row.get("candidate_id") or "") for row in result["topics"]]
+    if set(identities) != allowed or len(identities) != len(set(identities)):
+        raise WorkflowConflict("editorial_result_coverage_incomplete")
     seen: set[str] = set()
     for row in result["topics"]:
         identity = str(row.get("candidate_id") or "")
@@ -1020,8 +1028,21 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
             str(row.get(key) or "") for key in ("title", "hook", "structure", "selection_reason")
         ):
             raise WorkflowConflict("editorial_selected_incomplete")
-    if seen != allowed:
-        raise WorkflowConflict("editorial_result_coverage_incomplete")
+        if row["decision"] in {"observe", "reject"}:
+            basis = row.get("decision_basis")
+            if isinstance(basis, dict) and not all(
+                str(basis.get(key) or "").strip()
+                for key in ("content", "persona", "differentiation")
+            ):
+                raise WorkflowConflict("editorial_nonselect_topic_basis_missing")
+            reason = str(row.get("selection_reason") or "").lower()
+            evidence_only_reasons = (
+                "evidence insufficient", "insufficient evidence",
+                "independent corroboration is missing", "missing independent corroboration",
+                "证据不足", "缺少独立佐证", "缺少证据",
+            )
+            if reason.strip() in evidence_only_reasons:
+                raise WorkflowConflict("editorial_nonselect_evidence_gate_forbidden")
 
 
 def validate_scripts(run_id: str, result: dict[str, Any], selected: set[str]) -> None:
@@ -1043,7 +1064,9 @@ def validate_scripts(run_id: str, result: dict[str, Any], selected: set[str]) ->
         failed.add(identity)
         if not str(row.get("reason") or ""):
             raise WorkflowConflict("script_result_incomplete")
-    if seen | failed != selected:
+    if failed:
+        raise WorkflowConflict("script_selected_incomplete")
+    if seen != selected:
         raise WorkflowConflict("script_result_coverage_incomplete")
 
 
@@ -1463,11 +1486,7 @@ def main() -> int:
             )
             workflow.commit_stage(args.run_id, "collection_enrichment", collection, stage_status)
         editorial_stage = workflow.stage(args.run_id, "editorial")
-        editorial_handoff = collection.get("editorial_candidates", [])
-        if args.video_mode == "disabled" and not args.qa_frozen_packages:
-            # Explicit three-stage recovery/test mode has no video-enrichment
-            # stage. Production normal mode never takes this path.
-            editorial_handoff = collection.get("candidates", [])
+        editorial_handoff = editorial_handoff_candidates(collection)
         if editorial_stage:
             editorial = editorial_stage["payload"]
         elif not editorial_handoff:
@@ -1502,6 +1521,15 @@ def main() -> int:
                         "selection_reason_is_separate": True,
                     },
                     "select_requires": ["title", "hook", "structure"],
+                    "selection_policy": {
+                        "evidence_quantity_is_not_eligibility": True,
+                        "research_is_optional_enrichment": True,
+                        "research_failure_does_not_force_observe": True,
+                        "observe_reject_must_be_topic_based": [
+                            "duplicate", "weak_persona_fit",
+                            "no_distinct_judgment", "insufficient_user_value",
+                        ],
+                    },
                 },
                 "stage": "editorial", "status": "waiting",
             })

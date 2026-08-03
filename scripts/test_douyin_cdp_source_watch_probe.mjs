@@ -17,6 +17,8 @@ import {
   configuredAccountIdentity,
   deriveAccountHealth,
   FixedPageSession,
+  explicitVerificationState,
+  isNavigationTimeout,
   decodeRuntimeEvaluation,
   fixedDouyinTarget,
   limitedPlanRejection,
@@ -34,6 +36,7 @@ import {
   selectedSources,
   isTransientAccountFailure,
   sourceGlobalRisk,
+  runDouyinPreflightWithRecheck,
   validateDouyinSourceIdentity,
   validateFullAccountLimitArgs,
   validateContentItemLineage,
@@ -155,6 +158,28 @@ assert.equal(riskPayload.slice(3).every((row) => row.status === "not_attempted_w
 assert.equal(sourceGlobalRisk({ status: "needs_login_or_verification" }), "verification_required");
 assert.equal(notifyManualVerification(() => ({ status: 0 })), "sent");
 assert.equal(notifyManualVerification(() => ({ status: 1 })), "failed");
+assert.equal(explicitVerificationState({ login_state: "verification_required" }), true);
+assert.equal(explicitVerificationState({ login_state: "indeterminate" }), false);
+const preflightSequence = [
+  { ok: false, status: "browser_readiness_inconclusive", login_state: "indeterminate" },
+  { ok: true, status: "session_verified", login_state: "logged_in" },
+];
+const preflightSleeps = [];
+const recoveredPreflight = await runDouyinPreflightWithRecheck(
+  () => preflightSequence.shift(),
+  async (ms) => preflightSleeps.push(ms),
+  25,
+);
+assert.equal(recoveredPreflight.ok, true);
+assert.equal(recoveredPreflight.preflight_attempts, 2);
+assert.deepEqual(preflightSleeps, [25]);
+const inconclusivePreflight = await runDouyinPreflightWithRecheck(
+  () => ({ ok: false, status: "browser_readiness_inconclusive", login_state: "indeterminate" }),
+  async () => {},
+  0,
+);
+assert.equal(inconclusivePreflight.status, "browser_readiness_inconclusive");
+assert.equal(inconclusivePreflight.preflight_attempts, 2);
 
 const completedIds = new Set(["source_risk-1", "source_risk-2"]);
 const resumeOrder = [];
@@ -392,6 +417,68 @@ assert.equal(transitioned.status, "success");
 assert.deepEqual(transitioned.video_ids, ["50000000001"]);
 assert.equal(transitionSession.reattachments, 1);
 transitionSession.close();
+
+assert.equal(isNavigationTimeout(new Error("Page.navigate timed out after 8000ms")), true);
+assert.equal(isNavigationTimeout(new Error("verification_required")), false);
+const timeoutClients = [
+  {
+    async open() {}, close() {},
+    async send(method) {
+      if (["Runtime.enable", "Page.enable", "Network.enable"].includes(method)) return {};
+      if (method === "Page.navigate") throw new Error("Page.navigate timed out after 8000ms");
+      throw new Error(`unexpected timeout client command:${method}`);
+    },
+  },
+  {
+    async open() {}, close() {},
+    async send(method) {
+      if (["Runtime.enable", "Page.enable", "Network.enable"].includes(method)) return {};
+      if (method === "Page.navigate") return { frameId: "fixed-frame" };
+      throw new Error(`unexpected recovered client command:${method}`);
+    },
+  },
+];
+let timeoutClientIndex = 0;
+const timeoutSession = new FixedPageSession("http://127.0.0.1:9333", {
+  id: "fixed-target-id", type: "page", url: "https://www.douyin.com/user/account-1", webSocketDebuggerUrl: "ws://first",
+}, {
+  maxReattachments: 1,
+  clientFactory: () => timeoutClients[timeoutClientIndex++],
+  listTargets: async () => [{
+    id: "fixed-target-id", type: "page", url: "https://www.douyin.com/user/account-1", webSocketDebuggerUrl: "ws://second",
+  }],
+});
+await timeoutSession.open();
+assert.deepEqual(await timeoutSession.send("Page.navigate", { url: "https://www.douyin.com/user/account-1" }), { frameId: "fixed-frame" });
+assert.equal(timeoutSession.reattachments, 1);
+assert.equal(timeoutSession.navigationTimeoutRecoveries, 1);
+timeoutSession.close();
+
+const repeatedTimeoutClients = [0, 1].map(() => ({
+  async open() {}, close() {},
+  async send(method) {
+    if (["Runtime.enable", "Page.enable", "Network.enable"].includes(method)) return {};
+    if (method === "Page.navigate") throw new Error("Page.navigate timed out after 8000ms");
+    throw new Error(`unexpected repeated timeout command:${method}`);
+  },
+}));
+let repeatedTimeoutIndex = 0;
+const repeatedTimeoutSession = new FixedPageSession("http://127.0.0.1:9333", {
+  id: "fixed-target-id", type: "page", url: "https://www.douyin.com/user/account-1", webSocketDebuggerUrl: "ws://first",
+}, {
+  maxReattachments: 1,
+  clientFactory: () => repeatedTimeoutClients[repeatedTimeoutIndex++],
+  listTargets: async () => [{
+    id: "fixed-target-id", type: "page", url: "https://www.douyin.com/user/account-1", webSocketDebuggerUrl: "ws://second",
+  }],
+});
+await repeatedTimeoutSession.open();
+await assert.rejects(
+  repeatedTimeoutSession.send("Page.navigate", { url: "https://www.douyin.com/user/account-1" }),
+  /douyin_navigation_timeout_after_reattach/,
+);
+assert.equal(repeatedTimeoutSession.navigationTimeoutRecoveries, 1);
+repeatedTimeoutSession.close();
 
 let contextEvaluateCount = 0;
 let contextRecoveries = 0;

@@ -7,7 +7,7 @@ import { fileURLToPath } from "node:url";
 import {
   FixedPageSession,
   fixedDouyinTarget,
-  runDouyinPreflight,
+  runDouyinPreflightWithRecheck,
 } from "./douyin_cdp_source_watch_probe.mjs";
 
 function parseArgs(argv) {
@@ -335,7 +335,7 @@ async function collectVisibleFeed(session, waitMs, risk, stage) {
 
 async function main() {
   const options = parseArgs(process.argv.slice(2));
-  const preflight = runDouyinPreflight();
+  const preflight = await runDouyinPreflightWithRecheck();
   if (preflight.status !== "session_verified" || preflight.login_state !== "logged_in") {
     throw new Error(`discovery_preflight_blocked:${preflight.status || preflight.login_state}`);
   }

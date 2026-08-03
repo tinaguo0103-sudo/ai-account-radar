@@ -305,6 +305,39 @@ export function runDouyinPreflight(root = ROOT, runner = spawnSync) {
   }
 }
 
+export function explicitVerificationState(preflight) {
+  return ["verification_required", "challenge_detected", "sms_verification_required"]
+    .includes(String(preflight?.login_state || preflight?.status || ""));
+}
+
+export async function runDouyinPreflightWithRecheck(
+  run = runDouyinPreflight,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  delayMs = 1200,
+) {
+  const startedAt = Date.now();
+  const first = run();
+  const attempts = [first];
+  if (!first.ok && String(first.login_state || "") === "indeterminate") {
+    await sleep(Math.max(0, delayMs));
+    attempts.push(run());
+  }
+  const current = attempts.at(-1);
+  return {
+    ...current,
+    status: current.ok
+      ? "session_verified"
+      : explicitVerificationState(current)
+        ? "verification_required"
+        : String(current.login_state || "") === "indeterminate"
+          ? "browser_readiness_inconclusive"
+          : String(current.status || "browser_session_unavailable"),
+    preflight_attempts: attempts.length,
+    rechecked: attempts.length > 1,
+    elapsed_ms: Math.max(0, Date.now() - startedAt),
+  };
+}
+
 export function notifyManualVerification(runner = spawnSync) {
   const script = 'display notification "请在既有固定抖音页面完成滑块或短信验证，然后回到来源管理点击我已完成验证。" with title "抖音采集已暂停"';
   const result = runner("osascript", ["-e", script], { encoding: "utf8", stdio: "ignore" });
@@ -770,6 +803,7 @@ export class FixedPageSession {
     this.clientFactory = options.clientFactory || ((url) => new CdpClient(url));
     this.maxReattachments = Number.isInteger(options.maxReattachments) ? options.maxReattachments : 2;
     this.reattachments = 0;
+    this.navigationTimeoutRecoveries = 0;
     this.attachmentRecoveryStreak = 0;
     this.capture = null;
     if (!this.targetId || !target.webSocketDebuggerUrl) throw new Error("fixed_douyin_target_identity_missing");
@@ -862,6 +896,27 @@ export class FixedPageSession {
       this.attachmentRecoveryStreak = 0;
       return result;
     } catch (error) {
+      if (method === "Page.navigate" && isNavigationTimeout(error)) {
+        if (this.navigationTimeoutRecoveries >= 1) {
+          const exhausted = new Error("douyin_navigation_timeout_after_reattach");
+          exhausted.code = "douyin_navigation_timeout_after_reattach";
+          throw exhausted;
+        }
+        this.navigationTimeoutRecoveries += 1;
+        await this.reattach();
+        try {
+          const result = await this.client.send(method, params);
+          this.attachmentRecoveryStreak = 0;
+          return result;
+        } catch (retryError) {
+          if (isNavigationTimeout(retryError)) {
+            const exhausted = new Error("douyin_navigation_timeout_after_reattach");
+            exhausted.code = "douyin_navigation_timeout_after_reattach";
+            throw exhausted;
+          }
+          throw retryError;
+        }
+      }
       if (!isAttachmentTransitionError(error)) throw error;
       await this.reattach();
       const result = await this.client.send(method, params);
@@ -873,6 +928,11 @@ export class FixedPageSession {
   close() {
     this.client?.close();
   }
+}
+
+export function isNavigationTimeout(error) {
+  const text = String(error?.message || error || "");
+  return /Page\.navigate.*timed?\s*out|timed?\s*out.*Page\.navigate|navigation.*timed?\s*out/i.test(text);
 }
 
 export async function fixedDouyinTarget(cdp, listTargets = getJson) {
@@ -1508,6 +1568,7 @@ export function buildSourceRuntimeCoverage(sources, rows, failure) {
 }
 
 export async function probeAccount(client, source, options) {
+  const startedAt = Date.now();
   const homepage = source.url || source.homepage_url || "";
   if (!homepage) {
     return {
@@ -1603,6 +1664,9 @@ export async function probeAccount(client, source, options) {
         exact_account_bound: true,
         response_item_count: pageOwned.response_item_count,
         rejected_item_count: pageOwned.rejected_item_count,
+        phase_timing_ms: { total: Math.max(0, Date.now() - startedAt) },
+        fixed_target_reattachments: Number(client.reattachments || 0),
+        navigation_timeout_recoveries: Number(client.navigationTimeoutRecoveries || 0),
       },
       freshness_state: incremental.status,
       untrusted_video_ids: [],
@@ -1634,6 +1698,9 @@ export async function probeAccount(client, source, options) {
       extraction_diagnostics: {
         failure_code: String(error.code || "account_probe_failed"),
         extraction_source: "page_owned_exact_account_xhr",
+        phase_timing_ms: { total: Math.max(0, Date.now() - startedAt) },
+        fixed_target_reattachments: Number(client.reattachments || 0),
+        navigation_timeout_recoveries: Number(client.navigationTimeoutRecoveries || 0),
       },
       video_ids: [],
       video_links: [],
@@ -1705,27 +1772,32 @@ async function main() {
     return 0;
   }
 
-  const preflight = runDouyinPreflight();
+  const preflight = await runDouyinPreflightWithRecheck();
   if (!preflight.ok) {
-    const notificationStatus = notifyManualVerification();
+    const verificationRequired = explicitVerificationState(preflight);
+    const notificationStatus = verificationRequired ? notifyManualVerification() : "not_required";
     const waitingRows = plan.valid_sources.map((source) => ({
       source_id: String(source.id || source.source_id || ""),
       account_name: source.account_name || source.name || "",
-      status: "not_attempted_waiting_manual_verification",
+      status: verificationRequired
+        ? "not_attempted_waiting_manual_verification"
+        : "not_attempted_browser_readiness_failure",
       video_ids: [],
       video_links: [],
     }));
-    persistRiskCheckpoint(
-      options,
-      runId,
-      plan.valid_sources,
-      waitingRows,
-      preflight.login_state || preflight.status,
-      notificationStatus,
-    );
+    if (verificationRequired) {
+      persistRiskCheckpoint(
+        options,
+        runId,
+        plan.valid_sources,
+        waitingRows,
+        preflight.login_state || preflight.status,
+        notificationStatus,
+      );
+    }
     const failure = {
       ok: false,
-      status: "waiting_manual_verification",
+      status: verificationRequired ? "waiting_manual_verification" : "browser_readiness_failed",
       reason: preflight.login_state || preflight.status,
       preflight,
       account_navigations: 0,
@@ -1737,7 +1809,7 @@ async function main() {
     };
     fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(failure, null, 2), "utf8");
     console.log(JSON.stringify(failure, null, 2));
-    return 4;
+    return verificationRequired ? 4 : 5;
   }
 
   let version;

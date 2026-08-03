@@ -15,7 +15,7 @@ description: 基于已打开的精确来源、网页研究证据与 Austin 私�
 trusted collection artifact review pool
 -> optional exact source enhancement
 -> persona-native editorial decision
--> selected visible hard-claim evidence check
+-> optional selected hard-claim research or claim softening
 -> dynamic global ranking (0..N, no cap)
 -> operational field mapping
 -> lossless paginated Topic Cards
@@ -27,7 +27,9 @@ trusted collection artifact review pool
 
 - 已验证 run/date/source/account/fingerprint 且具有非空标题、caption 或 body 的采集 artifact 本身可进入 Skill。原链接为空或打不开时标记 `link_unavailable` 与较低置信度，不得因此删除候选。
 - raw 素材中的数字、日期、法律、医疗、金融等词不构成 Stage 1 前置研究资格门。所有可信 exact-run artifact 先进入 Stage 1。
-- 只有最终选择的可见标题或角度实际保留精确数字、日期、直接引语、官方声明、法律、医疗、金融、安全等 hard claim 时，才要求对应研究证据。证据不足时先删除或软化该 hard claim；仍不成立时只淘汰该候选。
+- 证据数量不是推荐资格门。先按题目本身的用户价值、账号适配、独特判断与时效性决定 `select|observe|reject`。
+- 只有最终选择的可见标题或角度实际保留精确数字、日期、直接引语、官方声明、法律、医疗、金融、安全等 hard claim 时，才补充公开研究或删除/软化该 hard claim。研究失败不自动把值得做的题降为 `observe`；可以改用已有公开事实、Austin 判断与明确假设实验完成脚本。
+- `observe/reject` 只能基于题目重复、账号适配弱、没有独特判断或用户价值不足，不能只写“证据不足”“缺少案例”或“缺少独立佐证”。
 - 产品名、创作者名、工具名不是天然钩子。钩子必须解释陌生受众为什么会点，并绑定 evidence IDs。
 - persona 只影响 Austin 如何注意、比较、怀疑、取舍和表达；不能改变来源事实、证据强度或 eligibility。
 - 私有案例不是候选证据。禁止输出案例名、case ID、引用、锚点或“案例证明”。
@@ -55,7 +57,7 @@ trusted collection artifact review pool
 - Austin 自然角度
 - 2-3 个标题方向与最终可见标题
 - 标题理由、来源标题钩子及借用/舍弃说明
-- `recommendation_status`: `生成脚本包|补证据|存素材|观察|不做`
+- `recommendation_status`: `生成脚本包|存素材|观察|不做`。`补证据` 不是推荐状态；研究仅是已选题的可选内容增强。
 - near miss / gap
 - 公开主编判断摘要
 - research dossier hash 与支撑 angle/title/hook 的 evidence IDs
@@ -109,4 +111,4 @@ Stage 2 只生成运营字段，如实验、验证、资产和内部细节。它
 
 ## Fail Closed
 
-最终可见 hard claim 无证据、Skill 输出失败、schema/hash 不一致、ownership drift、排序 bijection 失败或分页 ID 丢失/重复时，该候选不得生成标题、推荐或卡片。其他完整候选继续，候选失败保持可见但不得反转 survivor 的核心业务结果。推荐数可以为 0，此时正常结束为 `completed_no_recommendation`，不得凑数。
+最终可见 hard claim 无法核实时，先软化或删除该 claim，不得把证据数量变成选题资格门。Skill 输出失败、schema/hash 不一致、ownership drift、排序 bijection 失败或分页 ID 丢失/重复时，该候选不得生成标题、推荐或卡片。其他完整候选继续。推荐数可以为 0，此时正常结束为 `completed_no_recommendation`，不得凑数。

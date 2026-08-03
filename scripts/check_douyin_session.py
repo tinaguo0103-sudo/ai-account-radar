@@ -107,9 +107,15 @@ def preflight(port: int, profile: Path, runner=subprocess.run) -> tuple[int, dic
     exit_error = "" if result.returncode == expected_exit else f"unexpected_dom_probe_exit:{result.returncode}:expected:{expected_exit}"
     probe_error = parse_error or exit_error or str(login.get("error") or "")
     probe_ok = not parse_error and not exit_error and state == "logged_in"
+    status = (
+        "session_verified" if probe_ok else
+        "browser_readiness_inconclusive" if state == "indeterminate" else
+        "verification_required" if state == "verification_required" else
+        "browser_session_logged_out"
+    )
     payload.update({
         "ok": probe_ok,
-        "status": "session_verified" if probe_ok else "login_preflight_failed",
+        "status": status,
         "login_state": state,
         "page": {"url": str(login.get("url") or ""), "title": str(login.get("title") or "")},
         "dom_markers": {str(key): bool(value) for key, value in (login.get("markers") or {}).items()},

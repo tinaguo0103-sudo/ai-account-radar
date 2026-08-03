@@ -156,6 +156,11 @@ class DouyinChromeRuntimeTests(unittest.TestCase):
             code, payload = session.preflight(9333, Path("/tmp/p"), runner=lambda *a, **k: completed)
             self.assertNotEqual(code, 0)
             self.assertEqual(payload["login_state"], state)
+            self.assertEqual(payload["status"], {
+                "logged_out": "browser_session_logged_out",
+                "verification_required": "verification_required",
+                "indeterminate": "browser_readiness_inconclusive",
+            }[state])
 
     @mock.patch.object(session, "verify_listener_identity")
     def test_empty_and_malformed_dom_probe_output_fail_typed(self, identity_mock) -> None:
@@ -167,7 +172,7 @@ class DouyinChromeRuntimeTests(unittest.TestCase):
             code, payload = session.preflight(9333, Path("/tmp/p"), runner=lambda *a, **k: completed)
             self.assertEqual(code, 4)
             self.assertFalse(payload["ok"])
-            self.assertEqual(payload["status"], "login_preflight_failed")
+            self.assertEqual(payload["status"], "browser_readiness_inconclusive")
             self.assertEqual(payload["error"], expected)
 
     @mock.patch.object(session, "verify_listener_identity")
@@ -227,7 +232,7 @@ class DouyinChromeRuntimeTests(unittest.TestCase):
                 code, payload = session.preflight(9333, Path("/tmp/p"), runner=lambda *a, **k: completed)
                 self.assertEqual(code, 4)
                 self.assertFalse(payload["ok"])
-                self.assertEqual(payload["status"], "login_preflight_failed")
+                self.assertEqual(payload["status"], "browser_readiness_inconclusive")
                 self.assertEqual(payload["login_state"], "indeterminate")
                 self.assertEqual(payload["error"], "malformed_dom_probe_output")
 
