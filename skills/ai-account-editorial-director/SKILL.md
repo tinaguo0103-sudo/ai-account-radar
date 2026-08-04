@@ -49,9 +49,19 @@ trusted collection artifact review pool
 
 输入只允许：精确来源事实、研究 dossier、证据化 hook、账号四方向、persona facts 与检索的风格片段。
 
+先逐题完成独立资格判断，再看全批排序。对每个候选先回答反事实问题：如果今天只有这一题，
+它是否值得 Austin 制作一篇完整脚本？把答案写入 `standalone_eligibility.decision` 和只基于该卡
+用户价值、persona fit、独特判断、时效与真实来源身份的 `reason`。所有 standalone select 在
+排序前锁定；ranking 只能排序，不能降级。
+
+唯一允许的跨候选降级是真重复，并须显式记录 `duplicate_relation`：相同用户冲突、相同核心
+判断、相同动作或实验三项同时为真。共享产品、实体、工具或大类不构成重复。每个 observe/reject
+理由在隐藏其余候选后仍须成立，不能使用“不是今天主线”“不如另一题”或名额竞争作为语义。
+
 输出必须包括：
 
 - `decision`: `select|observe|reject`
+- `standalone_eligibility`: 独立 `decision` 与 candidate-local `reason`
 - 选择与不选择理由
 - 被舍弃的常见讲法
 - Austin 自然角度

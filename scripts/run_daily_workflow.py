@@ -1013,6 +1013,7 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
     if result.get("run_id") != run_id or not isinstance(result.get("topics"), list):
         raise WorkflowConflict("editorial_result_invalid")
     allowed = {str(row.get("candidate_id")) for row in candidates}
+    requires_standalone = run_id[4:12] >= "20260804"
     identities = [str(row.get("candidate_id") or "") for row in result["topics"]]
     if set(identities) != allowed or len(identities) != len(set(identities)):
         raise WorkflowConflict("editorial_result_coverage_incomplete")
@@ -1024,6 +1025,24 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
         seen.add(identity)
         if row.get("decision") not in {"select", "observe", "reject", "failed"}:
             raise WorkflowConflict("editorial_result_invalid")
+        standalone = row.get("standalone_eligibility")
+        if requires_standalone and (not isinstance(standalone, dict) or standalone.get("decision") not in {
+            "select", "observe", "reject", "failed",
+        } or not str(standalone.get("reason") or "").strip()):
+            raise WorkflowConflict("editorial_standalone_eligibility_missing")
+        if requires_standalone and row["decision"] != standalone["decision"]:
+            duplicate = row.get("duplicate_relation")
+            valid_duplicate = (
+                standalone["decision"] == "select"
+                and row["decision"] in {"observe", "reject"}
+                and isinstance(duplicate, dict)
+                and str(duplicate.get("duplicate_of") or "") in allowed
+                and all(duplicate.get(key) is True for key in (
+                    "same_user_conflict", "same_core_judgment", "same_action_or_experiment",
+                ))
+            )
+            if not valid_duplicate:
+                raise WorkflowConflict("editorial_standalone_decision_demotion")
         if row["decision"] == "select" and not all(
             str(row.get(key) or "") for key in ("title", "hook", "structure", "selection_reason")
         ):
