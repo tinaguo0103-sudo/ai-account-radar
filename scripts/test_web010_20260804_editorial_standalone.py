@@ -48,6 +48,45 @@ class EditorialStandaloneEligibilityTest(unittest.TestCase):
         with self.assertRaisesRegex(WorkflowConflict, "editorial_standalone_decision_demotion"):
             validate_editorial(RUN, {"run_id": RUN, "topics": [row("original"), duplicate]}, candidates)
 
+    def test_duplicate_cannot_reference_itself(self) -> None:
+        duplicate = row("duplicate", "observe")
+        duplicate["standalone_eligibility"] = {"decision": "select", "reason": "worthwhile alone"}
+        duplicate["duplicate_relation"] = {
+            "duplicate_of": "duplicate", "same_user_conflict": True,
+            "same_core_judgment": True, "same_action_or_experiment": True,
+        }
+        with self.assertRaisesRegex(WorkflowConflict, "editorial_standalone_decision_demotion"):
+            validate_editorial(RUN, {"run_id": RUN, "topics": [duplicate]}, [candidate("duplicate")])
+
+    def test_mutual_duplicate_demotion_cannot_remove_all_representatives(self) -> None:
+        first = row("first", "observe")
+        second = row("second", "observe")
+        for current, target in ((first, "second"), (second, "first")):
+            current["standalone_eligibility"] = {"decision": "select", "reason": "worthwhile alone"}
+            current["duplicate_relation"] = {
+                "duplicate_of": target, "same_user_conflict": True,
+                "same_core_judgment": True, "same_action_or_experiment": True,
+            }
+        with self.assertRaisesRegex(WorkflowConflict, "editorial_standalone_decision_demotion"):
+            validate_editorial(
+                RUN, {"run_id": RUN, "topics": [first, second]},
+                [candidate("first"), candidate("second")],
+            )
+
+    def test_duplicate_representative_must_remain_selected(self) -> None:
+        representative = row("representative", "observe")
+        duplicate = row("duplicate", "observe")
+        duplicate["standalone_eligibility"] = {"decision": "select", "reason": "worthwhile alone"}
+        duplicate["duplicate_relation"] = {
+            "duplicate_of": "representative", "same_user_conflict": True,
+            "same_core_judgment": True, "same_action_or_experiment": True,
+        }
+        with self.assertRaisesRegex(WorkflowConflict, "editorial_standalone_decision_demotion"):
+            validate_editorial(
+                RUN, {"run_id": RUN, "topics": [representative, duplicate]},
+                [candidate("representative"), candidate("duplicate")],
+            )
+
     def test_nonselect_has_candidate_local_standalone_reason(self) -> None:
         observe = row("narrow", "observe")
         validate_editorial(RUN, {"run_id": RUN, "topics": [observe]}, [candidate("narrow")])

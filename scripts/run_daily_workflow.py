@@ -1017,6 +1017,9 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
     identities = [str(row.get("candidate_id") or "") for row in result["topics"]]
     if set(identities) != allowed or len(identities) != len(set(identities)):
         raise WorkflowConflict("editorial_result_coverage_incomplete")
+    rows_by_identity = {
+        str(row.get("candidate_id") or ""): row for row in result["topics"]
+    }
     seen: set[str] = set()
     for row in result["topics"]:
         identity = str(row.get("candidate_id") or "")
@@ -1032,11 +1035,24 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
             raise WorkflowConflict("editorial_standalone_eligibility_missing")
         if requires_standalone and row["decision"] != standalone["decision"]:
             duplicate = row.get("duplicate_relation")
+            representative_id = str(
+                duplicate.get("duplicate_of") if isinstance(duplicate, dict) else ""
+            )
+            representative = rows_by_identity.get(representative_id)
+            representative_standalone = (
+                representative.get("standalone_eligibility")
+                if isinstance(representative, dict) else None
+            )
             valid_duplicate = (
                 standalone["decision"] == "select"
                 and row["decision"] in {"observe", "reject"}
                 and isinstance(duplicate, dict)
-                and str(duplicate.get("duplicate_of") or "") in allowed
+                and representative_id in allowed
+                and representative_id != identity
+                and isinstance(representative, dict)
+                and representative.get("decision") == "select"
+                and isinstance(representative_standalone, dict)
+                and representative_standalone.get("decision") == "select"
                 and all(duplicate.get(key) is True for key in (
                     "same_user_conflict", "same_core_judgment", "same_action_or_experiment",
                 ))
