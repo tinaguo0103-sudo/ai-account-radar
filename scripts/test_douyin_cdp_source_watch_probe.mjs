@@ -12,6 +12,7 @@ import {
   buildWorksFactParity,
   buildSourceRuntimeCoverage,
   checkpointPayload,
+  hasUsableFinalSourceArtifact,
   classifyWorksResponse,
   collectionStatusWithHealth,
   configuredAccountIdentity,
@@ -27,6 +28,7 @@ import {
   mergeNewAndBacklog,
   persistAccountHealth,
   probeSourcesWithTailRetry,
+  rehydrationSourceIds,
   notifyManualVerification,
   persistCollectedCandidates,
   probeAccount,
@@ -320,6 +322,82 @@ for (const checkpoint of resumeCheckpoints) {
 }
 assert.equal(resumeCheckpoints[0][25].status, "updated_no_new_items");
 assert.deepEqual(resumeCheckpoints[0].slice(26), failedPrior.slice(1));
+
+const artifactRoot = fs.mkdtempSync(path.join(os.tmpdir(), "douyin-rehydrate-"));
+const rehydratePrior = [
+  ...resumeSources.slice(0, 5).map((row, ordinal) => ({
+    source_id: row.id,
+    status: "completed",
+    artifact_sha256: `completed-${ordinal}`,
+    artifact_count: 1,
+    ordinal,
+  })),
+  ...resumeSources.slice(5, 25).map((row, offset) => ({
+    source_id: row.id,
+    status: "updated_no_new_items",
+    artifact_sha256: `no-new-${offset}`,
+    artifact_count: 0,
+    ordinal: offset + 5,
+  })),
+  ...failedPrior,
+];
+assert.equal(hasUsableFinalSourceArtifact(artifactRoot, "run_rehydrate"), false);
+const rehydrateIds = rehydrationSourceIds(rehydratePrior, false);
+assert.deepEqual(rehydrateIds, resumeSources.slice(0, 5).map((row) => row.id));
+const rehydrateCalls = [];
+const rehydrateCheckpoints = [];
+await probeSourcesWithTailRetry(
+  {},
+  resumeSources,
+  {
+    completedSourceIds: resumeSources.slice(5, 25).map((row) => row.id),
+    batchSize: 31,
+    accountPacingMs: 0,
+    batchCooldownMs: 0,
+    tailRetryDelayMs: 0,
+    riskCheck: async () => ({ riskSignal: "", readinessFailure: "" }),
+    onCheckpoint: async (rows) => rehydrateCheckpoints.push(
+      checkpointPayload(resumeSources, rows, "", rehydratePrior),
+    ),
+  },
+  async (_client, row) => {
+    rehydrateCalls.push(row.id);
+    if (rehydrateIds.includes(row.id)) {
+      return {
+        source_id: row.id,
+        account_name: row.account_name,
+        status: "success",
+        video_ids: [`video-${row.id}`],
+        video_links: [`https://www.douyin.com/video/video-${row.id}`],
+      };
+    }
+    return { source_id: row.id, account_name: row.account_name, status: "updated_no_new_items", video_links: [] };
+  },
+  async () => {},
+);
+assert.deepEqual(rehydrateCalls, [
+  ...resumeSources.slice(0, 5).map((row) => row.id),
+  ...resumeSources.slice(25).map((row) => row.id),
+]);
+for (const checkpoint of rehydrateCheckpoints) {
+  assert.deepEqual(checkpoint.slice(0, 25), rehydratePrior.slice(0, 25));
+}
+const manualPath = path.join(artifactRoot, "content_items_manual.jsonl");
+const manualBytes = Buffer.from('{"content":"rehydrated"}\n', "utf8");
+fs.writeFileSync(manualPath, manualBytes);
+fs.writeFileSync(path.join(artifactRoot, "cdp_probe_results.json"), JSON.stringify({
+  run_id: "run_rehydrate",
+  status: "completed_with_failures",
+  manual_artifact: {
+    run_id: "run_rehydrate",
+    path: fs.realpathSync(manualPath),
+    sha256: (await import("node:crypto")).createHash("sha256").update(manualBytes).digest("hex"),
+    size: manualBytes.length,
+    row_count: 1,
+  },
+}));
+assert.equal(hasUsableFinalSourceArtifact(artifactRoot, "run_rehydrate"), true);
+assert.deepEqual(rehydrationSourceIds(rehydratePrior, true), []);
 
 const quarantinedSources = Array.from({ length: 8 }, (_, index) => source(`quarantined-${index + 1}`));
 const selectedSourceIds = new Set(resumeSources.map((row) => row.id));

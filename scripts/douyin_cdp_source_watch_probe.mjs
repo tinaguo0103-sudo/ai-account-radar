@@ -410,6 +410,15 @@ export function checkpointPayload(sources, rows, riskSignal = "", priorRows = []
     const sourceId = String(source.id || source.source_id || "");
     const row = byId.get(sourceId);
     const prior = priorById.get(sourceId);
+    if (prior && ["completed", "updated_no_new_items"].includes(String(prior.status || ""))) {
+      return {
+        source_id: sourceId,
+        status: String(prior.status),
+        artifact_sha256: String(prior.artifact_sha256 || ""),
+        artifact_count: Number(prior.artifact_count) || 0,
+        ordinal: Number(prior.ordinal) || 0,
+      };
+    }
     if (!row && prior) {
       return {
         source_id: sourceId,
@@ -439,6 +448,35 @@ export function checkpointPayload(sources, rows, riskSignal = "", priorRows = []
       ordinal,
     };
   });
+}
+
+export function hasUsableFinalSourceArtifact(outDir, runId) {
+  const resultPath = path.join(outDir, "cdp_probe_results.json");
+  const manualPath = path.join(outDir, "content_items_manual.jsonl");
+  try {
+    const result = JSON.parse(fs.readFileSync(resultPath, "utf8"));
+    const artifact = result.manual_artifact || {};
+    const bytes = fs.readFileSync(manualPath);
+    const rows = bytes.toString("utf8").split("\n").filter((line) => line.trim()).length;
+    return String(result.run_id || "") === String(runId || "")
+      && ["completed", "completed_with_failures"].includes(String(result.status || ""))
+      && String(artifact.run_id || "") === String(runId || "")
+      && fs.realpathSync(manualPath) === String(artifact.path || "")
+      && createHash("sha256").update(bytes).digest("hex") === String(artifact.sha256 || "")
+      && bytes.length === Number(artifact.size)
+      && rows > 0
+      && rows === Number(artifact.row_count);
+  } catch {
+    return false;
+  }
+}
+
+export function rehydrationSourceIds(priorRows, finalArtifactUsable) {
+  if (finalArtifactUsable) return [];
+  return priorRows
+    .filter((row) => String(row.status || "") === "completed" && Number(row.artifact_count) > 0)
+    .map((row) => String(row.source_id || ""))
+    .filter(Boolean);
 }
 
 export function persistRiskCheckpoint(options, runId, sources, rows, riskSignal, notificationStatus = "") {
@@ -1936,8 +1974,13 @@ async function main() {
     ], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     const priorRisk = prior.status === 0 ? JSON.parse(String(prior.stdout || "{}")) : { checkpoints: [] };
     options.priorCheckpointRows = priorRisk.checkpoints || [];
+    const rehydrateIds = new Set(rehydrationSourceIds(
+      options.priorCheckpointRows,
+      hasUsableFinalSourceArtifact(options.outDir, runId),
+    ));
     options.completedSourceIds = (priorRisk.checkpoints || [])
       .filter((row) => ["completed", "updated_no_new_items"].includes(row.status))
+      .filter((row) => !rehydrateIds.has(String(row.source_id || "")))
       .map((row) => row.source_id);
     let notificationStatus = "";
     options.onCheckpoint = async (checkpointRows, riskSignal) => {
