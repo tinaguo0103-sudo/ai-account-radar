@@ -352,11 +352,13 @@ export async function runDouyinPreflightWithRecheck(
   run = runDouyinPreflight,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   delayMs = 1200,
+  reload = async () => {},
 ) {
   const startedAt = Date.now();
   const first = run();
   const attempts = [first];
   if (!first.ok && String(first.login_state || "") === "indeterminate") {
+    await reload();
     await sleep(Math.max(0, delayMs));
     attempts.push(run());
   }
@@ -380,8 +382,9 @@ export async function tailRetryReadinessCheck(
   run = runDouyinPreflight,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   delayMs = 1200,
+  reload = async () => {},
 ) {
-  const current = await runDouyinPreflightWithRecheck(run, sleep, delayMs);
+  const current = await runDouyinPreflightWithRecheck(run, sleep, delayMs, reload);
   if (current.ok) return { riskSignal: "", readinessFailure: "", preflight: current };
   if (explicitVerificationState(current)) {
     return {
@@ -1880,7 +1883,25 @@ async function main() {
     return 0;
   }
 
-  const preflight = await runDouyinPreflightWithRecheck();
+  let fixedTarget;
+  let pageClient;
+  const fixedSession = async () => {
+    if (pageClient) return pageClient;
+    fixedTarget = await fixedDouyinTarget(options.cdp);
+    pageClient = new FixedPageSession(options.cdp, fixedTarget);
+    await pageClient.open();
+    return pageClient;
+  };
+  const reloadFixedSession = async () => {
+    const session = await fixedSession();
+    await session.send("Page.reload", { ignoreCache: false });
+  };
+  const preflight = await runDouyinPreflightWithRecheck(
+    runDouyinPreflight,
+    (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+    1200,
+    reloadFixedSession,
+  );
   if (!preflight.ok) {
     const verificationRequired = explicitVerificationState(preflight);
     const notificationStatus = verificationRequired ? notifyManualVerification() : "not_required";
@@ -1917,6 +1938,7 @@ async function main() {
     };
     fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(failure, null, 2), "utf8");
     console.log(JSON.stringify(failure, null, 2));
+    pageClient?.close();
     return verificationRequired ? 4 : 5;
   }
 
@@ -1933,6 +1955,7 @@ async function main() {
     };
     fs.writeFileSync(path.join(options.outDir, "cdp_probe_results.json"), JSON.stringify(failure, null, 2), "utf8");
     console.log(JSON.stringify(failure, null, 2));
+    pageClient?.close();
     return 2;
   }
 
@@ -1955,15 +1978,10 @@ async function main() {
   }));
   let sharedRuntimeFailure = null;
   let rows = invalidRows;
-  let fixedTarget;
   try {
-    fixedTarget = await fixedDouyinTarget(options.cdp);
+    await fixedSession();
   } catch (error) {
     sharedRuntimeFailure = { status: error.code || "fixed_douyin_target_missing", reason: error.message };
-  }
-  const pageClient = fixedTarget ? new FixedPageSession(options.cdp, fixedTarget) : null;
-  if (pageClient) {
-    await pageClient.open();
   }
   try {
     const prior = spawnSync("python3", [
@@ -1994,7 +2012,12 @@ async function main() {
         notificationStatus,
       );
     };
-    options.riskCheck = async () => tailRetryReadinessCheck();
+    options.riskCheck = async () => tailRetryReadinessCheck(
+      runDouyinPreflight,
+      (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+      1200,
+      reloadFixedSession,
+    );
     const probed = await probeSourcesWithTailRetry(pageClient, sources, options);
     rows = [...invalidRows, ...probed.rows];
     sharedRuntimeFailure = probed.sharedRuntimeFailure;

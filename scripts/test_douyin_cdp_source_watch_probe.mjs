@@ -168,29 +168,92 @@ const preflightSequence = [
   { ok: true, status: "session_verified", login_state: "logged_in" },
 ];
 const preflightSleeps = [];
+const preflightReloads = [];
 const recoveredPreflight = await runDouyinPreflightWithRecheck(
   () => preflightSequence.shift(),
   async (ms) => preflightSleeps.push(ms),
   25,
+  async () => preflightReloads.push("fixed-target"),
 );
 assert.equal(recoveredPreflight.ok, true);
 assert.equal(recoveredPreflight.preflight_attempts, 2);
 assert.deepEqual(preflightSleeps, [25]);
+assert.deepEqual(preflightReloads, ["fixed-target"]);
+const sameTargetCommands = [];
+const sameTargetSession = new FixedPageSession("http://127.0.0.1:9333", {
+  id: "fixed-target-id",
+  type: "page",
+  url: "https://www.douyin.com/",
+  webSocketDebuggerUrl: "ws://fixed-target",
+}, {
+  clientFactory: () => ({
+    async open() {},
+    async send(method) {
+      sameTargetCommands.push(method);
+      return {};
+    },
+    on() {},
+    close() {},
+  }),
+});
+await sameTargetSession.open();
+const sameTargetSequence = [
+  { ok: false, status: "browser_readiness_inconclusive", login_state: "indeterminate" },
+  { ok: true, status: "session_verified", login_state: "logged_in" },
+];
+await runDouyinPreflightWithRecheck(
+  () => sameTargetSequence.shift(),
+  async () => {},
+  0,
+  async () => sameTargetSession.send("Page.reload", { ignoreCache: false }),
+);
+assert.equal(sameTargetSession.targetId, "fixed-target-id");
+assert.equal(sameTargetSession.reattachments, 0);
+assert.equal(sameTargetCommands.filter((method) => method === "Page.reload").length, 1);
+sameTargetSession.close();
+const persistentReloads = [];
 const inconclusivePreflight = await runDouyinPreflightWithRecheck(
   () => ({ ok: false, status: "browser_readiness_inconclusive", login_state: "indeterminate" }),
   async () => {},
   0,
+  async () => persistentReloads.push("fixed-target"),
 );
 assert.equal(inconclusivePreflight.status, "browser_readiness_inconclusive");
 assert.equal(inconclusivePreflight.preflight_attempts, 2);
+assert.deepEqual(persistentReloads, ["fixed-target"]);
 
+for (const loginState of ["verification_required", "challenge_detected", "sms_verification_required"]) {
+  let reloadCount = 0;
+  const explicit = await runDouyinPreflightWithRecheck(
+    () => ({ ok: false, status: loginState, login_state: loginState }),
+    async () => {},
+    0,
+    async () => { reloadCount += 1; },
+  );
+  assert.equal(explicit.status, "verification_required");
+  assert.equal(explicit.preflight_attempts, 1);
+  assert.equal(reloadCount, 0);
+}
+let healthyReloadCount = 0;
+const healthyPreflight = await runDouyinPreflightWithRecheck(
+  () => ({ ok: true, status: "session_verified", login_state: "logged_in" }),
+  async () => {},
+  0,
+  async () => { healthyReloadCount += 1; },
+);
+assert.equal(healthyPreflight.preflight_attempts, 1);
+assert.equal(healthyReloadCount, 0);
+
+let tailReloadCount = 0;
 const inconclusiveTailReadiness = await tailRetryReadinessCheck(
   () => ({ ok: false, status: "browser_readiness_inconclusive", login_state: "indeterminate" }),
   async () => {},
   0,
+  async () => { tailReloadCount += 1; },
 );
 assert.equal(inconclusiveTailReadiness.riskSignal, "");
 assert.equal(inconclusiveTailReadiness.readinessFailure, "browser_readiness_inconclusive");
+assert.equal(tailReloadCount, 1);
 const challengeTailReadiness = await tailRetryReadinessCheck(
   () => ({ ok: false, status: "verification_required", login_state: "verification_required" }),
   async () => {},
