@@ -403,11 +403,22 @@ export function notifyManualVerification(runner = spawnSync) {
   return result.status === 0 ? "sent" : "failed";
 }
 
-export function checkpointPayload(sources, rows, riskSignal = "") {
+export function checkpointPayload(sources, rows, riskSignal = "", priorRows = []) {
   const byId = new Map(rows.map((row) => [String(row.source_id || ""), row]));
+  const priorById = new Map(priorRows.map((row) => [String(row.source_id || ""), row]));
   return sources.map((source, ordinal) => {
     const sourceId = String(source.id || source.source_id || "");
     const row = byId.get(sourceId);
+    const prior = priorById.get(sourceId);
+    if (!row && prior) {
+      return {
+        source_id: sourceId,
+        status: String(prior.status || "pending"),
+        artifact_sha256: String(prior.artifact_sha256 || ""),
+        artifact_count: Number(prior.artifact_count) || 0,
+        ordinal: Number(prior.ordinal) || 0,
+      };
+    }
     let status = "pending";
     if (row?.status === "success") status = "completed";
     else if (row?.status === "updated_no_new_items") status = "updated_no_new_items";
@@ -432,7 +443,7 @@ export function checkpointPayload(sources, rows, riskSignal = "") {
 
 export function persistRiskCheckpoint(options, runId, sources, rows, riskSignal, notificationStatus = "") {
   const checkpointPath = path.join(options.outDir, "douyin_checkpoint_rows.json");
-  const payload = checkpointPayload(sources, rows, riskSignal);
+  const payload = checkpointPayload(sources, rows, riskSignal, options.priorCheckpointRows || []);
   fs.writeFileSync(checkpointPath, JSON.stringify(payload, null, 2), "utf8");
   const finalStatus = riskSignal
     ? "waiting_manual_verification"
@@ -1924,6 +1935,7 @@ async function main() {
       "--run-id", runId,
     ], { cwd: ROOT, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
     const priorRisk = prior.status === 0 ? JSON.parse(String(prior.stdout || "{}")) : { checkpoints: [] };
+    options.priorCheckpointRows = priorRisk.checkpoints || [];
     options.completedSourceIds = (priorRisk.checkpoints || [])
       .filter((row) => ["completed", "updated_no_new_items"].includes(row.status))
       .map((row) => row.source_id);

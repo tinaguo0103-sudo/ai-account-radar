@@ -276,6 +276,55 @@ await probeSourcesWithTailRetry(
 assert.deepEqual(resumeOrder, riskSources.slice(2).map((row) => row.id));
 assert.equal(riskCheckpoints.length, 6);
 
+const resumeSources = Array.from({ length: 31 }, (_, index) => source(`resume-${index + 1}`));
+const immutablePrior = resumeSources.slice(0, 25).map((row, ordinal) => ({
+  source_id: row.id,
+  status: ordinal % 2 ? "updated_no_new_items" : "completed",
+  artifact_sha256: `sha-${ordinal}`,
+  artifact_count: ordinal + 1,
+  ordinal,
+}));
+const failedPrior = resumeSources.slice(25).map((row, offset) => ({
+  source_id: row.id,
+  status: "failed_account_local",
+  artifact_sha256: "",
+  artifact_count: 0,
+  ordinal: 25 + offset,
+}));
+const resumeCalls = [];
+const resumeCheckpoints = [];
+await probeSourcesWithTailRetry(
+  {},
+  resumeSources,
+  {
+    completedSourceIds: immutablePrior.map((row) => row.source_id),
+    batchSize: 5,
+    accountPacingMs: 0,
+    batchCooldownMs: 0,
+    tailRetryDelayMs: 600000,
+    riskCheck: async () => ({ riskSignal: "", readinessFailure: "" }),
+    onCheckpoint: async (rows) => resumeCheckpoints.push(
+      checkpointPayload(resumeSources, rows, "", [...immutablePrior, ...failedPrior]),
+    ),
+  },
+  async (_client, row) => {
+    resumeCalls.push(row.id);
+    return { account_name: row.account_name, status: "updated_no_new_items", video_links: [] };
+  },
+  async () => {},
+);
+assert.deepEqual(resumeCalls, resumeSources.slice(25).map((row) => row.id));
+assert.equal(resumeCheckpoints.length, 6);
+for (const checkpoint of resumeCheckpoints) {
+  assert.deepEqual(checkpoint.slice(0, 25), immutablePrior);
+}
+assert.equal(resumeCheckpoints[0][25].status, "updated_no_new_items");
+assert.deepEqual(resumeCheckpoints[0].slice(26), failedPrior.slice(1));
+
+const quarantinedSources = Array.from({ length: 8 }, (_, index) => source(`quarantined-${index + 1}`));
+const selectedSourceIds = new Set(resumeSources.map((row) => row.id));
+assert.equal(quarantinedSources.some((row) => selectedSourceIds.has(row.id)), false);
+
 const timingSources = Array.from({ length: 31 }, (_, index) => source(`timing-${index + 1}`));
 const timingOrder = [];
 const timingSleeps = [];
