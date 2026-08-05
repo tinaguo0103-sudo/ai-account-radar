@@ -317,6 +317,10 @@ class NaturalRunContinuationTest(unittest.TestCase):
         self.assertIn("--status-only", schedule["statusEntrypoint"])
         protocol = "\n".join(schedule["outerAgentProtocol"])
         self.assertIn("same ai-rebuild heartbeat and fixed task", protocol)
+        self.assertIn("wait for that live process to exit", protocol)
+        self.assertIn("Do not infer a hang from artifact or file-mtime silence", protocol)
+        self.assertIn("bounded tail retry may remain silent for 600000ms", protocol)
+        self.assertIn("existing total automation execution boundary remains unchanged", protocol)
         source = (ROOT / "scripts" / "run_daily_workflow.py").read_text()
         for forbidden in (
             "codex exec",
@@ -326,6 +330,26 @@ class NaturalRunContinuationTest(unittest.TestCase):
             "request envelope",
         ):
             self.assertNotIn(forbidden, source)
+
+    def test_live_child_outlasts_old_file_silence_limit_without_real_wait(self):
+        release = json.loads(
+            (ROOT / "config" / "web010_single_daily_workflow_release.json").read_text()
+        )
+        protocol = "\n".join(release["externalSchedule"]["outerAgentProtocol"])
+
+        def simulate(*, use_file_silence_stop: bool) -> tuple[int, int]:
+            now_ms = 0
+            child_exit_ms = 600_001
+            old_file_silence_limit_ms = 540_000
+            while now_ms < child_exit_ms:
+                if use_file_silence_stop and now_ms >= old_file_silence_limit_ms:
+                    return 130, now_ms
+                now_ms += 60_000
+            return 0, child_exit_ms
+
+        self.assertEqual(simulate(use_file_silence_stop=True), (130, 540_000))
+        self.assertIn("do not interrupt a live child on that basis", protocol)
+        self.assertEqual(simulate(use_file_silence_stop=False), (0, 600_001))
 
 
 if __name__ == "__main__":
