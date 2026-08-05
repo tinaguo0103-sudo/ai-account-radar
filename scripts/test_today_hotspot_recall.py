@@ -6,7 +6,9 @@ import tempfile
 import unittest
 from argparse import Namespace
 from pathlib import Path
+from unittest.mock import patch
 
+from daily_workflow import DailyWorkflow
 from run_daily_workflow import (
     collect_with_checkpoint,
     merge_exact_today_new_rows,
@@ -104,9 +106,15 @@ class TodayHotspotRecallTest(unittest.TestCase):
             (run_dir / "sources" / "current_run_rows.jsonl").write_text(
                 json.dumps(row, ensure_ascii=False), encoding="utf-8",
             )
+            workflow_db = root / "workflow.sqlite3"
+            workflow = DailyWorkflow(workflow_db)
+            workflow.begin(run_id, "2026-08-01")
+            workflow.commit_stage(run_id, "collection_enrichment", checkpoint, "completed")
+            workflow.db.close()
 
             recovered = collect_with_checkpoint(Namespace(
                 artifact_root=str(root), run_id=run_id, business_date="2026-08-01",
+                workflow_db=workflow_db,
             ))
             normal = merge_exact_today_new_rows(
                 checkpoint, run_dir=run_dir, run_id=run_id,
@@ -118,6 +126,113 @@ class TodayHotspotRecallTest(unittest.TestCase):
             self.assertEqual(recovered["today_new_promotion"]["promoted_count"], 1)
             self.assertEqual(len(recovered["content_items"]), 2)
             self.assertEqual(len(recovered["candidates"]), 1)
+
+    def test_uncommitted_stale_checkpoint_reaches_existing_collection_path(self):
+        run_id = "run_20260805_080110"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / run_id
+            run_dir.mkdir(parents=True)
+            stale = {
+                "run_id": run_id,
+                "business_date": "2026-08-05",
+                "content_items": [{"item_id": "stale"}],
+                "candidates": [],
+            }
+            (run_dir / "workflow_collection.json").write_text(json.dumps(stale))
+            workflow_db = root / "workflow.sqlite3"
+            workflow = DailyWorkflow(workflow_db)
+            workflow.begin(run_id, "2026-08-05")
+            workflow.db.close()
+            fresh = {
+                "run_id": run_id,
+                "business_date": "2026-08-05",
+                "content_items": [{"item_id": "rehydrated"}],
+                "candidates": [{"candidate_id": "rehydrated"}],
+            }
+            args = Namespace(
+                artifact_root=str(root), run_id=run_id,
+                business_date="2026-08-05", workflow_db=workflow_db,
+            )
+            with patch("run_daily_workflow.collect", return_value=fresh) as source_path:
+                recovered = collect_with_checkpoint(args)
+            source_path.assert_called_once_with(args)
+            self.assertEqual(recovered, fresh)
+            self.assertEqual(
+                json.loads((run_dir / "workflow_collection.json").read_text()), stale,
+            )
+
+    def test_fresh_run_without_checkpoint_uses_existing_collection_path(self):
+        run_id = "run_20260805_080110"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fresh = {
+                "run_id": run_id,
+                "business_date": "2026-08-05",
+                "content_items": [],
+                "candidates": [],
+            }
+            args = Namespace(
+                artifact_root=str(root), run_id=run_id,
+                business_date="2026-08-05", workflow_db=root / "workflow.sqlite3",
+            )
+            with patch("run_daily_workflow.collect", return_value=fresh) as source_path:
+                recovered = collect_with_checkpoint(args)
+            source_path.assert_called_once_with(args)
+            self.assertEqual(recovered, fresh)
+
+    def test_uncommitted_checkpoint_with_usable_source_artifact_is_reused(self):
+        run_id = "run_20260805_080110"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            run_dir = root / run_id
+            douyin_dir = run_dir / "sources" / "douyin"
+            douyin_dir.mkdir(parents=True)
+            checkpoint = {
+                "run_id": run_id,
+                "business_date": "2026-08-05",
+                "content_items": [{"item_id": "usable"}],
+                "candidates": [],
+            }
+            (run_dir / "workflow_collection.json").write_text(json.dumps(checkpoint))
+            manual_path = douyin_dir / "content_items_manual.jsonl"
+            manual_row = {
+                "运行批次": run_id,
+                "账号名/公众号名": "qa-account",
+                "内容链接": "https://www.douyin.com/video/1",
+                "候选时态": "today_new",
+            }
+            manual_path.write_text(json.dumps(manual_row, ensure_ascii=False) + "\n")
+            raw = manual_path.read_bytes()
+            (douyin_dir / "cdp_probe_results.json").write_text(json.dumps({
+                "run_id": run_id,
+                "status": "completed",
+                "source_runtime_failure": None,
+                "item_lineage": {"ok": True},
+                "coverage": {"failed_accounts": []},
+                "manual_artifact": {
+                    "run_id": run_id,
+                    "path": str(manual_path.resolve()),
+                    "row_count": 1,
+                    "sha256": hashlib.sha256(raw).hexdigest(),
+                },
+                "candidate_lifecycle": {
+                    "today_new_count": 1,
+                    "historical_unreviewed_count": 0,
+                },
+            }))
+            workflow_db = root / "workflow.sqlite3"
+            workflow = DailyWorkflow(workflow_db)
+            workflow.begin(run_id, "2026-08-05")
+            workflow.db.close()
+            args = Namespace(
+                artifact_root=str(root), run_id=run_id,
+                business_date="2026-08-05", workflow_db=workflow_db,
+            )
+            with patch("run_daily_workflow.collect") as source_path:
+                recovered = collect_with_checkpoint(args)
+            source_path.assert_not_called()
+            self.assertEqual(recovered, checkpoint)
 
     def test_exact_today_new_is_promoted_before_legacy_filter(self):
         run_id = "run_20260801_080215"

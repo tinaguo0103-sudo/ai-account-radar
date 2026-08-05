@@ -20,6 +20,7 @@ from pathlib import Path
 from typing import Any
 
 from daily_workflow import DailyWorkflow, WorkflowConflict, canonical
+from daily_pipeline import current_douyin_artifact
 from collected_artifact_adoption import adopt_collected_artifacts
 from douyin_video_understanding_producer import (
     ProducerError,
@@ -1333,6 +1334,23 @@ def collection_checkpoint_path(args: argparse.Namespace) -> Path:
     return Path(args.artifact_root).resolve() / args.run_id / "workflow_collection.json"
 
 
+def collection_checkpoint_reusable(args: argparse.Namespace, path: Path) -> bool:
+    workflow_db = Path(args.workflow_db).resolve()
+    status = DailyWorkflow.read_business_date(workflow_db, args.business_date)
+    if (
+        status
+        and status["run"]["run_id"] == args.run_id
+        and "collection_enrichment" in status["committed_stages"]
+    ):
+        return True
+    douyin_dir = path.parent / "sources" / "douyin"
+    return current_douyin_artifact(
+        douyin_dir / "cdp_probe_results.json",
+        douyin_dir / "content_items_manual.jsonl",
+        args.run_id,
+    ).get("ok") is True
+
+
 def collect_with_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
     path = collection_checkpoint_path(args)
     if path.is_file():
@@ -1342,16 +1360,18 @@ def collect_with_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
             or value.get("business_date") != args.business_date
         ):
             raise WorkflowConflict("collection_checkpoint_wrong_run")
-        return merge_exact_today_new_rows(
-            value, run_dir=path.parent, run_id=args.run_id,
-        )
+        if collection_checkpoint_reusable(args, path):
+            return merge_exact_today_new_rows(
+                value, run_dir=path.parent, run_id=args.run_id,
+            )
     value = collect(args)
     if (
         value.get("run_id") != args.run_id
         or value.get("business_date") != args.business_date
     ):
         raise WorkflowConflict("collection_checkpoint_wrong_run")
-    atomic_json(path, value)
+    if not path.exists():
+        atomic_json(path, value)
     return value
 
 
