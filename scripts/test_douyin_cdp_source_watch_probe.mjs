@@ -23,6 +23,7 @@ import {
   decodeRuntimeEvaluation,
   fixedDouyinTarget,
   limitedPlanRejection,
+  launchFixedDouyinBrowser,
   loadCandidateLifecycle,
   materializeHistoricalBacklog,
   mergeNewAndBacklog,
@@ -39,6 +40,7 @@ import {
   isTransientAccountFailure,
   sourceGlobalRisk,
   runDouyinPreflightWithRecheck,
+  runDouyinPreflightWithAutostart,
   tailRetryReadinessCheck,
   validateDouyinSourceIdentity,
   validateFullAccountLimitArgs,
@@ -244,6 +246,115 @@ const healthyPreflight = await runDouyinPreflightWithRecheck(
 assert.equal(healthyPreflight.preflight_attempts, 1);
 assert.equal(healthyReloadCount, 0);
 
+let launcherCommand = null;
+const launcherContract = launchFixedDouyinBrowser("/qa/repo", (command, args, options) => {
+  launcherCommand = { command, args, options };
+  return {
+    status: 0,
+    stdout: JSON.stringify({
+      ok: true, status: "started", mode: "hidden", cdp: "http://127.0.0.1:9333",
+    }),
+  };
+});
+assert.equal(launcherContract.ok, true);
+assert.deepEqual(launcherCommand.args, [
+  "/qa/repo/scripts/start_douyin_cdp_chrome.py",
+  "--port", "9333", "--mode", "hidden",
+]);
+assert.equal(launcherCommand.options.cwd, "/qa/repo");
+
+const missingThenReady = [
+  { ok: false, status: "not_running", login_state: "indeterminate" },
+  { ok: true, status: "session_verified", login_state: "logged_in" },
+];
+let missingLaunchCalls = 0;
+let missingReloadCalls = 0;
+const autostartReady = await runDouyinPreflightWithAutostart(
+  () => missingThenReady.shift(),
+  () => {
+    missingLaunchCalls += 1;
+    return { ok: true, status: "started", mode: "hidden", cdp: "http://127.0.0.1:9333" };
+  },
+  async () => {},
+  0,
+  async () => { missingReloadCalls += 1; },
+);
+assert.equal(autostartReady.ok, true);
+assert.equal(autostartReady.launcher_calls, 1);
+assert.equal(missingLaunchCalls, 1);
+assert.equal(missingReloadCalls, 0);
+
+let runningLaunchCalls = 0;
+const alreadyRunning = await runDouyinPreflightWithAutostart(
+  () => ({ ok: true, status: "session_verified", login_state: "logged_in" }),
+  () => { runningLaunchCalls += 1; return {}; },
+  async () => {},
+  0,
+);
+assert.equal(alreadyRunning.ok, true);
+assert.equal(runningLaunchCalls, 0);
+assert.equal(alreadyRunning.launcher_calls, 0);
+
+for (const launchResult of [
+  { ok: false, status: "launch_failed_or_not_ready", mode: "hidden", cdp: "http://127.0.0.1:9333" },
+  { ok: false, status: "profile_identity_mismatch", mode: "hidden", cdp: "http://127.0.0.1:9333" },
+]) {
+  const failedLaunch = await runDouyinPreflightWithAutostart(
+    () => ({ ok: false, status: "not_running", login_state: "indeterminate" }),
+    () => launchResult,
+    async () => {},
+    0,
+  );
+  assert.equal(failedLaunch.ok, false);
+  assert.equal(failedLaunch.launcher_calls, 1);
+  assert.equal(failedLaunch.status, launchResult.status === "profile_identity_mismatch"
+    ? "profile_identity_mismatch" : "fixed_browser_launch_failed");
+}
+
+let wrongIdentityLaunchCalls = 0;
+let wrongIdentityReloadCalls = 0;
+const wrongIdentity = await runDouyinPreflightWithAutostart(
+  () => ({ ok: false, status: "profile_identity_mismatch", login_state: "indeterminate" }),
+  () => { wrongIdentityLaunchCalls += 1; return {}; },
+  async () => {},
+  0,
+  async () => { wrongIdentityReloadCalls += 1; },
+);
+assert.equal(wrongIdentity.status, "profile_identity_mismatch");
+assert.equal(wrongIdentityLaunchCalls, 0);
+assert.equal(wrongIdentityReloadCalls, 0);
+
+const launchedChallengeSequence = [
+  { ok: false, status: "not_running", login_state: "indeterminate" },
+  { ok: false, status: "verification_required", login_state: "verification_required" },
+];
+let launchedChallengeReloads = 0;
+const launchedChallenge = await runDouyinPreflightWithAutostart(
+  () => launchedChallengeSequence.shift(),
+  () => ({ ok: true, status: "started", mode: "hidden", cdp: "http://127.0.0.1:9333" }),
+  async () => {},
+  0,
+  async () => { launchedChallengeReloads += 1; },
+);
+assert.equal(launchedChallenge.status, "verification_required");
+assert.equal(launchedChallengeReloads, 0);
+
+const launchedIndeterminateSequence = [
+  { ok: false, status: "not_running", login_state: "indeterminate" },
+  { ok: false, status: "browser_readiness_inconclusive", login_state: "indeterminate" },
+  { ok: false, status: "browser_readiness_inconclusive", login_state: "indeterminate" },
+];
+let launchedIndeterminateReloads = 0;
+const launchedIndeterminate = await runDouyinPreflightWithAutostart(
+  () => launchedIndeterminateSequence.shift(),
+  () => ({ ok: true, status: "started", mode: "hidden", cdp: "http://127.0.0.1:9333" }),
+  async () => {},
+  0,
+  async () => { launchedIndeterminateReloads += 1; },
+);
+assert.equal(launchedIndeterminate.status, "browser_readiness_inconclusive");
+assert.equal(launchedIndeterminateReloads, 1);
+
 let tailReloadCount = 0;
 const inconclusiveTailReadiness = await tailRetryReadinessCheck(
   () => ({ ok: false, status: "browser_readiness_inconclusive", login_state: "indeterminate" }),
@@ -261,6 +372,23 @@ const challengeTailReadiness = await tailRetryReadinessCheck(
 );
 assert.equal(challengeTailReadiness.riskSignal, "verification_required");
 assert.equal(challengeTailReadiness.readinessFailure, "");
+const tailMissingSequence = [
+  { ok: false, status: "not_running", login_state: "indeterminate" },
+  { ok: true, status: "session_verified", login_state: "logged_in" },
+];
+let tailMissingLaunches = 0;
+const tailAutostartReady = await tailRetryReadinessCheck(
+  () => tailMissingSequence.shift(),
+  async () => {},
+  0,
+  async () => {},
+  () => {
+    tailMissingLaunches += 1;
+    return { ok: true, status: "started", mode: "hidden", cdp: "http://127.0.0.1:9333" };
+  },
+);
+assert.equal(tailAutostartReady.readinessFailure, "");
+assert.equal(tailMissingLaunches, 1);
 
 const transientSource = [source("transient-indeterminate")];
 const transientSleeps = [];

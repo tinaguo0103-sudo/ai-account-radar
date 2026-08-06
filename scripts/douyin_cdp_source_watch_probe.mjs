@@ -343,9 +343,34 @@ export function runDouyinPreflight(root = ROOT, runner = spawnSync) {
   }
 }
 
+export function launchFixedDouyinBrowser(root = ROOT, runner = spawnSync) {
+  const result = runner("python3", [
+    path.join(root, "scripts/start_douyin_cdp_chrome.py"),
+    "--port", "9333",
+    "--mode", "hidden",
+  ], { cwd: root, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"] });
+  try {
+    const payload = JSON.parse(String(result.stdout || "{}"));
+    return {
+      ok: result.status === 0 && payload.ok === true,
+      status: String(payload.status || "fixed_browser_launch_failed"),
+      mode: String(payload.mode || ""),
+      cdp: String(payload.cdp || ""),
+    };
+  } catch {
+    return { ok: false, status: "fixed_browser_launch_failed", mode: "", cdp: "" };
+  }
+}
+
 export function explicitVerificationState(preflight) {
   return ["verification_required", "challenge_detected", "sms_verification_required"]
     .includes(String(preflight?.login_state || preflight?.status || ""));
+}
+
+export function reloadableIndeterminate(preflight) {
+  return String(preflight?.login_state || "") === "indeterminate"
+    && ["browser_readiness_inconclusive", "login_preflight_failed"]
+      .includes(String(preflight?.status || ""));
 }
 
 export async function runDouyinPreflightWithRecheck(
@@ -357,7 +382,7 @@ export async function runDouyinPreflightWithRecheck(
   const startedAt = Date.now();
   const first = run();
   const attempts = [first];
-  if (!first.ok && String(first.login_state || "") === "indeterminate") {
+  if (!first.ok && reloadableIndeterminate(first)) {
     await reload();
     await sleep(Math.max(0, delayMs));
     attempts.push(run());
@@ -369,7 +394,7 @@ export async function runDouyinPreflightWithRecheck(
       ? "session_verified"
       : explicitVerificationState(current)
         ? "verification_required"
-        : String(current.login_state || "") === "indeterminate"
+        : reloadableIndeterminate(current)
           ? "browser_readiness_inconclusive"
           : String(current.status || "browser_session_unavailable"),
     preflight_attempts: attempts.length,
@@ -378,13 +403,68 @@ export async function runDouyinPreflightWithRecheck(
   };
 }
 
+export async function runDouyinPreflightWithAutostart(
+  run = runDouyinPreflight,
+  launch = launchFixedDouyinBrowser,
+  sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
+  delayMs = 1200,
+  reload = async () => {},
+) {
+  let first = run();
+  let launcherCalls = 0;
+  let launcherStatus = "not_required";
+  if (!first.ok && String(first.status || "") === "not_running") {
+    launcherCalls = 1;
+    const launched = launch();
+    launcherStatus = String(launched.status || "fixed_browser_launch_failed");
+    if (
+      !launched.ok
+      || launched.mode !== "hidden"
+      || launched.cdp !== "http://127.0.0.1:9333"
+    ) {
+      return {
+        ok: false,
+        status: launcherStatus === "profile_identity_mismatch"
+          ? "profile_identity_mismatch"
+          : "fixed_browser_launch_failed",
+        login_state: "indeterminate",
+        profile_identity: "fixed_douyin_profile_9333",
+        preflight_attempts: 1,
+        rechecked: false,
+        launcher_calls: launcherCalls,
+        launcher_status: launcherStatus,
+      };
+    }
+    first = run();
+  }
+  let pending = first;
+  const checked = await runDouyinPreflightWithRecheck(
+    () => {
+      const current = pending;
+      pending = null;
+      return current || run();
+    },
+    sleep,
+    delayMs,
+    reload,
+  );
+  return {
+    ...checked,
+    launcher_calls: launcherCalls,
+    launcher_status: launcherStatus,
+  };
+}
+
 export async function tailRetryReadinessCheck(
   run = runDouyinPreflight,
   sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
   delayMs = 1200,
   reload = async () => {},
+  launch = launchFixedDouyinBrowser,
 ) {
-  const current = await runDouyinPreflightWithRecheck(run, sleep, delayMs, reload);
+  const current = await runDouyinPreflightWithAutostart(
+    run, launch, sleep, delayMs, reload,
+  );
   if (current.ok) return { riskSignal: "", readinessFailure: "", preflight: current };
   if (explicitVerificationState(current)) {
     return {
@@ -1896,8 +1976,9 @@ async function main() {
     const session = await fixedSession();
     await session.send("Page.reload", { ignoreCache: false });
   };
-  const preflight = await runDouyinPreflightWithRecheck(
+  const preflight = await runDouyinPreflightWithAutostart(
     runDouyinPreflight,
+    launchFixedDouyinBrowser,
     (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
     1200,
     reloadFixedSession,
@@ -1926,8 +2007,10 @@ async function main() {
     }
     const failure = {
       ok: false,
-      status: verificationRequired ? "waiting_manual_verification" : "browser_readiness_failed",
-      reason: preflight.login_state || preflight.status,
+      status: verificationRequired ? "waiting_manual_verification" : preflight.status,
+      reason: verificationRequired
+        ? (preflight.login_state || preflight.status)
+        : preflight.status,
       preflight,
       account_navigations: 0,
       completed_accounts: 0,
@@ -2017,6 +2100,7 @@ async function main() {
       (ms) => new Promise((resolve) => setTimeout(resolve, ms)),
       1200,
       reloadFixedSession,
+      launchFixedDouyinBrowser,
     );
     const probed = await probeSourcesWithTailRetry(pageClient, sources, options);
     rows = [...invalidRows, ...probed.rows];
