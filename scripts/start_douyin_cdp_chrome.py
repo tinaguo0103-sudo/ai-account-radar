@@ -76,12 +76,10 @@ def chrome_arg_list(port: int, profile: Path, url: str, mode: str) -> list[str]:
 
 
 def chrome_app_launch_command(app_path: Path, port: int, profile: Path, url: str, mode: str) -> list[str]:
-    if mode == "hidden":
-        return [
-            str(app_path / "Contents" / "MacOS" / "Google Chrome"),
-            *chrome_arg_list(port, profile, url, mode),
-        ]
     cmd = ["/usr/bin/open", "-n"]
+    if mode == "hidden":
+        # -g avoids stealing focus; -j asks LaunchServices to hide the app at launch.
+        cmd.extend(["-g", "-j"])
     cmd.extend(["-a", str(app_path), "--args", *chrome_arg_list(port, profile, url, mode)])
     return cmd
 
@@ -90,35 +88,13 @@ def launch_status(ok: bool, identity: object | None) -> str:
     return "started" if ok else (str(getattr(identity, "status")) if identity is not None else "launch_failed_or_not_ready")
 
 
-def launch_chrome(
-    port: int,
-    profile: Path,
-    url: str,
-    mode: str,
-    *,
-    run=subprocess.run,
-    popen=subprocess.Popen,
-) -> tuple[object, Path]:
+def launch_chrome(port: int, profile: Path, url: str, mode: str) -> tuple[subprocess.CompletedProcess, Path]:
     profile = profile.expanduser().resolve()
     profile.mkdir(parents=True, exist_ok=True)
     log_path = ROOT / ".local_services" / f"douyin-chrome-{mode}-{port}.log"
     log_path.parent.mkdir(parents=True, exist_ok=True)
     cmd = chrome_app_launch_command(chrome_app_path(), port, profile, url, mode)
-    if mode == "hidden":
-        with log_path.open("w", encoding="utf-8") as log:
-            log.write(f"command: {' '.join(cmd)}\n")
-            log.flush()
-            proc = popen(
-                cmd,
-                cwd=ROOT,
-                text=True,
-                stdout=log,
-                stderr=log,
-                start_new_session=True,
-            )
-            log.write(f"pid: {getattr(proc, 'pid', '')}\nspawned: true\n")
-        return proc, log_path
-    proc = run(cmd, cwd=ROOT, text=True, capture_output=True, check=False)
+    proc = subprocess.run(cmd, cwd=ROOT, text=True, capture_output=True, check=False)
     log_path.write_text(
         "\n".join([
             f"command: {' '.join(cmd)}",
@@ -200,17 +176,9 @@ def main() -> int:
         launch_error = str(exc)
         proc = None
         log_path = ROOT / ".local_services" / f"douyin-chrome-{args.mode}-{args.port}.log"
+    stdout = (getattr(proc, "stdout", "") or "")[-1000:]
+    stderr = ((getattr(proc, "stderr", "") or "")[-1000:]) if not launch_error else launch_error
     time.sleep(args.wait_seconds)
-    direct_returncode = proc.poll() if args.mode == "hidden" and proc is not None else getattr(proc, "returncode", None)
-    if args.mode == "hidden" and log_path.is_file():
-        direct_log = log_path.read_text(encoding="utf-8", errors="replace")[-2000:]
-        stdout = ""
-        stderr = direct_log if direct_returncode not in (None, 0) else ""
-    else:
-        stdout = (getattr(proc, "stdout", "") or "")[-1000:]
-        stderr = (getattr(proc, "stderr", "") or "")[-1000:]
-    if launch_error:
-        stderr = launch_error
     version = cdp_version(args.port)
     identity = None
     marker_path = ""
@@ -236,7 +204,6 @@ def main() -> int:
         "chrome_app_path": str(app_path),
         "chrome_bundle_id": CHROME_BUNDLE_ID,
         "pid": getattr(proc, "pid", None),
-        "launch_returncode": direct_returncode,
         "stdout": stdout,
         "stderr": stderr,
         "log_path": str(log_path),
