@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 from pathlib import Path
 from typing import Any
 
@@ -16,6 +17,93 @@ DEFAULT_VOICE_PACK = (
     / "config"
     / "web010_austin_voice_pack.json"
 )
+PRIVATE_STYLE_SOURCE_SPECS = (
+    (
+        "production_context",
+        Path(".codex/skills/austin-no-overtime-scripting/references/private/production_context.md"),
+    ),
+    (
+        "private_runtime",
+        Path(".codex/skills/austin-no-overtime-scripting/references/private/private_runtime.json"),
+    ),
+    (
+        "evidence_playbook",
+        Path(".codex/skills/austin-no-overtime-scripting/references/private/evidence_playbook.md"),
+    ),
+    (
+        "private_topic_cards",
+        Path(".codex/skills/austin-no-overtime-scripting/examples/private/full_topic_cards.json"),
+    ),
+    (
+        "voice_prd",
+        Path("00_资料库/01_项目PRD/Austin不加班脚本Skill_PRD.md"),
+    ),
+)
+
+
+def _private_style_source_paths(
+    source_paths: dict[str, str | Path] | None = None,
+) -> list[tuple[str, Path]]:
+    if source_paths is not None:
+        return [(role, Path(path)) for role, path in source_paths.items()]
+    home = Path(os.environ.get("HOME") or Path.home())
+    project_root = Path(__file__).resolve().parents[1]
+    paths: list[tuple[str, Path]] = []
+    for role, relative in PRIVATE_STYLE_SOURCE_SPECS:
+        if str(relative).startswith(".codex/"):
+            base = home
+        elif (project_root / relative).exists():
+            base = project_root
+        else:
+            base = project_root.parent
+        paths.append((role, base / relative))
+    return paths
+
+
+def _derive_private_style_cues(contents: list[str]) -> list[str]:
+    text = "\n".join(contents)
+    cues: list[str] = []
+    if "判断" in text and ("真人" in text or "口播" in text):
+        cues.append("first_person_judgment_before_instruction")
+    if "现场" in text and ("流程" in text or "交付" in text):
+        cues.append("concrete_work_scene_before_tool_hype")
+    if "不是" in text and ("而是" in text or "反而" in text):
+        cues.append("plain_contrast_and_reversal")
+    if "人工" in text and ("修正" in text or "判断" in text):
+        cues.append("human_tradeoff_and_consequence")
+    if "证据" in text and ("验收" in text or "截图" in text):
+        cues.append("show_work_before_claim")
+    if "case_anchors" in text or "full_topic_cards" in text:
+        cues.append("private_cases_optional_and_not_current_facts")
+    return cues
+
+
+def load_private_style_context(
+    source_paths: dict[str, str | Path] | None = None,
+) -> dict[str, Any]:
+    """Read private style material in memory and expose only a safe derivation."""
+    loaded_roles: list[str] = []
+    contents: list[str] = []
+    for role, path in _private_style_source_paths(source_paths):
+        try:
+            content = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeError):
+            continue
+        if content.strip():
+            loaded_roles.append(role)
+            contents.append(content)
+    cues = _derive_private_style_cues(contents)
+    return {
+        "contract": "private_style_only_v1",
+        "loaded": len(loaded_roles) == len(PRIVATE_STYLE_SOURCE_SPECS),
+        "loaded_source_count": len(loaded_roles),
+        "expected_source_count": len(PRIVATE_STYLE_SOURCE_SPECS),
+        "source_roles": loaded_roles,
+        "derived_style_cues": cues,
+        "case_matching": "optional",
+        "current_fact_source": False,
+        "raw_content_embedded": False,
+    }
 
 
 def load_voice_pack(path: str | Path = DEFAULT_VOICE_PACK) -> dict[str, Any]:
@@ -31,7 +119,7 @@ def load_voice_pack(path: str | Path = DEFAULT_VOICE_PACK) -> dict[str, Any]:
         or not isinstance(exemplars, list)
     ):
         raise WorkflowConflict("voice_pack_schema_invalid")
-    if not 3 <= len(exemplars) <= 5:
+    if len(exemplars) != 2:
         raise WorkflowConflict("voice_pack_count_invalid")
     normalized: list[dict[str, Any]] = []
     seen: set[str] = set()
@@ -199,11 +287,13 @@ def topic_packet(
     completed_count: int,
     voice_pack: dict[str, Any],
 ) -> dict[str, Any]:
+    private_style_context = load_private_style_context()
     packet_basis = {
         "run_id": run_id,
         "business_date": business_date,
         "topic": topic,
         "voice_pack_sha256": voice_pack["sha256"],
+        "private_style_context": private_style_context,
     }
     packet_id = hashlib.sha256(canonical(packet_basis).encode("utf-8")).hexdigest()
     return {
@@ -224,6 +314,7 @@ def topic_packet(
             "topic_id": topic["topic_id"],
             "voice_pack_sha256": voice_pack["sha256"],
             "voice_pack_content_bytes": voice_pack["content_bytes"],
+            "private_style_context": private_style_context,
         },
         "voice_pack": voice_pack["exemplars"],
         "voice_pack_sha256": voice_pack["sha256"],
@@ -234,7 +325,10 @@ def topic_packet(
             "embedded_content": True,
             "embedded_content_bytes": voice_pack["content_bytes"],
             "exemplar_count": len(voice_pack["exemplars"]),
+            "positive_authority": "two_user_approved_full_bodies",
+            "rejected_system_scripts_included": False,
         },
+        "private_style_context": private_style_context,
         "required_script_input": {
             "keys": ["packet_id", "voice_pack_sha256", "script"],
             "script_keys": ["topic_id", "title", "hook", "structure", "body"],

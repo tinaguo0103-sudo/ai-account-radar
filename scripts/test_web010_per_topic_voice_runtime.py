@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import os
 import subprocess
 import sys
@@ -11,7 +12,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from daily_workflow import DailyWorkflow
-from spoken_script_runtime import load_voice_pack
+from spoken_script_runtime import load_private_style_context, load_voice_pack, topic_packet
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -94,6 +95,43 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         self.server.shutdown()
         self.server.server_close()
         self.thread.join(timeout=2)
+
+    def test_voice_authority_is_the_two_approved_bodies_and_private_context_is_loaded(self):
+        pack = load_voice_pack()
+        self.assertEqual(
+            [row["exemplar_id"] for row in pack["exemplars"]],
+            [
+                "run_20260805_080110:script:0f51191cbf21c6b2677f",
+                "run_20260803_110453:trend:f6f8f499268476dcc550",
+            ],
+        )
+        self.assertEqual(
+            [hashlib.sha256(row["body"].encode("utf-8")).hexdigest() for row in pack["exemplars"]],
+            [
+                "61e7884e8dbba991310c7537f79f6816e7b4ab3d3bc3fe3b0ba55b71382be570",
+                "e1b6b5246c7ef9cb833d71a3eed5a2406d840944ab9a0e1abf5d3c7e095f38be",
+            ],
+        )
+        joined = json.dumps(pack["exemplars"], ensure_ascii=False)
+        self.assertNotIn("一个人做账号，最该自动化的不是写文案", joined)
+
+        context = load_private_style_context()
+        self.assertTrue(context["loaded"])
+        self.assertEqual(context["loaded_source_count"], 5)
+        self.assertFalse(context["raw_content_embedded"])
+        packet = topic_packet(
+            RUN_ID,
+            BUSINESS_DATE,
+            {"topic_id": "trend:voice-authority", "title": "QA-private"},
+            0,
+            1,
+            0,
+            pack,
+        )
+        self.assertEqual(packet["private_style_context"], context)
+        self.assertEqual(packet["voice_pack"], pack["exemplars"])
+        self.assertEqual(packet["voice_pack_contract"]["positive_authority"], "two_user_approved_full_bodies")
+        self.assertFalse(packet["voice_pack_contract"]["rejected_system_scripts_included"])
 
     def fixture(self, root: Path) -> Path:
         content = []
