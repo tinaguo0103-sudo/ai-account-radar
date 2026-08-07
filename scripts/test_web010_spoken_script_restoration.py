@@ -342,11 +342,11 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
         self.assertIn("batch-level orchestration boundary", protocol)
-        self.assertIn("process selected topics strictly one at a time", protocol)
-        self.assertIn("finish the current topic's Topic Focus, Semantic Plan, Full Draft, Teleprompter Read, and Item QA/rewrite before reading or drafting the next topic", protocol)
-        self.assertIn("only after every topic has completed that method, serialize the one simple stage result", protocol)
+        self.assertIn("exposes exactly one selected rich Topic Card", protocol)
+        self.assertIn("The current topic must complete Topic Focus, Semantic Plan, Full Draft, Teleprompter Read, and Item QA/rewrite, then submit the simple topic result before the next topic is exposed", protocol)
+        self.assertIn("serializes one final simple scripts result after all selected topics complete", protocol)
         self.assertNotIn("once for the full batch", protocol)
-        self.assertIn("Do not first summarize or draft the whole batch", protocol)
+        self.assertIn("does not expose or accept a whole-batch script submission", protocol)
 
 
 if __name__ == "__main__":

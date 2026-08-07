@@ -247,6 +247,27 @@ class DailyWorkflow:
         if existing:
             if existing["status"] == status and existing["payload_json"] == encoded:
                 return {"action": "noop", **dict(existing)}
+            if (
+                stage == "scripts"
+                and existing["status"] == "in_progress"
+                and status in {"in_progress", "completed", "completed_with_failures"}
+            ):
+                now = datetime.now(timezone.utc).isoformat()
+                with self.db:
+                    self.db.execute(
+                        """UPDATE stage_results
+                           SET status=?,payload_json=?,committed_at=?
+                           WHERE run_id=? AND stage=?""",
+                        (status, encoded, now, run_id, stage),
+                    )
+                    self.db.execute(
+                        "UPDATE daily_runs SET status=?,updated_at=? WHERE run_id=?",
+                        (WAITING, now, run_id),
+                    )
+                return {"action": "updated", **dict(self.db.execute(
+                    "SELECT * FROM stage_results WHERE run_id=? AND stage=?",
+                    (run_id, stage),
+                ).fetchone())}
             raise WorkflowConflict("stage_result_conflict")
         now = datetime.now(timezone.utc).isoformat()
         with self.db:

@@ -57,7 +57,7 @@ class TodayHotspotRecallTest(unittest.TestCase):
                 (inputs / "discovery.json").read_bytes(),
             )
             self.assertEqual(args.editorial_result_file, str((inputs / "editorial_result.json").resolve()))
-            self.assertEqual(args.scripts_result_file, str((inputs / "scripts_result.json").resolve()))
+            self.assertEqual(args.scripts_result_file, "")
             self.assertFalse((root / "workflow.sqlite3").exists())
 
     def test_replay_inputs_reject_incomplete_manifest_without_output(self):

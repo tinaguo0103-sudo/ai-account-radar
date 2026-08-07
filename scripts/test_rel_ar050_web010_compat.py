@@ -157,14 +157,16 @@ class PublicV2FlowTest(unittest.TestCase):
             selected_id = handoff["selected_topics"][0]["topic_id"]
             scripts = root / "scripts.json"
             write(scripts, {
-                "run_id": run_id, "scripts": [{
+                "packet_id": handoff["topic_input"]["packet_id"],
+                "voice_pack_sha256": handoff["topic_input"]["voice_pack_sha256"],
+                "script": {
                     "topic_id": selected_id, "title": "稿件", "hook": "钩子",
                     "structure": "结构", "body": "完整正文",
-                }], "failures": [],
+                },
             })
             third = self.execute(command + [
                 "--editorial-result-file", str(editorial),
-                "--scripts-result-file", str(scripts),
+                "--script-item-file", str(scripts),
             ], config)
             self.assertEqual(third.returncode, 0, third.stderr + third.stdout)
             result = last_json(third.stdout)

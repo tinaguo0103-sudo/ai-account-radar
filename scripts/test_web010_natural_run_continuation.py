@@ -265,20 +265,20 @@ class NaturalRunContinuationTest(unittest.TestCase):
             self.assertEqual(len(scripts_handoff["selected_topics"]), 1)
             scripts = root / "scripts.json"
             write_json(scripts, {
-                "run_id": RUN_ID,
-                "scripts": [{
+                "packet_id": scripts_handoff["topic_input"]["packet_id"],
+                "voice_pack_sha256": scripts_handoff["topic_input"]["voice_pack_sha256"],
+                "script": {
                     "topic_id": candidate_ids[0],
                     "title": "AI workflow",
                     "hook": "具体冲突",
                     "structure": "场景到动作",
                     "body": "这是一篇可以继续进入提词器修改的完整正文。",
-                }],
-                "failures": [],
+                },
             })
             third = self.execute(command + [
                 "--editorial-result-file",
                 str(editorial),
-                "--scripts-result-file",
+                "--script-item-file",
                 str(scripts),
             ], self.publisher_config(root))
             self.assertEqual(third.returncode, 0, third.stderr + third.stdout)

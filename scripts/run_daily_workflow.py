@@ -40,6 +40,7 @@ from trend_hotspot_cards import (
 )
 from website_publisher_client import publish_terminal
 from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
+import spoken_script_runtime as script_runtime
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_ROOT = Path.home() / ".codex" / "skills"
@@ -117,6 +118,8 @@ def prepare_replay_inputs(args: argparse.Namespace) -> None:
         expected = str(by_role[role])
         if current and Path(current).resolve() != by_role[role]:
             raise WorkflowConflict(f"replay_input_result_conflict:{role}")
+        if role == "scripts_result":
+            continue
         setattr(args, attribute, expected)
 
 
@@ -1416,6 +1419,7 @@ def main() -> int:
     parser.add_argument("--qa-frozen-packages")
     parser.add_argument("--editorial-result-file")
     parser.add_argument("--scripts-result-file")
+    parser.add_argument("--script-item-file")
     parser.add_argument("--video-mode", choices=("normal", "disabled"), default="normal")
     parser.add_argument("--video-runtime-config", default="")
     parser.add_argument("--video-policy", default="")
@@ -1611,40 +1615,90 @@ def main() -> int:
                 {"provenance": skill_diagnostics()[0]},
             )
             workflow.commit_stage(args.run_id, "editorial", editorial, "completed")
-        selected = {
-            str(row["candidate_id"]) for row in editorial.get("topics", [])
+        selected_topics = [
+            row for row in editorial.get("topics", [])
             if row.get("decision") == "select"
-        }
+        ]
+        selected = {str(row["candidate_id"]) for row in selected_topics}
         scripts_stage = workflow.stage(args.run_id, "scripts")
-        if scripts_stage:
+        scripts_finalized = False
+        if scripts_stage and scripts_stage.get("status") != "in_progress":
             scripts = scripts_stage["payload"]
-        elif not args.scripts_result_file and selected:
-            workflow.mark_waiting(args.run_id)
-            handoff = build_scripts_handoff(
+            scripts_finalized = True
+        elif selected_topics:
+            if args.scripts_result_file:
+                raise WorkflowConflict("whole_batch_scripts_submission_forbidden")
+            voice_pack = script_runtime.load_voice_pack()
+            all_handoff = build_scripts_handoff(
                 args.run_id, args.business_date, collection, editorial,
             )
-            handoff.update({
-                "selected_count": len(selected),
-                "stage": "scripts",
-                "status": "waiting",
-            })
-            emit_handoff(args, handoff)
-            return 0
+            script_topics = all_handoff["selected_topics"]
+            checkpoint = script_runtime.ensure_checkpoint(
+                workflow,
+                args.run_id,
+                args.business_date,
+                script_topics,
+                voice_pack,
+            )
+            if args.script_item_file:
+                outcome = script_runtime.submit_topic(
+                    workflow,
+                    args.run_id,
+                    args.business_date,
+                    script_topics,
+                    checkpoint,
+                    voice_pack,
+                    read_json(args.script_item_file),
+                )
+                if not outcome["complete"]:
+                    workflow.mark_waiting(args.run_id)
+                    next_handoff = outcome["handoff"]
+                    next_handoff.update({
+                        "skill_names": list(SKILLS[1:]),
+                        "batch_contract": all_handoff["batch_contract"],
+                    })
+                    emit_handoff(args, next_handoff)
+                    return 0
+                scripts = outcome["scripts"]
+                validate_scripts(args.run_id, scripts, selected)
+                for name, diagnostic in zip(SKILLS[1:], skill_diagnostics()[1:]):
+                    workflow.record_skill_diagnostic(
+                        args.run_id, "scripts", "batch", name,
+                        {"provenance": diagnostic},
+                    )
+                write_script_artifacts(args.artifact_root, args.run_id, scripts["scripts"])
+                scripts_finalized = True
+            else:
+                index = script_runtime.first_unfinished_index(checkpoint)
+                if index >= len(script_topics):
+                    raise WorkflowConflict("scripts_checkpoint_incomplete_status")
+                handoff = script_runtime.topic_packet(
+                    args.run_id,
+                    args.business_date,
+                    script_topics[index],
+                    index,
+                    len(script_topics),
+                    len(checkpoint["completed_scripts"]),
+                    voice_pack,
+                )
+                handoff.update({
+                    "skill_names": list(SKILLS[1:]),
+                    "batch_contract": all_handoff["batch_contract"],
+                })
+                workflow.mark_waiting(args.run_id)
+                emit_handoff(args, handoff)
+                return 0
         else:
-            scripts = read_json(args.scripts_result_file) if selected else {
+            scripts = {
                 "run_id": args.run_id, "scripts": [], "failures": [],
             }
             validate_scripts(args.run_id, scripts, selected)
-            if selected:
-                for name, diagnostic in zip(SKILLS[1:], skill_diagnostics()[1:]):
-                    workflow.record_skill_diagnostic(
-                        args.run_id, "scripts", "daily", name, {"provenance": diagnostic},
-                    )
             write_script_artifacts(args.artifact_root, args.run_id, scripts["scripts"])
             workflow.commit_stage(
                 args.run_id, "scripts", scripts,
                 "completed_with_failures" if scripts.get("failures") else "completed",
             )
+            scripts_finalized = True
         failures = (
             len(collection.get("item_failures", []))
             + len(scripts.get("failures", []))

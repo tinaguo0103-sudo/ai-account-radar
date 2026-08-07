@@ -128,16 +128,32 @@ def main() -> int:
                 identity_key="candidate_id",
             )
             command.extend(["--editorial-result-file", str(mapped_editorial)])
-        if args.scripts_result_file:
-            mapped_scripts = remap_result(
-                args.scripts_result_file,
-                Path(tmp) / "scripts.json",
-                identity_map,
-                collection_key="scripts",
-                identity_key="topic_id",
-            )
-            command.extend(["--scripts-result-file", str(mapped_scripts)])
         result = subprocess.run(command, text=True)
+        if result.returncode != 0 or not args.scripts_result_file:
+            return result.returncode
+        mapped_scripts = remap_result(
+            args.scripts_result_file,
+            Path(tmp) / "scripts.json",
+            identity_map,
+            collection_key="scripts",
+            identity_key="topic_id",
+        )
+        payload = json.loads(mapped_scripts.read_text(encoding="utf-8"))
+        for script in payload.get("scripts", []):
+            handoff_path = args.artifact_root.resolve() / EXACT_RUN / "workflow_handoff.json"
+            handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+            submission = Path(tmp) / f"submission_{script['topic_id'].replace(':', '_')}.json"
+            submission.write_text(json.dumps({
+                "packet_id": handoff["topic_input"]["packet_id"],
+                "voice_pack_sha256": handoff["topic_input"]["voice_pack_sha256"],
+                "script": script,
+            }, ensure_ascii=False), encoding="utf-8")
+            result = subprocess.run(
+                command + ["--script-item-file", str(submission)],
+                text=True,
+            )
+            if result.returncode != 0:
+                return result.returncode
         return result.returncode
 
 
