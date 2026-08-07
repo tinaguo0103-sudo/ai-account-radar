@@ -18,6 +18,7 @@ from website_publisher_client import load_config
 
 SCRIPT_KEYS = {"topic_id", "title", "hook", "structure", "body"}
 FAILURE_KEYS = {"topic_id", "reason"}
+SCRIPT_ARTIFACT_REQUIRED_KEYS = {"run_id", "scripts", "failures"}
 CONTENT_BUSINESS_KEYS = (
     "id", "run_id", "source", "account", "title", "summary", "source_url",
     "published_at", "collected_at", "selected", "topic_id", "script_id",
@@ -94,10 +95,14 @@ def authority_snapshot(db_path: Path, run_id: str, business_date: str) -> dict[s
 
 
 def validate_override(
-    artifact: dict[str, Any], run_id: str, selected: list[str],
+    artifact: dict[str, Any], run_id: str, business_date: str, selected: list[str],
 ) -> dict[str, Any]:
-    if set(artifact) != {"run_id", "scripts", "failures"} or artifact.get("run_id") != run_id:
+    if not SCRIPT_ARTIFACT_REQUIRED_KEYS.issubset(set(artifact)):
+        raise ProjectionError("script_refresh_artifact_schema_invalid")
+    if artifact.get("run_id") != run_id:
         raise ProjectionError("script_refresh_artifact_run_conflict")
+    if "business_date" in artifact and artifact.get("business_date") != business_date:
+        raise ProjectionError("script_refresh_artifact_date_conflict")
     scripts = artifact.get("scripts")
     failures = artifact.get("failures")
     if not isinstance(scripts, list) or not isinstance(failures, list):
@@ -120,7 +125,7 @@ def validate_override(
         failed.add(identity)
     if seen | failed != set(selected):
         raise ProjectionError("script_refresh_selected_coverage_conflict")
-    return {"run_id": run_id, "scripts": scripts, "failures": failures}
+    return artifact
 
 
 def canonical_rows(rows: list[dict[str, Any]]) -> str:
@@ -249,7 +254,9 @@ def run_refresh(
     *, config: dict[str, str] | None = None, request_fn: RequestFn = request_json,
 ) -> dict[str, Any]:
     authority = authority_snapshot(db_path, run_id, business_date)
-    override = validate_override(read_json(scripts_path), run_id, authority["selected"])
+    override = validate_override(
+        read_json(scripts_path), run_id, business_date, authority["selected"],
+    )
     settings = config or load_config()
     payload = build_workflow_projection(
         db_path, run_id, settings["authority_identity"], scripts_override=override,

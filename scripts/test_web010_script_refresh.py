@@ -4,6 +4,7 @@ import tempfile
 import unittest
 import urllib.parse
 from pathlib import Path
+from unittest.mock import patch
 
 from daily_workflow import DailyWorkflow
 from publish_website_projection import ProjectionError, build_workflow_projection
@@ -93,6 +94,7 @@ class FakeWebsite:
         self.projected_at = {target_payload["run_id"]: "old-target",
                              historical_payload["run_id"]: "old-history"}
         self.posts = 0
+        self.last_post_payload = None
         self.fail_post = None
         self.mutate_readback = None
 
@@ -110,6 +112,7 @@ class FakeWebsite:
                 pre = payload.get("refresh_precondition") or {}
                 if pre.get("projected_at") != self.projected_at[run_id]:
                     raise ProjectionError("business_projection_precondition_stale")
+                self.last_post_payload = copy.deepcopy(payload)
                 self.payloads[run_id] = copy.deepcopy(payload)
                 self.projected_at[run_id] = "new-target"
                 return self.metadata(run_id, "refreshed")
@@ -145,7 +148,7 @@ class ScriptRefreshTests(unittest.TestCase):
         self.temp = tempfile.TemporaryDirectory()
         self.root = Path(self.temp.name)
         self.db, self.identities, self.old = make_authority(self.root)
-        self.accepted = {"run_id": RUN_ID,
+        self.accepted = {"run_id": RUN_ID, "business_date": DATE,
                          "scripts": [script(identity, "accepted") for identity in self.identities],
                          "failures": []}
         self.artifact = self.root / "accepted.json"
@@ -181,9 +184,43 @@ class ScriptRefreshTests(unittest.TestCase):
         self.assertEqual(second["request_ledger"]["terminal_post"], 0)
         self.assertEqual(self.website.posts, 1)
 
-    def test_strict_artifact_matrix(self):
+    def test_exact_artifact_shape_is_used_without_repacking(self):
+        snapshot = authority_snapshot(self.db, RUN_ID, DATE)
+        validated = validate_override(
+            self.accepted, RUN_ID, DATE, snapshot["selected"],
+        )
+        self.assertIs(validated, self.accepted)
+        self.assertEqual(validated["business_date"], DATE)
+
+    def test_harmless_extra_metadata_is_ignored_and_not_forwarded(self):
+        enriched = copy.deepcopy(self.accepted)
+        enriched["producer_trace"] = {"batch": "accepted", "captured_at": "diagnostic"}
+        enriched_path = self.root / "enriched.json"
+        enriched_path.write_text(json.dumps(enriched), encoding="utf-8")
+        result = run_refresh(self.db, RUN_ID, DATE, enriched_path,
+                             config=CONFIG, request_fn=self.website.request)
+        self.assertEqual(result["action"], "refreshed")
+        self.assertEqual(self.website.posts, 1)
+        self.assertNotIn("producer_trace", self.website.last_post_payload)
+
+    def test_legacy_artifact_without_business_date_remains_supported(self):
+        legacy = {key: value for key, value in self.accepted.items() if key != "business_date"}
+        legacy_path = self.root / "legacy.json"
+        legacy_path.write_text(json.dumps(legacy), encoding="utf-8")
+        result = run_refresh(self.db, RUN_ID, DATE, legacy_path,
+                             config=CONFIG, request_fn=self.website.request)
+        self.assertEqual(result["action"], "refreshed")
+        self.assertEqual(result["request_ledger"]["terminal_post"], 1)
+
+    def test_required_artifact_matrix(self):
         snapshot = authority_snapshot(self.db, RUN_ID, DATE)
         cases = []
+        missing_run_id = copy.deepcopy(self.accepted); missing_run_id.pop("run_id")
+        cases.append((missing_run_id, "script_refresh_artifact_schema_invalid"))
+        malformed_scripts = copy.deepcopy(self.accepted); malformed_scripts["scripts"] = {}
+        cases.append((malformed_scripts, "script_refresh_artifact_schema_invalid"))
+        malformed_failures = copy.deepcopy(self.accepted); malformed_failures["failures"] = {}
+        cases.append((malformed_failures, "script_refresh_artifact_schema_invalid"))
         wrong_run = copy.deepcopy(self.accepted); wrong_run["run_id"] = "run_20260801_080000"
         cases.append((wrong_run, "script_refresh_artifact_run_conflict"))
         missing = copy.deepcopy(self.accepted); missing["scripts"].pop()
@@ -196,7 +233,25 @@ class ScriptRefreshTests(unittest.TestCase):
         cases.append((schema, "script_refresh_artifact_schema_invalid"))
         for value, reason in cases:
             with self.subTest(reason=reason), self.assertRaisesRegex(ProjectionError, reason):
-                validate_override(value, RUN_ID, snapshot["selected"])
+                validate_override(value, RUN_ID, DATE, snapshot["selected"])
+
+    def test_artifact_wrong_date_fails_before_config_or_website(self):
+        wrong = copy.deepcopy(self.accepted)
+        wrong["business_date"] = "2026-08-05"
+        wrong_path = self.root / "wrong-date.json"
+        wrong_path.write_text(json.dumps(wrong), encoding="utf-8")
+        requests = []
+
+        def request(method, url, payload=None):
+            requests.append((method, url))
+            raise AssertionError("Website request must not be reached")
+
+        with patch(
+            "refresh_website_scripts.load_config",
+            side_effect=AssertionError("publisher config must not be loaded"),
+        ), self.assertRaisesRegex(ProjectionError, "script_refresh_artifact_date_conflict"):
+            run_refresh(self.db, RUN_ID, DATE, wrong_path, request_fn=request)
+        self.assertEqual(requests, [])
 
     def test_wrong_date_and_non_terminal_fail_before_requests(self):
         with self.assertRaisesRegex(ValueError, "wrong_business_date"):
