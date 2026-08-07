@@ -338,6 +338,16 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         ):
             self.assertNotIn(forbidden_entrypoint, protocol)
 
+    def test_release_prompt_makes_batch_invocation_sequential_per_topic(self):
+        config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
+        protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
+        self.assertIn("batch-level orchestration boundary", protocol)
+        self.assertIn("process selected topics strictly one at a time", protocol)
+        self.assertIn("finish the current topic's Topic Focus, Semantic Plan, Full Draft, Teleprompter Read, and Item QA/rewrite before reading or drafting the next topic", protocol)
+        self.assertIn("only after every topic has completed that method, serialize the one simple stage result", protocol)
+        self.assertNotIn("once for the full batch", protocol)
+        self.assertIn("Do not first summarize or draft the whole batch", protocol)
+
 
 if __name__ == "__main__":
     unittest.main()
