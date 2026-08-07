@@ -12,7 +12,13 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from daily_workflow import DailyWorkflow
-from spoken_script_runtime import load_private_style_context, load_voice_pack, topic_packet
+from spoken_script_runtime import (
+    load_private_style_context,
+    load_voice_pack,
+    sanitize_handoff,
+    select_topic_references,
+    topic_packet,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -96,7 +102,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         self.server.server_close()
         self.thread.join(timeout=2)
 
-    def test_voice_authority_is_the_two_approved_bodies_and_private_context_is_loaded(self):
+    def test_voice_authority_is_topic_matched_and_private_context_stays_transient(self):
         pack = load_voice_pack()
         self.assertEqual(
             [row["exemplar_id"] for row in pack["exemplars"]],
@@ -119,19 +125,55 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         self.assertTrue(context["loaded"])
         self.assertEqual(context["loaded_source_count"], 5)
         self.assertFalse(context["raw_content_embedded"])
+        self.assertNotIn("derived_style_cues", json.dumps(context, ensure_ascii=False))
         packet = topic_packet(
             RUN_ID,
             BUSINESS_DATE,
-            {"topic_id": "trend:voice-authority", "title": "QA-private"},
+            {
+                "topic_id": "trend:voice-authority",
+                "title": "AI视频导演交付验收",
+                "summary": "镜头、成片、返修与交付",
+            },
             0,
             1,
             0,
             pack,
         )
         self.assertEqual(packet["private_style_context"], context)
-        self.assertEqual(packet["voice_pack"], pack["exemplars"])
-        self.assertEqual(packet["voice_pack_contract"]["positive_authority"], "two_user_approved_full_bodies")
+        self.assertNotIn("voice_pack", packet)
+        self.assertFalse(packet["voice_pack_contract"]["embedded_content"])
+        self.assertFalse(packet["voice_pack_contract"]["shared_full_text_pack"])
+        self.assertLessEqual(packet["voice_pack_contract"]["approved_full_script_count"], 1)
+        self.assertLessEqual(packet["voice_pack_contract"]["private_excerpt_count"], 2)
         self.assertFalse(packet["voice_pack_contract"]["rejected_system_scripts_included"])
+        transient = packet["topic_input"]["reference_input"]
+        self.assertTrue(transient["approved_full_scripts"] or transient["private_excerpts"])
+        persisted = sanitize_handoff(packet)
+        self.assertNotIn("voice_pack", persisted)
+        self.assertFalse(persisted["topic_input"]["reference_input"]["raw_text_persisted"])
+        persisted_text = json.dumps(persisted, ensure_ascii=False)
+        self.assertEqual(
+            set(persisted["topic_input"]["reference_input"]["approved_full_scripts"][0]),
+            {"exemplar_id", "body_sha256", "selection_reason"},
+        )
+        self.assertEqual(
+            set(persisted["topic_input"]["reference_input"]["private_excerpts"][0]),
+            {"reference_id", "excerpt_sha256", "selection_reason"},
+        )
+        for row in transient["approved_full_scripts"]:
+            self.assertNotIn(row["body"], persisted_text)
+        for row in transient["private_excerpts"]:
+            self.assertNotIn(row["text"], persisted_text)
+
+        no_body = select_topic_references(
+            {
+                "topic_id": "trend:cover-automation",
+                "title": "封面自动化最难的不是出图，是视觉规则",
+            },
+            pack,
+        )
+        self.assertEqual(no_body["approved_full_scripts"], [])
+        self.assertLessEqual(len(no_body["private_excerpts"]), 2)
 
     def fixture(self, root: Path) -> Path:
         content = []
@@ -242,8 +284,14 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertEqual(handoff["action"], "scripts_required")
             self.assertEqual(len(handoff["selected_topics"]), 1)
             self.assertEqual(handoff["topic_index"], 0)
-            self.assertEqual(handoff["voice_pack"], load_voice_pack()["exemplars"])
-            self.assertTrue(handoff["voice_pack_contract"]["embedded_content"])
+            self.assertNotIn("voice_pack", handoff)
+            self.assertFalse(handoff["voice_pack_contract"]["embedded_content"])
+            self.assertFalse(handoff["voice_pack_contract"]["shared_full_text_pack"])
+            self.assertFalse(handoff["topic_input"]["reference_input"]["raw_text_persisted"])
+            for row in handoff["topic_input"]["reference_input"]["approved_full_scripts"]:
+                self.assertNotIn("body", row)
+            for row in handoff["topic_input"]["reference_input"]["private_excerpts"]:
+                self.assertNotIn("text", row)
             self.assertEqual(
                 handoff["topic_input"]["voice_pack_content_bytes"],
                 load_voice_pack()["content_bytes"],
@@ -295,7 +343,8 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 self.assertEqual(len(handoff["selected_topics"]), 1)
                 current_id = handoff["selected_topics"][0]["topic_id"]
                 self.assertEqual(current_id, topic_ids[index])
-                self.assertEqual(handoff["voice_pack"], load_voice_pack()["exemplars"])
+                self.assertNotIn("voice_pack", handoff)
+                self.assertFalse(handoff["voice_pack_contract"]["embedded_content"])
                 completed_ids.append(current_id)
                 submission = self.submit_file(root, handoff, index)
                 result = self.execute(command + ["--script-item-file", str(submission)], config)

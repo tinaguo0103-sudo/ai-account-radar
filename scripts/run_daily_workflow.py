@@ -196,6 +196,7 @@ def handoff_summary(document: dict[str, Any], path: Path) -> dict[str, Any]:
 
 def emit_handoff(args: argparse.Namespace, value: dict[str, Any]) -> dict[str, Any]:
     path = workflow_handoff_path(args)
+    value = script_runtime.sanitize_handoff(value)
     document = {
         "schema_version": 1,
         "run_id": args.run_id,

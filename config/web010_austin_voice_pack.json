@@ -6,6 +6,7 @@
       "exemplar_id": "run_20260805_080110:script:0f51191cbf21c6b2677f",
       "title": "AI时代最危险的创业幻觉：以为做出MVP就算有产品",
       "style_focus": "concept reversal, personal judgment, concrete product scene, consequence-led close",
+      "match_terms": ["MVP", "产品", "创业", "用户", "闭环", "验证", "交付", "功能", "上线", "市场", "项目", "验收"],
       "body": [
         "现在用AI做产品，有一个特别容易上头的瞬间。",
         "你把需求丢进去，代码出来了，页面出来了，登录、支付、聊天框，可能一个周末就都跑起来了。你点开那个链接，看着第一版真的能用，会有一种很强的感觉：产品已经做出来了，接下来只差找用户。",
@@ -47,6 +48,7 @@
       "exemplar_id": "run_20260803_110453:trend:f6f8f499268476dcc550",
       "title": "AI导演不是一键成片，是一套交付验收流程",
       "style_focus": "lived creator scene, concrete production decisions, spoken turns, responsibility-led close",
+      "match_terms": ["视频", "导演", "镜头", "分镜", "成片", "画面", "资产", "返修", "交付", "创作者", "动画"],
       "body": [
         "你有没有发现，很多人讲 AI 视频，讲到最后都在比一件事：",
         "这个模型画面更好了，那个模型动作更稳了，这个工具又能多生成几秒了。",
