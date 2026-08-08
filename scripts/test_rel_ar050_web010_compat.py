@@ -150,7 +150,21 @@ class PublicV2FlowTest(unittest.TestCase):
             })
             second = self.execute(command + ["--editorial-result-file", str(editorial)], config)
             second_value = last_json(second.stdout)
-            self.assertEqual(second_value["action"], "scripts_required")
+            self.assertEqual(second_value["action"], "script_reference_selection_required")
+            selection = root / "selection.json"
+            write(selection, {
+                "topic_id": identities[0],
+                "approved_exemplar_id": None,
+                "private_case_id": None,
+                "persona_id": None,
+                "reason": "该题独立具备用户价值，当前脚本不需要外部参考。",
+            })
+            selected = self.execute(command + [
+                "--editorial-result-file", str(editorial),
+                "--script-reference-selection-file", str(selection),
+            ], config)
+            self.assertEqual(selected.returncode, 0, selected.stderr + selected.stdout)
+            self.assertEqual(last_json(selected.stdout)["action"], "scripts_required")
             handoff = json.loads(
                 (root / "runs" / run_id / "workflow_handoff.json").read_text()
             )

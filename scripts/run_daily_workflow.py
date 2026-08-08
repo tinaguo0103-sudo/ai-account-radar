@@ -1421,6 +1421,7 @@ def main() -> int:
     parser.add_argument("--editorial-result-file")
     parser.add_argument("--scripts-result-file")
     parser.add_argument("--script-item-file")
+    parser.add_argument("--script-reference-selection-file")
     parser.add_argument("--video-mode", choices=("normal", "disabled"), default="normal")
     parser.add_argument("--video-runtime-config", default="")
     parser.add_argument("--video-policy", default="")
@@ -1629,6 +1630,8 @@ def main() -> int:
         elif selected_topics:
             if args.scripts_result_file:
                 raise WorkflowConflict("whole_batch_scripts_submission_forbidden")
+            if args.script_reference_selection_file and args.script_item_file:
+                raise WorkflowConflict("script_reference_selection_and_item_same_call")
             voice_pack = script_runtime.load_voice_pack()
             all_handoff = build_scripts_handoff(
                 args.run_id, args.business_date, collection, editorial,
@@ -1641,6 +1644,35 @@ def main() -> int:
                 script_topics,
                 voice_pack,
             )
+            if args.script_reference_selection_file:
+                selection = read_json(args.script_reference_selection_file)
+                checkpoint = script_runtime.set_reference_selection(
+                    workflow,
+                    args.run_id,
+                    args.business_date,
+                    script_topics,
+                    checkpoint,
+                    voice_pack,
+                    selection,
+                )
+                index = script_runtime.first_unfinished_index(checkpoint)
+                handoff = script_runtime.topic_packet(
+                    args.run_id,
+                    args.business_date,
+                    script_topics[index],
+                    index,
+                    len(script_topics),
+                    len(checkpoint["completed_scripts"]),
+                    voice_pack,
+                    checkpoint["current_reference_selection"],
+                )
+                handoff.update({
+                    "skill_names": list(SKILLS[1:]),
+                    "batch_contract": all_handoff["batch_contract"],
+                })
+                workflow.mark_waiting(args.run_id)
+                emit_handoff(args, handoff)
+                return 0
             if args.script_item_file:
                 outcome = script_runtime.submit_topic(
                     workflow,
@@ -1673,15 +1705,27 @@ def main() -> int:
                 index = script_runtime.first_unfinished_index(checkpoint)
                 if index >= len(script_topics):
                     raise WorkflowConflict("scripts_checkpoint_incomplete_status")
-                handoff = script_runtime.topic_packet(
-                    args.run_id,
-                    args.business_date,
-                    script_topics[index],
-                    index,
-                    len(script_topics),
-                    len(checkpoint["completed_scripts"]),
-                    voice_pack,
-                )
+                if checkpoint.get("current_reference_selection") is None:
+                    handoff = script_runtime.reference_selector_handoff(
+                        args.run_id,
+                        args.business_date,
+                        script_topics[index],
+                        index,
+                        len(script_topics),
+                        len(checkpoint["completed_scripts"]),
+                        voice_pack,
+                    )
+                else:
+                    handoff = script_runtime.topic_packet(
+                        args.run_id,
+                        args.business_date,
+                        script_topics[index],
+                        index,
+                        len(script_topics),
+                        len(checkpoint["completed_scripts"]),
+                        voice_pack,
+                        checkpoint["current_reference_selection"],
+                    )
                 handoff.update({
                     "skill_names": list(SKILLS[1:]),
                     "batch_contract": all_handoff["batch_contract"],

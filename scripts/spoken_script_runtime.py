@@ -5,7 +5,6 @@ from __future__ import annotations
 import hashlib
 import json
 import os
-import re
 from pathlib import Path
 from typing import Any
 
@@ -92,14 +91,15 @@ def _catalog_from_sources(sources: dict[str, dict[str, Any]]) -> dict[str, Any]:
     ]
     encoded = canonical(rows).encode("utf-8")
     return {
-        "contract": "per_topic_reference_catalog_v2",
+        "contract": "per_topic_reference_catalog_v3",
         "loaded": len(sources) == len(PRIVATE_STYLE_SOURCE_SPECS),
         "loaded_source_count": len(sources),
         "expected_source_count": len(PRIVATE_STYLE_SOURCE_SPECS),
         "source_roles": [row["role"] for row in rows],
         "source_hashes": {row["role"]: row["sha256"] for row in rows},
         "catalog_sha256": hashlib.sha256(encoded).hexdigest(),
-        "case_matching": "topic_specific_transient",
+        "case_selection": "outer_codex_semantic",
+        "keyword_matching": False,
         "current_fact_source": False,
         "raw_content_embedded": False,
     }
@@ -112,83 +112,105 @@ def load_private_style_context(
     return _catalog_from_sources(_read_private_sources(source_paths))
 
 
-def _matching_terms(text: str, terms: list[str]) -> list[str]:
-    lowered = text.casefold()
-    matches: list[str] = []
-    for term in terms:
-        value = str(term or "").strip()
-        if value and value.casefold() in lowered and value not in matches:
-            matches.append(value)
-    return matches
-
-
-def _private_card_terms(card: dict[str, Any]) -> list[str]:
-    title = str(card.get("topic_title") or "")
-    # The terms come from the private case title itself, not from the current topic.
-    terms = re.findall(r"[A-Za-z0-9+#.-]+|[\u4e00-\u9fff]{2}", title)
-    stop = {
-        "不是", "真正", "最难", "一个", "怎么", "以后", "需要", "工作",
-        "流程", "内容", "系统", "自动", "人工", "可以", "应该", "开始",
-    }
-    return [term for term in terms if term not in stop]
-
-
-def _private_case_excerpt(card: dict[str, Any]) -> str:
-    fields = (
-        ("题目", "topic_title"),
+def _anchor_excerpt(
+    anchor: dict[str, Any],
+    topic_card: dict[str, Any] | None = None,
+) -> str:
+    """Build a transient excerpt from approved private fields only."""
+    card_fields = (
+        ("原始题目", "topic_title"),
         ("核心判断", "core_thesis"),
-        ("痛点", "pain_point"),
+        ("现场痛点", "pain_point"),
         ("旧流程", "old_workflow"),
         ("AI介入", "ai_intervention"),
         ("独有判断", "unique_judgment"),
     )
-    return "\n".join(
-        f"{label}：{card[key]}"
-        for label, key in fields
-        if str(card.get(key) or "").strip()
+    fields = (
+        ("案例名称", "name"),
+        ("适用场景", "usable_for"),
+        ("语义线索", "keywords"),
+        ("可展示证据", "shootable_evidence"),
+        ("事实边界", "boundaries"),
     )
+    lines: list[str] = []
+    if isinstance(topic_card, dict):
+        for label, key in card_fields:
+            value = topic_card.get(key)
+            if str(value or "").strip():
+                lines.append(f"{label}：{value}")
+    for label, key in fields:
+        value = anchor.get(key)
+        if isinstance(value, list):
+            value = "、".join(str(item) for item in value if str(item).strip())
+        if str(value or "").strip():
+            lines.append(f"{label}：{value}")
+    return "\n".join(lines)
 
 
 def load_private_reference_library(
     source_paths: dict[str, str | Path] | None = None,
 ) -> dict[str, Any]:
-    """Load private cases/persona excerpts for transient, topic-local use only."""
+    """Load approved private excerpts without deciding which topic needs them."""
     sources = _read_private_sources(source_paths)
     catalog = _catalog_from_sources(sources)
-    cases: list[dict[str, Any]] = []
     runtime: dict[str, Any] = {}
-    cards: list[dict[str, Any]] = []
     try:
         runtime = json.loads(sources.get("private_runtime", {}).get("text", "{}"))
     except (json.JSONDecodeError, TypeError):
         runtime = {}
     try:
         raw_cards = json.loads(sources.get("private_topic_cards", {}).get("text", "[]"))
-        cards = raw_cards if isinstance(raw_cards, list) else []
+        topic_cards = raw_cards if isinstance(raw_cards, list) else []
     except (json.JSONDecodeError, TypeError):
-        cards = []
+        topic_cards = []
     anchors = runtime.get("case_anchors", []) if isinstance(runtime, dict) else []
-    for card in cards:
-        if not isinstance(card, dict) or not str(card.get("topic_id") or ""):
-            continue
-        reference_id = f"private_case:{card['topic_id']}"
-        terms = _private_card_terms(card)
-        for anchor in anchors if isinstance(anchors, list) else []:
-            if not isinstance(anchor, dict):
-                continue
-            anchor_terms = [str(term) for term in anchor.get("keywords", [])]
-            if str(anchor.get("name") or "") and any(
-                term.casefold() in str(card.get("topic_title") or "").casefold()
-                for term in anchor_terms if term
-            ):
-                terms.extend(anchor_terms)
+    if not isinstance(anchors, list) or len(anchors) != 7:
+        raise WorkflowConflict("private_case_catalog_invalid")
+    cases: list[dict[str, Any]] = []
+    safe_case_catalog: list[dict[str, Any]] = []
+    runtime_sha256 = sources.get("private_runtime", {}).get("sha256", "")
+    for index, anchor in enumerate(anchors, start=1):
+        if not isinstance(anchor, dict) or not str(anchor.get("name") or "").strip():
+            raise WorkflowConflict("private_case_catalog_invalid")
+        required_lists = ("usable_for", "shootable_evidence", "boundaries")
+        if any(not isinstance(anchor.get(key), list) for key in required_lists):
+            raise WorkflowConflict("private_case_catalog_invalid")
+        reference_id = f"private_anchor:{index:02d}"
+        # The first approved anchors have corresponding full Topic Cards; the
+        # remaining anchors retain only runtime fields that actually exist.
+        topic_card = topic_cards[index - 1] if index <= len(topic_cards) else None
+        text = _anchor_excerpt(anchor, topic_card)
+        excerpt_sha256 = hashlib.sha256(text.encode("utf-8")).hexdigest()
+        source_hashes = {"private_runtime": runtime_sha256}
+        source_roles = ["private_runtime"]
+        if isinstance(topic_card, dict):
+            source_hashes["private_topic_cards"] = sources.get(
+                "private_topic_cards", {}
+            ).get("sha256", "")
+            source_roles.append("private_topic_cards")
         cases.append({
             "reference_id": reference_id,
             "role": "private_case",
-            "source_role": "private_topic_cards",
-            "source_sha256": sources.get("private_topic_cards", {}).get("sha256", ""),
-            "match_terms": sorted(set(terms)),
-            "text": _private_case_excerpt(card),
+            "source_role": "private_runtime",
+            "source_sha256": runtime_sha256,
+            "source_roles": source_roles,
+            "source_hashes": source_hashes,
+            "text": text,
+            "excerpt_sha256": excerpt_sha256,
+        })
+        safe_case_catalog.append({
+            "reference_id": reference_id,
+            "name": str(anchor["name"]),
+            "usable_for": [str(item) for item in anchor["usable_for"]],
+            "evidence_shape": [str(item) for item in anchor["shootable_evidence"]],
+            "fact_boundaries": [str(item) for item in anchor["boundaries"]],
+            "semantic_cues": [str(item) for item in anchor.get("keywords", [])],
+            "source_role": "private_runtime",
+            "source_roles": source_roles,
+            "source_hashes": source_hashes,
+            "source_sha256": runtime_sha256,
+            "excerpt_sha256": excerpt_sha256,
+            "full_topic_card_excerpt": isinstance(topic_card, dict),
         })
 
     persona_text = sources.get("production_context", {}).get("text", "")
@@ -198,17 +220,33 @@ def load_private_reference_library(
         if any(term in part for term in ("AI业务系统导演", "真人轨", "录屏轨", "人工判断"))
     ]
     if persona_candidates:
+        persona_text_value = persona_candidates[0]
+        persona_excerpt_sha256 = hashlib.sha256(
+            persona_text_value.encode("utf-8")
+        ).hexdigest()
         cases.append({
             "reference_id": "private_persona:production_context:director",
             "role": "private_persona",
             "source_role": "production_context",
             "source_sha256": sources.get("production_context", {}).get("sha256", ""),
-            "match_terms": ["AI", "导演", "工作流", "判断", "交付"],
-            "text": persona_candidates[0],
+            "text": persona_text_value,
+            "excerpt_sha256": persona_excerpt_sha256,
         })
+        persona_catalog = [{
+            "reference_id": "private_persona:production_context:director",
+            "role": "private_persona",
+            "source_role": "production_context",
+            "source_sha256": sources.get("production_context", {}).get("sha256", ""),
+            "excerpt_sha256": persona_excerpt_sha256,
+            "selection_note": "optional persona stance excerpt; no topic fallback",
+        }]
+    else:
+        persona_catalog = []
     return {
         "catalog": catalog,
         "references": cases,
+        "private_case_catalog": safe_case_catalog,
+        "persona_catalog": persona_catalog,
     }
 
 
@@ -237,9 +275,6 @@ def load_voice_pack(path: str | Path = DEFAULT_VOICE_PACK) -> dict[str, Any]:
         raw_body = exemplar.get("body")
         body = "\n\n".join(str(part) for part in raw_body) if isinstance(raw_body, list) else str(raw_body or "")
         style_focus = str(exemplar.get("style_focus") or "")
-        match_terms = exemplar.get("match_terms", [])
-        if not isinstance(match_terms, list):
-            raise WorkflowConflict("voice_pack_exemplar_invalid")
         if not exemplar_id or exemplar_id in seen or not title or not body or not style_focus:
             raise WorkflowConflict("voice_pack_exemplar_invalid")
         seen.add(exemplar_id)
@@ -248,11 +283,10 @@ def load_voice_pack(path: str | Path = DEFAULT_VOICE_PACK) -> dict[str, Any]:
             "title": title,
             "body": body,
             "style_focus": style_focus,
-            "match_terms": [str(term) for term in match_terms if str(term).strip()],
             "source_role": "style_only",
         })
-    # Match terms are retrieval metadata. Keep the established library digest based
-    # on the approved body/title/style fields so existing checkpoints remain valid.
+    # Keep the established library digest based on approved body/title/style
+    # fields; reference selection is performed by the outer Codex, not keywords.
     digest_exemplars = [
         {key: row[key] for key in ("exemplar_id", "title", "body", "style_focus", "source_role")}
         for row in normalized
@@ -295,6 +329,7 @@ def new_checkpoint(
         "selected_count": len(selected_topics),
         "completed_scripts": [],
         "completed_receipts": [],
+        "current_reference_selection": None,
         "voice_pack": {
             "schema_version": voice_pack["schema_version"],
             "sha256": voice_pack["sha256"],
@@ -332,6 +367,9 @@ def validate_checkpoint(
         raise WorkflowConflict("scripts_checkpoint_voice_pack_conflict")
     completed = checkpoint.get("completed_scripts")
     receipts = checkpoint.get("completed_receipts")
+    current_selection = checkpoint.get("current_reference_selection")
+    if current_selection is not None and not isinstance(current_selection, dict):
+        raise WorkflowConflict("scripts_checkpoint_reference_selection_invalid")
     if not isinstance(completed, list) or not isinstance(receipts, list):
         raise WorkflowConflict("scripts_checkpoint_shape_invalid")
     if len(completed) != len(receipts):
@@ -395,52 +433,138 @@ def first_unfinished_index(checkpoint: dict[str, Any]) -> int:
     return len(checkpoint["selected_topic_ids"])
 
 
-def _topic_reference_text(topic: dict[str, Any]) -> str:
-    values: list[str] = []
-    for key, value in topic.items():
-        if key in {"topic_id", "run_id", "business_date"}:
-            continue
-        if isinstance(value, (dict, list)):
-            values.append(json.dumps(value, ensure_ascii=False, sort_keys=True))
-        elif value not in (None, ""):
-            values.append(str(value))
-    return "\n".join(values)
+def set_reference_selection(
+    workflow: Any,
+    run_id: str,
+    business_date: str,
+    selected_topics: list[dict[str, Any]],
+    checkpoint: dict[str, Any],
+    voice_pack: dict[str, Any],
+    selection: dict[str, Any],
+    private_library: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    validate_checkpoint(checkpoint, run_id, business_date, selected_topics, voice_pack)
+    index = first_unfinished_index(checkpoint)
+    if index >= len(selected_topics):
+        raise WorkflowConflict("scripts_checkpoint_already_complete")
+    if checkpoint.get("current_reference_selection") is not None:
+        raise WorkflowConflict("script_reference_selection_already_set")
+    normalized = validate_reference_selection(
+        selected_topics[index], voice_pack, selection, private_library,
+    )
+    updated = {
+        **checkpoint,
+        "current_reference_selection": normalized,
+    }
+    workflow.commit_stage(run_id, "scripts", updated, "in_progress")
+    return updated
 
 
 def _reference_ledger(
     approved: list[dict[str, Any]],
     private: list[dict[str, Any]],
     catalog: dict[str, Any],
+    selection: dict[str, Any],
 ) -> dict[str, Any]:
     return {
-        "selection_contract": "per_topic_transient_references_v2",
+        "selection_contract": "per_topic_transient_references_v3",
         "approved_full_script_ids": [row["exemplar_id"] for row in approved],
         "private_excerpt_ids": [row["reference_id"] for row in private],
+        "approved_full_script_hashes": [row["body_sha256"] for row in approved],
+        "private_excerpt_hashes": [row["excerpt_sha256"] for row in private],
         "approved_reasons": [row["selection_reason"] for row in approved],
         "private_reasons": [row["selection_reason"] for row in private],
+        "selection_reason": selection["reason"],
+        "selection_basis": [
+            "central_contradiction",
+            "responsible_person",
+            "consequence",
+            "judgment_motion",
+        ],
         "private_catalog_sha256": catalog.get("catalog_sha256", ""),
         "raw_text_persisted": False,
         "current_fact_source": "topic_card_only",
     }
 
 
-def select_topic_references(
+def approved_exemplar_catalog(voice_pack: dict[str, Any]) -> list[dict[str, Any]]:
+    return [
+        {
+            "exemplar_id": row["exemplar_id"],
+            "title": row["title"],
+            "style_focus": row["style_focus"],
+            "body_sha256": hashlib.sha256(row["body"].encode("utf-8")).hexdigest(),
+            "source_role": "approved_production_full_script",
+        }
+        for row in voice_pack["exemplars"]
+    ]
+
+
+def validate_reference_selection(
     topic: dict[str, Any],
     voice_pack: dict[str, Any],
+    selection: dict[str, Any],
     private_library: dict[str, Any] | None = None,
-    private_source_paths: dict[str, str | Path] | None = None,
 ) -> dict[str, Any]:
-    """Select only relevant references for this topic, keeping selected text transient."""
-    topic_text = _topic_reference_text(topic)
-    scored_approved: list[tuple[int, dict[str, Any], list[str]]] = []
-    for exemplar in voice_pack["exemplars"]:
-        matches = _matching_terms(topic_text, exemplar.get("match_terms", []))
-        if matches:
-            scored_approved.append((len(matches), exemplar, matches))
-    scored_approved.sort(key=lambda row: (-row[0], row[1]["exemplar_id"]))
+    allowed = {
+        "topic_id", "approved_exemplar_id", "private_case_id", "persona_id", "reason",
+    }
+    if not isinstance(selection, dict) or set(selection) - allowed:
+        raise WorkflowConflict("script_reference_selection_schema_invalid")
+    if not str(selection.get("topic_id") or "") or not str(selection.get("reason") or "").strip():
+        raise WorkflowConflict("script_reference_selection_incomplete")
+    if selection["topic_id"] != topic.get("topic_id"):
+        raise WorkflowConflict("script_reference_selection_not_current")
+    normalized = {
+        "topic_id": str(selection["topic_id"]),
+        "approved_exemplar_id": str(selection.get("approved_exemplar_id") or "") or None,
+        "private_case_id": str(selection.get("private_case_id") or "") or None,
+        "persona_id": str(selection.get("persona_id") or "") or None,
+        "reason": str(selection["reason"]).strip(),
+    }
+    exemplar_ids = {str(row["exemplar_id"]) for row in voice_pack["exemplars"]}
+    if normalized["approved_exemplar_id"] not in (None, *exemplar_ids):
+        raise WorkflowConflict("script_reference_selection_exemplar_unknown")
+    library = private_library or load_private_reference_library()
+    case_ids = {
+        str(row["reference_id"])
+        for row in library.get("references", [])
+        if row.get("role") == "private_case"
+    }
+    persona_ids = {
+        str(row["reference_id"])
+        for row in library.get("references", [])
+        if row.get("role") == "private_persona"
+    }
+    if normalized["private_case_id"] not in (None, *case_ids):
+        raise WorkflowConflict("script_reference_selection_case_unknown")
+    if normalized["persona_id"] not in (None, *persona_ids):
+        raise WorkflowConflict("script_reference_selection_persona_unknown")
+    if (
+        normalized["approved_exemplar_id"] is None
+        and normalized["private_case_id"] is None
+        and normalized["persona_id"] is None
+    ):
+        normalized["reason"] = normalized["reason"]
+    return normalized
+
+
+def load_selected_references(
+    topic: dict[str, Any],
+    voice_pack: dict[str, Any],
+    selection: dict[str, Any],
+    private_library: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Load only IDs selected by the outer Codex; returned text is transient."""
+    library = private_library or load_private_reference_library()
+    normalized = validate_reference_selection(topic, voice_pack, selection, library)
     approved: list[dict[str, Any]] = []
-    if scored_approved:
-        score, exemplar, matches = scored_approved[0]
+    private: list[dict[str, Any]] = []
+    if normalized["approved_exemplar_id"] is not None:
+        exemplar = next(
+            row for row in voice_pack["exemplars"]
+            if row["exemplar_id"] == normalized["approved_exemplar_id"]
+        )
         approved.append({
             "exemplar_id": exemplar["exemplar_id"],
             "title": exemplar["title"],
@@ -448,51 +572,92 @@ def select_topic_references(
             "style_focus": exemplar["style_focus"],
             "source_role": "approved_production_full_script",
             "body_sha256": hashlib.sha256(exemplar["body"].encode("utf-8")).hexdigest(),
-            "selection_reason": f"topic matches approved production voice situation via {', '.join(matches[:4])}",
-            "match_score": score,
+            "selection_reason": normalized["reason"],
         })
-
-    library = private_library or load_private_reference_library(private_source_paths)
-    scored_private: list[tuple[int, dict[str, Any], list[str]]] = []
-    for reference in library.get("references", []):
-        matches = _matching_terms(topic_text, reference.get("match_terms", []))
-        if matches:
-            scored_private.append((len(matches), reference, matches))
-    scored_private.sort(key=lambda row: (-row[0], row[1]["reference_id"]))
-    private: list[dict[str, Any]] = []
-    for score, reference, matches in scored_private[:2]:
+    selected_ids = [
+        value for value in (normalized["private_case_id"], normalized["persona_id"])
+        if value is not None
+    ]
+    for reference_id in selected_ids:
+        reference = next(
+            row for row in library["references"]
+            if row["reference_id"] == reference_id
+        )
         private.append({
             "reference_id": reference["reference_id"],
             "role": reference["role"],
             "source_role": reference["source_role"],
             "source_sha256": reference["source_sha256"],
             "text": reference["text"],
-            "excerpt_sha256": hashlib.sha256(reference["text"].encode("utf-8")).hexdigest(),
-            "selection_reason": f"topic-specific private {reference['role']} match via {', '.join(matches[:4])}",
-            "match_score": score,
+            "excerpt_sha256": reference["excerpt_sha256"],
+            "selection_reason": normalized["reason"],
         })
-    if not private:
-        persona = next(
-            (row for row in library.get("references", []) if row.get("role") == "private_persona"),
-            None,
-        )
-        if persona:
-            private.append({
-                "reference_id": persona["reference_id"],
-                "role": persona["role"],
-                "source_role": persona["source_role"],
-                "source_sha256": persona["source_sha256"],
-                "text": persona["text"],
-                "excerpt_sha256": hashlib.sha256(persona["text"].encode("utf-8")).hexdigest(),
-                "selection_reason": "no private case matched; use the approved general persona excerpt only",
-                "match_score": 0,
-            })
-    ledger = _reference_ledger(approved, private, library["catalog"])
     return {
         "approved_full_scripts": approved,
         "private_excerpts": private,
-        "ledger": ledger,
+        "ledger": _reference_ledger(
+            approved, private, library["catalog"], normalized,
+        ),
         "catalog": library["catalog"],
+        "selection": normalized,
+    }
+
+
+def select_topic_references(
+    topic: dict[str, Any],
+    voice_pack: dict[str, Any],
+    selection: dict[str, Any],
+    private_library: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    """Compatibility name for the explicit outer-Codex selection boundary."""
+    return load_selected_references(topic, voice_pack, selection, private_library)
+
+
+def reference_selector_handoff(
+    run_id: str,
+    business_date: str,
+    topic: dict[str, Any],
+    index: int,
+    selected_count: int,
+    completed_count: int,
+    voice_pack: dict[str, Any],
+    private_library: dict[str, Any] | None = None,
+) -> dict[str, Any]:
+    library = private_library or load_private_reference_library()
+    return {
+        "ok": True,
+        "action": "script_reference_selection_required",
+        "stage": "scripts",
+        "status": "waiting",
+        "run_id": run_id,
+        "business_date": business_date,
+        "selected_topics": [topic],
+        "topic_index": index,
+        "selected_count": selected_count,
+        "completed_count": completed_count,
+        "remaining_count": selected_count - completed_count,
+        "next_topic_not_exposed_until_submit": True,
+        "topic_selector_input": {
+            "topic": topic,
+            "approved_exemplar_catalog": approved_exemplar_catalog(voice_pack),
+            "private_case_catalog": library.get("private_case_catalog", []),
+            "persona_catalog": library.get("persona_catalog", []),
+            "previous_topic_body_included": False,
+        },
+        "reference_selection_contract": {
+            "required_keys": [
+                "topic_id", "approved_exemplar_id", "private_case_id",
+                "persona_id", "reason",
+            ],
+            "approved_full_script_default": None,
+            "private_case_default": None,
+            "semantic_basis": [
+                "central_contradiction", "responsible_person",
+                "consequence", "judgment_motion",
+            ],
+            "generic_keyword_reason_not_valid": True,
+            "raw_text_in_selector_input": False,
+        },
     }
 
 
@@ -545,15 +710,17 @@ def topic_packet(
     selected_count: int,
     completed_count: int,
     voice_pack: dict[str, Any],
+    reference_selection: dict[str, Any],
     private_source_paths: dict[str, str | Path] | None = None,
     private_library: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     private_style_context = load_private_style_context(private_source_paths)
-    references = select_topic_references(
+    selected_library = private_library or load_private_reference_library(private_source_paths)
+    references = load_selected_references(
         topic,
         voice_pack,
-        private_library=private_library,
-        private_source_paths=private_source_paths,
+        reference_selection,
+        private_library=selected_library,
     )
     ledger = references["ledger"]
     packet_basis = {
@@ -635,6 +802,9 @@ def submit_topic(
     index = first_unfinished_index(checkpoint)
     if index >= len(selected_topics):
         raise WorkflowConflict("scripts_checkpoint_already_complete")
+    reference_selection = checkpoint.get("current_reference_selection")
+    if not isinstance(reference_selection, dict):
+        raise WorkflowConflict("script_reference_selection_required")
     if not isinstance(submitted, dict) or set(submitted) != {
         "packet_id", "voice_pack_sha256", "script",
     }:
@@ -642,7 +812,7 @@ def submit_topic(
     topic = selected_topics[index]
     packet = topic_packet(
         run_id, business_date, topic, index, len(selected_topics),
-        len(checkpoint["completed_scripts"]), voice_pack,
+        len(checkpoint["completed_scripts"]), voice_pack, reference_selection,
     )
     if (
         submitted.get("packet_id") != packet["topic_input"]["packet_id"]
@@ -666,13 +836,14 @@ def submit_topic(
         "packet_id": submitted["packet_id"],
         "voice_pack_sha256": submitted["voice_pack_sha256"],
         "voice_pack_content_bytes": voice_pack["content_bytes"],
-        "voice_pack_exemplar_ids": [row["exemplar_id"] for row in voice_pack["exemplars"]],
+        "voice_pack_exemplar_ids": packet["reference_selection"]["approved_full_script_ids"],
         "reference_selection": packet["reference_selection"],
     }]
     updated = {
         **checkpoint,
         "completed_scripts": completed,
         "completed_receipts": receipts,
+        "current_reference_selection": None,
     }
     if len(completed) < len(selected_topics):
         workflow.commit_stage(run_id, "scripts", updated, "in_progress")
@@ -680,7 +851,7 @@ def submit_topic(
         return {
             "complete": False,
             "checkpoint": updated,
-            "handoff": topic_packet(
+            "handoff": reference_selector_handoff(
                 run_id, business_date, selected_topics[next_index], next_index,
                 len(selected_topics), len(completed), voice_pack,
             ),
