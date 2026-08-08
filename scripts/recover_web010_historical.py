@@ -142,28 +142,12 @@ def main() -> int:
         for script in payload.get("scripts", []):
             handoff_path = args.artifact_root.resolve() / EXACT_RUN / "workflow_handoff.json"
             handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-            if handoff.get("action") == "script_reference_selection_required":
-                selection = Path(tmp) / f"selection_{script['topic_id'].replace(':', '_')}.json"
-                selection.write_text(json.dumps({
-                    "topic_id": script["topic_id"],
-                    "approved_exemplar_id": None,
-                    "private_case_id": None,
-                    "persona_id": None,
-                    "reason": "历史兼容恢复不注入外部参考，直接消费调用方提供的当前脚本正文。",
-                }, ensure_ascii=False), encoding="utf-8")
-                result = subprocess.run(
-                    command + ["--script-reference-selection-file", str(selection)],
-                    text=True,
-                )
-                if result.returncode != 0:
-                    return result.returncode
-                handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
             if handoff.get("action") != "scripts_required":
                 return 1
             submission = Path(tmp) / f"submission_{script['topic_id'].replace(':', '_')}.json"
             submission.write_text(json.dumps({
                 "packet_id": handoff["topic_input"]["packet_id"],
-                "voice_pack_sha256": handoff["topic_input"]["voice_pack_sha256"],
+                "editing_reference_sha256": handoff["topic_input"]["editing_reference_sha256"],
                 "script": script,
             }, ensure_ascii=False), encoding="utf-8")
             result = subprocess.run(

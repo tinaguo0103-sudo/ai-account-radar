@@ -260,28 +260,13 @@ class NaturalRunContinuationTest(unittest.TestCase):
             second = self.execute(command + ["--editorial-result-file", str(editorial)])
             self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
             second_value = last_json(second.stdout)
-            self.assertEqual(second_value["action"], "script_reference_selection_required")
-            selection = root / "script-reference-selection.json"
-            write_json(selection, {
-                "topic_id": candidate_ids[0],
-                "approved_exemplar_id": None,
-                "private_case_id": None,
-                "persona_id": None,
-                "reason": "该题的中心冲突和动作后果足以独立成稿，不需要借用已有成稿作为角度。",
-            })
-            selected = self.execute(command + [
-                "--editorial-result-file", str(editorial),
-                "--script-reference-selection-file", str(selection),
-            ])
-            self.assertEqual(selected.returncode, 0, selected.stderr + selected.stdout)
-            selected_value = last_json(selected.stdout)
-            self.assertEqual(selected_value["action"], "scripts_required")
-            scripts_handoff = json.loads(Path(selected_value["handoff_path"]).read_text())
+            self.assertEqual(second_value["action"], "scripts_required")
+            scripts_handoff = json.loads(Path(second_value["handoff_path"]).read_text())
             self.assertEqual(len(scripts_handoff["selected_topics"]), 1)
             scripts = root / "scripts.json"
             write_json(scripts, {
                 "packet_id": scripts_handoff["topic_input"]["packet_id"],
-                "voice_pack_sha256": scripts_handoff["topic_input"]["voice_pack_sha256"],
+                "editing_reference_sha256": scripts_handoff["topic_input"]["editing_reference_sha256"],
                 "script": {
                     "topic_id": candidate_ids[0],
                     "title": "AI workflow",

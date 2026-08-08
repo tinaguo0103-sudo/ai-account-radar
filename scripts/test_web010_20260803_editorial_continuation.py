@@ -55,7 +55,7 @@ class EditorialContinuationTest(unittest.TestCase):
             }, [self.candidate()])
 
     def test_every_selected_topic_requires_complete_script(self) -> None:
-        with self.assertRaisesRegex(workflow.WorkflowConflict, "script_selected_incomplete"):
+        with self.assertRaisesRegex(workflow.WorkflowConflict, "script_result_incomplete"):
             workflow.validate_scripts("run_20260803_110453", {
                 "run_id": "run_20260803_110453", "scripts": [],
                 "failures": [{"topic_id": "trend:one", "reason": "generation_failed"}],

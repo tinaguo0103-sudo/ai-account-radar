@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import json
 import tempfile
 import unittest
@@ -6,37 +8,20 @@ from pathlib import Path
 import run_daily_workflow as workflow
 
 
-RELEASE_CONFIG = (
-    Path(__file__).resolve().parents[1]
-    / "config"
-    / "web010_single_daily_workflow_release.json"
-)
-VOICE_SKILL = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "austin-voice-scriptwriter"
-    / "SKILL.md"
-)
-NO_OVERTIME_SKILL = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "austin-no-overtime-scripting"
-    / "SKILL.md"
-)
+ROOT = Path(__file__).resolve().parents[1]
+RELEASE_CONFIG = ROOT / "config" / "web010_single_daily_workflow_release.json"
+VOICE_SKILL = ROOT / "skills" / "austin-voice-scriptwriter" / "SKILL.md"
+NO_OVERTIME_SKILL = ROOT / "skills" / "austin-no-overtime-scripting" / "SKILL.md"
 SPOKEN_BODY_METHOD = (
-    Path(__file__).resolve().parents[1]
-    / "skills"
-    / "austin-no-overtime-scripting"
-    / "prompts"
-    / "spoken_body_method.md"
+    ROOT / "skills" / "austin-no-overtime-scripting" / "prompts" / "spoken_body_method.md"
 )
 
 
 class SpokenScriptRestorationTests(unittest.TestCase):
-    def fixture(self):
+    def fixture(self) -> dict:
         return {
-            "run_id": "run_20260730_120000",
-            "business_date": "2026-07-30",
+            "run_id": "run_20260808_121000",
+            "business_date": "2026-08-08",
             "content_items": [{
                 "item_id": "douyin:100",
                 "source_url": "https://www.douyin.com/video/100",
@@ -76,54 +61,41 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             }],
         }
 
-    def editorial(self):
+    def editorial(self) -> dict:
         return {
-            "run_id": "run_20260730_120000",
+            "run_id": "run_20260808_121000",
             "topics": [{
                 "candidate_id": "douyin:100",
                 "decision": "select",
                 "title": "长任务真正要留下的是恢复点",
                 "hook": "四小时以后，失败能不能接着跑？",
-                "structure": "失败现场 -> 恢复判断 -> 可执行边界",
+                "structure": "按当前材料自然推进",
                 "selection_reason": "来源事实与 Austin 工作流判断直接相关。",
             }],
         }
 
-    def test_builds_compact_same_run_topic_card_without_human_direction(self):
+    def test_builds_content_driven_topic_card_and_silent_constraints(self):
         handoff = workflow.build_scripts_handoff(
-            "run_20260730_120000", "2026-07-30", self.fixture(), self.editorial()
+            "run_20260808_121000", "2026-08-08", self.fixture(), self.editorial()
         )
         self.assertEqual(handoff["action"], "scripts_required")
-        self.assertEqual(len(handoff["selected_topics"]), 1)
+        self.assertEqual(handoff["selected_topics"][0]["topic_id"], "douyin:100")
         topic = handoff["selected_topics"][0]
-        self.assertEqual(topic["topic_id"], "douyin:100")
         self.assertEqual(topic["source"]["likes"], 0)
         self.assertNotIn("comments", topic["source"])
-        self.assertEqual(topic["source"]["missing_reasons"], {"comments": "not_public"})
         self.assertEqual(topic["workflow_context"]["experiment"], "用一批资料验证能否续跑。")
         self.assertEqual(topic["video_understanding"]["asr_supplement"], "spoken supplement")
-        self.assertEqual(topic["video_understanding"]["screen_facts"][0]["value"], "Codex")
         encoded = json.dumps(handoff, ensure_ascii=False)
         self.assertNotIn("我的制作补充", encoded)
         self.assertNotIn("制作方向", encoded)
-        self.assertTrue(handoff["batch_contract"]["human_supplement_excluded"])
-        self.assertTrue(
-            handoff["batch_contract"]["fact_boundaries_are_silent_generation_context"]
-        )
-        self.assertTrue(
-            handoff["batch_contract"]["plausible_hypothetical_or_composite_scenes_allowed"]
-        )
-        self.assertTrue(handoff["batch_contract"]["illustrative_experiment_data_allowed"])
-        self.assertTrue(
-            handoff["batch_contract"][
-                "fabricated_actual_client_team_or_measured_results_forbidden"
-            ]
-        )
-        self.assertTrue(
-            handoff["batch_contract"]["defensive_disclaimer_pattern_forbidden"]
-        )
+        contract = handoff["batch_contract"]
+        self.assertTrue(contract["content_driven_form"])
+        self.assertFalse(contract["universal_content_slots"])
+        self.assertTrue(contract["unsupported_first_person_experience_forbidden"])
+        self.assertTrue(contract["material_insufficiency_is_item_local"])
+        self.assertTrue(contract["fact_boundaries_are_silent_generation_context"])
 
-    def test_optional_context_stays_absent_or_null(self):
+    def test_optional_missing_context_stays_absent(self):
         fixture = self.fixture()
         fixture["content_items"][0] = {
             "item_id": "douyin:100",
@@ -135,7 +107,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         }
         fixture["understanding_results"] = []
         topic = workflow.build_scripts_handoff(
-            "run_20260730_120000", "2026-07-30", fixture, self.editorial()
+            "run_20260808_121000", "2026-08-08", fixture, self.editorial()
         )["selected_topics"][0]
         self.assertEqual(topic["source"], {"url": "https://www.douyin.com/video/100"})
         self.assertEqual(topic["workflow_context"], {})
@@ -143,18 +115,63 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIsNone(topic["cannot_claim"])
         self.assertIsNone(topic["video_understanding"])
 
-    def test_missing_same_run_candidate_fails_closed(self):
-        fixture = self.fixture()
-        fixture["candidates"] = []
-        with self.assertRaisesRegex(workflow.WorkflowConflict, "scripts_context_candidate_missing"):
-            workflow.build_scripts_handoff(
-                "run_20260730_120000", "2026-07-30", fixture, self.editorial()
-            )
-
-    def test_public_submit_and_replay_do_not_change_simple_result_contract(self):
+    def test_simple_result_accepts_item_local_material_failure(self):
         selected = {"douyin:100"}
         result = {
-            "run_id": "run_20260730_120000",
+            "run_id": "run_20260808_121000",
+            "scripts": [],
+            "failures": [{
+                "topic_id": "douyin:100",
+                "reason": "material_insufficiency",
+                "detail": "当前材料不足以支撑独特正文。",
+            }],
+        }
+        workflow.validate_scripts("run_20260808_121000", result, selected)
+        with self.assertRaisesRegex(workflow.WorkflowConflict, "script_result_incomplete"):
+            workflow.validate_scripts(
+                "run_20260808_121000",
+                {**result, "failures": [{"topic_id": "douyin:100", "reason": "evidence_only"}]},
+                selected,
+            )
+
+    def test_skills_use_content_driven_form_without_private_routing(self):
+        voice = VOICE_SKILL.read_text(encoding="utf-8")
+        no_overtime = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
+        method = SPOKEN_BODY_METHOD.read_text(encoding="utf-8")
+        combined = "\n".join((voice, no_overtime, method))
+        self.assertIn("没有固定开场、固定问题链、固定动作数", voice)
+        self.assertIn("material_insufficiency", combined)
+        self.assertIn("一次主观复读", combined)
+        self.assertIn("不默认写“我做了一个实验”", no_overtime)
+        self.assertIn("不读取 `references/private/three_round_learning.md`", voice)
+        self.assertIn("模块不是大纲", voice)
+        self.assertNotIn("scene/conflict/old workflow/experiment/judgment/consequence/close", combined)
+        self.assertIn("不启动 `codex exec`", combined)
+        for retired_path in (
+            "watch_script_package_queue.py",
+            "codex_script_package_runner.py",
+            "--write-feishu",
+        ):
+            self.assertNotIn(retired_path, combined)
+
+    def test_release_contract_uses_one_outer_content_driven_path(self):
+        config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
+        protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
+        self.assertIn("small style-only modular editing reference", protocol)
+        self.assertIn("There is no reference-selection handoff", protocol)
+        self.assertIn("choose the form that the topic's material supports", protocol)
+        self.assertIn("do not invent Austin's first-person experience", protocol)
+        self.assertIn("material_insufficiency", protocol)
+        self.assertIn("does not expose or accept a whole-batch script submission", protocol)
+        self.assertNotIn("--script-reference-selection-file", protocol)
+        self.assertIn("There is no reference-selection handoff, full-body exemplar injection", protocol)
+        self.assertIn("private case/persona routing or selector receipt", protocol)
+        for forbidden in ("codex exec", "watcher", "Feishu", "--write-feishu"):
+            self.assertNotIn(forbidden, protocol)
+
+    def test_simple_script_artifact_is_idempotent(self):
+        result = {
+            "run_id": "run_20260808_121000",
             "scripts": [{
                 "topic_id": "douyin:100",
                 "title": "Title",
@@ -164,189 +181,12 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             }],
             "failures": [],
         }
-        workflow.validate_scripts("run_20260730_120000", result, selected)
         with tempfile.TemporaryDirectory() as temp:
             root = Path(temp)
-            workflow.write_script_artifacts(root, "run_20260730_120000", result["scripts"])
+            workflow.write_script_artifacts(root, "run_20260808_121000", result["scripts"])
             before = next(root.rglob("*.md")).read_bytes()
-            workflow.write_script_artifacts(root, "run_20260730_120000", result["scripts"])
+            workflow.write_script_artifacts(root, "run_20260808_121000", result["scripts"])
             self.assertEqual(next(root.rglob("*.md")).read_bytes(), before)
-
-    def test_candidate_voice_skill_owns_optional_narrative_contract(self):
-        skill = VOICE_SKILL.read_text(encoding="utf-8")
-        self.assertIn("连续问题只是可选手法，不规定数量", skill)
-        self.assertIn("也可以完全不编号", skill)
-        self.assertIn("只有当不确定性或责任边界本身就是这条题的冲突时", skill)
-        self.assertIn("合理假设/复合场景和示例数据", skill)
-        self.assertIn("以本节为准", skill)
-        self.assertIn("0 个匹配案例是正常输入", skill)
-        self.assertNotIn("用 3-5 个连续问题把痛点拆开", skill)
-        self.assertNotIn("结尾必须有边界", skill)
-
-    def test_candidate_voice_skill_keeps_provenance_silent_and_attribution_natural(self):
-        skill = VOICE_SKILL.read_text(encoding="utf-8")
-        silent_context_fixtures = (
-            "公开信息里提到",
-            "根据来源",
-            "资料显示",
-            "目前可验证",
-        )
-        self.assertIn("provenance、source verification、missing evidence 和 cannot-claim", skill)
-        self.assertIn("静默生成与 QA", skill)
-        self.assertIn("不要换一组同义词继续解释核验", skill)
-        for fixture in silent_context_fixtures:
-            self.assertIn(fixture, skill)
-        self.assertIn("视频里的作者说，他凌晨四点看到成片", skill)
-        self.assertIn("这是人物归属，不是来源", skill)
-        self.assertIn("直接讲已经支持的事实、判断、场景、动作和后果", skill)
-
-    def test_candidate_skill_set_has_one_outer_spoken_only_runtime(self):
-        voice = VOICE_SKILL.read_text(encoding="utf-8")
-        no_overtime = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
-        combined = "\n".join((voice, no_overtime))
-        for forbidden_entrypoint in (
-            "codex exec",
-            "watch_script_package_queue.py",
-            "codex_script_package_runner.py",
-            "--write-feishu",
-        ):
-            self.assertNotIn(forbidden_entrypoint, combined)
-        self.assertIn("唯一 AI owner 是当前 outer Codex", no_overtime)
-        self.assertIn("本 Skill 每个批次应用一次", no_overtime)
-        self.assertIn("austin-voice-scriptwriter` 每个批次应用一次", no_overtime)
-        self.assertIn("输出只包含 `topic_id/title/hook/structure/body`", no_overtime)
-        self.assertIn("0 case match 是正常输入", no_overtime)
-        self.assertIn("同一上下文直接通读完整正文并完成质量检查", voice)
-
-    def test_each_topic_runs_the_complete_spoken_body_method(self):
-        skill = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
-        method = SPOKEN_BODY_METHOD.read_text(encoding="utf-8")
-        self.assertIn("逐题聚焦", skill)
-        self.assertIn("分段规划语义", skill)
-        self.assertIn("完整正文起草", skill)
-        self.assertIn("提词器视角复读", skill)
-        self.assertIn("逐题内容 QA 和必要重写", skill)
-        self.assertIn("完成一题再进入下一题", skill)
-        self.assertIn("3-5 分钟是语义完整度参考", method)
-        self.assertIn("scene、conflict、old workflow", method)
-        self.assertIn("identity exact coverage", method)
-        self.assertNotIn("字符下限", method)
-
-    def test_complete_method_keeps_simple_output_and_retired_paths_unreachable(self):
-        sources = "\n".join((
-            NO_OVERTIME_SKILL.read_text(encoding="utf-8"),
-            SPOKEN_BODY_METHOD.read_text(encoding="utf-8"),
-        ))
-        self.assertIn("只返回每题 `title/hook/structure/body`", sources)
-        self.assertIn("不创建额外用户产物", sources)
-        for forbidden_entrypoint in (
-            "codex exec",
-            "watch_script_package_queue.py",
-            "codex_script_package_runner.py",
-            "--write-feishu",
-        ):
-            self.assertNotIn(forbidden_entrypoint, sources)
-        for forced_template in (
-            "开头8秒必须",
-            "中段实操最多3步",
-            "必须出现人工修正点或AI边界",
-            "结尾必须回到真人判断",
-        ):
-            self.assertNotIn(forced_template, sources)
-
-    def test_multi_topic_batch_does_not_collapse_topics_into_one_summary(self):
-        skill = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
-        method = SPOKEN_BODY_METHOD.read_text(encoding="utf-8")
-        self.assertIn("不得先把多题压成一组摘要", skill)
-        self.assertIn("不要把五题先压成摘要", method)
-        self.assertIn("多选题仍是一次 batch", skill)
-        self.assertIn("每题都必须", skill)
-
-    def test_normal_generation_excludes_legacy_three_round_reference(self):
-        voice = VOICE_SKILL.read_text(encoding="utf-8")
-        self.assertIn(
-            "正常口播生成不定位、不读取 `references/private/three_round_learning.md`",
-            voice,
-        )
-        self.assertNotIn("可以借它理解 Austin 的节奏和判断感", voice)
-        self.assertIn("只有用户明确要求历史风格研究", voice)
-        self.assertIn("历史版本对照或旧方法诊断", voice)
-
-    def test_three_round_calibration_is_a_context_boundary_not_a_number_gate(self):
-        sources = "\n".join((
-            VOICE_SKILL.read_text(encoding="utf-8"),
-            NO_OVERTIME_SKILL.read_text(encoding="utf-8"),
-            SPOKEN_BODY_METHOD.read_text(encoding="utf-8"),
-        ))
-        for forbidden_gate in (
-            "禁止数字3",
-            "禁止三",
-            "三的出现次数",
-            "数字3不得出现",
-        ):
-            self.assertNotIn(forbidden_gate, sources)
-        self.assertIn("动作可以拆成两步、三步、四步", sources)
-        self.assertIn("是否编号只看这条内容是否因此更清楚", sources)
-
-    def test_corrected_skill_structure_matches_continuous_task_body(self):
-        skill = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
-        self.assertIn("同步复读并更新该题的", skill)
-        self.assertIn("structure 与最终", skill)
-        structure = (
-            "Skill收藏焦虑 -> 从重复任务建立旧流程基线 -> 同材料接手并中途改brief -> "
-            "关键结论回链 -> 按交接与返工成本决定去留"
-        )
-        body_semantics = {
-            "从重复任务建立旧流程基线": "这个旧流程，就是我的基线。",
-            "同材料接手并中途改brief": "等它做到一半，我会把真实变化丢进去",
-            "关键结论回链": "我会随手点开一条最关键、也最容易写错的结论",
-            "按交接与返工成本决定去留": "整个过程，我只记真实发生的成本。",
-        }
-        corrected_body_fixture = " ".join(body_semantics.values())
-        self.assertNotIn("文档任务三轮实测", structure)
-        for structure_step, body_evidence in body_semantics.items():
-            self.assertIn(structure_step, structure)
-            self.assertIn(body_evidence, corrected_body_fixture)
-
-    def test_release_prompt_delegates_style_instead_of_copying_skill_rules(self):
-        config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
-        protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
-        self.assertIn("candidate Voice Skill owns spoken narrative structure", protocol)
-        self.assertIn("candidate austin-no-overtime-scripting once", protocol)
-        self.assertIn("candidate austin-voice-scriptwriter once", protocol)
-        for duplicated_detail in (
-            "hypothetical or composite Austin-use scene",
-            "Illustrative numbers",
-            "distinct scene and narrative engine",
-            "我还没有所以我不会",
-            "AI不是万能",
-        ):
-            self.assertNotIn(duplicated_detail, protocol)
-        for forbidden_claim in (
-            "measured personal saving",
-            "real client outcome",
-            "completed team result",
-            "verified third-party statistic",
-        ):
-            self.assertIn(forbidden_claim, protocol)
-        for forbidden_entrypoint in (
-            "codex exec",
-            "watcher",
-            "codex_script_package_runner.py",
-            "--write-feishu",
-            "Feishu",
-        ):
-            self.assertNotIn(forbidden_entrypoint, protocol)
-
-    def test_release_prompt_makes_batch_invocation_sequential_per_topic(self):
-        config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
-        protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
-        self.assertIn("batch-level orchestration boundary", protocol)
-        self.assertIn("exposes exactly one selected rich Topic Card", protocol)
-        self.assertIn("The current topic must complete Topic Focus, Semantic Plan, Full Draft, Teleprompter Read, and Item QA/rewrite, then submit the simple topic result before the next topic is exposed", protocol)
-        self.assertIn("serializes one final simple scripts result after all selected topics complete", protocol)
-        self.assertNotIn("once for the full batch", protocol)
-        self.assertIn("does not expose or accept a whole-batch script submission", protocol)
 
 
 if __name__ == "__main__":
