@@ -1283,9 +1283,10 @@ def build_scripts_handoff(
             "source_grounded_or_direct_argument_preferred": True,
             "unsupported_first_person_experience_forbidden": True,
             "material_or_angle_insufficiency_is_item_local": True,
-            "one_subjective_full_text_reread_max_one_rewrite": True,
+            "one_author_edit_after_complete_draft": True,
             "fabricated_actual_client_team_or_measured_results_forbidden": True,
-            "defensive_disclaimer_pattern_forbidden": True,
+            "generic_editing_deltas_not_in_runtime": True,
+            "anti_template_self_check_not_in_runtime": True,
         },
     }
 
@@ -1626,7 +1627,7 @@ def main() -> int:
         elif selected_topics:
             if args.scripts_result_file:
                 raise WorkflowConflict("whole_batch_scripts_submission_forbidden")
-            editing_reference = script_runtime.load_editing_reference()
+            author_edit_contract = script_runtime.load_author_edit_contract()
             all_handoff = build_scripts_handoff(
                 args.run_id, args.business_date, collection, editorial,
             )
@@ -1636,7 +1637,7 @@ def main() -> int:
                 args.run_id,
                 args.business_date,
                 script_topics,
-                editing_reference,
+                author_edit_contract,
             )
             if args.script_item_file:
                 outcome = script_runtime.submit_topic(
@@ -1645,7 +1646,7 @@ def main() -> int:
                     args.business_date,
                     script_topics,
                     checkpoint,
-                    editing_reference,
+                    author_edit_contract,
                     read_json(args.script_item_file),
                 )
                 if not outcome["complete"]:
@@ -1677,7 +1678,7 @@ def main() -> int:
                     index,
                     len(script_topics),
                     len(checkpoint["completed_items"]),
-                    editing_reference,
+                    author_edit_contract,
                 )
                 handoff.update({
                     "skill_names": list(SKILLS[1:]),

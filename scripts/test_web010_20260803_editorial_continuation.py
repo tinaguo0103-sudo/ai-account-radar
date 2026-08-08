@@ -75,7 +75,10 @@ class EditorialContinuationTest(unittest.TestCase):
         prompt = "\n".join(contract["externalSchedule"]["outerAgentProtocol"]).lower()
         self.assertIn("evidence quantity is not recommendation eligibility", prompt)
         self.assertIn("research failure never automatically changes select to observe", prompt)
-        self.assertIn("exposes exactly one topic packet containing exact identity", prompt)
+        self.assertIn(
+            "runtime exposes exactly one topic packet containing only exact identity",
+            prompt,
+        )
         self.assertIn("submit before the next topic is exposed", prompt)
         self.assertNotIn("evidence shortage forces observe", prompt)
 

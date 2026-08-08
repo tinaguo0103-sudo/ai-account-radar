@@ -266,7 +266,6 @@ class NaturalRunContinuationTest(unittest.TestCase):
             scripts = root / "scripts.json"
             write_json(scripts, {
                 "packet_id": scripts_handoff["topic_input"]["packet_id"],
-                "editing_reference_sha256": scripts_handoff["topic_input"]["editing_reference_sha256"],
                 "script": {
                     "topic_id": candidate_ids[0],
                     "title": "AI workflow",

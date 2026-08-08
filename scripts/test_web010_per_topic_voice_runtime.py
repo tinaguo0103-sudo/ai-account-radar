@@ -13,7 +13,7 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from daily_workflow import DailyWorkflow
-from spoken_script_runtime import load_austin_authority, load_editing_reference, sanitize_handoff
+from spoken_script_runtime import load_austin_authority, load_author_edit_contract, sanitize_handoff
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -189,7 +189,6 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         if failure:
             payload = {
                 "packet_id": handoff["topic_input"]["packet_id"],
-                "editing_reference_sha256": handoff["topic_input"]["editing_reference_sha256"],
                 "failure": {
                     "topic_id": topic["topic_id"],
                     "reason": "material_insufficiency",
@@ -199,7 +198,6 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         else:
             payload = {
                 "packet_id": handoff["topic_input"]["packet_id"],
-                "editing_reference_sha256": handoff["topic_input"]["editing_reference_sha256"],
                 "script": {
                     "topic_id": topic["topic_id"],
                     "title": f"题目 {index} 的判断",
@@ -214,28 +212,33 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         write_json(path, payload)
         return path
 
-    def test_editing_reference_is_modular_and_no_selector_payload(self):
-        reference = load_editing_reference()
-        self.assertEqual(reference["schema_version"], 3)
-        self.assertTrue(reference["style_only"])
-        self.assertGreaterEqual(len(reference["modules"]), 8)
-        self.assertEqual(reference["authority_read_status"], "complete")
-        self.assertEqual(len(reference["authority_read_ledger"]), 8)
-        self.assertEqual(reference["authority_allowlist_id"], "austin_owned_transient_context_v1")
-        self.assertTrue(reference["outer_codex_direct_read_required"])
-        self.assertNotIn("full_body_injection", reference)
-        self.assertNotIn("private_case_routing", reference)
-        for module in reference["modules"]:
-            self.assertNotIn("body", module)
-            self.assertNotIn("match_terms", module)
-            self.assertTrue(module["edit_delta"])
+    def test_facts_first_contract_has_no_selector_or_style_payload(self):
+        contract = load_author_edit_contract()
+        self.assertEqual(contract["schema_version"], 1)
+        self.assertEqual(contract["phase_order"], ["facts_first_draft", "austin_author_edit"])
+        self.assertTrue(contract["facts_first_draft"]["topic_facts_only"])
+        self.assertEqual(
+            contract["facts_first_draft"]["private_context_read"],
+            "forbidden_until_draft_complete",
+        )
+        self.assertEqual(contract["austin_author_edit"]["starts_after"], "draft_complete")
+        self.assertEqual(
+            contract["austin_author_edit"]["approved_modules"],
+            "optional_local_edit_comparison_only",
+        )
+        self.assertIn("central_thesis", contract["austin_author_edit"]["preserves"])
+        self.assertIn("argument_movement", contract["austin_author_edit"]["preserves"])
+        self.assertIn("new_reversal", contract["austin_author_edit"]["must_not"])
+        self.assertEqual(contract["raw_text_persistence"], "forbidden")
         packet = {
             "action": "scripts_required",
             "topic_input": {
-                "editing_reference": reference,
-                "previous_topic_body_included": False,
+                "writing_contract": contract,
+                "writing_phases": {
+                    "draft": {"private_context_read": "forbidden_until_draft_complete"},
+                    "author_edit": {"starts_after": "draft_complete"},
+                },
             },
-            "editing_reference": reference,
         }
         sanitized = sanitize_handoff({
             **packet,
@@ -246,6 +249,8 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         self.assertNotIn("reference_selection", encoded)
         self.assertNotIn("private_case_catalog", encoded)
         self.assertNotIn("voice_pack", encoded)
+        self.assertNotIn("editing_reference", encoded)
+        self.assertNotIn("semantic_reread", encoded)
 
         source = (ROOT / "scripts" / "run_daily_workflow.py").read_text(encoding="utf-8")
         self.assertNotIn("--script-reference-selection-file", source)
@@ -317,29 +322,26 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertEqual(len(handoff["selected_topics"]), 1)
             self.assertEqual(handoff["topic_index"], 0)
             self.assertNotIn(topic_ids[1], json.dumps(handoff, ensure_ascii=False))
-            self.assertIn("editing_reference_sha256", handoff["topic_input"])
+            self.assertIn("writing_contract", handoff)
+            self.assertEqual(
+                handoff["topic_input"]["writing_phases"]["draft"]["private_context_read"],
+                "forbidden_until_draft_complete",
+            )
+            self.assertEqual(
+                handoff["topic_input"]["writing_phases"]["author_edit"]["starts_after"],
+                "draft_complete",
+            )
             self.assertEqual(
                 handoff["topic_input"]["writer_owns_final_fields"],
                 ["title", "hook", "structure", "body"],
             )
-            authority = handoff["topic_input"]["austin_authority_read"]
-            self.assertEqual(authority["status"], "complete")
-            self.assertFalse(authority["raw_text_included_in_handoff"])
-            self.assertEqual(len(authority["sources"]), 8)
-            self.assertTrue(all(set(row) == {"source_id", "role", "sha256", "read_status", "excerpt_ids"}
-                                for row in authority["sources"]))
-            private_context = handoff["topic_input"]["austin_private_context"]
-            self.assertEqual(private_context["mode"], "outer_codex_direct_read")
-            self.assertTrue(private_context["read_before_draft"])
-            self.assertTrue(private_context["read_before_subjective_reread"])
-            self.assertTrue(private_context["raw_text_in_current_context"])
-            self.assertFalse(private_context["raw_text_in_handoff"])
-            self.assertEqual(len(private_context["sources"]), 8)
             self.assertNotIn("PRIVATE_PERSONA", json.dumps(handoff, ensure_ascii=False))
-            self.assertTrue(all("edit_delta" in row for row in handoff["topic_input"]["editing_reference"]["modules"]))
             self.assertNotIn("reference_selection", json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn("full_body_injection", json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn("private_case_routing", json.dumps(handoff, ensure_ascii=False))
+            self.assertNotIn("editing_reference", json.dumps(handoff, ensure_ascii=False))
+            self.assertNotIn('"austin_authority_read":', json.dumps(handoff, ensure_ascii=False))
+            self.assertNotIn('"austin_private_context":', json.dumps(handoff, ensure_ascii=False))
 
             resumed = self.execute(command + ["--editorial-result-file", str(editorial)], config)
             self.assertEqual(resumed.returncode, 0, resumed.stderr + resumed.stdout)

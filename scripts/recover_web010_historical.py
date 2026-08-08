@@ -147,7 +147,6 @@ def main() -> int:
             submission = Path(tmp) / f"submission_{script['topic_id'].replace(':', '_')}.json"
             submission.write_text(json.dumps({
                 "packet_id": handoff["topic_input"]["packet_id"],
-                "editing_reference_sha256": handoff["topic_input"]["editing_reference_sha256"],
                 "script": script,
             }, ensure_ascii=False), encoding="utf-8")
             result = subprocess.run(

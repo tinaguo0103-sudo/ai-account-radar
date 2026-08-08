@@ -158,7 +158,6 @@ class PublicV2FlowTest(unittest.TestCase):
             scripts = root / "scripts.json"
             write(scripts, {
                 "packet_id": handoff["topic_input"]["packet_id"],
-                "editing_reference_sha256": handoff["topic_input"]["editing_reference_sha256"],
                 "script": {
                     "topic_id": selected_id, "title": "稿件", "hook": "钩子",
                     "structure": "结构", "body": "完整正文",
