@@ -1,35 +1,79 @@
 {
-  "schema_version": 2,
-  "authority": "approved_austin_editing_modules",
+  "schema_version": 3,
+  "authority": "austin_owned_editing_deltas",
   "style_only": true,
   "modules": [
     {
       "module_id": "judgment_before_explanation",
       "name": "判断先于解释",
       "editing_question": "这篇真正想让人重新看见的判断是什么？",
-      "guidance": "把抽象结论压回题目自己的事实、人物或后果；不要先铺工具说明。",
-      "source_role": "approved_austin_texts_and_original_cases"
+      "guidance": "先抓住题目里真的发生了什么，再决定观点从哪里出现；不要把工具说明当成开场。",
+      "edit_delta": "把系统先写好的解释改成有主语的判断，再回到一个当前题目的可见细节。",
+      "source_role": "austin_owned_approved_texts_and_cases"
     },
     {
       "module_id": "breathing_and_turns",
       "name": "口语呼吸与转折",
       "editing_question": "读起来像人在现场说话，还是像一段整理好的说明？",
-      "guidance": "让句子长短和停顿服务当前内容；每次转折都要改变理解，不套固定问句或编号。",
-      "source_role": "approved_austin_texts_and_original_cases"
+      "guidance": "让句子长短、停顿和突然停住服务当前内容；转折要带来新的看法，不套固定问句或编号。",
+      "edit_delta": "把整理好的说明拆成能直接念的呼吸，让一处停顿或回头真的改变听者的理解。",
+      "source_role": "austin_owned_approved_texts_and_cases"
     },
     {
       "module_id": "concrete_consequence",
       "name": "具体后果",
       "editing_question": "这个判断落到当前题目以后，什么会因此变得不同？",
-      "guidance": "补上题目真正支持的动作、观察或结果；没有材料时不要补成作者亲历。",
-      "source_role": "approved_austin_texts_and_original_cases"
+      "guidance": "让一个事实、动作、选择或后果留在文中；没有材料时不要补成作者亲历。",
+      "edit_delta": "把漂亮总结换成当前材料里的选择和代价；不为了完整添加一段通用方法。",
+      "source_role": "austin_owned_approved_texts_and_cases"
     },
     {
       "module_id": "topic_specific_close",
       "name": "题目自己的收束",
       "editing_question": "最后一句为什么只能属于这道题？",
-      "guidance": "从当前论证自然结束，保留主观判断；不使用通用 AI 边界或责任口号。",
-      "source_role": "approved_austin_texts_and_original_cases"
+      "guidance": "从当前论证自然结束，留下只能属于这条题的判断；不使用通用 AI 边界或责任口号。",
+      "edit_delta": "让结尾回答开头留下的疑问，或者停在一个具体决定上，而不是回到万能口号。",
+      "source_role": "austin_owned_approved_texts_and_cases"
+    },
+    {
+      "module_id": "detail_changes_the_claim",
+      "name": "细节改变判断",
+      "editing_question": "哪一个细节会让这条内容不能只按常识讲？",
+      "guidance": "只保留当前来源真正支持的细节，让它推动论证，不堆事实清单。",
+      "edit_delta": "把一个小动作、限制或异常结果留到后面回响，让观点因为它而转向。",
+      "source_role": "austin_owned_cases_and_approved_texts"
+    },
+    {
+      "module_id": "authorial_stance",
+      "name": "作者站位",
+      "editing_question": "这条题里 Austin 真正愿意承担的判断是什么？",
+      "guidance": "可以直接说喜欢、怀疑、犹豫或不值得，但不能编造本人、客户或团队经历。",
+      "edit_delta": "把中性的报告句改成有立场的口语句；没有真实第一人称材料时就用直接观点或自然人物归属。",
+      "source_role": "austin_owned_persona_and_cases"
+    },
+    {
+      "module_id": "consequence_over_summary",
+      "name": "后果先于总结",
+      "editing_question": "听众听完以后，哪个具体选择会因此改变？",
+      "guidance": "跟着当前事件的后果走，不把文章收束成工作流、责任或验收说明。",
+      "edit_delta": "删掉泛化的最终总结，跟住一个真实会发生的改变，直到它把前面的判断兑现。",
+      "source_role": "austin_owned_cases_and_approved_texts"
+    },
+    {
+      "module_id": "author_editing_delta",
+      "name": "作者改稿动作",
+      "editing_question": "如果这是系统初稿，Austin 会删掉哪句顺滑但没用的话？",
+      "guidance": "把格式正确的句子改成更具体、更有呼吸、更像当前现场的表达；不复用完整范文。",
+      "edit_delta": "删去看似完整的连接句，保留真正的犹豫、回头、判断和题目专属收束。",
+      "source_role": "austin_owned_edit_deltas"
+    },
+    {
+      "module_id": "topic_owned_close",
+      "name": "题目专属收束",
+      "editing_question": "为什么最后这个停点只能由这条题产生？",
+      "guidance": "收束可以停在发现、选择、代价或一个未被解决但必须面对的事实。",
+      "edit_delta": "不为了圆满而补标准结尾；让前面埋下的对象、动作或疑问在最后一次响起来。",
+      "source_role": "austin_owned_approved_texts_and_cases"
     }
   ]
 }

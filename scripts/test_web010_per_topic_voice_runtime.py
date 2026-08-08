@@ -7,11 +7,12 @@ import sys
 import tempfile
 import threading
 import unittest
+from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from daily_workflow import DailyWorkflow
-from spoken_script_runtime import load_editing_reference, sanitize_handoff
+from spoken_script_runtime import load_austin_authority, load_editing_reference, sanitize_handoff
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -214,14 +215,17 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
 
     def test_editing_reference_is_modular_and_no_selector_payload(self):
         reference = load_editing_reference()
-        self.assertEqual(reference["schema_version"], 2)
+        self.assertEqual(reference["schema_version"], 3)
         self.assertTrue(reference["style_only"])
-        self.assertGreaterEqual(len(reference["modules"]), 3)
+        self.assertGreaterEqual(len(reference["modules"]), 8)
+        self.assertEqual(reference["authority_read_status"], "complete")
+        self.assertEqual(len(reference["authority_read_ledger"]), 5)
         self.assertNotIn("full_body_injection", reference)
         self.assertNotIn("private_case_routing", reference)
         for module in reference["modules"]:
             self.assertNotIn("body", module)
             self.assertNotIn("match_terms", module)
+            self.assertTrue(module["edit_delta"])
         packet = {
             "action": "scripts_required",
             "topic_input": {
@@ -243,6 +247,35 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         source = (ROOT / "scripts" / "run_daily_workflow.py").read_text(encoding="utf-8")
         self.assertNotIn("--script-reference-selection-file", source)
         self.assertNotIn("set_reference_selection", source)
+
+    def test_runtime_reads_private_authority_and_returns_safe_ledger_only(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            private = root / "private"
+            private.mkdir()
+            sentinel = "PRIVATE_PERSONA_SENTINEL_MUST_NOT_ESCAPE"
+            (private / "production_context.md").write_text(sentinel, encoding="utf-8")
+            (private / "evidence_playbook.md").write_text("evidence boundaries", encoding="utf-8")
+            (private / "private_runtime.json").write_text(
+                json.dumps({"style_rules": {}, "case_anchors": []}), encoding="utf-8",
+            )
+            cases = root / "cases.json"
+            cases.write_text(json.dumps({"cards": []}), encoding="utf-8")
+            project = root / "project"
+            prd = project / "00_资料库" / "01_项目PRD"
+            prd.mkdir(parents=True)
+            (prd / "Austin不加班脚本Skill_PRD.md").write_text("owned positioning", encoding="utf-8")
+            with mock.patch.dict(os.environ, {
+                "AUSTIN_PRIVATE_REFERENCE_ROOT": str(private),
+                "AUSTIN_CASE_REFERENCE_FILE": str(cases),
+                "AUSTIN_PROJECT_ROOT": str(project),
+            }, clear=False):
+                authority = load_austin_authority()
+            encoded = json.dumps(authority, ensure_ascii=False)
+            self.assertEqual(authority["read_status"], "complete")
+            self.assertEqual(len(authority["sources"]), 5)
+            self.assertNotIn(sentinel, encoded)
+            self.assertTrue(all(set(row) == {"source_id", "role", "sha256", "read_status"} for row in authority["sources"]))
 
     def test_public_per_topic_checkpoint_resume_and_noop(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -273,6 +306,13 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 handoff["topic_input"]["writer_owns_final_fields"],
                 ["title", "hook", "structure", "body"],
             )
+            authority = handoff["topic_input"]["austin_authority_read"]
+            self.assertEqual(authority["status"], "complete")
+            self.assertFalse(authority["raw_text_included"])
+            self.assertEqual(len(authority["sources"]), 5)
+            self.assertTrue(all(set(row) == {"source_id", "role", "sha256", "read_status"}
+                                for row in authority["sources"]))
+            self.assertTrue(all("edit_delta" in row for row in handoff["topic_input"]["editing_reference"]["modules"]))
             self.assertNotIn("reference_selection", json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn("full_body_injection", json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn("private_case_routing", json.dumps(handoff, ensure_ascii=False))

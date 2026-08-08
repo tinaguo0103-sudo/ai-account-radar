@@ -149,12 +149,12 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         no_overtime = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
         method = SPOKEN_BODY_METHOD.read_text(encoding="utf-8")
         combined = "\n".join((voice, no_overtime, method))
-        self.assertIn("没有固定开场、固定问题链、固定动作数", voice)
+        self.assertIn("不规定顺序", voice)
         self.assertIn("material_or_angle_insufficiency", combined)
         self.assertIn("一次主观复读", combined)
         self.assertIn("不默认写“我做了一个实验”", no_overtime)
         self.assertIn("不读取 `references/private/three_round_learning.md`", voice)
-        self.assertIn("模块不是大纲", voice)
+        self.assertIn("不是文章类型字段、模板或 gate", voice)
         self.assertNotIn("scene/conflict/old workflow/experiment/judgment/consequence/close", combined)
         self.assertIn("不启动 `codex exec`", combined)
         for retired_path in (
@@ -167,7 +167,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
     def test_release_contract_uses_one_outer_content_driven_path(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
-        self.assertIn("small style-only modular editing reference", protocol)
+        self.assertIn("Austin-owned style-only editing reference", protocol)
         self.assertIn("There is no reference-selection handoff", protocol)
         self.assertIn("Choose the form that the topic's material supports", protocol)
         self.assertIn("do not invent Austin's first-person experience", protocol)
@@ -176,7 +176,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("does not expose or accept a whole-batch script submission", protocol)
         self.assertNotIn("--script-reference-selection-file", protocol)
         self.assertIn("There is no reference-selection handoff, full-body exemplar injection", protocol)
-        self.assertIn("private case/persona routing or selector receipt", protocol)
+        self.assertIn("per-topic private case/persona routing or selector receipt", protocol)
         for forbidden in ("codex exec", "watcher", "Feishu", "--write-feishu"):
             self.assertNotIn(forbidden, protocol)
 
