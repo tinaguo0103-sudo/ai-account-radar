@@ -1102,7 +1102,9 @@ def validate_scripts(run_id: str, result: dict[str, Any], selected: set[str]) ->
         if identity not in selected or identity in seen or identity in failed:
             raise WorkflowConflict("script_result_identity_conflict")
         failed.add(identity)
-        if row.get("reason") != "material_insufficiency" or not str(row.get("detail") or "").strip():
+        if row.get("reason") not in {
+            "material_or_angle_insufficiency", "material_insufficiency",
+        } or not str(row.get("detail") or "").strip():
             raise WorkflowConflict("script_result_incomplete")
     if seen | failed != selected or seen & failed:
         raise WorkflowConflict("script_result_coverage_incomplete")
@@ -1166,6 +1168,25 @@ def compact_video_understanding(package: dict[str, Any] | None) -> dict[str, Any
     }
 
 
+def compact_source_facts(rows: list[dict[str, Any]]) -> dict[str, Any]:
+    """Expose source-owned facts/details without forwarding editorial blueprints."""
+    facts: dict[str, Any] = {}
+    aliases = {
+        "details": (
+            "source_details", "details", "source_facts", "public_facts",
+            "fact_details", "content_facts", "事实细节", "事实摘要",
+        ),
+        "caption": ("caption", "caption_text", "字幕", "caption_timeline"),
+        "transcript": ("transcript", "asr_text", "口播转写", "ASR"),
+        "public_claims": ("public_claims", "supported_claims", "公开事实"),
+    }
+    for key, names in aliases.items():
+        value = first_context_value(rows, *names)
+        if value not in (None, "", [], {}):
+            facts[key] = value
+    return facts
+
+
 def build_scripts_handoff(
     run_id: str,
     business_date: str,
@@ -1201,16 +1222,7 @@ def build_scripts_handoff(
         selected_topics.append({
             "topic_id": topic_id,
             "trend_event_id": candidate.get("trend_event_id") or topic_id,
-            "title": topic.get("title"),
-            "hook": topic.get("hook"),
-            "structure": topic.get("structure"),
-            "selection_reason": topic.get("selection_reason"),
-            "unique_judgment": first_context_value(
-                rows, "unique_judgment", "我的独家判断", "我的思考点", "主编判断摘要",
-            ),
-            "persona_fit": first_context_value(
-                rows, "persona_fit", "persona_reason", "我的账号为什么能讲", "人设匹配",
-            ),
+            "selection_reason": str(topic.get("selection_reason") or "").strip(),
             "source": {
                 key: first_context_value(source_rows, *aliases)
                 for key, aliases in {
@@ -1230,29 +1242,13 @@ def build_scripts_handoff(
                 }.items()
                 if first_context_value(source_rows, *aliases) is not None
             },
-            "workflow_context": {
-                key: first_context_value(rows, *aliases)
-                for key, aliases in {
-                    "pain": ("pain", "我的工作流痛点", "痛点"),
-                    "old_workflow": ("old_workflow", "旧流程痛点", "旧流程"),
-                    "ai_intervention": ("ai_intervention", "AI介入点"),
-                    "experiment": ("experiment", "我要做的实验"),
-                    "validation": ("validation", "验证方式"),
-                    "available_evidence": ("available_evidence", "可展示证据", "市场验证依据"),
-                    "missing_evidence": ("missing_evidence", "需要补的证据", "证据缺口"),
-                }.items()
-                if first_context_value(rows, *aliases) is not None
-            },
+            "source_facts": compact_source_facts(source_rows),
             "fact_boundary": first_context_value(
                 rows, "fact_boundary", "fact_boundary_note", "事实边界",
             ),
             "cannot_claim": first_context_value(
                 rows, "cannot_claim", "cannot_claim_notes", "不能声称的部分",
             ),
-            "traffic_opportunity": candidate.get("traffic_opportunity"),
-            "persona_stability": candidate.get("persona_stability"),
-            "differentiation": candidate.get("differentiation"),
-            "cluster_synthesis": candidate.get("cluster_synthesis"),
             "sources": [
                 {
                     key: source.get(key)
@@ -1286,7 +1282,7 @@ def build_scripts_handoff(
             "fact_boundaries_are_silent_generation_context": True,
             "source_grounded_or_direct_argument_preferred": True,
             "unsupported_first_person_experience_forbidden": True,
-            "material_insufficiency_is_item_local": True,
+            "material_or_angle_insufficiency_is_item_local": True,
             "one_subjective_full_text_reread_max_one_rewrite": True,
             "fabricated_actual_client_team_or_measured_results_forbidden": True,
             "defensive_disclaimer_pattern_forbidden": True,

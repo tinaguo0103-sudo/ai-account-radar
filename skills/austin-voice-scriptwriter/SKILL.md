@@ -16,13 +16,14 @@ reference 只提醒编辑动作，不提供完整范文、private case/persona �
 - 直接讲题目支持的事实和判断。公开人物的行为可以自然归属；不能把来源作者、客户或团队经历
   改写成 Austin 本人的经历。
 - 没有 Austin 真实经历时，不默认使用第一人称实测、复合场景或“我做了一个实验”。假设只能
-  在自然帮助解释题目且不会伪装真实结果时使用；材料不足就返回 item-local material_insufficiency。
+  在自然帮助解释题目且不会伪装真实结果时使用；材料不足就返回 item-local material_or_angle_insufficiency。
 - provenance、source verification、missing evidence 和 cannot-claim 留在静默 context，不写成
   “公开信息显示”“根据来源”“目前可验证”等审核说明。边界只有在它本身是题目冲突时才自然出现。
 
 ## Modular editing reference
 
-只把模块当成编辑问题：
+只把模块当成编辑问题。writer packet 不提供预写的 editorial title、hook、structure 或 unique_judgment；
+最终字段必须由当前题的事实、细节和真实角度共同生成：
 
 - 判断是否先于解释；
 - 句子和停顿是否像人在说话；

@@ -552,6 +552,24 @@ def build_hotspot_cards(
         event_id = _event_id(run_id, descriptor)
         label = _event_label(next(iter(deduped.values()))) or event_id
         representative_source = source_rows[0]
+        fact_boundary = next(
+            (
+                row.get(key)
+                for row in rows
+                for key in ("fact_boundary", "fact_boundary_note", "事实边界")
+                if row.get(key) not in (None, "", [], {})
+            ),
+            None,
+        )
+        cannot_claim = next(
+            (
+                row.get(key)
+                for row in rows
+                for key in ("cannot_claim", "cannot_claim_notes", "不能声称的部分")
+                if row.get(key) not in (None, "", [], {})
+            ),
+            None,
+        )
         card = {
             "candidate_id": event_id,
             "trend_event_id": event_id,
@@ -561,6 +579,8 @@ def build_hotspot_cards(
             "event_name": label,
             "title": label,
             "source_url": representative_source["url"],
+            "fact_boundary": fact_boundary,
+            "cannot_claim": cannot_claim,
             "source_count": len(source_rows),
             "sources": source_rows,
             "representative_source_ids": [],

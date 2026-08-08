@@ -200,9 +200,9 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 "editing_reference_sha256": handoff["topic_input"]["editing_reference_sha256"],
                 "script": {
                     "topic_id": topic["topic_id"],
-                    "title": topic["title"],
-                    "hook": topic["hook"],
-                    "structure": topic["structure"],
+                    "title": f"题目 {index} 的判断",
+                    "hook": f"先看题目 {index} 里真正发生了什么。",
+                    "structure": "从来源事实推进到题目自己的判断。",
                     "body": (
                         f"这是题目 {index} 自己的连续口播正文。先把这条材料里的变化讲清楚，"
                         "再给出只属于它的判断和下一步，不借用另一题的现场。"
@@ -269,6 +269,10 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertEqual(handoff["topic_index"], 0)
             self.assertNotIn(topic_ids[1], json.dumps(handoff, ensure_ascii=False))
             self.assertIn("editing_reference_sha256", handoff["topic_input"])
+            self.assertEqual(
+                handoff["topic_input"]["writer_owns_final_fields"],
+                ["title", "hook", "structure", "body"],
+            )
             self.assertNotIn("reference_selection", json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn("full_body_injection", json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn("private_case_routing", json.dumps(handoff, ensure_ascii=False))
@@ -334,7 +338,10 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertEqual(last_json(terminal.stdout)["action"], "completed_publish_pending")
             stage = DailyWorkflow(root / f"{run_id}.sqlite3").stage(run_id, "scripts")
             self.assertEqual(stage["status"], "completed_with_failures")
-            self.assertEqual(stage["payload"]["failures"][0]["reason"], "material_insufficiency")
+            self.assertEqual(
+                stage["payload"]["failures"][0]["reason"],
+                "material_or_angle_insufficiency",
+            )
 
     def test_selector_cli_is_removed_from_normal_entrypoint(self):
         with tempfile.TemporaryDirectory() as directory:

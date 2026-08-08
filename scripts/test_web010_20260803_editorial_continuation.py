@@ -75,8 +75,8 @@ class EditorialContinuationTest(unittest.TestCase):
         prompt = "\n".join(contract["externalSchedule"]["outerAgentProtocol"]).lower()
         self.assertIn("evidence quantity is not recommendation eligibility", prompt)
         self.assertIn("research failure never automatically changes select to observe", prompt)
-        self.assertIn("exposes exactly one selected rich topic card", prompt)
-        self.assertIn("submit the simple topic result before the next topic is exposed", prompt)
+        self.assertIn("exposes exactly one topic packet containing exact identity", prompt)
+        self.assertIn("submit before the next topic is exposed", prompt)
         self.assertNotIn("evidence shortage forces observe", prompt)
 
     def test_public_editorial_handoff_uses_completed_deep_read_candidates(self) -> None:

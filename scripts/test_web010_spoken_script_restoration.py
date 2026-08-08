@@ -83,7 +83,14 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         topic = handoff["selected_topics"][0]
         self.assertEqual(topic["source"]["likes"], 0)
         self.assertNotIn("comments", topic["source"])
-        self.assertEqual(topic["workflow_context"]["experiment"], "用一批资料验证能否续跑。")
+        for blueprint_field in (
+            "title", "hook", "structure", "unique_judgment", "persona_fit",
+            "workflow_context", "traffic_opportunity", "differentiation", "cluster_synthesis",
+        ):
+            self.assertNotIn(blueprint_field, topic)
+        self.assertEqual(topic["source_facts"], {})
+        self.assertEqual(topic["fact_boundary"], "不能声称已经节省固定时长。")
+        self.assertEqual(topic["cannot_claim"], None)
         self.assertEqual(topic["video_understanding"]["asr_supplement"], "spoken supplement")
         encoded = json.dumps(handoff, ensure_ascii=False)
         self.assertNotIn("我的制作补充", encoded)
@@ -92,7 +99,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertTrue(contract["content_driven_form"])
         self.assertFalse(contract["universal_content_slots"])
         self.assertTrue(contract["unsupported_first_person_experience_forbidden"])
-        self.assertTrue(contract["material_insufficiency_is_item_local"])
+        self.assertTrue(contract["material_or_angle_insufficiency_is_item_local"])
         self.assertTrue(contract["fact_boundaries_are_silent_generation_context"])
 
     def test_optional_missing_context_stays_absent(self):
@@ -110,7 +117,10 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             "run_20260808_121000", "2026-08-08", fixture, self.editorial()
         )["selected_topics"][0]
         self.assertEqual(topic["source"], {"url": "https://www.douyin.com/video/100"})
-        self.assertEqual(topic["workflow_context"], {})
+        self.assertNotIn("workflow_context", topic)
+        self.assertNotIn("title", topic)
+        self.assertNotIn("hook", topic)
+        self.assertNotIn("structure", topic)
         self.assertIsNone(topic["fact_boundary"])
         self.assertIsNone(topic["cannot_claim"])
         self.assertIsNone(topic["video_understanding"])
@@ -122,7 +132,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             "scripts": [],
             "failures": [{
                 "topic_id": "douyin:100",
-                "reason": "material_insufficiency",
+                "reason": "material_or_angle_insufficiency",
                 "detail": "当前材料不足以支撑独特正文。",
             }],
         }
@@ -140,7 +150,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         method = SPOKEN_BODY_METHOD.read_text(encoding="utf-8")
         combined = "\n".join((voice, no_overtime, method))
         self.assertIn("没有固定开场、固定问题链、固定动作数", voice)
-        self.assertIn("material_insufficiency", combined)
+        self.assertIn("material_or_angle_insufficiency", combined)
         self.assertIn("一次主观复读", combined)
         self.assertIn("不默认写“我做了一个实验”", no_overtime)
         self.assertIn("不读取 `references/private/three_round_learning.md`", voice)
@@ -159,9 +169,10 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
         self.assertIn("small style-only modular editing reference", protocol)
         self.assertIn("There is no reference-selection handoff", protocol)
-        self.assertIn("choose the form that the topic's material supports", protocol)
+        self.assertIn("Choose the form that the topic's material supports", protocol)
         self.assertIn("do not invent Austin's first-person experience", protocol)
-        self.assertIn("material_insufficiency", protocol)
+        self.assertIn("material_or_angle_insufficiency", protocol)
+        self.assertIn("current outer Codex owns the final simple title/hook/structure/body", protocol)
         self.assertIn("does not expose or accept a whole-batch script submission", protocol)
         self.assertNotIn("--script-reference-selection-file", protocol)
         self.assertIn("There is no reference-selection handoff, full-body exemplar injection", protocol)

@@ -14,19 +14,20 @@ checkpoint，但不把所有题目压成同一篇文章，也不把任何叙事�
 - 当前 outer Codex 直接应用本 Skill 与 `austin-voice-scriptwriter`，一题完成后才提交并进入下一题。
 - public runtime 每次只暴露一个 selected rich Topic Card 和一份小型 style-only modular editing reference。
 - 不存在 semantic reference selector、full-body exemplar injection、private case/persona routing 或对应的 CLI/state/receipt。
-- 输出只包含每题 `topic_id/title/hook/structure/body`，以及确实无法成稿时的 item-local `material_insufficiency` failure。
+- 输出只包含每题 `topic_id/title/hook/structure/body`，以及确实无法成稿时的 item-local `material_or_angle_insufficiency` failure。
 
 ## 输入边界
 
-当前 Topic Card 是唯一事实输入，包含 same-run 的标题、公开来源、理解摘要、主编判断、事实边界
-和可用场景线索。可选的 editing reference 只提供判断、呼吸、转折和收束的改稿问题；它不是当前
-题目的事实、不是完整范文，也不指定文章顺序。
+当前 writer packet 是唯一事实输入，包含 exact topic identity、来源标题、来源事实/细节、事实边界
+和简短入选原因。它不再把编辑部的 title、hook、structure 或 unique_judgment 当成写作蓝图；当前
+outer Codex 与 writer 一起从这些事实生成最终四个简单字段。可选的 editing reference 只提供判断、
+呼吸、转折和收束的改稿问题；它不是当前题目的事实、不是完整范文，也不指定文章顺序。
 
 - 不读取或要求 human supplement、production direction、完整制作包字段或历史 run 替代。
 - optional facts 缺失时保持缺失；不得用模型记忆、私有案例或另一题内容补齐。
 - 没有 Austin 真实经历时，不默认写“我做了一个实验”或复合第一人称现场。优先使用来源真实
   人物/事件、直接论证、产品观察、真实方法或明确建议。
-- 如果材料撑不起题目独有且可读的正文，返回当前题的 `material_insufficiency`，让其他题继续。
+- 如果材料撑不起题目独有且可读的正文，返回当前题的 `material_or_angle_insufficiency`，让其他题继续。
 
 ## 内容驱动方法
 

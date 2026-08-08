@@ -11,7 +11,7 @@
 - 这条判断与普通泛 AI 文章相比，独特之处在哪里。
 
 如果这些问题没有可靠答案，不要用假想的 Austin 亲历来补齐，返回 item-local
-material_insufficiency。
+material_or_angle_insufficiency。
 
 ## 2. 选择表达形态
 
@@ -41,5 +41,5 @@ material_insufficiency。
 
 ## 5. 提交边界
 
-只返回 `topic_id/title/hook/structure/body`，或当前题的 typed `material_insufficiency` failure。
+只返回 `topic_id/title/hook/structure/body`，或当前题的 typed `material_or_angle_insufficiency` failure。
 完成一题并提交后才进入下一题；恢复从首个未完成题继续，不重生已完成题。
