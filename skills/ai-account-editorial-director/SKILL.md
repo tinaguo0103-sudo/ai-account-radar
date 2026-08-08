@@ -21,7 +21,7 @@ trusted collection artifact review pool
 -> lossless paginated Topic Cards
 ```
 
-当前 Codex 任务本身执行主编判断。禁止 nested `codex exec`、API、subagent 或第二模型会话。Python 只准备输入、校验 schema/hash、推进状态和保存证据。
+本 Skill 只在 deterministic controller 启动的独立、bounded editorial child 中执行。Child 只读取本次 exact candidate evidence 和本 Skill；不得读取 PM/Dev/QA history、脚本、发布控制文案，也不得递归启动 `codex exec`、Agent、API、浏览器或第二模型。Python/controller 只准备输入、校验结构化结果、推进状态和保存证据。
 
 ## 证据边界
 

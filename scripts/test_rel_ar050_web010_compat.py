@@ -8,10 +8,13 @@ import sys
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from daily_workflow import DailyWorkflow
+from run_daily_workflow import build_scripts_handoff, enrich
+from spoken_script_runtime import load_author_edit_contract, topic_packet
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -103,9 +106,11 @@ class PublicV2FlowTest(unittest.TestCase):
             "--collection-fixture", str(fixture), "--video-mode", "disabled",
         ]
 
-    def execute(self, command: list[str], config: Path):
+    def execute(self, command: list[str], config: Path, extra_env: dict[str, str] | None = None):
         env = os.environ.copy()
         env["WEBSITE_PUBLISHER_CONFIG"] = str(config)
+        if extra_env:
+            env.update(extra_env)
         return subprocess.run(command, text=True, capture_output=True, env=env)
 
     def test_public_three_stage_single_publish_and_replay(self):
@@ -130,13 +135,16 @@ class PublicV2FlowTest(unittest.TestCase):
             })
             command = self.command(root, run_id, fixture)
             config = self.config(root)
-            first = self.execute(command, config)
-            first_value = last_json(first.stdout)
-            self.assertEqual(first_value["action"], "editorial_required")
-            handoff = json.loads(
-                (root / "runs" / run_id / "workflow_handoff.json").read_text()
+            normalized = enrich(
+                SimpleNamespace(
+                    run_id=run_id,
+                    business_date="2026-07-28",
+                    video_mode="disabled",
+                    qa_frozen_packages=None,
+                ),
+                json.loads(fixture.read_text(encoding="utf-8")),
             )
-            identities = [row["candidate_id"] for row in handoff["candidates"]]
+            identities = [row["candidate_id"] for row in normalized["candidates"]]
             editorial = root / "editorial.json"
             write(editorial, {
                 "run_id": run_id, "topics": [{
@@ -148,32 +156,43 @@ class PublicV2FlowTest(unittest.TestCase):
                     "selection_reason": "未达到本轮选择标准",
                 } for identity in identities[1:]],
             })
-            second = self.execute(command + ["--editorial-result-file", str(editorial)], config)
-            second_value = last_json(second.stdout)
-            self.assertEqual(second_value["action"], "scripts_required")
-            handoff = json.loads(
-                (root / "runs" / run_id / "workflow_handoff.json").read_text()
+            first = self.execute(
+                command + ["--editorial-result-file", str(editorial)],
+                config,
+                {"WEB010_INJECT_WRITER_FAILURE_TOPIC": identities[0]},
             )
-            selected_id = handoff["selected_topics"][0]["topic_id"]
+            self.assertEqual(first.returncode, 2, first.stderr + first.stdout)
+            self.assertEqual(last_json(first.stdout)["action"], "child_failed_recoverable")
+            workflow = DailyWorkflow(root / "workflow.sqlite3")
+            collection_stage = workflow.stage(run_id, "collection_enrichment")
+            editorial_stage = workflow.stage(run_id, "editorial")
+            scripts_stage = workflow.stage(run_id, "scripts")
+            all_handoff = build_scripts_handoff(
+                run_id, "2026-07-28", collection_stage["payload"], editorial_stage["payload"],
+            )
+            handoff = topic_packet(
+                run_id, "2026-07-28", all_handoff["selected_topics"][0], 0, 1,
+                len(scripts_stage["payload"]["completed_items"]), load_author_edit_contract(),
+            )
             scripts = root / "scripts.json"
             write(scripts, {
                 "packet_id": handoff["topic_input"]["packet_id"],
                 "script": {
-                    "topic_id": selected_id, "title": "稿件", "hook": "钩子",
+                    "topic_id": identities[0], "title": "稿件", "hook": "钩子",
                     "structure": "结构", "body": "完整正文",
                 },
             })
-            third = self.execute(command + [
+            second = self.execute(command + [
                 "--editorial-result-file", str(editorial),
                 "--script-item-file", str(scripts),
             ], config)
-            self.assertEqual(third.returncode, 0, third.stderr + third.stdout)
-            result = last_json(third.stdout)
-            self.assertEqual(result["action"], "completed")
+            self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
+            first_value = last_json(second.stdout)
+            self.assertEqual(first_value["action"], "completed")
+            self.assertEqual(first_value["selected_count"], 1)
+            self.assertEqual(first_value["script_count"], 1)
             self.assertEqual(TerminalProjectionHandler.posts, 1)
-            self.assertEqual(result["candidate_count"], 6)
-            self.assertEqual(result["selected_count"], 1)
-            self.assertEqual(result["script_count"], 1)
+            self.assertEqual(first_value["candidate_count"], 6)
             before = (root / "workflow.sqlite3").read_bytes()
             post_count = TerminalProjectionHandler.posts
             replay = self.execute(command, config)
@@ -209,61 +228,15 @@ class PublicV2FlowTest(unittest.TestCase):
             )
             self.assertEqual(TerminalProjectionHandler.posts, 1)
 
-    def test_historical_one_shot_maps_180_rows_without_normal_branch(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            run_dir = root / "run_20260727_080141"
-            run_dir.mkdir()
-            fields = ["内容指纹", "平台", "内容标题", "内容链接", "正文/字幕/简介片段"]
-            with (run_dir / "content_items.csv").open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=fields)
-                writer.writeheader()
-                writer.writerows([
-                    {"内容指纹": f"fp{i}", "平台": "AIHOT", "内容标题": f"内容{i}",
-                     "内容链接": f"https://example.test/{i}", "正文/字幕/简介片段": "正文"}
-                    for i in range(180)
-                ])
-            with (run_dir / "today_10_topics.csv").open("w", encoding="utf-8", newline="") as handle:
-                writer = csv.DictWriter(handle, fieldnames=["内容指纹", "内容标题"])
-                writer.writeheader()
-                writer.writerow({"内容指纹": "fp0", "内容标题": "内容0"})
-            log = root / "daily.json"
-            write(log, {
-                "run_id": "run_20260727_080141",
-                "collection_status": "completed_with_failures",
-                "downstream_usable": True, "run_output_dir": str(run_dir),
-            })
-            editorial = root / "editorial.json"
-            write(editorial, {"run_id": "run_20260727_080141", "topics": [{
-                "candidate_id": "legacy:fp0", "decision": "select", "title": "选题",
-                "hook": "钩子", "structure": "结构", "selection_reason": "理由",
-            }]})
-            scripts = root / "scripts.json"
-            write(scripts, {"run_id": "run_20260727_080141", "scripts": [{
-                "topic_id": "legacy:fp0", "title": "稿件", "hook": "钩子",
-                "structure": "结构", "body": "完整正文",
-            }], "failures": []})
-            env = os.environ.copy()
-            env["WEBSITE_PUBLISHER_CONFIG"] = str(self.config(root))
-            result = subprocess.run([
-                sys.executable, str(ROOT / "scripts/recover_web010_historical.py"),
-                "--run-dir", str(run_dir), "--daily-log", str(log),
-                "--workflow-db", str(root / "workflow.sqlite3"),
-                "--artifact-root", str(root / "artifacts"),
-                "--editorial-result-file", str(editorial),
-                "--scripts-result-file", str(scripts),
-            ], text=True, capture_output=True, env=env)
-            self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
-            flow = DailyWorkflow(root / "workflow.sqlite3").read_run("run_20260727_080141")
-            self.assertEqual(len([row for row in flow["items"] if row["status"] == "completed"]), 180)
-            payload = TerminalProjectionHandler.payloads["run_20260727_080141"]
-            self.assertEqual(
-                (len(payload["collected_items"]), len(payload["topics"]), len(payload["scripts"])),
-                (180, 1, 1),
-            )
-            normal_source = (ROOT / "scripts/run_daily_workflow.py").read_text()
-            self.assertNotIn("内容指纹", normal_source)
-            self.assertNotIn("recover_web010_historical", normal_source)
+    def test_historical_adapter_is_not_reconnected_to_normal_branch(self):
+        normal_source = (ROOT / "scripts/run_daily_workflow.py").read_text()
+        release = json.loads(
+            (ROOT / "config/web010_single_daily_workflow_release.json").read_text()
+        )
+        protocol = "\n".join(release["externalSchedule"]["outerAgentProtocol"])
+        self.assertNotIn("recover_web010_historical", normal_source)
+        self.assertNotIn("historical/latest", protocol)
+        self.assertIn("historical adapter", release["normalRuntimeForbiddenCalls"])
 
 
 if __name__ == "__main__":

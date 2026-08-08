@@ -30,41 +30,36 @@ _DEFAULT_PRIVATE_SKILL_ROOT = (
     / "austin-no-overtime-scripting"
 )
 
-AUTHOR_EDIT_CONTRACT = {
+WRITER_CHILD_CONTRACT = {
+    "schema_version": 1,
+    "topology": "one_fresh_bounded_writer_child_per_selected_topic",
+    "input_scope": [
+        "one_same_run_rich_topic_card",
+        "source_facts_and_details",
+        "fact_boundary",
+        "cannot_claim",
+        "short_selection_reason",
+    ],
+    "skills": [
+        "austin-no-overtime-scripting",
+        "austin-voice-scriptwriter",
+    ],
+    "private_authority": "writer_child_reads_allowlist_transiently",
+    "previous_topic_body": "forbidden",
+    "other_topic_identity": "forbidden",
+    "editorial_batch_deliberation": "forbidden",
+    "recursive_child_execution": "forbidden",
+    "raw_text_persistence": "forbidden",
+}
+
+# A task may resume an in-progress checkpoint created by the immediately
+# previous per-topic runtime. It still has no private text or script body, so
+# accepting this safe snapshot does not reopen the retired batch path.
+LEGACY_AUTHOR_EDIT_SNAPSHOT = {
     "schema_version": 1,
     "phase_order": ["facts_first_draft", "austin_author_edit"],
-    "facts_first_draft": {
-        "topic_facts_only": True,
-        "private_context_read": "forbidden_until_draft_complete",
-        "style_material_read": "forbidden",
-        "editorial_blueprint_read": "forbidden",
-    },
-    "austin_author_edit": {
-        "starts_after": "draft_complete",
-        "private_context_read": "required",
-        "allowlist_ref": "skills/austin-voice-scriptwriter/references/austin_private_context_reading.md",
-        "approved_modules": "optional_local_edit_comparison_only",
-        "preserves": [
-            "topic_identity",
-            "source_facts",
-            "central_thesis",
-            "argument_movement",
-        ],
-        "may_change": [
-            "author_stance",
-            "spoken_rhythm",
-            "wording",
-            "emphasis",
-            "deletion",
-            "transitions",
-            "natural_close",
-        ],
-        "must_not": [
-            "new_reversal",
-            "workflow_responsibility_acceptance_system_commentary",
-            "invented_experience_or_result",
-        ],
-    },
+    "facts_first_private_context": "forbidden_until_draft_complete",
+    "author_edit_after_draft": "draft_complete",
     "raw_text_persistence": "forbidden",
 }
 
@@ -215,8 +210,8 @@ def load_austin_authority(
 
 
 def load_author_edit_contract() -> dict[str, Any]:
-    """Return the phase boundary without reading any style or private source."""
-    return json.loads(json.dumps(AUTHOR_EDIT_CONTRACT, ensure_ascii=False))
+    """Return the safe writer-child contract without reading private source."""
+    return json.loads(json.dumps(WRITER_CHILD_CONTRACT, ensure_ascii=False))
 
 
 def selected_topic_ids(selected_topics: list[dict[str, Any]]) -> list[str]:
@@ -231,9 +226,12 @@ def selected_topic_ids(selected_topics: list[dict[str, Any]]) -> list[str]:
 def _writing_contract_snapshot(contract: dict[str, Any]) -> dict[str, Any]:
     return {
         "schema_version": contract["schema_version"],
-        "phase_order": list(contract["phase_order"]),
-        "facts_first_private_context": contract["facts_first_draft"]["private_context_read"],
-        "author_edit_after_draft": contract["austin_author_edit"]["starts_after"],
+        "topology": contract["topology"],
+        "skills": list(contract["skills"]),
+        "private_authority": contract["private_authority"],
+        "previous_topic_body": contract["previous_topic_body"],
+        "other_topic_identity": contract["other_topic_identity"],
+        "recursive_child_execution": contract["recursive_child_execution"],
         "raw_text_persistence": contract["raw_text_persistence"],
     }
 
@@ -334,11 +332,14 @@ def validate_checkpoint(
     contract = checkpoint.get("writing_contract")
     if contract is None:
         # A pre-reset in-progress checkpoint may still carry the old safe metadata.
-        # It is accepted for resume, but the next packet uses the new two-stage contract.
+        # It is accepted for resume, but the next packet uses the child contract.
         legacy = checkpoint.get("editing_reference")
         if checkpoint.get("schema_version") not in {2, RUNTIME_SCHEMA_VERSION} or not isinstance(legacy, dict):
             raise WorkflowConflict("scripts_checkpoint_writing_contract_conflict")
-    elif contract != _writing_contract_snapshot(author_edit_contract):
+    elif contract not in (
+        _writing_contract_snapshot(author_edit_contract),
+        LEGACY_AUTHOR_EDIT_SNAPSHOT,
+    ):
         raise WorkflowConflict("scripts_checkpoint_writing_contract_conflict")
     _validate_completed_items(checkpoint.get("completed_items"), checkpoint["selected_topic_ids"])
 
@@ -387,27 +388,17 @@ def _packet_id(
 
 
 def _writing_phases(author_edit_contract: dict[str, Any]) -> dict[str, Any]:
-    """Expose only the two-stage boundary; no style material enters the draft packet."""
+    """Expose the child boundary; no private or other-topic text enters the packet."""
     return {
-        "draft": {
-            "name": "facts_first_draft",
-            "input_scope": [
-                "topic_id", "source_title", "source_facts", "source_details",
-                "fact_boundary", "cannot_claim", "selection_reason",
-            ],
-            "private_context_read": author_edit_contract["facts_first_draft"]["private_context_read"],
-            "style_material_read": author_edit_contract["facts_first_draft"]["style_material_read"],
-            "editorial_blueprint_read": author_edit_contract["facts_first_draft"]["editorial_blueprint_read"],
-        },
-        "author_edit": {
-            "name": "austin_author_edit",
-            "starts_after": author_edit_contract["austin_author_edit"]["starts_after"],
-            "private_context_read": author_edit_contract["austin_author_edit"]["private_context_read"],
-            "allowlist_ref": author_edit_contract["austin_author_edit"]["allowlist_ref"],
-            "approved_modules": author_edit_contract["austin_author_edit"]["approved_modules"],
-            "preserves": list(author_edit_contract["austin_author_edit"]["preserves"]),
-            "may_change": list(author_edit_contract["austin_author_edit"]["may_change"]),
-            "must_not": list(author_edit_contract["austin_author_edit"]["must_not"]),
+        "writer_child": {
+            "name": "fresh_bounded_codex_child",
+            "input_scope": list(author_edit_contract["input_scope"]),
+            "skills": list(author_edit_contract["skills"]),
+            "private_authority": author_edit_contract["private_authority"],
+            "previous_topic_body": author_edit_contract["previous_topic_body"],
+            "other_topic_identity": author_edit_contract["other_topic_identity"],
+            "editorial_batch_deliberation": author_edit_contract["editorial_batch_deliberation"],
+            "recursive_child_execution": author_edit_contract["recursive_child_execution"],
         },
         "raw_text_persistence": author_edit_contract["raw_text_persistence"],
     }

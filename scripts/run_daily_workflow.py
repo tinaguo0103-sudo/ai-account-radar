@@ -41,6 +41,11 @@ from trend_hotspot_cards import (
 from website_publisher_client import publish_terminal
 from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
 import spoken_script_runtime as script_runtime
+from web010_codex_child import (
+    ChildExecutionError,
+    run_editorial_child,
+    run_writer_child,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_ROOT = Path.home() / ".codex" / "skills"
@@ -1174,11 +1179,16 @@ def compact_source_facts(rows: list[dict[str, Any]]) -> dict[str, Any]:
     aliases = {
         "details": (
             "source_details", "details", "source_facts", "public_facts",
-            "fact_details", "content_facts", "事实细节", "事实摘要",
+            "fact_details", "content_facts", "source_summary", "source_text",
+            "description", "正文/字幕/简介片段", "内容摘要", "事实细节", "事实摘要",
         ),
         "caption": ("caption", "caption_text", "字幕", "caption_timeline"),
-        "transcript": ("transcript", "asr_text", "口播转写", "ASR"),
-        "public_claims": ("public_claims", "supported_claims", "公开事实"),
+        "transcript": (
+            "transcript", "asr_text", "正文/字幕/简介片段", "口播转写", "ASR",
+        ),
+        "public_claims": (
+            "public_claims", "supported_claims", "公开事实", "解析说明",
+        ),
     }
     for key, names in aliases.items():
         value = first_context_value(rows, *names)
@@ -1247,7 +1257,7 @@ def build_scripts_handoff(
                 rows, "fact_boundary", "fact_boundary_note", "事实边界",
             ),
             "cannot_claim": first_context_value(
-                rows, "cannot_claim", "cannot_claim_notes", "不能声称的部分",
+                rows, "cannot_claim", "cannot_claim_notes", "不能声称的部分", "不能照搬",
             ),
             "sources": [
                 {
@@ -1427,6 +1437,7 @@ def main() -> int:
     parser.add_argument("--replay-inputs", default="")
     parser.add_argument("--search-query", default="")
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
+    parser.add_argument("--codex-child-timeout-seconds", type=int, default=900)
     args = parser.parse_args()
     workflow: DailyWorkflow | None = None
     execution_lock: WorkflowExecutionLock | None = None
@@ -1556,44 +1567,17 @@ def main() -> int:
                 ),
             }
             workflow.commit_stage(args.run_id, "editorial", editorial, "completed")
-        elif not args.editorial_result_file:
-            workflow.mark_waiting(args.run_id)
-            emit_handoff(args, {
-                "ok": True, "action": "editorial_required", "run_id": args.run_id,
-                "business_date": args.business_date, "candidates": editorial_handoff,
-                "candidate_count": len(editorial_handoff), "skill_name": SKILLS[0],
-                "complete_hotspot_card_count": len(collection.get("hotspot_cards", [])),
-                "deep_read_summary": collection.get("deep_read_summary", {}),
-                "required_output_contract": {
-                    "decisions": ["select", "observe", "reject", "failed"],
-                    "candidate_specific_fields": [
-                        "selection_reason", "evidence_source_ids", "decision_basis",
-                    ],
-                    "judged_requires": ["unique_judgment"],
-                    "primary_angle_contract": {
-                        "applies_to": ["select", "observe", "reject"],
-                        "must_cover": [
-                            "concrete_conflict", "affected_party",
-                            "action_or_experiment", "consequence",
-                        ],
-                        "selection_reason_is_separate": True,
-                    },
-                    "select_requires": ["title", "hook", "structure"],
-                    "selection_policy": {
-                        "evidence_quantity_is_not_eligibility": True,
-                        "research_is_optional_enrichment": True,
-                        "research_failure_does_not_force_observe": True,
-                        "observe_reject_must_be_topic_based": [
-                            "duplicate", "weak_persona_fit",
-                            "no_distinct_judgment", "insufficient_user_value",
-                        ],
-                    },
-                },
-                "stage": "editorial", "status": "waiting",
-            })
-            return 0
         else:
-            judged_editorial = read_json(args.editorial_result_file)
+            child_metadata = None
+            if args.editorial_result_file:
+                judged_editorial = read_json(args.editorial_result_file)
+            else:
+                judged_editorial, child_metadata = run_editorial_child(
+                    args.run_id,
+                    args.business_date,
+                    editorial_handoff,
+                    timeout_seconds=args.codex_child_timeout_seconds,
+                )
             validate_editorial(args.run_id, judged_editorial, editorial_handoff)
             if not (args.video_mode == "disabled" and not args.qa_frozen_packages):
                 try:
@@ -1610,8 +1594,14 @@ def main() -> int:
                 ),
             }
             workflow.record_skill_diagnostic(
-                args.run_id, "editorial", "daily", SKILLS[0],
-                {"provenance": skill_diagnostics()[0]},
+                args.run_id, "editorial", "child", SKILLS[0],
+                {
+                    "provenance": skill_diagnostics()[0],
+                    "child_execution": child_metadata or {
+                        "mode": "explicit_result_file",
+                        "child_contexts": 0,
+                    },
+                },
             )
             workflow.commit_stage(args.run_id, "editorial", editorial, "completed")
         selected_topics = [
@@ -1668,25 +1658,54 @@ def main() -> int:
                 write_script_artifacts(args.artifact_root, args.run_id, scripts["scripts"])
                 scripts_finalized = True
             else:
-                index = script_runtime.first_unfinished_index(checkpoint)
-                if index >= len(script_topics):
-                    raise WorkflowConflict("scripts_checkpoint_incomplete_status")
-                handoff = script_runtime.topic_packet(
-                    args.run_id,
-                    args.business_date,
-                    script_topics[index],
-                    index,
-                    len(script_topics),
-                    len(checkpoint["completed_items"]),
-                    author_edit_contract,
-                )
-                handoff.update({
-                    "skill_names": list(SKILLS[1:]),
-                    "batch_contract": all_handoff["batch_contract"],
-                })
-                workflow.mark_waiting(args.run_id)
-                emit_handoff(args, handoff)
-                return 0
+                while True:
+                    index = script_runtime.first_unfinished_index(checkpoint)
+                    if index >= len(script_topics):
+                        raise WorkflowConflict("scripts_checkpoint_incomplete_status")
+                    child_packet = script_runtime.topic_packet(
+                        args.run_id,
+                        args.business_date,
+                        script_topics[index],
+                        index,
+                        len(script_topics),
+                        len(checkpoint["completed_items"]),
+                        author_edit_contract,
+                    )
+                    handoff = {**child_packet, **{
+                        "skill_names": list(SKILLS[1:]),
+                        "batch_contract": all_handoff["batch_contract"],
+                    }}
+                    submitted, child_metadata = run_writer_child(
+                        args.run_id,
+                        args.business_date,
+                        child_packet,
+                        timeout_seconds=args.codex_child_timeout_seconds,
+                    )
+                    outcome = script_runtime.submit_topic(
+                        workflow,
+                        args.run_id,
+                        args.business_date,
+                        script_topics,
+                        checkpoint,
+                        author_edit_contract,
+                        submitted,
+                    )
+                    workflow.record_skill_diagnostic(
+                        args.run_id, "scripts", script_topics[index]["topic_id"],
+                        SKILLS[1], {"child_execution": child_metadata},
+                    )
+                    workflow.record_skill_diagnostic(
+                        args.run_id, "scripts", script_topics[index]["topic_id"],
+                        SKILLS[2], {"child_execution": child_metadata},
+                    )
+                    if not outcome["complete"]:
+                        checkpoint = outcome["checkpoint"]
+                        continue
+                    scripts = outcome["scripts"]
+                    validate_scripts(args.run_id, scripts, selected)
+                    write_script_artifacts(args.artifact_root, args.run_id, scripts["scripts"])
+                    scripts_finalized = True
+                    break
         else:
             scripts = {
                 "run_id": args.run_id, "scripts": [], "failures": [],
@@ -1717,6 +1736,25 @@ def main() -> int:
             ),
         )
         return 0
+    except ChildExecutionError as error:
+        if workflow is not None:
+            workflow.mark_recoverable_failure(args.run_id, error.code)
+            try:
+                emit_handoff(args, {
+                    "ok": False,
+                    "action": "child_failed_recoverable",
+                    "status": "failed_recoverable",
+                    "error": error.code,
+                    "child_execution": error.details,
+                })
+            except Exception:
+                print(json.dumps({"ok": False, "error": error.code}, ensure_ascii=False))
+        else:
+            DailyWorkflow.mark_existing_recoverable_failure(
+                args.workflow_db, args.run_id, args.business_date, error.code
+            )
+            print(json.dumps({"ok": False, "error": error.code}, ensure_ascii=False))
+        return 2
     except (
         WorkflowConflict, ProducerError, ProjectionError, RuntimeReadinessError,
         RuntimeError, ValueError, OSError,

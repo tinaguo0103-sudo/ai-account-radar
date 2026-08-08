@@ -1,17 +1,17 @@
 ---
 name: austin-no-overtime-scripting
-description: 将 WEB-010 已确认的 same-run rich Topic Card 逐题交给当前 outer Codex，先形成 facts-first draft，再通过 Austin Skill 做一次作者编辑，生成 spoken-only 简单结果。不负责完整制作包、外部队列、表格回写、发布或启动其他进程。
+description: 将 WEB-010 已确认的 same-run rich Topic Card 逐题交给独立 bounded writer child，应用 Austin voice method 生成 spoken-only 简单结果。不负责完整制作包、外部队列、表格回写或发布。
 ---
 
 # Austin 不加班脚本
 
 ## 正常运行模型
 
-- 当前 outer Codex 是唯一 AI owner，直接应用本 Skill 和 `austin-voice-scriptwriter`。
+- 每个 selected topic 由 controller 启动一个新的 bounded writer child；该 child 是本题唯一 AI owner，直接应用本 Skill 和 `austin-voice-scriptwriter`。外层 controller 不写主编判断或正文。
 - public runtime 一次只暴露一个 selected rich Topic Card。当前题提交 script 或 typed material failure 后，下一题才会暴露；checkpoint 从首个未完成题恢复，不重生已完成题。
 - Facts-first draft 前只读取当前 Topic Card 的 exact identity、source facts/details、fact boundary、cannot-claim 和 short selection reason。禁止在 draft 形成前读取任何 persona、case、sample、approved script、editing delta 或风格 checklist。
-- Draft 完成后，当前 outer Codex 才通过 Austin Voice Skill 读取 allowlist 中的真实用户人设、原始案例/样稿和 before/after edit pairs，做一次 Author Edit。批准稿模块只能做局部编辑对照，不能供应当前题的开场、论证运动或结尾。
-- 最终只形成一个 simple scripts result；不启动新进程、nested Codex、第二 Agent、独立模型 API、selector、retrieval system 或第二 authority。
+- Draft 完成后，writer child 才通过 Austin Voice Skill 读取 allowlist 中的真实用户人设、原始案例/样稿和 before/after edit pairs，做一次 Author Edit。批准稿模块只能做局部编辑对照，不能供应当前题的开场、论证运动或结尾。
+- 最终只形成一个 simple scripts result。Writer child 不得递归启动 Codex、第二 Agent、独立模型 API、selector、retrieval system 或第二 authority，也不得执行浏览器、发布或业务写入。
 
 ## 当前题输入
 

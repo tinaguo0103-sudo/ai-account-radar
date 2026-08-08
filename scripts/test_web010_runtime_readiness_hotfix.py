@@ -7,11 +7,13 @@ import subprocess
 import sys
 import tempfile
 import unittest
+from types import SimpleNamespace
 from pathlib import Path
 from typing import Any
 
 from daily_workflow import DailyWorkflow
 from collected_artifact_adoption import adopt_collected_artifacts
+from run_daily_workflow import enrich
 from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
 
 SCRIPTS = Path(__file__).parent
@@ -107,16 +109,34 @@ class RuntimeReadinessHotfixTest(unittest.TestCase):
                 }],
                 "source_runs": [],
             }))
+            normalized = enrich(
+                SimpleNamespace(
+                    run_id="run_20260729_080000",
+                    business_date="2026-07-29",
+                    video_mode="disabled",
+                    qa_frozen_packages=None,
+                ),
+                json.loads(fixture.read_text()),
+            )
+            editorial = root / "editorial.json"
+            editorial.write_text(json.dumps({
+                "run_id": "run_20260729_080000",
+                "topics": [{
+                    "candidate_id": row["candidate_id"],
+                    "decision": "observe",
+                    "selection_reason": "本测试不生成脚本，只验证采集入口边界。",
+                } for row in normalized["candidates"]],
+            }))
             result = self.command(
                 root, str(config), "--collection-fixture", str(fixture),
                 "--video-mode", "disabled",
+                "--editorial-result-file", str(editorial),
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             value = json.loads(result.stdout.strip().splitlines()[-1])
-            self.assertEqual(value["action"], "editorial_required")
+            self.assertIn(value["action"], {"completed_publish_pending", "completed"})
             self.assertEqual(value["candidate_count"], 1)
-            handoff = json.loads(Path(value["handoff_path"]).read_text())
-            self.assertEqual(len(handoff["candidates"]), 1)
+            self.assertEqual(value["selected_count"], 0)
             producer = root / "runs/run_20260729_080000/video_producer"
             self.assertFalse((producer / "discovery.json").exists())
             self.assertFalse((producer / "candidates.json").exists())

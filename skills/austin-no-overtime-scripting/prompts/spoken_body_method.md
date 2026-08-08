@@ -1,6 +1,6 @@
 # Content-driven spoken body method
 
-这是当前 outer Codex 的内部工作说明，不是可见 outline，也不制造第二执行者。
+这是 dedicated writer child 的内部工作说明，不是可见 outline，也不制造第二执行者；controller 不直接完成正文。
 
 ## 当前题
 

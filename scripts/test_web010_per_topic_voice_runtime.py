@@ -8,12 +8,19 @@ import tempfile
 import threading
 import unittest
 import zipfile
+from types import SimpleNamespace
 from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from daily_workflow import DailyWorkflow
-from spoken_script_runtime import load_austin_authority, load_author_edit_contract, sanitize_handoff
+from run_daily_workflow import build_scripts_handoff, enrich
+from spoken_script_runtime import (
+    load_austin_authority,
+    load_author_edit_contract,
+    sanitize_handoff,
+    topic_packet,
+)
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -141,12 +148,19 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             "--video-mode", "disabled",
         ]
 
-    def execute(self, command: list[str], config: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def execute(
+        self,
+        command: list[str],
+        config: Path | None = None,
+        extra_env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         if config is not None:
             environment["WEBSITE_PUBLISHER_CONFIG"] = str(config)
         else:
             environment.pop("WEBSITE_PUBLISHER_CONFIG", None)
+        if extra_env:
+            environment.update(extra_env)
         return subprocess.run(command, text=True, capture_output=True, env=environment)
 
     def publisher_config(self, root: Path) -> Path:
@@ -158,6 +172,41 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             "sites_bearer": "runtime-only-test",
         })
         return path
+
+    def test_writer_packet_preserves_source_owned_facts(self):
+        collection = {
+            "candidates": [{
+                "candidate_id": "topic:source-facts",
+                "item_id": "item:source-facts",
+                "source_url": "https://example.test/source-facts",
+                "source_title": "Source-owned title",
+                "source_summary": "Source-owned summary with the concrete event detail.",
+                "不能照搬": "Do not copy the source wording.",
+            }],
+            "content_items": [{
+                "item_id": "item:source-facts",
+                "source_url": "https://example.test/source-facts",
+                "正文/字幕/简介片段": "Source-owned caption and fact excerpt.",
+                "解析说明": "Metadata-only boundary.",
+            }],
+            "understanding_results": [],
+        }
+        editorial = {"topics": [{
+            "candidate_id": "topic:source-facts",
+            "decision": "select",
+            "selection_reason": "The card has a concrete source-owned event.",
+        }]}
+        handoff = build_scripts_handoff(RUN_ID, BUSINESS_DATE, collection, editorial)
+        selected = handoff["selected_topics"][0]
+        self.assertEqual(
+            selected["source_facts"]["details"],
+            "Source-owned summary with the concrete event detail.",
+        )
+        self.assertEqual(
+            selected["source_facts"]["transcript"],
+            "Source-owned caption and fact excerpt.",
+        )
+        self.assertEqual(selected["cannot_claim"], "Do not copy the source wording.")
 
     def editorial_file(self, root: Path, topic_ids: list[str], run_id: str = RUN_ID) -> Path:
         path = root / f"editorial-{run_id}.json"
@@ -212,31 +261,29 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         write_json(path, payload)
         return path
 
-    def test_facts_first_contract_has_no_selector_or_style_payload(self):
+    def test_writer_child_contract_has_no_selector_or_style_payload(self):
         contract = load_author_edit_contract()
         self.assertEqual(contract["schema_version"], 1)
-        self.assertEqual(contract["phase_order"], ["facts_first_draft", "austin_author_edit"])
-        self.assertTrue(contract["facts_first_draft"]["topic_facts_only"])
         self.assertEqual(
-            contract["facts_first_draft"]["private_context_read"],
-            "forbidden_until_draft_complete",
+            contract["topology"],
+            "one_fresh_bounded_writer_child_per_selected_topic",
         )
-        self.assertEqual(contract["austin_author_edit"]["starts_after"], "draft_complete")
         self.assertEqual(
-            contract["austin_author_edit"]["approved_modules"],
-            "optional_local_edit_comparison_only",
+            contract["skills"],
+            ["austin-no-overtime-scripting", "austin-voice-scriptwriter"],
         )
-        self.assertIn("central_thesis", contract["austin_author_edit"]["preserves"])
-        self.assertIn("argument_movement", contract["austin_author_edit"]["preserves"])
-        self.assertIn("new_reversal", contract["austin_author_edit"]["must_not"])
+        self.assertEqual(contract["private_authority"], "writer_child_reads_allowlist_transiently")
+        self.assertEqual(contract["previous_topic_body"], "forbidden")
+        self.assertEqual(contract["other_topic_identity"], "forbidden")
+        self.assertEqual(contract["editorial_batch_deliberation"], "forbidden")
+        self.assertEqual(contract["recursive_child_execution"], "forbidden")
         self.assertEqual(contract["raw_text_persistence"], "forbidden")
         packet = {
             "action": "scripts_required",
             "topic_input": {
                 "writing_contract": contract,
                 "writing_phases": {
-                    "draft": {"private_context_read": "forbidden_until_draft_complete"},
-                    "author_edit": {"starts_after": "draft_complete"},
+                    "writer_child": {"name": "fresh_bounded_codex_child"},
                 },
             },
         }
@@ -304,32 +351,70 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             fixture = self.fixture(root)
             config = self.publisher_config(root)
             command = self.command(root, fixture)
-
-            first = self.execute(command, config)
-            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
-            self.assertEqual(last_json(first.stdout)["action"], "editorial_required")
-            editorial_handoff = json.loads(
-                (root / "runs" / RUN_ID / "workflow_handoff.json").read_text(encoding="utf-8")
+            normalized = enrich(
+                SimpleNamespace(
+                    run_id=RUN_ID,
+                    business_date=BUSINESS_DATE,
+                    video_mode="disabled",
+                    qa_frozen_packages=None,
+                ),
+                json.loads(fixture.read_text(encoding="utf-8")),
             )
-            topic_ids = [row["candidate_id"] for row in editorial_handoff["candidates"]]
+            topic_ids = [row["candidate_id"] for row in normalized["candidates"]]
             editorial = self.editorial_file(root, topic_ids)
 
-            second = self.execute(command + ["--editorial-result-file", str(editorial)], config)
+            first = self.execute(
+                command + ["--editorial-result-file", str(editorial)],
+                config,
+                {"WEB010_INJECT_WRITER_FAILURE_TOPIC": topic_ids[0]},
+            )
+            self.assertEqual(first.returncode, 2, first.stderr + first.stdout)
+            self.assertEqual(last_json(first.stdout)["action"], "child_failed_recoverable")
+
+            workflow = DailyWorkflow(root / f"{RUN_ID}.sqlite3")
+            collection_stage = workflow.stage(RUN_ID, "collection_enrichment")
+            editorial_stage = workflow.stage(RUN_ID, "editorial")
+            scripts_stage = workflow.stage(RUN_ID, "scripts")
+            self.assertIsNotNone(collection_stage)
+            self.assertIsNotNone(editorial_stage)
+            self.assertEqual(scripts_stage["status"], "in_progress")
+            all_handoff = build_scripts_handoff(
+                RUN_ID,
+                BUSINESS_DATE,
+                collection_stage["payload"],
+                editorial_stage["payload"],
+            )
+            selected_topics = all_handoff["selected_topics"]
+            contract = load_author_edit_contract()
+            first_packet = topic_packet(
+                RUN_ID,
+                BUSINESS_DATE,
+                selected_topics[0],
+                0,
+                len(selected_topics),
+                len(scripts_stage["payload"]["completed_items"]),
+                contract,
+            )
+            first_submission = self.submission_file(root, first_packet, 0)
+
+            second = self.execute(
+                command + [
+                    "--editorial-result-file", str(editorial),
+                    "--script-item-file", str(first_submission),
+                ],
+                config,
+            )
             self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
             handoff_path = root / "runs" / RUN_ID / "workflow_handoff.json"
             handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
             self.assertEqual(handoff["action"], "scripts_required")
             self.assertEqual(len(handoff["selected_topics"]), 1)
-            self.assertEqual(handoff["topic_index"], 0)
-            self.assertNotIn(topic_ids[1], json.dumps(handoff, ensure_ascii=False))
+            self.assertEqual(handoff["topic_index"], 1)
+            self.assertNotIn(topic_ids[2], json.dumps(handoff, ensure_ascii=False))
             self.assertIn("writing_contract", handoff)
             self.assertEqual(
-                handoff["topic_input"]["writing_phases"]["draft"]["private_context_read"],
-                "forbidden_until_draft_complete",
-            )
-            self.assertEqual(
-                handoff["topic_input"]["writing_phases"]["author_edit"]["starts_after"],
-                "draft_complete",
+                handoff["topic_input"]["writing_phases"]["writer_child"]["name"],
+                "fresh_bounded_codex_child",
             )
             self.assertEqual(
                 handoff["topic_input"]["writer_owns_final_fields"],
@@ -343,13 +428,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertNotIn('"austin_authority_read":', json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn('"austin_private_context":', json.dumps(handoff, ensure_ascii=False))
 
-            resumed = self.execute(command + ["--editorial-result-file", str(editorial)], config)
-            self.assertEqual(resumed.returncode, 0, resumed.stderr + resumed.stdout)
-            resumed_handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-            self.assertEqual(resumed_handoff["topic_input"]["packet_id"], handoff["topic_input"]["packet_id"])
-            self.assertEqual(resumed_handoff["selected_topics"][0]["topic_id"], topic_ids[0])
-
-            for index, topic_id in enumerate(topic_ids):
+            for index, topic_id in enumerate(topic_ids[1:], start=1):
                 handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
                 self.assertEqual(handoff["action"], "scripts_required")
                 self.assertEqual(handoff["selected_topics"][0]["topic_id"], topic_id)
@@ -398,14 +477,42 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             root = Path(directory)
             fixture = self.fixture(root, run_id=run_id, count=1)
             command = self.command(root, fixture, run_id=run_id)
-            first = self.execute(command)
-            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
-            handoff_path = root / "runs" / run_id / "workflow_handoff.json"
-            ids = [row["candidate_id"] for row in json.loads(handoff_path.read_text())["candidates"]]
+            normalized = enrich(
+                SimpleNamespace(
+                    run_id=run_id,
+                    business_date=BUSINESS_DATE,
+                    video_mode="disabled",
+                    qa_frozen_packages=None,
+                ),
+                json.loads(fixture.read_text(encoding="utf-8")),
+            )
+            ids = [row["candidate_id"] for row in normalized["candidates"]]
             editorial = self.editorial_file(root, ids, run_id=run_id)
-            second = self.execute(command + ["--editorial-result-file", str(editorial)])
-            self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
-            handoff = json.loads(handoff_path.read_text())
+            first = self.execute(
+                command + ["--editorial-result-file", str(editorial)],
+                extra_env={"WEB010_INJECT_WRITER_FAILURE_TOPIC": ids[0]},
+            )
+            self.assertEqual(first.returncode, 2, first.stderr + first.stdout)
+            workflow = DailyWorkflow(root / f"{run_id}.sqlite3")
+            collection_stage = workflow.stage(run_id, "collection_enrichment")
+            editorial_stage = workflow.stage(run_id, "editorial")
+            scripts_stage = workflow.stage(run_id, "scripts")
+            all_handoff = build_scripts_handoff(
+                run_id,
+                BUSINESS_DATE,
+                collection_stage["payload"],
+                editorial_stage["payload"],
+            )
+            contract = load_author_edit_contract()
+            handoff = topic_packet(
+                run_id,
+                BUSINESS_DATE,
+                all_handoff["selected_topics"][0],
+                0,
+                1,
+                len(scripts_stage["payload"]["completed_items"]),
+                contract,
+            )
             submission = self.submission_file(root, handoff, 0, failure=True)
             terminal = self.execute(
                 command + ["--editorial-result-file", str(editorial), "--script-item-file", str(submission)],

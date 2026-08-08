@@ -92,7 +92,10 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             "workflow_context", "traffic_opportunity", "differentiation", "cluster_synthesis",
         ):
             self.assertNotIn(blueprint_field, topic)
-        self.assertEqual(topic["source_facts"], {})
+        self.assertEqual(
+            topic["source_facts"],
+            {"details": "A bounded public summary"},
+        )
         self.assertEqual(topic["fact_boundary"], "不能声称已经节省固定时长。")
         self.assertEqual(topic["cannot_claim"], None)
         self.assertEqual(topic["video_understanding"]["asr_supplement"], "spoken supplement")
@@ -159,14 +162,15 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("一次 Author Edit", combined)
         self.assertIn("不虚构经历", no_overtime)
         self.assertIn("不读取 `references/private/three_round_learning.md`", voice)
-        self.assertIn("当前 outer Codex 才通过", voice)
+        self.assertIn("writer child", voice)
         self.assertIn(
-            "Raw excerpt text may exist only in the current outer Codex context during the post-draft Author Edit",
+            "Raw excerpt text may exist only in the current per-topic writer child context",
             private_reading,
         )
         self.assertIn("不是文章类型字段、模板或 gate", voice)
         self.assertNotIn("scene/conflict/old workflow/experiment/judgment/consequence/close", combined)
-        self.assertIn("不启动 `codex exec`", combined)
+        self.assertIn("Writer child 不得递归启动 Codex", no_overtime)
+        self.assertNotIn("当前 outer Codex", combined)
         for retired_path in (
             "watch_script_package_queue.py",
             "codex_script_package_runner.py",
@@ -174,25 +178,20 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         ):
             self.assertNotIn(retired_path, combined)
 
-    def test_release_contract_uses_one_outer_content_driven_path(self):
+    def test_release_contract_uses_separate_bounded_children(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
-        self.assertIn("Facts-first comes first", protocol)
-        self.assertIn("Until that draft is complete, it must not read persona", protocol)
-        self.assertIn("Only after the draft is complete does the same outer Codex", protocol)
-        self.assertIn("There is no keyword selector", protocol)
-        self.assertIn("Choose the form that the topic's material supports", protocol)
-        self.assertIn("It must not invent Austin's first-person experience", protocol)
+        self.assertIn("exactly one fresh bounded Codex child", protocol)
+        self.assertIn("fresh bounded Codex child for the current topic", protocol)
+        self.assertIn("one selected rich Topic Card at a time", protocol)
+        self.assertIn("No full-batch script submission exists", protocol)
         self.assertIn("material_or_angle_insufficiency", protocol)
-        self.assertIn("current outer Codex completes a full draft", protocol)
-        self.assertIn("does not expose or accept a whole-batch script submission", protocol)
-        self.assertIn("generic editing deltas", protocol)
-        self.assertIn("anti-template/self-check prompt", protocol)
+        self.assertNotIn("same outer Codex", protocol)
         self.assertNotIn("--script-reference-selection-file", protocol)
-        self.assertIn("There is no keyword selector, full-body template routing", protocol)
         self.assertNotIn("per-topic private case/persona routing or selector receipt", protocol)
-        for forbidden in ("codex exec", "watcher", "Feishu", "--write-feishu"):
+        for forbidden in ("watcher", "Feishu", "--write-feishu"):
             self.assertNotIn(forbidden, protocol)
+        self.assertIn("recursive codex exec outside the editorial and per-topic writer adapters", "\n".join(config["normalRuntimeForbiddenCalls"]))
 
     def test_simple_script_artifact_is_idempotent(self):
         result = {

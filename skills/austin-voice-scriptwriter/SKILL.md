@@ -1,6 +1,6 @@
 ---
 name: austin-voice-scriptwriter
-description: 将已确认的 same-run rich Topic Card 写成自然、可连续朗读、由当前事实驱动的 Austin spoken-only 正文。不负责选题筛选、事实核验、外部写入或启动其他进程。
+description: 在独立 bounded writer child 中将已确认的 same-run rich Topic Card 写成自然、可连续朗读、由当前事实驱动的 Austin spoken-only 正文。不负责选题筛选、事实核验或外部写入。
 ---
 
 # Austin Voice Scriptwriter
@@ -9,7 +9,7 @@ description: 将已确认的 same-run rich Topic Card 写成自然、可连续�
 
 - 当前 same-run rich Topic Card 是事实唯一来源。来源标题、人物动作、公开事实、细节和事实边界只能按输入使用。
 - Facts-first draft 阶段只读取当前题的 exact identity、source facts/details、fact boundary、cannot-claim 和 short selection reason。此阶段不读取 persona、private cases、samples、approved scripts、editing deltas、anti-template checklist 或任何风格材料。
-- 完整 draft 形成后，当前 outer Codex 才通过 `references/austin_private_context_reading.md` 读取 allowlist 中的真实 user persona、original cases/samples 和 before/after edit pairs。批准稿模块若保留，只能作为局部编辑对照，不能供应当前题的 opening、argument movement 或 close。
+- 完整 draft 形成后，当前 writer child 才通过 `references/austin_private_context_reading.md` 读取 allowlist 中的真实 user persona、original cases/samples 和 before/after edit pairs。批准稿模块若保留，只能作为局部编辑对照，不能供应当前题的 opening、argument movement 或 close。
 - Author Edit 只改作者站位、口语呼吸、措辞、强调/删减、连接和自然收束，必须保留 topic identity、source facts、central thesis 和 argument movement。私有原文只存在于 draft 完成后的当前题临时上下文，不进入 handoff、checkpoint 或结果。
 - 编辑参考不是当前题事实，也不是 title、hook、structure、unique_judgment 的蓝图。最终四个字段和正文必须由当前题事实先形成，再由作者编辑完成。
 - 不把来源作者、客户、团队或建议场景改写成 Austin 已经发生的经历。材料不足时返回 item-local `material_or_angle_insufficiency`。
@@ -22,7 +22,7 @@ description: 将已确认的 same-run rich Topic Card 写成自然、可连续�
 
 ## 两阶段写作
 
-1. 当前 outer Codex 只用 Topic Card 完成完整 facts-first draft，并共同形成 title/hook/structure/body。
+1. 当前 writer child 只用 Topic Card 完成完整 facts-first draft，并共同形成 title/hook/structure/body。
 2. draft 完成后，Austin Skill 才读取真实 allowlisted private context，做一次 Author Edit。原始材料用于站位、呼吸、措辞和取舍，不用于替换当前题的事实或论证。
 3. Author Edit 不制造新的“不是 X 而是 Y”反转，不把文章改成 workflow/responsibility/acceptance/system commentary，不虚构经历、结果或来源外事实。
 4. Author Edit 完成后只提交最终 simple result；draft、edit reasoning 和 private raw 不进入持久化结果。
@@ -35,4 +35,4 @@ description: 将已确认的 same-run rich Topic Card 写成自然、可连续�
 
 - 只返回 `topic_id/title/hook/structure/body`，或当前题的 typed `material_or_angle_insufficiency` failure。
 - provenance、missing evidence 和 cannot-claim 留在静默上下文，不写成公开核验话术。
-- 不读取 `references/private/three_round_learning.md` 作为正常输入，不读取 evidence playbook、PRD、Task Card、生产手册、测试/报告或任何系统/拒绝稿；不运行 selector、keyword/embedding retrieval、模板分类器或第二模型；不启动 nested Codex、第二 Agent、独立模型 API、watcher 或其他进程；不启动 `codex exec`。
+- 不读取 `references/private/three_round_learning.md` 作为正常输入，不读取 evidence playbook、PRD、Task Card、生产手册、测试/报告或任何系统/拒绝稿；不运行 selector、keyword/embedding retrieval、模板分类器或第二模型。Writer child 不得递归启动 Codex、第二 Agent、独立模型 API、watcher 或其他进程。

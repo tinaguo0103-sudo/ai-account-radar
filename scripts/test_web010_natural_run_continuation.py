@@ -7,11 +7,14 @@ import sys
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from daily_workflow import DailyWorkflow
+from run_daily_workflow import build_scripts_handoff, enrich
 from run_daily_workflow import WorkflowExecutionLock
+from spoken_script_runtime import load_author_edit_contract, topic_packet
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -107,10 +110,17 @@ class NaturalRunContinuationTest(unittest.TestCase):
             "disabled",
         ]
 
-    def execute(self, command: list[str], config: Path | None = None) -> subprocess.CompletedProcess[str]:
+    def execute(
+        self,
+        command: list[str],
+        config: Path | None = None,
+        extra_env: dict[str, str] | None = None,
+    ) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
         if config is not None:
             environment["WEBSITE_PUBLISHER_CONFIG"] = str(config)
+        if extra_env:
+            environment.update(extra_env)
         return subprocess.run(command, text=True, capture_output=True, env=environment)
 
     def fixture(self, root: Path) -> Path:
@@ -215,32 +225,16 @@ class NaturalRunContinuationTest(unittest.TestCase):
             root = Path(temporary)
             fixture = self.fixture(root)
             command = self.base_command(root, fixture)
-            first = self.execute(command)
-            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
-            first_lines = [json.loads(line) for line in first.stdout.splitlines() if line.strip()]
-            self.assertEqual(first_lines[0]["action"], "waiting_stage")
-            self.assertEqual(first_lines[-1]["action"], "editorial_required")
-            handoff_path = Path(first_lines[-1]["handoff_path"])
-            handoff = json.loads(handoff_path.read_text())
-            self.assertEqual(len(handoff["candidates"]), 6)
-            candidate_ids = [candidate["candidate_id"] for candidate in handoff["candidates"]]
-            status_command = [
-                sys.executable,
-                str(ROOT / "scripts" / "run_daily_workflow.py"),
-                "--business-date",
-                BUSINESS_DATE,
-                "--workflow-db",
-                str(root / "workflow.sqlite3"),
-                "--artifact-root",
-                str(root / "runs"),
-                "--status-only",
-            ]
-            interrupted = self.execute(status_command)
-            interrupted_value = last_json(interrupted.stdout)
-            self.assertEqual(interrupted_value["status"], "waiting")
-            self.assertEqual(interrupted_value["next_action"], "editorial_required")
-            fixture.unlink()
-            (root / "runs" / RUN_ID / "workflow_collection.json").unlink()
+            normalized = enrich(
+                SimpleNamespace(
+                    run_id=RUN_ID,
+                    business_date=BUSINESS_DATE,
+                    video_mode="disabled",
+                    qa_frozen_packages=None,
+                ),
+                json.loads(fixture.read_text(encoding="utf-8")),
+            )
+            candidate_ids = [row["candidate_id"] for row in normalized["candidates"]]
             editorial = root / "editorial.json"
             write_json(editorial, {
                 "run_id": RUN_ID,
@@ -254,15 +248,48 @@ class NaturalRunContinuationTest(unittest.TestCase):
                 }] + [{
                     "candidate_id": candidate_ids[index],
                     "decision": "observe",
-                    "selection_reason": f"候选 {index} 的证据密度较低",
-                } for index in range(1, 6)],
+                    "selection_reason": f"候选 {index} 暂不进入脚本",
+                } for index in range(1, len(candidate_ids))],
             })
-            second = self.execute(command + ["--editorial-result-file", str(editorial)])
-            self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
-            second_value = last_json(second.stdout)
-            self.assertEqual(second_value["action"], "scripts_required")
-            scripts_handoff = json.loads(Path(second_value["handoff_path"]).read_text())
-            self.assertEqual(len(scripts_handoff["selected_topics"]), 1)
+            first = self.execute(
+                command + ["--editorial-result-file", str(editorial)],
+                extra_env={"WEB010_INJECT_WRITER_FAILURE_TOPIC": candidate_ids[0]},
+            )
+            self.assertEqual(first.returncode, 2, first.stderr + first.stdout)
+            first_lines = [json.loads(line) for line in first.stdout.splitlines() if line.strip()]
+            self.assertEqual(first_lines[0]["action"], "waiting_stage")
+            self.assertEqual(first_lines[-1]["action"], "child_failed_recoverable")
+            handoff_path = Path(first_lines[-1]["handoff_path"])
+            status_command = [
+                sys.executable,
+                str(ROOT / "scripts" / "run_daily_workflow.py"),
+                "--business-date",
+                BUSINESS_DATE,
+                "--workflow-db",
+                str(root / "workflow.sqlite3"),
+                "--artifact-root",
+                str(root / "runs"),
+                "--status-only",
+            ]
+            interrupted = self.execute(status_command)
+            interrupted_value = last_json(interrupted.stdout)
+            self.assertEqual(interrupted_value["status"], "failed_recoverable")
+            self.assertEqual(interrupted_value["next_action"], "child_failed_recoverable")
+            fixture.unlink()
+            (root / "runs" / RUN_ID / "workflow_collection.json").unlink()
+            workflow = DailyWorkflow(root / "workflow.sqlite3")
+            collection_stage = workflow.stage(RUN_ID, "collection_enrichment")
+            editorial_stage = workflow.stage(RUN_ID, "editorial")
+            scripts_stage = workflow.stage(RUN_ID, "scripts")
+            all_handoff = build_scripts_handoff(
+                RUN_ID, BUSINESS_DATE,
+                collection_stage["payload"], editorial_stage["payload"],
+            )
+            scripts_handoff = topic_packet(
+                RUN_ID, BUSINESS_DATE, all_handoff["selected_topics"][0], 0, 1,
+                len(scripts_stage["payload"]["completed_items"]),
+                load_author_edit_contract(),
+            )
             scripts = root / "scripts.json"
             write_json(scripts, {
                 "packet_id": scripts_handoff["topic_input"]["packet_id"],
