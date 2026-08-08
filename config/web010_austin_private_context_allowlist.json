@@ -1,0 +1,88 @@
+{
+  "schema_version": 1,
+  "allowlist_id": "austin_owned_transient_context_v1",
+  "sources": [
+    {
+      "source_id": "austin-persona-context",
+      "role": "user_persona",
+      "kind": "text",
+      "path_env": "AUSTIN_PRIVATE_REFERENCE_ROOT",
+      "relative_path": "production_context.md",
+      "excerpt_ids": ["persona_positioning", "persona_published_voice", "persona_opening_examples"],
+      "line_ranges": [[5, 32], [34, 50], [52, 66]]
+    },
+    {
+      "source_id": "austin-original-private-cases",
+      "role": "user_original_cases",
+      "kind": "json",
+      "path_env": "AUSTIN_PRIVATE_REFERENCE_ROOT",
+      "relative_path": "private_runtime.json",
+      "excerpt_ids": ["case_anchors_all", "style_rules"],
+      "json_paths": ["style_rules", "case_anchors"]
+    },
+    {
+      "source_id": "austin-original-case-cards",
+      "role": "user_original_case_cards",
+      "kind": "json",
+      "path_env": "AUSTIN_CASE_REFERENCE_FILE",
+      "excerpt_ids": ["approved_case_cards_all"],
+      "json_paths": ["*"]
+    },
+    {
+      "source_id": "austin-original-sample-cover",
+      "role": "user_original_sample",
+      "kind": "text",
+      "path_env": "AUSTIN_PROJECT_ROOT",
+      "relative_path": "00_资料库/03_口播风格样稿/封面skill 口播稿final.md",
+      "excerpt_ids": ["cover_problem_to_system", "cover_close"],
+      "line_ranges": [[2, 17], [39, 58]]
+    },
+    {
+      "source_id": "austin-original-sample-radar",
+      "role": "user_original_sample",
+      "kind": "text",
+      "path_env": "AUSTIN_PROJECT_ROOT",
+      "relative_path": "00_资料库/03_口播风格样稿/热点监控及脚本落地_1500字口播脚本.md",
+      "excerpt_ids": ["radar_pain_to_workflow", "radar_close"],
+      "line_ranges": [[5, 37], [63, 81]]
+    },
+    {
+      "source_id": "austin-original-edit-pairs",
+      "role": "user_original_edit_pairs",
+      "kind": "docx",
+      "path_env": "AUSTIN_PROJECT_ROOT",
+      "relative_path": "00_资料库/04_案例库/我的案例库.docx",
+      "excerpt_ids": ["edit_pair_workflow", "edit_pair_video", "edit_pair_business"],
+      "paragraph_anchors": ["样例一", "样例二", "样例三", "样例四", "样例五"]
+    },
+    {
+      "source_id": "austin-approved-module-mvp",
+      "role": "approved_austin_script_module",
+      "kind": "text",
+      "path_env": "AUSTIN_APPROVED_SCRIPT_MVP",
+      "excerpt_ids": ["mvp_opening", "mvp_argument_turn", "mvp_close"],
+      "line_ranges": [[13, 19], [35, 61], [71, 79]]
+    },
+    {
+      "source_id": "austin-approved-module-director",
+      "role": "approved_austin_script_module",
+      "kind": "text",
+      "path_env": "AUSTIN_APPROVED_SCRIPT_DIRECTOR",
+      "excerpt_ids": ["director_opening", "director_working_scene", "director_close"],
+      "line_ranges": [[13, 31], [33, 81], [103, 121]]
+    }
+  ],
+  "excluded_source_kinds": [
+    "pm_control_plane",
+    "evidence_playbook",
+    "production_manual",
+    "project_prd",
+    "task_card",
+    "tests_and_fixtures",
+    "dev_qa_production_reports",
+    "khazix_content",
+    "system_generated_scripts",
+    "rejected_scripts",
+    "abstract_model_summaries"
+  ]
+}

@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import zipfile
 from pathlib import Path
 from typing import Any
 
@@ -21,6 +22,11 @@ DEFAULT_EDITING_REFERENCE = (
     / "config"
     / "web010_austin_voice_pack.json"
 )
+DEFAULT_PRIVATE_CONTEXT_ALLOWLIST = (
+    Path(__file__).resolve().parents[1]
+    / "config"
+    / "web010_austin_private_context_allowlist.json"
+)
 
 _DEFAULT_PRIVATE_SKILL_ROOT = (
     Path.home()
@@ -30,42 +36,87 @@ _DEFAULT_PRIVATE_SKILL_ROOT = (
 )
 
 
-def _authority_sources(
-    private_root: str | Path | None = None,
-    case_file: str | Path | None = None,
-    project_root: str | Path | None = None,
-) -> list[tuple[str, str, Path, str]]:
-    """Return approved Austin sources without exposing their paths downstream."""
+def _default_context_paths() -> dict[str, Path]:
     skill_root = _DEFAULT_PRIVATE_SKILL_ROOT
-    private = Path(
-        private_root
-        or os.environ.get("AUSTIN_PRIVATE_REFERENCE_ROOT", skill_root / "references" / "private")
-    )
-    cases = Path(
-        case_file
-        or os.environ.get(
-            "AUSTIN_CASE_REFERENCE_FILE",
-            skill_root / "examples" / "private" / "full_topic_cards.json",
-        )
-    )
-    workspace = Path(
-        project_root
-        or os.environ.get(
-            "AUSTIN_PROJECT_ROOT",
-            Path(__file__).resolve().parents[2],
-        )
-    )
-    return [
-        ("austin-persona-context", "persona_boundary", private / "production_context.md", "text"),
-        ("austin-evidence-playbook", "evidence_boundary", private / "evidence_playbook.md", "text"),
-        ("austin-persona-runtime", "persona_cases", private / "private_runtime.json", "json"),
-        ("austin-original-case-cards", "original_cases", cases, "json"),
-        (
-            "austin-owned-prd",
-            "content_positioning",
-            workspace / "00_资料库" / "01_项目PRD" / "Austin不加班脚本Skill_PRD.md",
-            "text",
+    workspace = Path(__file__).resolve().parents[2]
+    production_root = workspace / "ai_account_radar" / "output" / "runs"
+    return {
+        "AUSTIN_PRIVATE_REFERENCE_ROOT": skill_root / "references" / "private",
+        "AUSTIN_CASE_REFERENCE_FILE": skill_root / "examples" / "private" / "full_topic_cards.json",
+        "AUSTIN_PROJECT_ROOT": workspace,
+        "AUSTIN_APPROVED_SCRIPT_MVP": (
+            production_root / "run_20260805_080110" / "scripts"
+            / "0f51191cbf21c6b2677f.md"
         ),
+        "AUSTIN_APPROVED_SCRIPT_DIRECTOR": (
+            production_root / "run_20260803_110453" / "scripts"
+            / "b4cf842748e23795e5c9.md"
+        ),
+    }
+
+
+def _context_allowlist(path: str | Path | None = None) -> dict[str, Any]:
+    source = Path(
+        path
+        or os.environ.get("AUSTIN_PRIVATE_CONTEXT_ALLOWLIST", DEFAULT_PRIVATE_CONTEXT_ALLOWLIST)
+    )
+    try:
+        value = json.loads(source.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as error:
+        raise WorkflowConflict("austin_private_context_allowlist_unreadable") from error
+    allowed_roles = {
+        "user_persona", "user_original_cases", "user_original_case_cards",
+        "user_original_sample", "user_original_edit_pairs",
+        "approved_austin_script_module",
+    }
+    if (
+        not isinstance(value, dict)
+        or value.get("schema_version") != 1
+        or not value.get("allowlist_id")
+        or not isinstance(value.get("sources"), list)
+    ):
+        raise WorkflowConflict("austin_private_context_allowlist_invalid")
+    seen: set[str] = set()
+    for source_row in value["sources"]:
+        if not isinstance(source_row, dict):
+            raise WorkflowConflict("austin_private_context_source_invalid")
+        source_id = str(source_row.get("source_id") or "")
+        role = str(source_row.get("role") or "")
+        excerpt_ids = source_row.get("excerpt_ids")
+        if (
+            not source_id or source_id in seen or role not in allowed_roles
+            or not source_row.get("path_env")
+            or not isinstance(excerpt_ids, list)
+            or not excerpt_ids
+            or any(not isinstance(item, str) or not item for item in excerpt_ids)
+            or source_row.get("kind") not in {"text", "json", "docx"}
+        ):
+            raise WorkflowConflict("austin_private_context_source_invalid")
+        seen.add(source_id)
+    return value
+
+
+def _resolve_context_path(source_row: dict[str, Any]) -> Path:
+    defaults = _default_context_paths()
+    path_env = str(source_row["path_env"])
+    base_value = os.environ.get(path_env)
+    if base_value is None:
+        default = defaults.get(path_env)
+        if default is None:
+            raise WorkflowConflict("austin_private_context_path_unbound")
+        base = default
+    else:
+        base = Path(base_value)
+    relative = str(source_row.get("relative_path") or "")
+    return base / relative if relative else base
+
+
+def _authority_sources(
+    allowlist: dict[str, Any],
+) -> list[tuple[dict[str, Any], Path]]:
+    return [
+        (source_row, _resolve_context_path(source_row))
+        for source_row in allowlist["sources"]
     ]
 
 
@@ -73,27 +124,61 @@ def load_austin_authority(
     private_root: str | Path | None = None,
     case_file: str | Path | None = None,
     project_root: str | Path | None = None,
+    allowlist_path: str | Path | None = None,
 ) -> dict[str, Any]:
-    """Read approved Austin authority transiently and return only safe provenance."""
+    """Verify the allowlist and return safe provenance; raw text stays transient."""
+    overrides = {
+        "AUSTIN_PRIVATE_REFERENCE_ROOT": private_root,
+        "AUSTIN_CASE_REFERENCE_FILE": case_file,
+        "AUSTIN_PROJECT_ROOT": project_root,
+    }
+    previous: dict[str, str | None] = {}
+    for key, value in overrides.items():
+        if value is not None:
+            previous[key] = os.environ.get(key)
+            os.environ[key] = str(value)
     ledger: list[dict[str, str]] = []
-    for source_id, role, source, kind in _authority_sources(private_root, case_file, project_root):
-        try:
-            raw = source.read_bytes()
-            if not raw:
-                raise ValueError("empty")
-            if kind == "text":
-                raw.decode("utf-8")
+    try:
+        allowlist = _context_allowlist(allowlist_path)
+        for source_row, source in _authority_sources(allowlist):
+            source_id = str(source_row["source_id"])
+            role = str(source_row["role"])
+            kind = str(source_row["kind"])
+            try:
+                raw = source.read_bytes()
+                if not raw:
+                    raise ValueError("empty")
+                if kind == "text":
+                    raw.decode("utf-8")
+                elif kind == "json":
+                    json.loads(raw.decode("utf-8"))
+                else:
+                    with zipfile.ZipFile(source) as archive:
+                        archive.read("word/document.xml")
+            except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
+                raise WorkflowConflict("austin_reference_runtime_read_failed") from error
+            except (KeyError, zipfile.BadZipFile) as error:
+                raise WorkflowConflict("austin_reference_runtime_read_failed") from error
+            ledger.append({
+                "source_id": source_id,
+                "role": role,
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "read_status": "read",
+                "excerpt_ids": ",".join(str(item) for item in source_row["excerpt_ids"]),
+            })
+    finally:
+        for key, value in previous.items():
+            if value is None:
+                os.environ.pop(key, None)
             else:
-                json.loads(raw.decode("utf-8"))
-        except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError) as error:
-            raise WorkflowConflict("austin_reference_runtime_read_failed") from error
-        ledger.append({
-            "source_id": source_id,
-            "role": role,
-            "sha256": hashlib.sha256(raw).hexdigest(),
-            "read_status": "read",
-        })
-    return {"read_status": "complete", "sources": ledger}
+                os.environ[key] = value
+    return {
+        "read_status": "complete",
+        "allowlist_id": allowlist["allowlist_id"],
+        "sources": ledger,
+        "outer_codex_direct_read_required": True,
+        "raw_text_in_runtime_output": False,
+    }
 
 
 def load_editing_reference(path: str | Path = DEFAULT_EDITING_REFERENCE) -> dict[str, Any]:
@@ -152,6 +237,8 @@ def load_editing_reference(path: str | Path = DEFAULT_EDITING_REFERENCE) -> dict
         "content_bytes": len(encoded),
         "authority_read_status": authority["read_status"],
         "authority_read_ledger": authority["sources"],
+        "authority_allowlist_id": authority["allowlist_id"],
+        "outer_codex_direct_read_required": authority["outer_codex_direct_read_required"],
     }
 
 
@@ -189,6 +276,7 @@ def new_checkpoint(
             "authority_source_ids": [
                 row["source_id"] for row in editing_reference["authority_read_ledger"]
             ],
+            "authority_allowlist_id": editing_reference["authority_allowlist_id"],
         },
     }
 
@@ -326,6 +414,30 @@ def _packet_id(
     return hashlib.sha256(canonical(basis).encode("utf-8")).hexdigest()
 
 
+def _outer_codex_private_context_plan(editing_reference: dict[str, Any]) -> dict[str, Any]:
+    """Describe the direct-read contract without carrying any private source text."""
+    return {
+        "mode": "outer_codex_direct_read",
+        "allowlist_id": editing_reference["authority_allowlist_id"],
+        "read_before_draft": True,
+        "read_before_subjective_reread": True,
+        "raw_text_in_current_context": True,
+        "raw_text_in_handoff": False,
+        "sources": [
+            {
+                "source_id": row["source_id"],
+                "role": row["role"],
+                "excerpt_ids": row["excerpt_ids"].split(","),
+            }
+            for row in editing_reference["authority_read_ledger"]
+        ],
+        "instructions_ref": (
+            "skills/austin-voice-scriptwriter/references/"
+            "austin_private_context_reading.md"
+        ),
+    }
+
+
 def topic_packet(
     run_id: str,
     business_date: str,
@@ -367,8 +479,10 @@ def topic_packet(
             "austin_authority_read": {
                 "status": editing_reference["authority_read_status"],
                 "sources": editing_reference["authority_read_ledger"],
-                "raw_text_included": False,
+                "raw_text_included_in_handoff": False,
+                "outer_codex_direct_read_required": True,
             },
+            "austin_private_context": _outer_codex_private_context_plan(editing_reference),
             "current_topic_only": True,
             "previous_topic_body_included": False,
             "semantic_reread": {
@@ -414,7 +528,7 @@ def sanitize_handoff(value: dict[str, Any]) -> dict[str, Any]:
     if isinstance(topic_input, dict):
         for key in (
             "voice_pack", "reference_selection", "private_style_context",
-            "private_excerpts", "approved_full_scripts",
+            "private_excerpts", "approved_full_scripts", "austin_private_context_raw",
         ):
             topic_input.pop(key, None)
     return document

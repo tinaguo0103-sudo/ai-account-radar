@@ -7,6 +7,7 @@ import sys
 import tempfile
 import threading
 import unittest
+import zipfile
 from unittest import mock
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -219,7 +220,9 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         self.assertTrue(reference["style_only"])
         self.assertGreaterEqual(len(reference["modules"]), 8)
         self.assertEqual(reference["authority_read_status"], "complete")
-        self.assertEqual(len(reference["authority_read_ledger"]), 5)
+        self.assertEqual(len(reference["authority_read_ledger"]), 8)
+        self.assertEqual(reference["authority_allowlist_id"], "austin_owned_transient_context_v1")
+        self.assertTrue(reference["outer_codex_direct_read_required"])
         self.assertNotIn("full_body_injection", reference)
         self.assertNotIn("private_case_routing", reference)
         for module in reference["modules"]:
@@ -255,27 +258,40 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             private.mkdir()
             sentinel = "PRIVATE_PERSONA_SENTINEL_MUST_NOT_ESCAPE"
             (private / "production_context.md").write_text(sentinel, encoding="utf-8")
-            (private / "evidence_playbook.md").write_text("evidence boundaries", encoding="utf-8")
             (private / "private_runtime.json").write_text(
                 json.dumps({"style_rules": {}, "case_anchors": []}), encoding="utf-8",
             )
             cases = root / "cases.json"
             cases.write_text(json.dumps({"cards": []}), encoding="utf-8")
             project = root / "project"
-            prd = project / "00_资料库" / "01_项目PRD"
-            prd.mkdir(parents=True)
-            (prd / "Austin不加班脚本Skill_PRD.md").write_text("owned positioning", encoding="utf-8")
+            samples = project / "00_资料库" / "03_口播风格样稿"
+            samples.mkdir(parents=True)
+            (samples / "封面skill 口播稿final.md").write_text("owned sample cover", encoding="utf-8")
+            (samples / "热点监控及脚本落地_1500字口播脚本.md").write_text("owned sample radar", encoding="utf-8")
+            case_dir = project / "00_资料库" / "04_案例库"
+            case_dir.mkdir(parents=True)
+            docx = case_dir / "我的案例库.docx"
+            with zipfile.ZipFile(docx, "w") as archive:
+                archive.writestr("word/document.xml", "<document>owned edits</document>")
+            mvp = root / "approved-mvp.md"
+            director = root / "approved-director.md"
+            mvp.write_text("approved module mvp", encoding="utf-8")
+            director.write_text("approved module director", encoding="utf-8")
             with mock.patch.dict(os.environ, {
                 "AUSTIN_PRIVATE_REFERENCE_ROOT": str(private),
                 "AUSTIN_CASE_REFERENCE_FILE": str(cases),
                 "AUSTIN_PROJECT_ROOT": str(project),
+                "AUSTIN_APPROVED_SCRIPT_MVP": str(mvp),
+                "AUSTIN_APPROVED_SCRIPT_DIRECTOR": str(director),
             }, clear=False):
                 authority = load_austin_authority()
             encoded = json.dumps(authority, ensure_ascii=False)
             self.assertEqual(authority["read_status"], "complete")
-            self.assertEqual(len(authority["sources"]), 5)
+            self.assertEqual(len(authority["sources"]), 8)
             self.assertNotIn(sentinel, encoded)
-            self.assertTrue(all(set(row) == {"source_id", "role", "sha256", "read_status"} for row in authority["sources"]))
+            self.assertTrue(all(set(row) == {"source_id", "role", "sha256", "read_status", "excerpt_ids"} for row in authority["sources"]))
+            self.assertNotIn("evidence-playbook", encoded)
+            self.assertNotIn("project_prd", encoded)
 
     def test_public_per_topic_checkpoint_resume_and_noop(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -308,10 +324,18 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             )
             authority = handoff["topic_input"]["austin_authority_read"]
             self.assertEqual(authority["status"], "complete")
-            self.assertFalse(authority["raw_text_included"])
-            self.assertEqual(len(authority["sources"]), 5)
-            self.assertTrue(all(set(row) == {"source_id", "role", "sha256", "read_status"}
+            self.assertFalse(authority["raw_text_included_in_handoff"])
+            self.assertEqual(len(authority["sources"]), 8)
+            self.assertTrue(all(set(row) == {"source_id", "role", "sha256", "read_status", "excerpt_ids"}
                                 for row in authority["sources"]))
+            private_context = handoff["topic_input"]["austin_private_context"]
+            self.assertEqual(private_context["mode"], "outer_codex_direct_read")
+            self.assertTrue(private_context["read_before_draft"])
+            self.assertTrue(private_context["read_before_subjective_reread"])
+            self.assertTrue(private_context["raw_text_in_current_context"])
+            self.assertFalse(private_context["raw_text_in_handoff"])
+            self.assertEqual(len(private_context["sources"]), 8)
+            self.assertNotIn("PRIVATE_PERSONA", json.dumps(handoff, ensure_ascii=False))
             self.assertTrue(all("edit_delta" in row for row in handoff["topic_input"]["editing_reference"]["modules"]))
             self.assertNotIn("reference_selection", json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn("full_body_injection", json.dumps(handoff, ensure_ascii=False))
@@ -355,6 +379,16 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertEqual(last_json(replay.stdout)["action"], "noop")
             self.assertEqual(Publisher.posts, posts)
             self.assertEqual((root / f"{RUN_ID}.sqlite3").read_bytes(), before)
+
+    def test_sanitize_removes_transient_private_text_if_a_caller_supplies_it(self):
+        sanitized = sanitize_handoff({
+            "action": "scripts_required",
+            "topic_input": {
+                "austin_private_context_raw": "PRIVATE_CONTEXT_SENTINEL",
+            },
+        })
+        self.assertNotIn("PRIVATE_CONTEXT_SENTINEL", json.dumps(sanitized, ensure_ascii=False))
+        self.assertNotIn("austin_private_context_raw", sanitized["topic_input"])
 
     def test_material_insufficiency_is_item_local_and_terminal(self):
         run_id = "run_20260808_120001"

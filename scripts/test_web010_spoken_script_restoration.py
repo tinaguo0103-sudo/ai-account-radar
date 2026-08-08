@@ -15,6 +15,10 @@ NO_OVERTIME_SKILL = ROOT / "skills" / "austin-no-overtime-scripting" / "SKILL.md
 SPOKEN_BODY_METHOD = (
     ROOT / "skills" / "austin-no-overtime-scripting" / "prompts" / "spoken_body_method.md"
 )
+PRIVATE_CONTEXT_READING = (
+    ROOT / "skills" / "austin-voice-scriptwriter" / "references"
+    / "austin_private_context_reading.md"
+)
 
 
 class SpokenScriptRestorationTests(unittest.TestCase):
@@ -148,12 +152,15 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         voice = VOICE_SKILL.read_text(encoding="utf-8")
         no_overtime = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
         method = SPOKEN_BODY_METHOD.read_text(encoding="utf-8")
-        combined = "\n".join((voice, no_overtime, method))
+        private_reading = PRIVATE_CONTEXT_READING.read_text(encoding="utf-8")
+        combined = "\n".join((voice, no_overtime, method, private_reading))
         self.assertIn("不规定顺序", voice)
         self.assertIn("material_or_angle_insufficiency", combined)
         self.assertIn("一次主观复读", combined)
         self.assertIn("不默认写“我做了一个实验”", no_overtime)
         self.assertIn("不读取 `references/private/three_round_learning.md`", voice)
+        self.assertIn("当前 outer Codex 必须直接读取", voice)
+        self.assertIn("Raw excerpt text may exist only in the current outer Codex context", private_reading)
         self.assertIn("不是文章类型字段、模板或 gate", voice)
         self.assertNotIn("scene/conflict/old workflow/experiment/judgment/consequence/close", combined)
         self.assertIn("不启动 `codex exec`", combined)
@@ -167,7 +174,8 @@ class SpokenScriptRestorationTests(unittest.TestCase):
     def test_release_contract_uses_one_outer_content_driven_path(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
-        self.assertIn("Austin-owned style-only editing reference", protocol)
+        self.assertIn("safe Austin private-context read plan", protocol)
+        self.assertIn("current outer Codex must directly read", protocol)
         self.assertIn("There is no reference-selection handoff", protocol)
         self.assertIn("Choose the form that the topic's material supports", protocol)
         self.assertIn("do not invent Austin's first-person experience", protocol)
@@ -175,8 +183,8 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("current outer Codex owns the final simple title/hook/structure/body", protocol)
         self.assertIn("does not expose or accept a whole-batch script submission", protocol)
         self.assertNotIn("--script-reference-selection-file", protocol)
-        self.assertIn("There is no reference-selection handoff, full-body exemplar injection", protocol)
-        self.assertIn("per-topic private case/persona routing or selector receipt", protocol)
+        self.assertIn("There is no reference-selection handoff, keyword selector or full-body template route", protocol)
+        self.assertNotIn("per-topic private case/persona routing or selector receipt", protocol)
         for forbidden in ("codex exec", "watcher", "Feishu", "--write-feishu"):
             self.assertNotIn(forbidden, protocol)
 

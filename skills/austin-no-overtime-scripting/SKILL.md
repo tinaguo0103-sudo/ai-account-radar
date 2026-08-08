@@ -9,7 +9,7 @@ description: 将 WEB-010 已确认的 same-run rich Topic Card 逐题交给当�
 
 - 当前 outer Codex 是唯一 AI owner，直接应用本 Skill 和 `austin-voice-scriptwriter`。
 - public runtime 一次只暴露一个 selected rich Topic Card。当前题提交 script 或 typed material failure 后，下一题才会暴露；checkpoint 从首个未完成题恢复，不重生已完成题。
-- runtime 在每题前实际读取 approved Austin persona/case authority，并只向当前题提供安全的 Austin-owned modular editing reference 和 `read_status/source_id/role/sha256` ledger。私有正文不进入 checkpoint、Website、脚本或报告。
+- 每题 draft 前，当前 outer Codex 通过 Austin Voice Skill 直接读取 allowlist 中的真实用户人设、原始案例、原始样稿、before/after edit pairs 和批准稿模块；这些文本只进入当前题临时上下文。Python runtime 只校验来源并记录 `read_status/source_id/role/excerpt_id/sha256`，私有正文不进入 checkpoint、Website、脚本或报告。
 - 最终只形成一个 simple scripts result；不启动新进程、nested Codex、第二 Agent、独立模型 API、selector 或第二 authority。
 
 ## 当前题输入
@@ -25,7 +25,7 @@ writer packet 只包含 exact topic identity、source title/facts/details、fact
 3. outer Codex 完成当前题初稿，再做一次从头到尾的主观复读，必要时只重写一次。检查是否滑回咨询说明、统一工作流/交付/责任收束，或与上一题共享母版。
 4. 每题完成后再提交，保持选题身份、事实边界和简单 schema。
 
-Austin-owned reference 的模块只是编辑动作：判断、呼吸、细节转向、作者站位、后果和题目专属停点。它不是固定 outline，也不是当前题事实。
+Austin-owned reference 的模块只是编辑动作：判断、呼吸、细节转向、作者站位、后果和题目专属停点。它不是固定 outline，也不是当前题事实；不能代替每题 draft 前的真实 private context read。
 
 ## 失败和禁止
 
