@@ -36,8 +36,18 @@ class CodexChildAdapterTest(unittest.TestCase):
         self.assertIn('"reason":"material_or_angle_insufficiency"', prompt)
         self.assertIn("with no other failure keys", prompt)
         self.assertIn(str(child.VOICE_SKILL), prompt)
+        self.assertIn(str(child.ALLOWLIST), prompt)
+        self.assertIn("voice calibration only", prompt)
+        self.assertFalse(hasattr(child, "VOICE_READING_CONTRACT"))
         self.assertNotIn("austin-no-overtime-scripting", prompt)
         self.assertNotIn("Semantic Plan", prompt)
+        self.assertNotIn("Facts-first Draft", prompt)
+        self.assertNotIn("Author Edit", prompt)
+        self.assertNotIn("anti-template", prompt)
+        self.assertNotIn("austin_private_context_reading.md", prompt)
+        self.assertNotIn("shared outline", prompt)
+        self.assertNotIn("workflow/acceptance conclusion", prompt)
+        self.assertNotIn("generic replacement body", prompt)
         self.assertNotIn("scene/conflict/old workflow/experiment/judgment/consequence/close", prompt)
 
     def test_child_prompts_have_one_role_specific_skill(self):
@@ -49,6 +59,10 @@ class CodexChildAdapterTest(unittest.TestCase):
         self.assertNotIn(str(child.EDITORIAL_SKILL), writer)
         self.assertNotIn("austin-no-overtime-scripting", writer)
         self.assertNotIn("Semantic Plan", writer)
+        self.assertNotIn("Facts-first Draft", writer)
+        self.assertNotIn("Author Edit", writer)
+        self.assertNotIn("anti-template", writer)
+        self.assertNotIn("austin_private_context_reading.md", writer)
         self.assertNotIn("conflict/old workflow/action/consequence/QA", writer)
 
     def test_editorial_child_decodes_existing_result_and_records_safe_metadata(self):

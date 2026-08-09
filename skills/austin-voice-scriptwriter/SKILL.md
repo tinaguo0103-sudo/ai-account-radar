@@ -1,38 +1,85 @@
 ---
 name: austin-voice-scriptwriter
-description: 在独立 bounded writer child 中将已确认的 same-run rich Topic Card 写成自然、可连续朗读、由当前事实驱动的 Austin spoken-only 正文。不负责选题筛选、事实核验或外部写入。
+description: 将已确认的 AI 账号选题、Topic Card、制作方向补充或 06 执行包输入，写成接近 Austin 真人口播习惯的全文。适用于生成短视频口播稿、提词器稿、真人开场、痛点展开、场景推进与自然判断。优先用于 06 完整脚本包中的“口播全文”，不负责选题筛选、事实核验、飞书回写或自动发布。
 ---
 
 # Austin Voice Scriptwriter
 
-## 权威边界
+这个 Skill 专门负责“口播全文怎么像 Austin 说出来”，不负责 `04 -> 06` 流程调度。
 
-- 当前 same-run rich Topic Card 是事实唯一来源。来源标题、人物动作、公开事实、细节和事实边界只能按输入使用。
-- Facts-first draft 阶段只读取当前题的 exact identity、source facts/details、fact boundary、cannot-claim 和 short selection reason。此阶段不读取 persona、private cases、samples、approved scripts、editing deltas、anti-template checklist 或任何风格材料。
-- 完整 draft 形成后，当前 writer child 才通过 `references/austin_private_context_reading.md` 读取 allowlist 中的真实 user persona、original cases/samples 和 before/after edit pairs。批准稿模块若保留，只能作为局部编辑对照，不能供应当前题的 opening、argument movement 或 close。
-- Author Edit 只改作者站位、口语呼吸、措辞、强调/删减、连接和自然收束，必须保留 topic identity、source facts、central thesis 和 argument movement。私有原文只存在于 draft 完成后的当前题临时上下文，不进入 handoff、checkpoint 或结果。
-- 编辑参考不是当前题事实，也不是 title、hook、structure、unique_judgment 的蓝图。最终四个字段和正文必须由当前题事实先形成，再由作者编辑完成。
-- 不把来源作者、客户、团队或建议场景改写成 Austin 已经发生的经历。材料不足时返回 item-local `material_or_angle_insufficiency`。
+## 何时使用
 
-## 作者与 AI 的分工
+- 已经有 `04 工作流实验命题卡`、Topic Card、执行包输入或人工制作补充。
+- 用户要生成完整口播稿、提词器稿、开头钩子、痛点展开或真人讲述段。
+- 原稿看起来像 PRD、课程讲义、AI 汇报或系统说明，需要改成真实口播。
 
-- 当前题事实先决定能成立的中心判断、取舍和情绪姿态；Author Edit 只把已经成立的判断讲得更像 Austin，不替当前题创造另一条论证。
-- 不用 AI 补造第一手经历、客户结果、团队成果或实测数字。没有真实第一人称材料时，可以直接论证、讲来源人物、做产品观察或给出明确建议。
-- 先由当前题事实自然选择表达运动。可以从一个观察、一个人物动作、一个产品细节、一次公开事件的后果、一个对照或一个直接判断开始；这些只是可能性，不是文章类型字段、模板或 gate。
+不要用它做选题判断、事实核验、飞书字段整理、素材清单或剪辑交接。这些仍由 `austin-no-overtime-scripting` 处理。
 
-## 两阶段写作
+## 写作顺序
 
-1. 当前 writer child 只用 Topic Card 完成完整 facts-first draft，并共同形成 title/hook/structure/body。
-2. draft 完成后，Austin Skill 才读取真实 allowlisted private context，做一次 Author Edit。原始材料用于站位、呼吸、措辞和取舍，不用于替换当前题的事实或论证。
-3. Author Edit 不制造新的“不是 X 而是 Y”反转，不把文章改成 workflow/responsibility/acceptance/system commentary，不虚构经历、结果或来源外事实。
-4. Author Edit 完成后只提交最终 simple result；draft、edit reasoning 和 private raw 不进入持久化结果。
+1. 先找这条题独有的叙事发动机：一个冲突、反常识结果、具体现场、失败动作、修改时刻或责任变化。不要先讲工具、模型、Skill 或系统。
+2. 用具体或合理假设的场景把判断落地。场景里要有人在做事、有东西发生变化、有动作带来后果，不能只有抽象观点。
+3. 根据题目选择推进方式。可以连续追问，也可以直接讲事故、对照、一次实验、责任链、时间线、成本账单或工作流演示；连续问题只是可选手法，不规定数量。
+4. 动作可以拆成两步、三步、四步，也可以完全不编号。是否编号只看这条内容是否因此更清楚，不能把所有题写成同一套动作清单。
+5. 每个实操点先用人话，再补工具、字段、Agent 或工作流。允许用一个自然提示引入 Austin 可能会使用的合理假设/复合场景和示例数据，之后正常讲故事，不反复提醒它是假设。
+6. 示例数字可以用于预设实验、成本拆解、时间线或对照计算，但不能写成已经真实测得的个人节省、真实客户成果、团队结果或第三方统计。
+7. 如果执行包提供搜索来源、对标表达或浅显解释，只把它们转成自然口播素材，不新增教程式章节，不在正文复述 provenance、缺字段或审核说明。
+8. 概念/工具型选题先在脑子里过一遍：原来通常怎么做、旧方式卡在哪里、为什么现在需要这个概念或工具、人话怎么解释、当前工具只是哪个案例、最后怎么回到自己的工作流和证据。
+9. 前后对比、人工判断和内容边界都按题选用。只有当不确定性或责任边界本身就是这条题的冲突时，才自然说出来；不要把 `AI 不是万能`、`最后还是人判断` 或来源免责声明写成固定结尾。
+10. 不同题必须有不同的开场、问题密度、动作组织和结尾动力。完成后并排检查，不能共享强制问句链、编号骨架、转场句或边界收尾。
 
-这不是新的模板或质量 gate。runtime 不选择文章类型，也不把 editing delta、完整范文或统一自审问题传给当前 draft。
+本节是当前用户校准后的主规则。`references/public_voice_style.md` 或历史样稿里的固定问句、
+三/四步动作和通用边界结尾只能作为历史节奏参考；与本节冲突时，以本节为准。
 
-真实读取契约见 `references/austin_private_context_reading.md`。Python 的 path/open/hash/read ledger 只证明来源可用，不替代 draft 完成后的直接读取。完成一题并提交后才进入下一题；恢复时不重生已完成题。
+## 来源与核验只留在后台
 
-## 输出与禁止
+- provenance、source verification、missing evidence 和 cannot-claim 是静默生成与 QA
+  上下文。它们约束哪些事实能写、哪些结果不能冒充，但不提供公开口播的说服话术。
+- 可见正文直接讲已经支持的事实、判断、场景、动作和后果。不要通过“有来源”“查到资料”
+  “可以验证”或“信息只证明到这里”来替正文自证可靠，也不要换一组同义词继续解释核验
+  过程、字段缺口或证据等级。
+- 如果某个公开人物的原话、动作或经历本身就是故事事实，可以自然说明是谁说、谁做、发生
+  在哪段视频里，例如“视频里的作者说，他凌晨四点看到成片”。这是人物归属，不是来源
+  背书；不要改写成“公开信息显示他凌晨四点看到成片”。
+- 当来源归属不是观众理解故事所必需的信息时，直接省略归属，把注意力留给题目本身。
 
-- 只返回 `topic_id/title/hook/structure/body`，或当前题的 typed `material_or_angle_insufficiency` failure。
-- provenance、missing evidence 和 cannot-claim 留在静默上下文，不写成公开核验话术。
-- 不读取 `references/private/three_round_learning.md` 作为正常输入，不读取 evidence playbook、PRD、Task Card、生产手册、测试/报告或任何系统/拒绝稿；不运行 selector、keyword/embedding retrieval、模板分类器或第二模型。Writer child 不得递归启动 Codex、第二 Agent、独立模型 API、watcher 或其他进程。
+## 必须像口播
+
+- 句子要短，适合直接念。
+- 允许重复关键词，重复会让口播更自然。
+- 抽象判断后必须接具体现场、动作或后果。
+- 知识库、RAG、Agent、TTS、Voice Agent、工作流系统、AI 工具等概念不要一上来当主角；先让观众听懂旧方式为什么卡，再自然引出概念。
+- 可以用“你可能也有这种感觉”“你看”“说白了”“这才是”做转场。
+- 不要把自己写成老师，要像一线实战分享。
+
+## 可借用语气
+
+- 可以借 Austin 的短句、反问、停顿和真实判断感，但不能连续套用同一批句式。
+- 可以写“最痛苦的不是 A，而是 C”，但 A/C 必须来自当前选题的真实旧流程和证据。
+- 可以写“以前是 X；现在是 Y”，但 X/Y 必须来自输入材料，不能每条都走同一套三动作。
+- 边界确实是题目冲突时，可以自然收束到具体责任或事实；不是每条都需要边界段落。
+- 禁止为了像口播而复用固定金句；两个不同选题不应共享同一套章节名、推进骨架和过渡句。
+
+## 禁止口吻
+
+- 不要写“本条视频的核心观点是”“这一段要让观众相信”“本次验证路径为”。
+- 不要把 `验证方式`、`沉淀资产`、`QA`、`执行包`、`进入06` 这些内部词放进口播。
+- `沉淀资产` 也不能进入开头钩子、标题、封面大字、简介、置顶评论、素材清单或 QA 原因；统一改成人话：`有没有留下来`、`下次还能不能用`、`路径有没有串起来`、`后面能不能复用`、`资料有没有变成下次能用的东西`。
+- `如果当天/今天没有生成 06`、`没有完整生成到最后一步`、`选题系统复盘` 这类内部状态边界不能写进口播、拍摄待办、素材清单、剪辑节奏或发布文案。
+- 不要为了完整而解释所有字段。
+- 不要把来源存在、核验动作、证据充分程度或缺失字段写成公开口播的论证。后台事实约束
+  不能变成“公开信息里提到”“根据来源”“资料显示”“目前可验证”一类审核说明腔。
+- 不要照搬对标账号、热点标题或工具卖点；外部表达只能被拆解后转成自己的业务语言。
+- 不要把工具能力说成已经验证过，除非输入里明确有证据。
+- 不要把建议案例写成已经发生的真实案例。
+- 不要把用户临时举例写成固定规则；不同选题要根据输入里的真实旧流程、痛点和素材选择讲法。
+
+## 资源
+
+- 需要更完整的公开安全风格规则时，读 `references/public_voice_style.md`。
+- 正常口播生成不定位、不读取 `references/private/three_round_learning.md`，也不把其中的三轮、
+  三步或数字骨架加入写作上下文。只有用户明确要求历史风格研究、历史版本对照或旧方法诊断时，
+  才可把该文件作为历史资料定位和读取；研究结果不能自动变成后续正常生成合同。
+- 私有案例只作可选发散。0 个匹配案例是正常输入，不阻断生成，也不要求每题读取或使用案例；没有合适案例时，直接从 Topic Card 构造题目独有的合理假设/复合场景。
+- `scripts/austin_voice.py` 只提供 `fallback_draft / not_style_qa` 的字段化兜底，用于格式、安全和边界检查；不得把它当成 Austin 风格质量样例。
+- 当前 outer Codex 必须在同一上下文直接通读完整正文并完成质量检查，不启动新进程或其他 Agent。后续 PM、Independent QA 和用户仍需独立阅读匿名全文；它们是验收角色，不是本 Skill 需要调用的运行时。

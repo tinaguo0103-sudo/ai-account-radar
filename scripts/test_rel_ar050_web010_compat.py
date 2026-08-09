@@ -14,7 +14,7 @@ from pathlib import Path
 
 from daily_workflow import DailyWorkflow
 from run_daily_workflow import build_scripts_handoff, enrich
-from spoken_script_runtime import load_author_edit_contract, topic_packet
+from spoken_script_runtime import load_writer_contract, topic_packet
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -172,7 +172,7 @@ class PublicV2FlowTest(unittest.TestCase):
             )
             handoff = topic_packet(
                 run_id, "2026-07-28", all_handoff["selected_topics"][0], 0, 1,
-                len(scripts_stage["payload"]["completed_items"]), load_author_edit_contract(),
+                len(scripts_stage["payload"]["completed_items"]), load_writer_contract(),
             )
             scripts = root / "scripts.json"
             write(scripts, {

@@ -22,10 +22,6 @@ from codex_cli_path import resolve_codex_cli
 ROOT = Path(__file__).resolve().parents[1]
 EDITORIAL_SKILL = ROOT / "skills" / "ai-account-editorial-director" / "SKILL.md"
 VOICE_SKILL = ROOT / "skills" / "austin-voice-scriptwriter" / "SKILL.md"
-VOICE_READING_CONTRACT = (
-    ROOT / "skills" / "austin-voice-scriptwriter" / "references"
-    / "austin_private_context_reading.md"
-)
 ALLOWLIST = ROOT / "config" / "web010_austin_private_context_allowlist.json"
 DEFAULT_TIMEOUT_SECONDS = 900
 
@@ -100,13 +96,12 @@ Read exactly one input file: {rendered}
 The file contains one same-run rich Topic Card only. Do not read any other
 topic, prior body, editorial batch deliberation, PM/Dev/QA history, release
 instructions, or controller rules. Read and apply only these approved
-writer Skill/contracts:
+writer authority:
 - {VOICE_SKILL}
-- {VOICE_READING_CONTRACT}
 - {ALLOWLIST}
-Follow that allowlist to read the actual user-owned private writer authority
-transiently while drafting. Private text is calibration only, never current
-topic facts, and must not be quoted or returned.
+The allowlist points to the user's original persona, cases and samples. Read
+those raw user-owned materials transiently for voice calibration only; they
+are not current topic facts and must not be quoted, persisted or returned.
 
 Return only this transport envelope:
 {{"packet_id":"<input packet_id>","result_json":"<JSON-encoded simple submission>"}}
@@ -116,10 +111,9 @@ topic_id/title/hook/structure/body. If the current card cannot support a
 distinctive source-grounded script, the failure value must be exactly
 {{"topic_id":"<input topic_id>","reason":"material_or_angle_insufficiency","detail":"<short truthful explanation>"}}
 with no other failure keys. The final writing must be
-source-grounded and may choose its own form; do not force a shared outline,
-experiment, first-person experience, workflow/acceptance conclusion, or
-generic replacement body. Do not write files, browse, call APIs, publish, or
-start codex/another Agent/process.
+Follow the restored voice Skill and the current card's facts and boundaries.
+Do not write files, browse, call APIs, publish, or start codex/another
+Agent/process.
 """
 
 

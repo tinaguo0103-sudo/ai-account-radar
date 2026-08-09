@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import json
 import tempfile
 import unittest
@@ -12,13 +13,8 @@ ROOT = Path(__file__).resolve().parents[1]
 RELEASE_CONFIG = ROOT / "config" / "web010_single_daily_workflow_release.json"
 VOICE_SKILL = ROOT / "skills" / "austin-voice-scriptwriter" / "SKILL.md"
 NO_OVERTIME_SKILL = ROOT / "skills" / "austin-no-overtime-scripting" / "SKILL.md"
-SPOKEN_BODY_METHOD = (
-    ROOT / "skills" / "austin-no-overtime-scripting" / "prompts" / "spoken_body_method.md"
-)
-PRIVATE_CONTEXT_READING = (
-    ROOT / "skills" / "austin-voice-scriptwriter" / "references"
-    / "austin_private_context_reading.md"
-)
+KNOWN_GOOD_VOICE_SHA256 = "7cac5ccadbeb6e808b8d737bc9318c54e22209c6fcc37385a96515e9c94c0ede"
+KNOWN_GOOD_VOICE_GIT_BLOB = "82e18672b687fa04ecafc1a6da2606499ac1ffcc"
 
 
 class SpokenScriptRestorationTests(unittest.TestCase):
@@ -103,17 +99,19 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("我的制作补充", encoded)
         self.assertNotIn("制作方向", encoded)
         contract = handoff["batch_contract"]
-        self.assertTrue(contract["content_driven_form"])
+        self.assertEqual(
+            set(contract),
+            {
+                "deterministic_controller_owns_order_and_checkpoint",
+                "one_editorial_child_per_batch",
+                "one_writer_child_per_selected_topic",
+                "one_topic_per_writer_child",
+            },
+        )
         self.assertTrue(contract["deterministic_controller_owns_order_and_checkpoint"])
         self.assertTrue(contract["one_editorial_child_per_batch"])
         self.assertTrue(contract["one_writer_child_per_selected_topic"])
         self.assertTrue(contract["one_topic_per_writer_child"])
-        self.assertNotIn("one_outer_ai_owner", contract)
-        self.assertNotIn("one_batch_invocation_per_skill", contract)
-        self.assertFalse(contract["universal_content_slots"])
-        self.assertTrue(contract["unsupported_first_person_experience_forbidden"])
-        self.assertTrue(contract["material_or_angle_insufficiency_is_item_local"])
-        self.assertTrue(contract["fact_boundaries_are_silent_generation_context"])
 
     def test_optional_missing_context_stays_absent(self):
         fixture = self.fixture()
@@ -157,32 +155,32 @@ class SpokenScriptRestorationTests(unittest.TestCase):
                 selected,
             )
 
-    def test_skills_use_content_driven_form_without_private_routing(self):
+    def test_voice_skill_is_exact_known_good_and_has_no_later_meta_contract(self):
         voice = VOICE_SKILL.read_text(encoding="utf-8")
         no_overtime = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
-        method = SPOKEN_BODY_METHOD.read_text(encoding="utf-8")
-        private_reading = PRIVATE_CONTEXT_READING.read_text(encoding="utf-8")
-        combined = "\n".join((voice, no_overtime, method, private_reading))
-        self.assertIn("不是文章类型字段、模板或 gate", voice)
-        self.assertIn("material_or_angle_insufficiency", combined)
-        self.assertIn("一次 Author Edit", combined)
-        self.assertIn("不虚构经历", no_overtime)
-        self.assertIn("不读取 `references/private/three_round_learning.md`", voice)
-        self.assertIn("writer child", voice)
-        self.assertIn(
-            "Raw excerpt text may exist only in the current per-topic writer child context",
-            private_reading,
+        self.assertEqual(
+            hashlib.sha256(VOICE_SKILL.read_bytes()).hexdigest(),
+            KNOWN_GOOD_VOICE_SHA256,
         )
-        self.assertIn("不是文章类型字段、模板或 gate", voice)
-        self.assertNotIn("scene/conflict/old workflow/experiment/judgment/consequence/close", combined)
-        self.assertIn("Writer child 不得递归启动 Codex", no_overtime)
-        self.assertNotIn("当前 outer Codex", combined)
-        for retired_path in (
-            "watch_script_package_queue.py",
-            "codex_script_package_runner.py",
-            "--write-feishu",
+        voice_bytes = VOICE_SKILL.read_bytes()
+        git_blob_header = f"blob {len(voice_bytes)}\0".encode("ascii")
+        self.assertEqual(
+            hashlib.sha1(git_blob_header + voice_bytes).hexdigest(),
+            KNOWN_GOOD_VOICE_GIT_BLOB,
+        )
+        self.assertIn("## 写作顺序", voice)
+        self.assertIn("## 必须像口播", voice)
+        self.assertIn("## 资源", voice)
+        for retired in (
+            "Facts-first Draft",
+            "Austin Author Edit",
+            "anti-template",
+            "Semantic Plan",
+            "austin_private_context_reading.md",
         ):
-            self.assertNotIn(retired_path, combined)
+            self.assertNotIn(retired, voice)
+        self.assertIn("不虚构经历", no_overtime)
+        self.assertIn("Writer child 不得递归启动 Codex", no_overtime)
 
     def test_release_contract_uses_separate_bounded_children(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
@@ -195,6 +193,9 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("same outer Codex", protocol)
         self.assertIn("only austin-voice-scriptwriter", protocol)
         self.assertNotIn("austin-no-overtime-scripting", protocol)
+        self.assertNotIn("Facts-first Draft", protocol)
+        self.assertNotIn("Author Edit", protocol)
+        self.assertNotIn("Semantic Plan", protocol)
         self.assertNotIn("--script-reference-selection-file", protocol)
         self.assertNotIn("per-topic private case/persona routing or selector receipt", protocol)
         for forbidden in ("watcher", "Feishu", "--write-feishu"):

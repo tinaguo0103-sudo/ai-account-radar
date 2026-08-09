@@ -1285,18 +1285,6 @@ def build_scripts_handoff(
             "one_editorial_child_per_batch": True,
             "one_writer_child_per_selected_topic": True,
             "one_topic_per_writer_child": True,
-            "content_driven_form": True,
-            "universal_content_slots": False,
-            "human_supplement_excluded": True,
-            "production_direction_excluded": True,
-            "fact_boundaries_are_silent_generation_context": True,
-            "source_grounded_or_direct_argument_preferred": True,
-            "unsupported_first_person_experience_forbidden": True,
-            "material_or_angle_insufficiency_is_item_local": True,
-            "one_author_edit_after_complete_draft": True,
-            "fabricated_actual_client_team_or_measured_results_forbidden": True,
-            "generic_editing_deltas_not_in_runtime": True,
-            "anti_template_self_check_not_in_runtime": True,
         },
     }
 
@@ -1617,7 +1605,7 @@ def main() -> int:
         elif selected_topics:
             if args.scripts_result_file:
                 raise WorkflowConflict("whole_batch_scripts_submission_forbidden")
-            author_edit_contract = script_runtime.load_author_edit_contract()
+            writer_contract = script_runtime.load_writer_contract()
             all_handoff = build_scripts_handoff(
                 args.run_id, args.business_date, collection, editorial,
             )
@@ -1627,7 +1615,7 @@ def main() -> int:
                 args.run_id,
                 args.business_date,
                 script_topics,
-                author_edit_contract,
+                writer_contract,
             )
             if args.script_item_file:
                 outcome = script_runtime.submit_topic(
@@ -1636,7 +1624,7 @@ def main() -> int:
                     args.business_date,
                     script_topics,
                     checkpoint,
-                    author_edit_contract,
+                    writer_contract,
                     read_json(args.script_item_file),
                 )
                 if not outcome["complete"]:
@@ -1669,7 +1657,7 @@ def main() -> int:
                         index,
                         len(script_topics),
                         len(checkpoint["completed_items"]),
-                        author_edit_contract,
+                        writer_contract,
                     )
                     handoff = {**child_packet, **{
                         "skill_names": list(WRITER_SKILLS),
@@ -1687,7 +1675,7 @@ def main() -> int:
                         args.business_date,
                         script_topics,
                         checkpoint,
-                        author_edit_contract,
+                        writer_contract,
                         submitted,
                     )
                     workflow.record_skill_diagnostic(

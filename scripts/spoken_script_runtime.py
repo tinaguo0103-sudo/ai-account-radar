@@ -72,7 +72,7 @@ LEGACY_WRITER_CHILD_SNAPSHOT = {
 # A task may resume an in-progress checkpoint created by the immediately
 # previous per-topic runtime. It still has no private text or script body, so
 # accepting this safe snapshot does not reopen the retired batch path.
-LEGACY_AUTHOR_EDIT_SNAPSHOT = {
+LEGACY_COMPATIBILITY_SNAPSHOT = {
     "schema_version": 1,
     "phase_order": ["facts_first_draft", "austin_author_edit"],
     "facts_first_private_context": "forbidden_until_draft_complete",
@@ -226,7 +226,7 @@ def load_austin_authority(
     }
 
 
-def load_author_edit_contract() -> dict[str, Any]:
+def load_writer_contract() -> dict[str, Any]:
     """Return the safe writer-child contract without reading private source."""
     return json.loads(json.dumps(WRITER_CHILD_CONTRACT, ensure_ascii=False))
 
@@ -257,7 +257,7 @@ def new_checkpoint(
     run_id: str,
     business_date: str,
     selected_topics: list[dict[str, Any]],
-    author_edit_contract: dict[str, Any],
+    writer_contract: dict[str, Any],
 ) -> dict[str, Any]:
     return {
         "schema_version": RUNTIME_SCHEMA_VERSION,
@@ -268,7 +268,7 @@ def new_checkpoint(
         "selected_topic_ids": selected_topic_ids(selected_topics),
         "selected_count": len(selected_topics),
         "completed_items": [],
-        "writing_contract": _writing_contract_snapshot(author_edit_contract),
+        "writing_contract": _writing_contract_snapshot(writer_contract),
     }
 
 
@@ -332,7 +332,7 @@ def validate_checkpoint(
     run_id: str,
     business_date: str,
     selected_topics: list[dict[str, Any]],
-    author_edit_contract: dict[str, Any],
+    writer_contract: dict[str, Any],
 ) -> None:
     if "current_reference_selection" in checkpoint or "reference_selection" in checkpoint:
         raise WorkflowConflict("scripts_checkpoint_selector_retired")
@@ -354,9 +354,9 @@ def validate_checkpoint(
         if checkpoint.get("schema_version") not in {2, RUNTIME_SCHEMA_VERSION} or not isinstance(legacy, dict):
             raise WorkflowConflict("scripts_checkpoint_writing_contract_conflict")
     elif contract not in (
-        _writing_contract_snapshot(author_edit_contract),
+        _writing_contract_snapshot(writer_contract),
         LEGACY_WRITER_CHILD_SNAPSHOT,
-        LEGACY_AUTHOR_EDIT_SNAPSHOT,
+        LEGACY_COMPATIBILITY_SNAPSHOT,
     ):
         raise WorkflowConflict("scripts_checkpoint_writing_contract_conflict")
     _validate_completed_items(checkpoint.get("completed_items"), checkpoint["selected_topic_ids"])
@@ -367,17 +367,17 @@ def ensure_checkpoint(
     run_id: str,
     business_date: str,
     selected_topics: list[dict[str, Any]],
-    author_edit_contract: dict[str, Any],
+    writer_contract: dict[str, Any],
 ) -> dict[str, Any]:
     existing = workflow.stage(run_id, "scripts")
     if existing is None:
-        checkpoint = new_checkpoint(run_id, business_date, selected_topics, author_edit_contract)
+        checkpoint = new_checkpoint(run_id, business_date, selected_topics, writer_contract)
         workflow.commit_stage(run_id, "scripts", checkpoint, "in_progress")
         return checkpoint
     if existing.get("status") != "in_progress":
         raise WorkflowConflict("scripts_checkpoint_not_in_progress")
     checkpoint = existing["payload"]
-    validate_checkpoint(checkpoint, run_id, business_date, selected_topics, author_edit_contract)
+    validate_checkpoint(checkpoint, run_id, business_date, selected_topics, writer_contract)
     return checkpoint
 
 
@@ -405,23 +405,6 @@ def _packet_id(
     return hashlib.sha256(canonical(basis).encode("utf-8")).hexdigest()
 
 
-def _writing_phases(author_edit_contract: dict[str, Any]) -> dict[str, Any]:
-    """Expose the child boundary; no private or other-topic text enters the packet."""
-    return {
-        "writer_child": {
-            "name": "fresh_bounded_codex_child",
-            "input_scope": list(author_edit_contract["input_scope"]),
-            "skills": list(author_edit_contract["skills"]),
-            "private_authority": author_edit_contract["private_authority"],
-            "previous_topic_body": author_edit_contract["previous_topic_body"],
-            "other_topic_identity": author_edit_contract["other_topic_identity"],
-            "editorial_batch_deliberation": author_edit_contract["editorial_batch_deliberation"],
-            "recursive_child_execution": author_edit_contract["recursive_child_execution"],
-        },
-        "raw_text_persistence": author_edit_contract["raw_text_persistence"],
-    }
-
-
 def topic_packet(
     run_id: str,
     business_date: str,
@@ -429,10 +412,9 @@ def topic_packet(
     index: int,
     selected_count: int,
     completed_count: int,
-    author_edit_contract: dict[str, Any],
+    writer_contract: dict[str, Any],
 ) -> dict[str, Any]:
     packet_id = _packet_id(run_id, business_date, topic)
-    phases = _writing_phases(author_edit_contract)
     return {
         "ok": True,
         "action": "scripts_required",
@@ -450,11 +432,10 @@ def topic_packet(
             "packet_id": packet_id,
             "topic_id": topic["topic_id"],
             "writer_owns_final_fields": ["title", "hook", "structure", "body"],
-            "writing_phases": phases,
             "current_topic_only": True,
             "previous_topic_body_included": False,
         },
-        "writing_contract": _writing_contract_snapshot(author_edit_contract),
+        "writing_contract": _writing_contract_snapshot(writer_contract),
         "required_script_input": {
             "keys": ["packet_id", "script"],
             "failure_keys": ["packet_id", "failure"],
@@ -495,10 +476,10 @@ def submit_topic(
     business_date: str,
     selected_topics: list[dict[str, Any]],
     checkpoint: dict[str, Any],
-    author_edit_contract: dict[str, Any],
+    writer_contract: dict[str, Any],
     submitted: dict[str, Any],
 ) -> dict[str, Any]:
-    validate_checkpoint(checkpoint, run_id, business_date, selected_topics, author_edit_contract)
+    validate_checkpoint(checkpoint, run_id, business_date, selected_topics, writer_contract)
     index = first_unfinished_index(checkpoint)
     if index >= len(selected_topics):
         raise WorkflowConflict("scripts_checkpoint_already_complete")
@@ -511,7 +492,7 @@ def submit_topic(
     topic = selected_topics[index]
     packet = topic_packet(
         run_id, business_date, topic, index, len(selected_topics),
-        len(checkpoint["completed_items"]), author_edit_contract,
+        len(checkpoint["completed_items"]), writer_contract,
     )
     if submitted.get("packet_id") != packet["topic_input"]["packet_id"]:
         raise WorkflowConflict("script_topic_input_conflict")
@@ -531,7 +512,7 @@ def submit_topic(
             "checkpoint": updated,
             "handoff": topic_packet(
                 run_id, business_date, selected_topics[next_index], next_index,
-                len(selected_topics), len(completed_items), author_edit_contract,
+                len(selected_topics), len(completed_items), writer_contract,
             ),
         }
     scripts = [row["script"] for row in completed_items if row["kind"] == "script"]

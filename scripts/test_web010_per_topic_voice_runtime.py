@@ -18,7 +18,7 @@ from run_daily_workflow import build_scripts_handoff, enrich
 from spoken_script_runtime import (
     LEGACY_WRITER_CHILD_SNAPSHOT,
     load_austin_authority,
-    load_author_edit_contract,
+    load_writer_contract,
     new_checkpoint,
     sanitize_handoff,
     topic_packet,
@@ -265,7 +265,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         return path
 
     def test_writer_child_contract_has_no_selector_or_style_payload(self):
-        contract = load_author_edit_contract()
+        contract = load_writer_contract()
         self.assertEqual(contract["schema_version"], 1)
         self.assertEqual(
             contract["topology"],
@@ -285,9 +285,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             "action": "scripts_required",
             "topic_input": {
                 "writing_contract": contract,
-                "writing_phases": {
-                    "writer_child": {"name": "fresh_bounded_codex_child"},
-                },
+                "current_topic_only": True,
             },
         }
         sanitized = sanitize_handoff({
@@ -332,7 +330,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             "fact_boundary": "do not invent results",
             "cannot_claim": None,
         }
-        current = load_author_edit_contract()
+        current = load_writer_contract()
         checkpoint = new_checkpoint(
             RUN_ID, BUSINESS_DATE, [topic], current,
         )
@@ -427,7 +425,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 editorial_stage["payload"],
             )
             selected_topics = all_handoff["selected_topics"]
-            contract = load_author_edit_contract()
+            contract = load_writer_contract()
             first_packet = topic_packet(
                 RUN_ID,
                 BUSINESS_DATE,
@@ -454,10 +452,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertEqual(handoff["topic_index"], 1)
             self.assertNotIn(topic_ids[2], json.dumps(handoff, ensure_ascii=False))
             self.assertIn("writing_contract", handoff)
-            self.assertEqual(
-                handoff["topic_input"]["writing_phases"]["writer_child"]["name"],
-                "fresh_bounded_codex_child",
-            )
+            self.assertNotIn("writing_phases", handoff["topic_input"])
             self.assertEqual(
                 handoff["topic_input"]["writer_owns_final_fields"],
                 ["title", "hook", "structure", "body"],
@@ -545,7 +540,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 collection_stage["payload"],
                 editorial_stage["payload"],
             )
-            contract = load_author_edit_contract()
+            contract = load_writer_contract()
             handoff = topic_packet(
                 run_id,
                 BUSINESS_DATE,
