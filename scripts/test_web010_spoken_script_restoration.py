@@ -104,6 +104,12 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("制作方向", encoded)
         contract = handoff["batch_contract"]
         self.assertTrue(contract["content_driven_form"])
+        self.assertTrue(contract["deterministic_controller_owns_order_and_checkpoint"])
+        self.assertTrue(contract["one_editorial_child_per_batch"])
+        self.assertTrue(contract["one_writer_child_per_selected_topic"])
+        self.assertTrue(contract["one_topic_per_writer_child"])
+        self.assertNotIn("one_outer_ai_owner", contract)
+        self.assertNotIn("one_batch_invocation_per_skill", contract)
         self.assertFalse(contract["universal_content_slots"])
         self.assertTrue(contract["unsupported_first_person_experience_forbidden"])
         self.assertTrue(contract["material_or_angle_insufficiency_is_item_local"])
@@ -187,6 +193,8 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("No full-batch script submission exists", protocol)
         self.assertIn("material_or_angle_insufficiency", protocol)
         self.assertNotIn("same outer Codex", protocol)
+        self.assertIn("only austin-voice-scriptwriter", protocol)
+        self.assertNotIn("austin-no-overtime-scripting", protocol)
         self.assertNotIn("--script-reference-selection-file", protocol)
         self.assertNotIn("per-topic private case/persona routing or selector receipt", protocol)
         for forbidden in ("watcher", "Feishu", "--write-feishu"):

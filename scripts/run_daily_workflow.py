@@ -49,11 +49,10 @@ from web010_codex_child import (
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_ROOT = Path.home() / ".codex" / "skills"
-SKILLS = (
-    "ai-account-editorial-director",
-    "austin-no-overtime-scripting",
-    "austin-voice-scriptwriter",
-)
+EDITORIAL_SKILL = "ai-account-editorial-director"
+WRITER_SKILL = "austin-voice-scriptwriter"
+SKILLS = (EDITORIAL_SKILL, WRITER_SKILL)
+WRITER_SKILLS = (WRITER_SKILL,)
 
 REPLAY_INPUT_TARGETS = {
     "collection_checkpoint": "workflow_collection.json",
@@ -1280,11 +1279,12 @@ def build_scripts_handoff(
         "run_id": run_id,
         "business_date": business_date,
         "selected_topics": selected_topics,
-        "skill_names": list(SKILLS[1:]),
+        "skill_names": list(WRITER_SKILLS),
         "batch_contract": {
-            "one_outer_ai_owner": True,
-            "one_batch_invocation_per_skill": True,
-            "independent_body_per_topic": True,
+            "deterministic_controller_owns_order_and_checkpoint": True,
+            "one_editorial_child_per_batch": True,
+            "one_writer_child_per_selected_topic": True,
+            "one_topic_per_writer_child": True,
             "content_driven_form": True,
             "universal_content_slots": False,
             "human_supplement_excluded": True,
@@ -1643,14 +1643,14 @@ def main() -> int:
                     workflow.mark_waiting(args.run_id)
                     next_handoff = outcome["handoff"]
                     next_handoff.update({
-                        "skill_names": list(SKILLS[1:]),
+                        "skill_names": list(WRITER_SKILLS),
                         "batch_contract": all_handoff["batch_contract"],
                     })
                     emit_handoff(args, next_handoff)
                     return 0
                 scripts = outcome["scripts"]
                 validate_scripts(args.run_id, scripts, selected)
-                for name, diagnostic in zip(SKILLS[1:], skill_diagnostics()[1:]):
+                for name, diagnostic in zip(WRITER_SKILLS, skill_diagnostics()[1:]):
                     workflow.record_skill_diagnostic(
                         args.run_id, "scripts", "batch", name,
                         {"provenance": diagnostic},
@@ -1672,7 +1672,7 @@ def main() -> int:
                         author_edit_contract,
                     )
                     handoff = {**child_packet, **{
-                        "skill_names": list(SKILLS[1:]),
+                        "skill_names": list(WRITER_SKILLS),
                         "batch_contract": all_handoff["batch_contract"],
                     }}
                     submitted, child_metadata = run_writer_child(
@@ -1692,11 +1692,7 @@ def main() -> int:
                     )
                     workflow.record_skill_diagnostic(
                         args.run_id, "scripts", script_topics[index]["topic_id"],
-                        SKILLS[1], {"child_execution": child_metadata},
-                    )
-                    workflow.record_skill_diagnostic(
-                        args.run_id, "scripts", script_topics[index]["topic_id"],
-                        SKILLS[2], {"child_execution": child_metadata},
+                        WRITER_SKILL, {"child_execution": child_metadata},
                     )
                     if not outcome["complete"]:
                         checkpoint = outcome["checkpoint"]

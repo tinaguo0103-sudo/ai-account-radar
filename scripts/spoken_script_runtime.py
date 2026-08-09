@@ -41,6 +41,23 @@ WRITER_CHILD_CONTRACT = {
         "short_selection_reason",
     ],
     "skills": [
+        "austin-voice-scriptwriter",
+    ],
+    "private_authority": "writer_child_reads_allowlist_transiently",
+    "previous_topic_body": "forbidden",
+    "other_topic_identity": "forbidden",
+    "editorial_batch_deliberation": "forbidden",
+    "recursive_child_execution": "forbidden",
+    "raw_text_persistence": "forbidden",
+}
+
+# Checkpoints written by f68bf927 may still carry the superseded two-skill
+# snapshot. It is accepted only while resuming that historical checkpoint; all
+# newly emitted packets use WRITER_CHILD_CONTRACT above.
+LEGACY_WRITER_CHILD_SNAPSHOT = {
+    "schema_version": 1,
+    "topology": "one_fresh_bounded_writer_child_per_selected_topic",
+    "skills": [
         "austin-no-overtime-scripting",
         "austin-voice-scriptwriter",
     ],
@@ -338,6 +355,7 @@ def validate_checkpoint(
             raise WorkflowConflict("scripts_checkpoint_writing_contract_conflict")
     elif contract not in (
         _writing_contract_snapshot(author_edit_contract),
+        LEGACY_WRITER_CHILD_SNAPSHOT,
         LEGACY_AUTHOR_EDIT_SNAPSHOT,
     ):
         raise WorkflowConflict("scripts_checkpoint_writing_contract_conflict")

@@ -21,7 +21,6 @@ from codex_cli_path import resolve_codex_cli
 
 ROOT = Path(__file__).resolve().parents[1]
 EDITORIAL_SKILL = ROOT / "skills" / "ai-account-editorial-director" / "SKILL.md"
-SCRIPTING_SKILL = ROOT / "skills" / "austin-no-overtime-scripting" / "SKILL.md"
 VOICE_SKILL = ROOT / "skills" / "austin-voice-scriptwriter" / "SKILL.md"
 VOICE_READING_CONTRACT = (
     ROOT / "skills" / "austin-voice-scriptwriter" / "references"
@@ -101,8 +100,7 @@ Read exactly one input file: {rendered}
 The file contains one same-run rich Topic Card only. Do not read any other
 topic, prior body, editorial batch deliberation, PM/Dev/QA history, release
 instructions, or controller rules. Read and apply only these approved
-writer Skills/contracts:
-- {SCRIPTING_SKILL}
+writer Skill/contracts:
 - {VOICE_SKILL}
 - {VOICE_READING_CONTRACT}
 - {ALLOWLIST}

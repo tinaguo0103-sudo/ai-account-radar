@@ -321,7 +321,7 @@ class NaturalRunContinuationTest(unittest.TestCase):
                 [row["stage"] for row in workflow["stages"]],
                 ["collection_enrichment", "editorial", "scripts"],
             )
-            self.assertEqual(len(workflow["skill_diagnostics"]), 3)
+            self.assertEqual(len(workflow["skill_diagnostics"]), 2)
             database_before = (root / "workflow.sqlite3").read_bytes()
             handoff_before = handoff_path.read_bytes()
             post_count = ProjectionHandler.posts

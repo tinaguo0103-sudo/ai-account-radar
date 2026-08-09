@@ -35,6 +35,21 @@ class CodexChildAdapterTest(unittest.TestCase):
         prompt = child._prompt("writer", Path("/tmp/topic.json"))
         self.assertIn('"reason":"material_or_angle_insufficiency"', prompt)
         self.assertIn("with no other failure keys", prompt)
+        self.assertIn(str(child.VOICE_SKILL), prompt)
+        self.assertNotIn("austin-no-overtime-scripting", prompt)
+        self.assertNotIn("Semantic Plan", prompt)
+        self.assertNotIn("scene/conflict/old workflow/experiment/judgment/consequence/close", prompt)
+
+    def test_child_prompts_have_one_role_specific_skill(self):
+        editorial = child._prompt("editorial", Path("/tmp/candidates.json"))
+        writer = child._prompt("writer", Path("/tmp/topic.json"))
+        self.assertIn(str(child.EDITORIAL_SKILL), editorial)
+        self.assertNotIn(str(child.VOICE_SKILL), editorial)
+        self.assertIn(str(child.VOICE_SKILL), writer)
+        self.assertNotIn(str(child.EDITORIAL_SKILL), writer)
+        self.assertNotIn("austin-no-overtime-scripting", writer)
+        self.assertNotIn("Semantic Plan", writer)
+        self.assertNotIn("conflict/old workflow/action/consequence/QA", writer)
 
     def test_editorial_child_decodes_existing_result_and_records_safe_metadata(self):
         result = {"run_id": "run-test", "topics": []}

@@ -16,10 +16,13 @@ from pathlib import Path
 from daily_workflow import DailyWorkflow
 from run_daily_workflow import build_scripts_handoff, enrich
 from spoken_script_runtime import (
+    LEGACY_WRITER_CHILD_SNAPSHOT,
     load_austin_authority,
     load_author_edit_contract,
+    new_checkpoint,
     sanitize_handoff,
     topic_packet,
+    validate_checkpoint,
 )
 
 
@@ -270,7 +273,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         )
         self.assertEqual(
             contract["skills"],
-            ["austin-no-overtime-scripting", "austin-voice-scriptwriter"],
+            ["austin-voice-scriptwriter"],
         )
         self.assertEqual(contract["private_authority"], "writer_child_reads_allowlist_transiently")
         self.assertEqual(contract["previous_topic_body"], "forbidden")
@@ -293,15 +296,54 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             "private_case_catalog": ["should-be-removed"],
         })
         encoded = json.dumps(sanitized, ensure_ascii=False)
+        self.assertNotIn("austin-no-overtime-scripting", encoded)
         self.assertNotIn("reference_selection", encoded)
         self.assertNotIn("private_case_catalog", encoded)
         self.assertNotIn("voice_pack", encoded)
         self.assertNotIn("editing_reference", encoded)
         self.assertNotIn("semantic_reread", encoded)
 
+        self.assertEqual(
+            json.loads(
+                (ROOT / "config" / "web010_single_daily_workflow_release.json")
+                .read_text(encoding="utf-8")
+            )["runtimeTopology"],
+            ["collection_enrichment", "editorial", "scripts"],
+        )
+        release_protocol = "\n".join(
+            json.loads(
+                (ROOT / "config" / "web010_single_daily_workflow_release.json")
+                .read_text(encoding="utf-8")
+            )["externalSchedule"]["outerAgentProtocol"]
+        )
+        self.assertIn("only austin-voice-scriptwriter", release_protocol)
+        self.assertNotIn("austin-no-overtime-scripting", release_protocol)
+
         source = (ROOT / "scripts" / "run_daily_workflow.py").read_text(encoding="utf-8")
         self.assertNotIn("--script-reference-selection-file", source)
         self.assertNotIn("set_reference_selection", source)
+        self.assertNotIn("austin-no-overtime-scripting", source)
+
+    def test_f68_two_skill_checkpoint_resumes_with_one_skill_packets(self):
+        topic = {
+            "topic_id": "topic-legacy",
+            "source": {"url": "https://example.test/topic-legacy"},
+            "source_facts": {"details": "same-run fact"},
+            "fact_boundary": "do not invent results",
+            "cannot_claim": None,
+        }
+        current = load_author_edit_contract()
+        checkpoint = new_checkpoint(
+            RUN_ID, BUSINESS_DATE, [topic], current,
+        )
+        checkpoint["writing_contract"] = dict(LEGACY_WRITER_CHILD_SNAPSHOT)
+        validate_checkpoint(
+            checkpoint, RUN_ID, BUSINESS_DATE, [topic], current,
+        )
+        packet = topic_packet(
+            RUN_ID, BUSINESS_DATE, topic, 0, 1, 0, current,
+        )
+        self.assertEqual(packet["writing_contract"]["skills"], ["austin-voice-scriptwriter"])
 
     def test_runtime_reads_private_authority_and_returns_safe_ledger_only(self):
         with tempfile.TemporaryDirectory() as directory:
