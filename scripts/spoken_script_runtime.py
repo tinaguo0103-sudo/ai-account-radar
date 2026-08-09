@@ -39,6 +39,7 @@ DIRECT_WRITER_STAGE_CONTRACT = {
         "fact_boundary",
         "cannot_claim",
         "short_selection_reason",
+        "substantive_editorial_judgment",
     ],
     "skills": [
         "austin-voice-scriptwriter",

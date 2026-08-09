@@ -1223,10 +1223,19 @@ def build_scripts_handoff(
         item = items.get(str(candidate.get("item_id") or topic_id), {})
         rows = [topic, candidate, item]
         source_rows = [candidate, item]
+        editorial_judgment = {
+            key: topic.get(key)
+            for key in (
+                "selection_reason", "unique_judgment", "decision_basis",
+                "evidence_source_ids",
+            )
+            if topic.get(key) not in (None, "", [], {})
+        }
         selected_topics.append({
             "topic_id": topic_id,
             "trend_event_id": candidate.get("trend_event_id") or topic_id,
             "selection_reason": str(topic.get("selection_reason") or "").strip(),
+            "editorial_judgment": editorial_judgment,
             "source": {
                 key: first_context_value(source_rows, *aliases)
                 for key, aliases in {

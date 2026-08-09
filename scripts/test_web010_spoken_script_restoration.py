@@ -83,6 +83,10 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         topic = handoff["selected_topics"][0]
         self.assertEqual(topic["source"]["likes"], 0)
         self.assertNotIn("comments", topic["source"])
+        self.assertEqual(
+            topic["editorial_judgment"],
+            {"selection_reason": "来源事实与 Austin 工作流判断直接相关。"},
+        )
         for blueprint_field in (
             "title", "hook", "structure", "unique_judgment", "persona_fit",
             "workflow_context", "traffic_opportunity", "differentiation", "cluster_synthesis",
@@ -136,6 +140,41 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIsNone(topic["cannot_claim"])
         self.assertIsNone(topic["video_understanding"])
 
+    def test_passes_existing_editorial_judgment_without_using_blueprint_fields(self):
+        fixture = self.fixture()
+        editorial = self.editorial()
+        editorial["topics"][0].update({
+            "unique_judgment": "The source changes the cost of a real recovery decision.",
+            "decision_basis": {
+                "content": "A source-owned workflow consequence.",
+                "persona": "A concrete Austin business angle.",
+                "differentiation": "A judgment not interchangeable with a tool summary.",
+            },
+            "evidence_source_ids": ["douyin:100"],
+            "title": "Editorial title must not become a writer blueprint",
+            "hook": "Editorial hook must not become a writer blueprint",
+            "structure": ["Editorial structure must not become a writer blueprint"],
+        })
+        topic = workflow.build_scripts_handoff(
+            "run_20260808_121000", "2026-08-08", fixture, editorial,
+        )["selected_topics"][0]
+        self.assertEqual(
+            topic["editorial_judgment"],
+            {
+                "selection_reason": "来源事实与 Austin 工作流判断直接相关。",
+                "unique_judgment": "The source changes the cost of a real recovery decision.",
+                "decision_basis": {
+                    "content": "A source-owned workflow consequence.",
+                    "persona": "A concrete Austin business angle.",
+                    "differentiation": "A judgment not interchangeable with a tool summary.",
+                },
+                "evidence_source_ids": ["douyin:100"],
+            },
+        )
+        self.assertNotIn("title", topic)
+        self.assertNotIn("hook", topic)
+        self.assertNotIn("structure", topic)
+
     def test_simple_result_accepts_item_local_material_failure(self):
         selected = {"douyin:100"}
         result = {
@@ -187,6 +226,9 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
         self.assertIn("current Automation Codex directly applies ai-account-editorial-director", protocol)
         self.assertIn("current Automation Codex directly applies austin-voice-scriptwriter", protocol)
+        self.assertIn("directly reads the approved core Austin persona", protocol)
+        self.assertIn("A Python path, byte or hash ledger is not a substitute", protocol)
+        self.assertIn("substantive editorial judgment", protocol)
         self.assertIn("one selected rich Topic Card at a time", protocol)
         self.assertIn("No full-batch script submission exists", protocol)
         self.assertIn("material_or_angle_insufficiency", protocol)
