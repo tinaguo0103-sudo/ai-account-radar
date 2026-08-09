@@ -21,7 +21,7 @@ trusted collection artifact review pool
 -> lossless paginated Topic Cards
 ```
 
-本 Skill 只在 deterministic controller 启动的独立、bounded editorial child 中执行。Child 只读取本次 exact candidate evidence 和本 Skill；不得读取 PM/Dev/QA history、脚本、发布控制文案，也不得递归启动 `codex exec`、Agent、API、浏览器或第二模型。Python/controller 只准备输入、校验结构化结果、推进状态和保存证据。
+本 Skill 由当前 Automation Codex 在 deterministic public stage 中直接执行。只读取本次 exact candidate evidence 和本 Skill；不得启动 `codex exec`、Agent、API、浏览器或第二模型，也不得读取 PM/Dev/QA history、脚本或发布控制文案。Python/controller 只准备输入、校验结构化结果、推进状态和保存证据。
 
 ## 证据边界
 

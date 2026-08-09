@@ -264,22 +264,22 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         write_json(path, payload)
         return path
 
-    def test_writer_child_contract_has_no_selector_or_style_payload(self):
+    def test_direct_writer_stage_contract_has_no_selector_or_style_payload(self):
         contract = load_writer_contract()
         self.assertEqual(contract["schema_version"], 1)
         self.assertEqual(
             contract["topology"],
-            "one_fresh_bounded_writer_child_per_selected_topic",
+            "one_automation_codex_direct_writer_stage_per_selected_topic",
         )
         self.assertEqual(
             contract["skills"],
             ["austin-voice-scriptwriter"],
         )
-        self.assertEqual(contract["private_authority"], "writer_child_reads_allowlist_transiently")
+        self.assertEqual(contract["private_authority"], "automation_codex_reads_approved_writer_authority_transiently")
         self.assertEqual(contract["previous_topic_body"], "forbidden")
         self.assertEqual(contract["other_topic_identity"], "forbidden")
         self.assertEqual(contract["editorial_batch_deliberation"], "forbidden")
-        self.assertEqual(contract["recursive_child_execution"], "forbidden")
+        self.assertEqual(contract["recursive_model_execution"], "forbidden")
         self.assertEqual(contract["raw_text_persistence"], "forbidden")
         packet = {
             "action": "scripts_required",
@@ -314,7 +314,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 .read_text(encoding="utf-8")
             )["externalSchedule"]["outerAgentProtocol"]
         )
-        self.assertIn("only austin-voice-scriptwriter", release_protocol)
+        self.assertIn("directly applies austin-voice-scriptwriter", release_protocol)
         self.assertNotIn("austin-no-overtime-scripting", release_protocol)
 
         source = (ROOT / "scripts" / "run_daily_workflow.py").read_text(encoding="utf-8")
@@ -403,13 +403,16 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             topic_ids = [row["candidate_id"] for row in normalized["candidates"]]
             editorial = self.editorial_file(root, topic_ids)
 
-            first = self.execute(
+            first = self.execute(command, config)
+            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
+            self.assertEqual(last_json(first.stdout)["action"], "editorial_required")
+
+            editorial_stage_call = self.execute(
                 command + ["--editorial-result-file", str(editorial)],
                 config,
-                {"WEB010_INJECT_WRITER_FAILURE_TOPIC": topic_ids[0]},
             )
-            self.assertEqual(first.returncode, 2, first.stderr + first.stdout)
-            self.assertEqual(last_json(first.stdout)["action"], "child_failed_recoverable")
+            self.assertEqual(editorial_stage_call.returncode, 0, editorial_stage_call.stderr + editorial_stage_call.stdout)
+            self.assertEqual(last_json(editorial_stage_call.stdout)["action"], "scripts_required")
 
             workflow = DailyWorkflow(root / f"{RUN_ID}.sqlite3")
             collection_stage = workflow.stage(RUN_ID, "collection_enrichment")
@@ -525,11 +528,12 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             )
             ids = [row["candidate_id"] for row in normalized["candidates"]]
             editorial = self.editorial_file(root, ids, run_id=run_id)
-            first = self.execute(
-                command + ["--editorial-result-file", str(editorial)],
-                extra_env={"WEB010_INJECT_WRITER_FAILURE_TOPIC": ids[0]},
-            )
-            self.assertEqual(first.returncode, 2, first.stderr + first.stdout)
+            first = self.execute(command)
+            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
+            self.assertEqual(last_json(first.stdout)["action"], "editorial_required")
+            editorial_stage_call = self.execute(command + ["--editorial-result-file", str(editorial)])
+            self.assertEqual(editorial_stage_call.returncode, 0, editorial_stage_call.stderr + editorial_stage_call.stdout)
+            self.assertEqual(last_json(editorial_stage_call.stdout)["action"], "scripts_required")
             workflow = DailyWorkflow(root / f"{run_id}.sqlite3")
             collection_stage = workflow.stage(run_id, "collection_enrichment")
             editorial_stage = workflow.stage(run_id, "editorial")

@@ -198,25 +198,6 @@ class NormalEntrypointDiscoveryTests(unittest.TestCase):
                 "--video-mode", "normal",
             ]
             output = io.StringIO()
-            def editorial_child(run_id, _business_date, candidates, **_kwargs):
-                return ({
-                    "run_id": run_id,
-                    "topics": [{
-                        "candidate_id": row["candidate_id"],
-                        "decision": "observe",
-                        "selection_reason": "保留给本测试验证来源发现，不生成脚本。",
-                        "decision_basis": {
-                            "content": "保留来源内容事实",
-                            "persona": "用于验证账号适配判断",
-                            "differentiation": "本测试不进入制作",
-                        },
-                    } for row in candidates],
-                }, {
-                    "role": "editorial",
-                    "context_mode": "test_child",
-                    "recursive_codex": 0,
-                    "business_write": 0,
-                })
             with (
                 mock.patch.object(sys, "argv", argv),
                 mock.patch(
@@ -229,14 +210,37 @@ class NormalEntrypointDiscoveryTests(unittest.TestCase):
                     return_value=discovery,
                 ) as load_discovery,
                 mock.patch("run_daily_workflow.produce", return_value=produced),
-                mock.patch("run_daily_workflow.run_editorial_child", side_effect=editorial_child) as child,
                 mock.patch("run_daily_workflow.validate_candidate_specific_decisions"),
                 contextlib.redirect_stdout(output),
             ):
+                first_code = main()
+                first_handoff = json.loads(
+                    (root / "artifacts" / RUN_ID / "workflow_handoff.json").read_text()
+                )
+                editorial = root / "editorial.json"
+                editorial.write_text(json.dumps({
+                    "run_id": RUN_ID,
+                    "topics": [{
+                        "candidate_id": row["candidate_id"],
+                        "decision": "observe",
+                        "selection_reason": "保留给本测试验证来源发现，不生成脚本。",
+                        "decision_basis": {
+                            "content": "保留来源内容事实",
+                            "persona": "用于验证账号适配判断",
+                            "differentiation": "本测试不进入制作",
+                        },
+                    } for row in first_handoff["candidate_topics"]],
+                }, ensure_ascii=False))
+                sys.argv.extend(["--editorial-result-file", str(editorial)])
                 code = main()
-            self.assertEqual(code, 0)
+            self.assertEqual(
+                code,
+                0,
+                output.getvalue() + "\n" +
+                (root / "artifacts" / RUN_ID / "workflow_handoff.json").read_text(),
+            )
+            self.assertEqual(first_code, 0)
             self.assertEqual(load_discovery.call_count, 1)
-            self.assertEqual(child.call_count, 1)
             result = json.loads(output.getvalue().strip().splitlines()[-1])
             self.assertEqual(result["action"], "completed_publish_pending")
             self.assertEqual(result["candidate_count"], 2)

@@ -41,11 +41,6 @@ from trend_hotspot_cards import (
 from website_publisher_client import publish_terminal
 from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
 import spoken_script_runtime as script_runtime
-from web010_codex_child import (
-    ChildExecutionError,
-    run_editorial_child,
-    run_writer_child,
-)
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_ROOT = Path.home() / ".codex" / "skills"
@@ -1282,9 +1277,9 @@ def build_scripts_handoff(
         "skill_names": list(WRITER_SKILLS),
         "batch_contract": {
             "deterministic_controller_owns_order_and_checkpoint": True,
-            "one_editorial_child_per_batch": True,
-            "one_writer_child_per_selected_topic": True,
-            "one_topic_per_writer_child": True,
+            "one_automation_codex_direct_writer_stage": True,
+            "one_topic_per_submission": True,
+            "submit_before_next_topic": True,
         },
     }
 
@@ -1425,7 +1420,6 @@ def main() -> int:
     parser.add_argument("--replay-inputs", default="")
     parser.add_argument("--search-query", default="")
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
-    parser.add_argument("--codex-child-timeout-seconds", type=int, default=900)
     args = parser.parse_args()
     workflow: DailyWorkflow | None = None
     execution_lock: WorkflowExecutionLock | None = None
@@ -1556,16 +1550,23 @@ def main() -> int:
             }
             workflow.commit_stage(args.run_id, "editorial", editorial, "completed")
         else:
-            child_metadata = None
-            if args.editorial_result_file:
-                judged_editorial = read_json(args.editorial_result_file)
-            else:
-                judged_editorial, child_metadata = run_editorial_child(
-                    args.run_id,
-                    args.business_date,
-                    editorial_handoff,
-                    timeout_seconds=args.codex_child_timeout_seconds,
-                )
+            if not args.editorial_result_file:
+                workflow.mark_waiting(args.run_id)
+                emit_handoff(args, {
+                    "ok": True,
+                    "action": "editorial_required",
+                    "stage": "editorial",
+                    "skill_names": [EDITORIAL_SKILL],
+                    "candidate_topics": editorial_handoff,
+                    "stage_contract": {
+                        "automation_codex_is_sole_ai_owner": True,
+                        "direct_skill": EDITORIAL_SKILL,
+                        "exact_candidate_batch_only": True,
+                        "simple_result_file": True,
+                    },
+                })
+                return 0
+            judged_editorial = read_json(args.editorial_result_file)
             validate_editorial(args.run_id, judged_editorial, editorial_handoff)
             if not (args.video_mode == "disabled" and not args.qa_frozen_packages):
                 try:
@@ -1582,13 +1583,10 @@ def main() -> int:
                 ),
             }
             workflow.record_skill_diagnostic(
-                args.run_id, "editorial", "child", SKILLS[0],
+                args.run_id, "editorial", "direct", SKILLS[0],
                 {
                     "provenance": skill_diagnostics()[0],
-                    "child_execution": child_metadata or {
-                        "mode": "explicit_result_file",
-                        "child_contexts": 0,
-                    },
+                    "execution_mode": "direct_automation_codex",
                 },
             )
             workflow.commit_stage(args.run_id, "editorial", editorial, "completed")
@@ -1618,6 +1616,9 @@ def main() -> int:
                 writer_contract,
             )
             if args.script_item_file:
+                index = script_runtime.first_unfinished_index(checkpoint)
+                if index >= len(script_topics):
+                    raise WorkflowConflict("scripts_checkpoint_incomplete_status")
                 outcome = script_runtime.submit_topic(
                     workflow,
                     args.run_id,
@@ -1626,6 +1627,16 @@ def main() -> int:
                     checkpoint,
                     writer_contract,
                     read_json(args.script_item_file),
+                )
+                workflow.record_skill_diagnostic(
+                    args.run_id,
+                    "scripts",
+                    script_topics[index]["topic_id"],
+                    WRITER_SKILL,
+                    {
+                        "provenance": skill_diagnostics()[1],
+                        "execution_mode": "direct_automation_codex",
+                    },
                 )
                 if not outcome["complete"]:
                     workflow.mark_waiting(args.run_id)
@@ -1646,50 +1657,25 @@ def main() -> int:
                 write_script_artifacts(args.artifact_root, args.run_id, scripts["scripts"])
                 scripts_finalized = True
             else:
-                while True:
-                    index = script_runtime.first_unfinished_index(checkpoint)
-                    if index >= len(script_topics):
-                        raise WorkflowConflict("scripts_checkpoint_incomplete_status")
-                    child_packet = script_runtime.topic_packet(
-                        args.run_id,
-                        args.business_date,
-                        script_topics[index],
-                        index,
-                        len(script_topics),
-                        len(checkpoint["completed_items"]),
-                        writer_contract,
-                    )
-                    handoff = {**child_packet, **{
-                        "skill_names": list(WRITER_SKILLS),
-                        "batch_contract": all_handoff["batch_contract"],
-                    }}
-                    submitted, child_metadata = run_writer_child(
-                        args.run_id,
-                        args.business_date,
-                        child_packet,
-                        timeout_seconds=args.codex_child_timeout_seconds,
-                    )
-                    outcome = script_runtime.submit_topic(
-                        workflow,
-                        args.run_id,
-                        args.business_date,
-                        script_topics,
-                        checkpoint,
-                        writer_contract,
-                        submitted,
-                    )
-                    workflow.record_skill_diagnostic(
-                        args.run_id, "scripts", script_topics[index]["topic_id"],
-                        WRITER_SKILL, {"child_execution": child_metadata},
-                    )
-                    if not outcome["complete"]:
-                        checkpoint = outcome["checkpoint"]
-                        continue
-                    scripts = outcome["scripts"]
-                    validate_scripts(args.run_id, scripts, selected)
-                    write_script_artifacts(args.artifact_root, args.run_id, scripts["scripts"])
-                    scripts_finalized = True
-                    break
+                index = script_runtime.first_unfinished_index(checkpoint)
+                if index >= len(script_topics):
+                    raise WorkflowConflict("scripts_checkpoint_incomplete_status")
+                topic_packet_value = script_runtime.topic_packet(
+                    args.run_id,
+                    args.business_date,
+                    script_topics[index],
+                    index,
+                    len(script_topics),
+                    len(checkpoint["completed_items"]),
+                    writer_contract,
+                )
+                handoff = {**topic_packet_value, **{
+                    "skill_names": list(WRITER_SKILLS),
+                    "batch_contract": all_handoff["batch_contract"],
+                }}
+                workflow.mark_waiting(args.run_id)
+                emit_handoff(args, handoff)
+                return 0
         else:
             scripts = {
                 "run_id": args.run_id, "scripts": [], "failures": [],
@@ -1720,25 +1706,6 @@ def main() -> int:
             ),
         )
         return 0
-    except ChildExecutionError as error:
-        if workflow is not None:
-            workflow.mark_recoverable_failure(args.run_id, error.code)
-            try:
-                emit_handoff(args, {
-                    "ok": False,
-                    "action": "child_failed_recoverable",
-                    "status": "failed_recoverable",
-                    "error": error.code,
-                    "child_execution": error.details,
-                })
-            except Exception:
-                print(json.dumps({"ok": False, "error": error.code}, ensure_ascii=False))
-        else:
-            DailyWorkflow.mark_existing_recoverable_failure(
-                args.workflow_db, args.run_id, args.business_date, error.code
-            )
-            print(json.dumps({"ok": False, "error": error.code}, ensure_ascii=False))
-        return 2
     except (
         WorkflowConflict, ProducerError, ProjectionError, RuntimeReadinessError,
         RuntimeError, ValueError, OSError,

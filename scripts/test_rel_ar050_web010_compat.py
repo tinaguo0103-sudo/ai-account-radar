@@ -156,13 +156,9 @@ class PublicV2FlowTest(unittest.TestCase):
                     "selection_reason": "未达到本轮选择标准",
                 } for identity in identities[1:]],
             })
-            first = self.execute(
-                command + ["--editorial-result-file", str(editorial)],
-                config,
-                {"WEB010_INJECT_WRITER_FAILURE_TOPIC": identities[0]},
-            )
-            self.assertEqual(first.returncode, 2, first.stderr + first.stdout)
-            self.assertEqual(last_json(first.stdout)["action"], "child_failed_recoverable")
+            first = self.execute(command + ["--editorial-result-file", str(editorial)], config)
+            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
+            self.assertEqual(last_json(first.stdout)["action"], "scripts_required")
             workflow = DailyWorkflow(root / "workflow.sqlite3")
             collection_stage = workflow.stage(run_id, "collection_enrichment")
             editorial_stage = workflow.stage(run_id, "editorial")

@@ -27,12 +27,12 @@ _DEFAULT_PRIVATE_SKILL_ROOT = (
     Path.home()
     / ".codex"
     / "skills"
-    / "austin-no-overtime-scripting"
+    / "austin-voice-scriptwriter"
 )
 
-WRITER_CHILD_CONTRACT = {
+DIRECT_WRITER_STAGE_CONTRACT = {
     "schema_version": 1,
-    "topology": "one_fresh_bounded_writer_child_per_selected_topic",
+    "topology": "one_automation_codex_direct_writer_stage_per_selected_topic",
     "input_scope": [
         "one_same_run_rich_topic_card",
         "source_facts_and_details",
@@ -43,17 +43,17 @@ WRITER_CHILD_CONTRACT = {
     "skills": [
         "austin-voice-scriptwriter",
     ],
-    "private_authority": "writer_child_reads_allowlist_transiently",
+    "private_authority": "automation_codex_reads_approved_writer_authority_transiently",
     "previous_topic_body": "forbidden",
     "other_topic_identity": "forbidden",
     "editorial_batch_deliberation": "forbidden",
-    "recursive_child_execution": "forbidden",
+    "recursive_model_execution": "forbidden",
     "raw_text_persistence": "forbidden",
 }
 
 # Checkpoints written by f68bf927 may still carry the superseded two-skill
 # snapshot. It is accepted only while resuming that historical checkpoint; all
-# newly emitted packets use WRITER_CHILD_CONTRACT above.
+# newly emitted packets use DIRECT_WRITER_STAGE_CONTRACT above.
 LEGACY_WRITER_CHILD_SNAPSHOT = {
     "schema_version": 1,
     "topology": "one_fresh_bounded_writer_child_per_selected_topic",
@@ -227,8 +227,8 @@ def load_austin_authority(
 
 
 def load_writer_contract() -> dict[str, Any]:
-    """Return the safe writer-child contract without reading private source."""
-    return json.loads(json.dumps(WRITER_CHILD_CONTRACT, ensure_ascii=False))
+    """Return the direct writer-stage contract without reading private source."""
+    return json.loads(json.dumps(DIRECT_WRITER_STAGE_CONTRACT, ensure_ascii=False))
 
 
 def selected_topic_ids(selected_topics: list[dict[str, Any]]) -> list[str]:
@@ -248,7 +248,7 @@ def _writing_contract_snapshot(contract: dict[str, Any]) -> dict[str, Any]:
         "private_authority": contract["private_authority"],
         "previous_topic_body": contract["previous_topic_body"],
         "other_topic_identity": contract["other_topic_identity"],
-        "recursive_child_execution": contract["recursive_child_execution"],
+        "recursive_model_execution": contract["recursive_model_execution"],
         "raw_text_persistence": contract["raw_text_persistence"],
     }
 
@@ -349,7 +349,7 @@ def validate_checkpoint(
     contract = checkpoint.get("writing_contract")
     if contract is None:
         # A pre-reset in-progress checkpoint may still carry the old safe metadata.
-        # It is accepted for resume, but the next packet uses the child contract.
+        # It is accepted for resume, but the next packet uses the direct-stage contract.
         legacy = checkpoint.get("editing_reference")
         if checkpoint.get("schema_version") not in {2, RUNTIME_SCHEMA_VERSION} or not isinstance(legacy, dict):
             raise WorkflowConflict("scripts_checkpoint_writing_contract_conflict")

@@ -251,14 +251,11 @@ class NaturalRunContinuationTest(unittest.TestCase):
                     "selection_reason": f"候选 {index} 暂不进入脚本",
                 } for index in range(1, len(candidate_ids))],
             })
-            first = self.execute(
-                command + ["--editorial-result-file", str(editorial)],
-                extra_env={"WEB010_INJECT_WRITER_FAILURE_TOPIC": candidate_ids[0]},
-            )
-            self.assertEqual(first.returncode, 2, first.stderr + first.stdout)
+            first = self.execute(command + ["--editorial-result-file", str(editorial)])
+            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
             first_lines = [json.loads(line) for line in first.stdout.splitlines() if line.strip()]
             self.assertEqual(first_lines[0]["action"], "waiting_stage")
-            self.assertEqual(first_lines[-1]["action"], "child_failed_recoverable")
+            self.assertEqual(first_lines[-1]["action"], "scripts_required")
             handoff_path = Path(first_lines[-1]["handoff_path"])
             status_command = [
                 sys.executable,
@@ -273,8 +270,8 @@ class NaturalRunContinuationTest(unittest.TestCase):
             ]
             interrupted = self.execute(status_command)
             interrupted_value = last_json(interrupted.stdout)
-            self.assertEqual(interrupted_value["status"], "failed_recoverable")
-            self.assertEqual(interrupted_value["next_action"], "child_failed_recoverable")
+            self.assertEqual(interrupted_value["status"], "waiting")
+            self.assertEqual(interrupted_value["next_action"], "scripts_required")
             fixture.unlink()
             (root / "runs" / RUN_ID / "workflow_collection.json").unlink()
             workflow = DailyWorkflow(root / "workflow.sqlite3")
@@ -321,7 +318,7 @@ class NaturalRunContinuationTest(unittest.TestCase):
                 [row["stage"] for row in workflow["stages"]],
                 ["collection_enrichment", "editorial", "scripts"],
             )
-            self.assertEqual(len(workflow["skill_diagnostics"]), 2)
+            self.assertEqual(len(workflow["skill_diagnostics"]), 3)
             database_before = (root / "workflow.sqlite3").read_bytes()
             handoff_before = handoff_path.read_bytes()
             post_count = ProjectionHandler.posts
@@ -374,7 +371,7 @@ class NaturalRunContinuationTest(unittest.TestCase):
             return 0, child_exit_ms
 
         self.assertEqual(simulate(use_file_silence_stop=True), (130, 540_000))
-        self.assertIn("do not interrupt a live child on that basis", protocol)
+        self.assertIn("do not interrupt a live process on that basis", protocol)
         self.assertEqual(simulate(use_file_silence_stop=False), (0, 600_001))
 
 

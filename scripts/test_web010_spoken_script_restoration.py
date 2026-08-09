@@ -103,15 +103,15 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             set(contract),
             {
                 "deterministic_controller_owns_order_and_checkpoint",
-                "one_editorial_child_per_batch",
-                "one_writer_child_per_selected_topic",
-                "one_topic_per_writer_child",
+                "one_automation_codex_direct_writer_stage",
+                "one_topic_per_submission",
+                "submit_before_next_topic",
             },
         )
         self.assertTrue(contract["deterministic_controller_owns_order_and_checkpoint"])
-        self.assertTrue(contract["one_editorial_child_per_batch"])
-        self.assertTrue(contract["one_writer_child_per_selected_topic"])
-        self.assertTrue(contract["one_topic_per_writer_child"])
+        self.assertTrue(contract["one_automation_codex_direct_writer_stage"])
+        self.assertTrue(contract["one_topic_per_submission"])
+        self.assertTrue(contract["submit_before_next_topic"])
 
     def test_optional_missing_context_stays_absent(self):
         fixture = self.fixture()
@@ -182,16 +182,15 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("不虚构经历", no_overtime)
         self.assertIn("Writer child 不得递归启动 Codex", no_overtime)
 
-    def test_release_contract_uses_separate_bounded_children(self):
+    def test_release_contract_uses_one_owner_and_direct_skill_stages(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
-        self.assertIn("exactly one fresh bounded Codex child", protocol)
-        self.assertIn("fresh bounded Codex child for the current topic", protocol)
+        self.assertIn("current Automation Codex directly applies ai-account-editorial-director", protocol)
+        self.assertIn("current Automation Codex directly applies austin-voice-scriptwriter", protocol)
         self.assertIn("one selected rich Topic Card at a time", protocol)
         self.assertIn("No full-batch script submission exists", protocol)
         self.assertIn("material_or_angle_insufficiency", protocol)
-        self.assertNotIn("same outer Codex", protocol)
-        self.assertIn("only austin-voice-scriptwriter", protocol)
+        self.assertIn("one selected rich Topic Card at a time", protocol)
         self.assertNotIn("austin-no-overtime-scripting", protocol)
         self.assertNotIn("Facts-first Draft", protocol)
         self.assertNotIn("Author Edit", protocol)
@@ -200,7 +199,16 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("per-topic private case/persona routing or selector receipt", protocol)
         for forbidden in ("watcher", "Feishu", "--write-feishu"):
             self.assertNotIn(forbidden, protocol)
-        self.assertIn("recursive codex exec outside the editorial and per-topic writer adapters", "\n".join(config["normalRuntimeForbiddenCalls"]))
+        self.assertIn("codex exec", "\n".join(config["normalRuntimeForbiddenCalls"]))
+        source = (ROOT / "scripts" / "run_daily_workflow.py").read_text(encoding="utf-8")
+        for forbidden in (
+            "web010_codex_child",
+            "run_editorial_child",
+            "run_writer_child",
+            "CODEX_BIN",
+            "codex-child-timeout",
+        ):
+            self.assertNotIn(forbidden, source)
 
     def test_simple_script_artifact_is_idempotent(self):
         result = {
