@@ -715,6 +715,14 @@ def attach_understanding(
         }
         card["cluster_synthesis"] = synthesize_card(card, representative_understood)
         if understood:
+            aggregate_run_id = run_id or next(
+                (
+                    candidate.get("run_id")
+                    for candidate in representative_understood + understood
+                    if candidate.get("run_id")
+                ),
+                None,
+            )
             understanding_results.append({
                 "candidate_id": card["candidate_id"],
                 "base_item_id": card["representative_item_id"],
@@ -723,7 +731,7 @@ def attach_understanding(
                         "completed" if card["deep_read"]["failed_count"] == 0
                         else "completed_with_failures"
                     ),
-                    "run_id": package.get("run_id"),
+                    "run_id": aggregate_run_id,
                     "source_url": card["source_url"],
                     "representative_packages": representative_understood,
                     "available_packages": understood,
