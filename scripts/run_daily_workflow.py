@@ -990,6 +990,8 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         hotspot_cards,
         packages,
         producer_failures,
+        require_viewable_keyframes=args.video_mode == "normal",
+        run_id=args.run_id,
     )
     qualified_editorial_candidates = editorial_candidates(hotspot_cards)
     deep_read_summary = deep_read_counts(hotspot_cards)
@@ -1125,7 +1127,15 @@ def compact_video_understanding(package: dict[str, Any] | None) -> dict[str, Any
     if isinstance(representatives, list):
         return {
             "status": package.get("status"),
+            "run_id": package.get("run_id"),
+            "source_url": package.get("source_url"),
             "cluster_synthesis": package.get("cluster_synthesis") or {},
+            "visual_reading": {
+                "direct_view_required": True,
+                "same_run_only": True,
+                "source_text_context": ["asr_supplement", "screen_facts"],
+                "observations_must_be_separated_from_interpretation": True,
+            },
             "representative_sources": [
                 compact_video_understanding(row)
                 for row in representatives
@@ -1143,6 +1153,8 @@ def compact_video_understanding(package: dict[str, Any] | None) -> dict[str, Any
         keyframes = []
     return {
         "status": package.get("status"),
+        "run_id": package.get("run_id"),
+        "source_url": package.get("source_url"),
         "caption_timeline": package.get("caption_timeline") or [],
         "asr_supplement": asr.get("text") or package.get("asr_supplement") or None,
         "screen_facts": [
@@ -1157,12 +1169,18 @@ def compact_video_understanding(package: dict[str, Any] | None) -> dict[str, Any
         "keyframes": [
             {
                 key: row.get(key)
-                for key in ("time_second", "start", "sha256")
+                for key in ("time_second", "start", "path", "sha256")
                 if row.get(key) is not None
             }
             for row in keyframes
             if isinstance(row, dict)
         ],
+        "visual_reading": {
+            "direct_view_required": True,
+            "same_run_only": True,
+            "source_text_context": ["asr_supplement", "screen_facts"],
+            "observations_must_be_separated_from_interpretation": True,
+        },
         "unresolved": package.get("unresolved_terms") or package.get("unresolved") or [],
     }
 

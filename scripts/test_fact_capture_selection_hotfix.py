@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import hashlib
 import tempfile
 import unittest
 from argparse import Namespace
@@ -83,10 +84,18 @@ class FactCaptureSelectionHotfixTests(unittest.TestCase):
         args = Namespace(
             run_id=run_id, qa_frozen_packages="", video_mode="normal",
         )
-        with mock.patch.object(
-            workflow, "produce", return_value={"packages": [package], "failures": []},
-        ) as produced:
-            enriched = workflow.enrich(args, base)
+        with tempfile.TemporaryDirectory() as tmp:
+            frame = Path(tmp) / "frame.jpg"
+            frame.write_bytes(b"qa-keyframe")
+            package["keyframes"] = [{
+                "path": str(frame),
+                "time_second": 0,
+                "sha256": hashlib.sha256(frame.read_bytes()).hexdigest(),
+            }]
+            with mock.patch.object(
+                workflow, "produce", return_value={"packages": [package], "failures": []},
+            ) as produced:
+                enriched = workflow.enrich(args, base)
         self.assertEqual(produced.call_count, 1)
         self.assertEqual(len(enriched["understanding_results"]), 1)
         self.assertEqual(

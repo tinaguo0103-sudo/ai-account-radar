@@ -5,6 +5,7 @@ import json
 import re
 from collections import defaultdict
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
@@ -620,6 +621,9 @@ def attach_understanding(
     cards: list[dict[str, Any]],
     packages: list[dict[str, Any]],
     failures: list[dict[str, Any]],
+    *,
+    require_viewable_keyframes: bool = False,
+    run_id: str | None = None,
 ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
     package_by_source = {
         _canonical_url(row.get("source_url")): row
@@ -643,7 +647,15 @@ def attach_understanding(
         representative_set = set(card.get("representative_source_ids", []))
         for source in card["sources"]:
             package = package_by_source.get(source["url"])
-            if package and package.get("status") in {"completed", "completed_with_failures"}:
+            visual_failure = (
+                viewable_keyframe_failure(package, run_id=run_id)
+                if package and require_viewable_keyframes else ""
+            )
+            if (
+                package
+                and package.get("status") in {"completed", "completed_with_failures"}
+                and not visual_failure
+            ):
                 source["understanding_status"] = "analyzed"
                 source["understanding_failure"] = ""
                 understood.append(package)
@@ -651,6 +663,7 @@ def attach_understanding(
                 item_failure = (
                     failure_by_item.get(source.get("item_id", ""), "")
                     or failure_by_source.get(source.get("url", ""), "")
+                    or visual_failure
                 )
                 if item_failure:
                     source["understanding_status"] = "failed"
@@ -710,6 +723,7 @@ def attach_understanding(
                         "completed" if card["deep_read"]["failed_count"] == 0
                         else "completed_with_failures"
                     ),
+                    "run_id": package.get("run_id"),
                     "source_url": card["source_url"],
                     "representative_packages": representative_understood,
                     "available_packages": understood,
@@ -717,6 +731,41 @@ def attach_understanding(
                 },
             })
     return cards, understanding_results
+
+
+def viewable_keyframe_failure(
+    package: dict[str, Any],
+    *,
+    run_id: str | None = None,
+) -> str:
+    """Check the local image handoff without persisting image bytes."""
+    if run_id and str(package.get("run_id") or "") != run_id:
+        return "video_keyframe_run_mismatch"
+    rows = package.get("keyframes")
+    if not isinstance(rows, list) or not rows:
+        return "video_keyframes_missing"
+    seen: set[tuple[str, str]] = set()
+    for row in rows:
+        if not isinstance(row, dict):
+            return "video_keyframe_invalid"
+        path_value = str(row.get("path") or "")
+        sha256 = str(row.get("sha256") or "")
+        if not path_value or not sha256 or row.get("time_second") is None:
+            return "video_keyframe_metadata_missing"
+        path = Path(path_value).expanduser()
+        identity = (str(row.get("time_second")), path_value)
+        if identity in seen:
+            return "video_keyframe_duplicate"
+        seen.add(identity)
+        try:
+            raw = path.read_bytes()
+        except OSError:
+            return "video_keyframe_unreadable"
+        if not raw:
+            return "video_keyframe_unreadable"
+        if hashlib.sha256(raw).hexdigest() != sha256:
+            return "video_keyframe_hash_mismatch"
+    return ""
 
 
 def deep_read_counts(cards: list[dict[str, Any]]) -> dict[str, int]:
@@ -789,6 +838,20 @@ def synthesize_card(
             "asr_excerpts": asr_sentences[:3],
             "screen_facts": screen_facts,
             "keyframe_count": len(package.get("keyframes", []) or []),
+            "keyframes": [
+                {
+                    key: row.get(key)
+                    for key in ("time_second", "start", "path", "sha256")
+                    if row.get(key) is not None
+                }
+                for row in package.get("keyframes", []) or []
+                if isinstance(row, dict)
+            ],
+            "visual_reading": {
+                "direct_view_required": True,
+                "same_run_only": True,
+                "observed_frame_facts_are_separate_from_interpretation": True,
+            },
             "unresolved": [
                 _text(value) for value in package.get("unresolved_terms", []) or []
                 if _text(value)

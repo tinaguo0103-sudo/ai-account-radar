@@ -49,6 +49,11 @@ trusted collection artifact review pool
 
 输入只允许：精确来源事实、研究 dossier、证据化 hook、账号四方向、persona facts 与检索的风格片段。
 
+视频候选还必须直接打开当前 same-run handoff 中的代表关键帧路径，再结合对应时间点的
+ASR/OCR。先把画面里实际看见的主体、动作、镜头或屏幕变化写成观察事实；再把来源文字事实、
+Austin 的解释和尚未发生的拟议测试分开。不能用标题、摘要或 ASR/OCR 代替看图，也不能把
+其他 run 的图片带进当前候选；关键帧缺失或无法读取时，当前候选保持 item-local 失败或不选。
+
 先逐题完成独立资格判断，再看全批排序。对每个候选先回答反事实问题：如果今天只有这一题，
 它是否值得 Austin 制作一篇完整脚本？把答案写入 `standalone_eligibility.decision` 和只基于该卡
 用户价值、persona fit、独特判断、时效与真实来源身份的 `reason`。所有 standalone select 在

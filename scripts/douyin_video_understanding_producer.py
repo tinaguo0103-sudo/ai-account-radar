@@ -410,6 +410,13 @@ def full_worker(config: dict[str, Any], audio: Path) -> dict[str, Any] | None:
     return json.loads(result_path.read_text())
 
 
+def representative_frame_indices(frame_count: int) -> list[int]:
+    """Return a deterministic start/middle/end spread without duplicate frames."""
+    if frame_count <= 0:
+        return []
+    return sorted({0, frame_count // 2, frame_count - 1})
+
+
 def process_one(
     candidate: dict[str, Any],
     *,
@@ -474,7 +481,7 @@ def process_one(
                 for row in unresolved
             ]
         keyframes = []
-        for index in sorted({0, len(frame_paths) // 2}):
+        for index in representative_frame_indices(len(frame_paths)):
             source = frame_paths[index]
             destination = keyframe_root / f"{aweme_id}_{source.name}"
             destination.parent.mkdir(parents=True, exist_ok=True)
