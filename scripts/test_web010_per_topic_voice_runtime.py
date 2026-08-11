@@ -198,18 +198,28 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             "candidate_id": "topic:source-facts",
             "decision": "select",
             "selection_reason": "The card has a concrete source-owned event.",
+            "editorial_thesis": {
+                "thesis": "The source changes the cost of a real decision.",
+                "audience_conflict": "The audience has a concrete choice to make.",
+                "why_now": "This same-run source supplies the decisive fact.",
+                "evidence_boundary": {
+                    "source_facts": "The source-owned event is recorded in this run.",
+                    "interpretation": "The event changes how the audience should judge the choice.",
+                    "proposed_test": "A bounded follow-up can test the interpretation.",
+                },
+            },
         }]}
         handoff = build_scripts_handoff(RUN_ID, BUSINESS_DATE, collection, editorial)
         selected = handoff["selected_topics"][0]
         self.assertEqual(
-            selected["source_facts"]["details"],
+            selected["source_evidence"]["source_facts"]["details"],
             "Source-owned summary with the concrete event detail.",
         )
         self.assertEqual(
-            selected["source_facts"]["transcript"],
+            selected["source_evidence"]["source_facts"]["transcript"],
             "Source-owned caption and fact excerpt.",
         )
-        self.assertEqual(selected["cannot_claim"], "Do not copy the source wording.")
+        self.assertEqual(selected["source_evidence"]["cannot_claim"], "Do not copy the source wording.")
 
     def editorial_file(self, root: Path, topic_ids: list[str], run_id: str = RUN_ID) -> Path:
         path = root / f"editorial-{run_id}.json"
@@ -222,6 +232,16 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 "hook": f"先看题目 {index} 自己的冲突。",
                 "structure": "按这条材料自然推进",
                 "selection_reason": "该题拥有独立事实和用户价值。",
+                "editorial_thesis": {
+                    "thesis": f"题目 {index} 的事实指向一个不能被替代的判断。",
+                    "audience_conflict": f"受众在题目 {index} 上面临具体取舍。",
+                    "why_now": "同 run 来源现在给出了可讲的事实。",
+                    "evidence_boundary": {
+                        "source_facts": f"题目 {index} 的同 run 来源事实。",
+                        "interpretation": f"题目 {index} 的判断来自这条事实，而不是标题推断。",
+                        "proposed_test": f"可以用题目 {index} 的边界设计一个有界验证。",
+                    },
+                },
                 "unique_judgment": f"题目 {index} 不能被另一题替代。",
                 "standalone_eligibility": {
                     "decision": "select",

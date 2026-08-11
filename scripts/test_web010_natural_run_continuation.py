@@ -245,6 +245,16 @@ class NaturalRunContinuationTest(unittest.TestCase):
                     "hook": "具体冲突",
                     "structure": "场景到动作",
                     "selection_reason": "候选包含明确工作流事实",
+                    "editorial_thesis": {
+                        "thesis": "这条来源事实指向一个独立的工作流判断。",
+                        "audience_conflict": "受众想要结果，却被旧流程的具体摩擦卡住。",
+                        "why_now": "同 run 证据让这个判断现在可以被讲清楚。",
+                        "evidence_boundary": {
+                            "source_facts": "同 run 来源记录了具体的工作流变化。",
+                            "interpretation": "这项变化支持一个面向受众的判断。",
+                            "proposed_test": "可以在相同边界下做一次有界验证。",
+                        },
+                    },
                 }] + [{
                     "candidate_id": candidate_ids[index],
                     "decision": "observe",

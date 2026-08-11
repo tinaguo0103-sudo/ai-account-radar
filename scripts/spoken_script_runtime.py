@@ -35,6 +35,8 @@ DIRECT_WRITER_STAGE_CONTRACT = {
     "topology": "one_automation_codex_direct_writer_stage_per_selected_topic",
     "input_scope": [
         "one_same_run_rich_topic_card",
+        "austin_thesis_audience_conflict_and_why_now",
+        "model_owned_evidence_boundary",
         "source_facts_and_details",
         "fact_boundary",
         "cannot_claim",

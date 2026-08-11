@@ -269,18 +269,28 @@ class VideoVisualSemanticEnrichmentTests(unittest.TestCase):
                 "candidate_id": "trend:visual-handoff",
                 "decision": "select",
                 "selection_reason": "同 run 画面与文本共同支持这个题。",
-                "unique_judgment": "画面关系决定这个题不能只按标题理解。",
-                "decision_basis": {"traffic": "fresh", "content": "frame", "persona": "fit", "differentiation": "visual"},
-                "evidence_source_ids": ["source:visual-handoff"],
+                "editorial_thesis": {
+                    "thesis": "画面关系决定这个题不能只按标题理解。",
+                    "audience_conflict": "观众需要知道画面事实如何改变自己的判断。",
+                    "why_now": "同 run 的画面和文本证据已经可以一起核对。",
+                    "evidence_boundary": {
+                        "source_facts": "画面、ASR 和屏幕事实来自同一 run。",
+                        "interpretation": "这些证据支持一个具体的内容判断。",
+                        "proposed_test": "可以在同样的素材边界下验证这个判断。",
+                    },
+                    "unique_judgment": "画面关系决定这个题不能只按标题理解。",
+                    "decision_basis": {"traffic": "fresh", "content": "frame", "persona": "fit", "differentiation": "visual"},
+                    "evidence_source_ids": ["source:visual-handoff"],
+                },
             }]}
             handoff = workflow.build_scripts_handoff(RUN_ID, DATE, collection, editorial)
             topic = handoff["selected_topics"][0]
-            self.assertEqual(topic["video_understanding"]["run_id"], RUN_ID)
-            self.assertTrue(topic["video_understanding"]["visual_reading"]["direct_view_required"])
-            writer_frames = topic["video_understanding"]["representative_sources"][0]["keyframes"]
+            self.assertEqual(topic["source_evidence"]["video"]["run_id"], RUN_ID)
+            self.assertNotIn("cluster_synthesis", topic["source_evidence"]["video"])
+            self.assertNotIn("visual_reading", topic["source_evidence"]["video"])
+            writer_frames = topic["source_evidence"]["video"]["representative_sources"][0]["keyframes"]
             self.assertEqual(writer_frames[0]["path"], str(path))
             self.assertEqual(writer_frames[0]["time_second"], 12)
-            self.assertTrue(topic["video_understanding"]["representative_sources"][0]["visual_reading"]["direct_view_required"])
 
 
 if __name__ == "__main__":

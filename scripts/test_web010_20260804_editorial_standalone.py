@@ -21,6 +21,16 @@ def row(identity: str, decision: str = "select") -> dict:
         "title": f"title {identity}" if decision == "select" else "",
         "hook": f"hook {identity}" if decision == "select" else "",
         "structure": ["scene", "experiment", "consequence"] if decision == "select" else [],
+        "editorial_thesis": {
+            "thesis": f"{identity} has a source-grounded judgment.",
+            "audience_conflict": f"{identity} creates a concrete audience choice.",
+            "why_now": "The exact run supplies a timely fact.",
+            "evidence_boundary": {
+                "source_facts": f"{identity} has an exact-run source fact.",
+                "interpretation": "The fact supports a candidate-local judgment.",
+                "proposed_test": "A bounded test can check the interpretation.",
+            },
+        } if decision == "select" else None,
     }
 
 

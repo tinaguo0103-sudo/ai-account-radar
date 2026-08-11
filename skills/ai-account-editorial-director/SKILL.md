@@ -78,6 +78,9 @@ Austin 的解释和尚未发生的拟议测试分开。不能用标题、摘要�
 
 输出必须包括：
 
+- `editorial_thesis`：先写这张卡自己的 `thesis`、具体 `audience_conflict`、`why_now`，以及
+  `evidence_boundary` 中的 `source_facts`、`interpretation`、`proposed_test`。这些是模型拥有的
+  语义判断与事实边界，必须先于运营字段形成；不得把视频时间线或画面顺序当作 thesis。
 - `decision`: `select|observe|reject`
 - `standalone_eligibility`: 独立 `decision` 与 candidate-local `reason`
 - 选择与不选择理由

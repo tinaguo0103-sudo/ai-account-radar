@@ -24,6 +24,16 @@ class EditorialCoverageTests(unittest.TestCase):
                 "hook": "hook" if index < selected else "",
                 "structure": "structure" if index < selected else "",
                 "selection_reason": "reason" if index < selected else "not selected",
+                "editorial_thesis": {
+                    "thesis": f"candidate-{index} has a source-grounded judgment.",
+                    "audience_conflict": f"candidate-{index} creates a concrete audience choice.",
+                    "why_now": "The exact run supplies a timely fact.",
+                    "evidence_boundary": {
+                        "source_facts": "The source-owned fact is present in this run.",
+                        "interpretation": "The fact supports a candidate-local judgment.",
+                        "proposed_test": "A bounded test can check the interpretation.",
+                    },
+                } if index < selected else None,
             } for index in range(count)],
         }
 

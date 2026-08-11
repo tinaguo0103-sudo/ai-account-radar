@@ -151,6 +151,16 @@ class PublicV2FlowTest(unittest.TestCase):
                     "candidate_id": identities[0], "decision": "select",
                     "title": "选题", "hook": "钩子", "structure": "结构",
                     "selection_reason": "理由",
+                    "editorial_thesis": {
+                        "thesis": "这条来源事实支持一个具体判断。",
+                        "audience_conflict": "受众在事实和旧做法之间有明确冲突。",
+                        "why_now": "同 run 资料让这个判断现在值得讲。",
+                        "evidence_boundary": {
+                            "source_facts": "同 run 来源事实。",
+                            "interpretation": "由事实推到判断，不把推断当观察结果。",
+                            "proposed_test": "可以用一个有界动作继续验证。",
+                        },
+                    },
                 }] + [{
                     "candidate_id": identity, "decision": "observe",
                     "selection_reason": "未达到本轮选择标准",

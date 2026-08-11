@@ -71,6 +71,16 @@ class SpokenScriptRestorationTests(unittest.TestCase):
                 "hook": "四小时以后，失败能不能接着跑？",
                 "structure": "按当前材料自然推进",
                 "selection_reason": "来源事实与 Austin 工作流判断直接相关。",
+                "editorial_thesis": {
+                    "thesis": "长任务真正要留下的是恢复点。",
+                    "audience_conflict": "做长任务的人想继续推进，却常常只能从头重做。",
+                    "why_now": "同一 run 的来源给出了失败后恢复的具体事实。",
+                    "evidence_boundary": {
+                        "source_facts": "来源记录了同一批次的 checkpoint 与恢复结果。",
+                        "interpretation": "恢复点比单次运行时长更能决定流程是否可用。",
+                        "proposed_test": "可以在失败后只继续未完成阶段来验证这个判断。",
+                    },
+                },
             }],
         }
 
@@ -81,24 +91,25 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertEqual(handoff["action"], "scripts_required")
         self.assertEqual(handoff["selected_topics"][0]["topic_id"], "douyin:100")
         topic = handoff["selected_topics"][0]
-        self.assertEqual(topic["source"]["likes"], 0)
-        self.assertNotIn("comments", topic["source"])
+        self.assertEqual(topic["source_evidence"]["source"]["likes"], 0)
+        self.assertNotIn("comments", topic["source_evidence"]["source"])
         self.assertEqual(
-            topic["editorial_judgment"],
-            {"selection_reason": "来源事实与 Austin 工作流判断直接相关。"},
+            topic["editorial_thesis"]["thesis"],
+            "长任务真正要留下的是恢复点。",
         )
         for blueprint_field in (
             "title", "hook", "structure", "unique_judgment", "persona_fit",
             "workflow_context", "traffic_opportunity", "differentiation", "cluster_synthesis",
+            "editorial_judgment", "video_understanding",
         ):
             self.assertNotIn(blueprint_field, topic)
         self.assertEqual(
-            topic["source_facts"],
+            topic["source_evidence"]["source_facts"],
             {"details": "A bounded public summary"},
         )
-        self.assertEqual(topic["fact_boundary"], "不能声称已经节省固定时长。")
-        self.assertEqual(topic["cannot_claim"], None)
-        self.assertEqual(topic["video_understanding"]["asr_supplement"], "spoken supplement")
+        self.assertEqual(topic["source_evidence"]["fact_boundary"], "不能声称已经节省固定时长。")
+        self.assertEqual(topic["source_evidence"]["cannot_claim"], None)
+        self.assertEqual(topic["source_evidence"]["video"]["asr_supplement"], "spoken supplement")
         encoded = json.dumps(handoff, ensure_ascii=False)
         self.assertNotIn("我的制作补充", encoded)
         self.assertNotIn("制作方向", encoded)
@@ -131,19 +142,24 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         topic = workflow.build_scripts_handoff(
             "run_20260808_121000", "2026-08-08", fixture, self.editorial()
         )["selected_topics"][0]
-        self.assertEqual(topic["source"], {"url": "https://www.douyin.com/video/100"})
+        self.assertEqual(topic["source_evidence"]["source"], {"url": "https://www.douyin.com/video/100"})
         self.assertNotIn("workflow_context", topic)
         self.assertNotIn("title", topic)
         self.assertNotIn("hook", topic)
         self.assertNotIn("structure", topic)
-        self.assertIsNone(topic["fact_boundary"])
-        self.assertIsNone(topic["cannot_claim"])
-        self.assertIsNone(topic["video_understanding"])
+        self.assertIsNone(topic["source_evidence"]["fact_boundary"])
+        self.assertIsNone(topic["source_evidence"]["cannot_claim"])
+        self.assertIsNone(topic["source_evidence"]["video"])
 
     def test_passes_existing_editorial_judgment_without_using_blueprint_fields(self):
         fixture = self.fixture()
         editorial = self.editorial()
         editorial["topics"][0].update({
+            "title": "Editorial title must not become a writer blueprint",
+            "hook": "Editorial hook must not become a writer blueprint",
+            "structure": ["Editorial structure must not become a writer blueprint"],
+        })
+        editorial["topics"][0]["editorial_thesis"].update({
             "unique_judgment": "The source changes the cost of a real recovery decision.",
             "decision_basis": {
                 "content": "A source-owned workflow consequence.",
@@ -151,17 +167,21 @@ class SpokenScriptRestorationTests(unittest.TestCase):
                 "differentiation": "A judgment not interchangeable with a tool summary.",
             },
             "evidence_source_ids": ["douyin:100"],
-            "title": "Editorial title must not become a writer blueprint",
-            "hook": "Editorial hook must not become a writer blueprint",
-            "structure": ["Editorial structure must not become a writer blueprint"],
         })
         topic = workflow.build_scripts_handoff(
             "run_20260808_121000", "2026-08-08", fixture, editorial,
         )["selected_topics"][0]
         self.assertEqual(
-            topic["editorial_judgment"],
+            topic["editorial_thesis"],
             {
-                "selection_reason": "来源事实与 Austin 工作流判断直接相关。",
+                "thesis": "长任务真正要留下的是恢复点。",
+                "audience_conflict": "做长任务的人想继续推进，却常常只能从头重做。",
+                "why_now": "同一 run 的来源给出了失败后恢复的具体事实。",
+                "evidence_boundary": {
+                    "source_facts": "来源记录了同一批次的 checkpoint 与恢复结果。",
+                    "interpretation": "恢复点比单次运行时长更能决定流程是否可用。",
+                    "proposed_test": "可以在失败后只继续未完成阶段来验证这个判断。",
+                },
                 "unique_judgment": "The source changes the cost of a real recovery decision.",
                 "decision_basis": {
                     "content": "A source-owned workflow consequence.",
@@ -174,6 +194,16 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("title", topic)
         self.assertNotIn("hook", topic)
         self.assertNotIn("structure", topic)
+
+    def test_selected_editorial_without_model_thesis_fails_closed(self):
+        editorial = self.editorial()
+        del editorial["topics"][0]["editorial_thesis"]
+        with self.assertRaisesRegex(workflow.WorkflowConflict, "editorial_thesis_missing"):
+            workflow.validate_editorial(
+                "run_20260803_110453",
+                {"run_id": "run_20260803_110453", "topics": editorial["topics"]},
+                [{"candidate_id": "douyin:100"}],
+            )
 
     def test_simple_result_accepts_item_local_material_failure(self):
         selected = {"douyin:100"}

@@ -1198,6 +1198,8 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
             str(row.get(key) or "") for key in ("title", "hook", "structure", "selection_reason")
         ):
             raise WorkflowConflict("editorial_selected_incomplete")
+        if row["decision"] == "select":
+            model_editorial_thesis(row)
         if row["decision"] in {"observe", "reject"}:
             basis = row.get("decision_basis")
             if isinstance(basis, dict) and not all(
@@ -1314,6 +1316,73 @@ def compact_video_understanding(package: dict[str, Any] | None) -> dict[str, Any
     }
 
 
+def compact_video_evidence(package: dict[str, Any] | None) -> dict[str, Any] | None:
+    """Expose same-run observations as evidence, never as a writing outline."""
+    if not package or package.get("status") not in {"completed", "completed_with_failures"}:
+        return None
+    asr = package.get("asr") if isinstance(package.get("asr"), dict) else {}
+    screen_rows = package.get("screen_facts")
+    if not isinstance(screen_rows, list):
+        screen_rows = package.get("screen_text")
+    if not isinstance(screen_rows, list):
+        screen_rows = []
+    keyframes = package.get("keyframes")
+    if not isinstance(keyframes, list):
+        keyframes = []
+    evidence = {
+        "status": package.get("status"),
+        "run_id": package.get("run_id"),
+        "source_url": package.get("source_url"),
+        "caption_timeline": package.get("caption_timeline") or [],
+        "asr_supplement": asr.get("text") or package.get("asr_supplement") or None,
+        "screen_facts": [
+            {
+                key: row.get(key)
+                for key in ("kind", "value", "text", "time_second", "start", "verified")
+                if row.get(key) is not None
+            }
+            for row in screen_rows
+            if isinstance(row, dict)
+        ],
+        "keyframes": [
+            {
+                key: row.get(key)
+                for key in ("time_second", "start", "path", "sha256")
+                if row.get(key) is not None
+            }
+            for row in keyframes
+            if isinstance(row, dict)
+        ],
+        "unresolved": package.get("unresolved_terms") or package.get("unresolved") or [],
+    }
+    representatives = package.get("representative_packages")
+    if isinstance(representatives, list):
+        evidence["representative_sources"] = [
+            compact_video_evidence(row)
+            for row in representatives
+            if isinstance(row, dict)
+        ]
+    return evidence
+
+
+def model_editorial_thesis(topic: dict[str, Any]) -> dict[str, Any]:
+    """Validate and carry model-owned meaning without authoring a fallback."""
+    value = topic.get("editorial_thesis")
+    if not isinstance(value, dict):
+        raise WorkflowConflict("editorial_thesis_missing")
+    if any(not str(value.get(key) or "").strip() for key in (
+        "thesis", "audience_conflict", "why_now",
+    )):
+        raise WorkflowConflict("editorial_thesis_incomplete")
+    boundary = value.get("evidence_boundary")
+    if not isinstance(boundary, dict) or any(
+        not str(boundary.get(key) or "").strip()
+        for key in ("source_facts", "interpretation", "proposed_test")
+    ):
+        raise WorkflowConflict("editorial_evidence_boundary_incomplete")
+    return json.loads(json.dumps(value, ensure_ascii=False))
+
+
 def compact_source_facts(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Expose source-owned facts/details without forwarding editorial blueprints."""
     facts: dict[str, Any] = {}
@@ -1370,19 +1439,8 @@ def build_scripts_handoff(
         item = items.get(str(candidate.get("item_id") or topic_id), {})
         rows = [topic, candidate, item]
         source_rows = [candidate, item]
-        editorial_judgment = {
-            key: topic.get(key)
-            for key in (
-                "selection_reason", "unique_judgment", "decision_basis",
-                "evidence_source_ids",
-            )
-            if topic.get(key) not in (None, "", [], {})
-        }
-        selected_topics.append({
-            "topic_id": topic_id,
-            "trend_event_id": candidate.get("trend_event_id") or topic_id,
-            "selection_reason": str(topic.get("selection_reason") or "").strip(),
-            "editorial_judgment": editorial_judgment,
+        editorial_thesis = model_editorial_thesis(topic)
+        source_evidence = {
             "source": {
                 key: first_context_value(source_rows, *aliases)
                 for key, aliases in {
@@ -1422,7 +1480,13 @@ def build_scripts_handoff(
                 for source in candidate.get("sources", [])
                 if isinstance(source, dict)
             ],
-            "video_understanding": compact_video_understanding(understanding.get(topic_id)),
+            "video": compact_video_evidence(understanding.get(topic_id)),
+        }
+        selected_topics.append({
+            "topic_id": topic_id,
+            "trend_event_id": candidate.get("trend_event_id") or topic_id,
+            "editorial_thesis": editorial_thesis,
+            "source_evidence": source_evidence,
         })
     return {
         "ok": True,

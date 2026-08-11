@@ -30,6 +30,16 @@ class EditorialContinuationTest(unittest.TestCase):
             "title": "Title" if decision == "select" else "",
             "hook": "Hook" if decision == "select" else "",
             "structure": ["Scene", "Action", "Consequence"] if decision == "select" else [],
+            "editorial_thesis": {
+                "thesis": "The source fact changes the audience's decision.",
+                "audience_conflict": "The audience faces a concrete workflow choice.",
+                "why_now": "The exact run makes the issue timely.",
+                "evidence_boundary": {
+                    "source_facts": "The source-owned fact is available in this run.",
+                    "interpretation": "The fact supports a candidate-local judgment.",
+                    "proposed_test": "A bounded follow-up can test the judgment.",
+                },
+            } if decision == "select" else None,
         }
 
     def test_research_failure_does_not_make_select_invalid(self) -> None:
