@@ -335,6 +335,9 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             )["externalSchedule"]["outerAgentProtocol"]
         )
         self.assertIn("directly applies austin-voice-scriptwriter", release_protocol)
+        self.assertIn("Fact boundaries and cannot-claim notes are silent constraints", release_protocol)
+        self.assertIn("ordinary conditional", release_protocol)
+        self.assertIn("never announce source verification", release_protocol)
         self.assertNotIn("austin-no-overtime-scripting", release_protocol)
 
         source = (ROOT / "scripts" / "run_daily_workflow.py").read_text(encoding="utf-8")
