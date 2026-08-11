@@ -155,17 +155,21 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
     def execute(
         self,
         command: list[str],
-        config: Path | None = None,
+        config: Path,
         extra_env: dict[str, str] | None = None,
+        cwd: Path | None = None,
     ) -> subprocess.CompletedProcess[str]:
         environment = os.environ.copy()
-        if config is not None:
-            environment["WEBSITE_PUBLISHER_CONFIG"] = str(config)
-        else:
-            environment.pop("WEBSITE_PUBLISHER_CONFIG", None)
+        environment["WEBSITE_PUBLISHER_CONFIG"] = str(config)
         if extra_env:
             environment.update(extra_env)
-        return subprocess.run(command, text=True, capture_output=True, env=environment)
+        return subprocess.run(
+            command,
+            text=True,
+            capture_output=True,
+            env=environment,
+            cwd=str(cwd) if cwd is not None else None,
+        )
 
     def publisher_config(self, root: Path) -> Path:
         path = root / "publisher.json"
@@ -569,6 +573,17 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         run_id = "run_20260808_120001"
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
+            production_shaped_cwd = root / "production-shaped-checkout"
+            production_default = production_shaped_cwd / "output" / "state" / "website_publisher.json"
+            write_json(production_default, {
+                "website_url": f"http://127.0.0.1:{self.server.server_port}",
+                "authority_identity": "owner-only:production-shaped-default",
+                "app_bearer": "production-shaped-test-bearer",
+                "sites_bearer": "production-shaped-test-bypass-bearer",
+            })
+            qa_private_missing = root / "qa-private" / "publisher.json"
+            self.assertTrue(production_default.is_file())
+            self.assertFalse(qa_private_missing.exists())
             fixture = self.fixture(root, run_id=run_id, count=1)
             command = self.command(root, fixture, run_id=run_id)
             normalized = enrich(
@@ -582,10 +597,14 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             )
             ids = [row["candidate_id"] for row in normalized["candidates"]]
             editorial = self.editorial_file(root, ids, run_id=run_id)
-            first = self.execute(command)
+            first = self.execute(command, qa_private_missing, cwd=production_shaped_cwd)
             self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
             self.assertEqual(last_json(first.stdout)["action"], "editorial_required")
-            editorial_stage_call = self.execute(command + ["--editorial-result-file", str(editorial)])
+            editorial_stage_call = self.execute(
+                command + ["--editorial-result-file", str(editorial)],
+                qa_private_missing,
+                cwd=production_shaped_cwd,
+            )
             self.assertEqual(editorial_stage_call.returncode, 0, editorial_stage_call.stderr + editorial_stage_call.stdout)
             self.assertEqual(last_json(editorial_stage_call.stdout)["action"], "scripts_required")
             workflow = DailyWorkflow(root / f"{run_id}.sqlite3")
@@ -611,9 +630,13 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             submission = self.submission_file(root, handoff, 0, failure=True)
             terminal = self.execute(
                 command + ["--editorial-result-file", str(editorial), "--script-item-file", str(submission)],
+                qa_private_missing,
+                cwd=production_shaped_cwd,
             )
             self.assertEqual(terminal.returncode, 0, terminal.stderr + terminal.stdout)
             self.assertEqual(last_json(terminal.stdout)["action"], "completed_publish_pending")
+            self.assertEqual(Publisher.posts, 0)
+            self.assertEqual(Publisher.gets, 0)
             stage = DailyWorkflow(root / f"{run_id}.sqlite3").stage(run_id, "scripts")
             self.assertEqual(stage["status"], "completed_with_failures")
             self.assertEqual(
@@ -632,7 +655,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 "--artifact-root", str(root / "runs"),
                 "--script-reference-selection-file", str(root / "selection.json"),
             ]
-            result = self.execute(command)
+            result = self.execute(command, root / "qa-private" / "publisher.json")
             self.assertNotEqual(result.returncode, 0)
             self.assertIn("unrecognized arguments", result.stderr)
 
