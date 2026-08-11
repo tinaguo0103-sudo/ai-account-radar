@@ -285,7 +285,7 @@ class VideoVisualSemanticEnrichmentTests(unittest.TestCase):
             }]}
             handoff = workflow.build_scripts_handoff(RUN_ID, DATE, collection, editorial)
             topic = handoff["selected_topics"][0]
-            self.assertEqual(topic["source_evidence"]["video"]["run_id"], RUN_ID)
+            self.assertNotIn("run_id", topic["source_evidence"]["video"])
             self.assertNotIn("cluster_synthesis", topic["source_evidence"]["video"])
             self.assertNotIn("visual_reading", topic["source_evidence"]["video"])
             writer_frames = topic["source_evidence"]["video"]["representative_sources"][0]["keyframes"]

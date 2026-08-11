@@ -220,7 +220,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             selected["source_evidence"]["source_facts"]["transcript"],
             "Source-owned caption and fact excerpt.",
         )
-        self.assertEqual(selected["source_evidence"]["cannot_claim"], "Do not copy the source wording.")
+        self.assertNotIn("cannot_claim", selected["source_evidence"])
 
     def editorial_file(self, root: Path, topic_ids: list[str], run_id: str = RUN_ID) -> Path:
         path = root / f"editorial-{run_id}.json"
@@ -296,6 +296,16 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             contract["skills"],
             ["austin-voice-scriptwriter"],
         )
+        self.assertEqual(
+            contract["input_scope"],
+            [
+                "one_same_run_rich_topic_card",
+                "current_topic_raw_source_and_video_evidence",
+                "approved_austin_persona_cases_and_samples_read_transiently",
+                "simple_truthfulness_requirement",
+                "simple_spoken_script_output",
+            ],
+        )
         self.assertEqual(contract["private_authority"], "automation_codex_reads_approved_writer_authority_transiently")
         self.assertEqual(contract["previous_topic_body"], "forbidden")
         self.assertEqual(contract["other_topic_identity"], "forbidden")
@@ -336,9 +346,14 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             )["externalSchedule"]["outerAgentProtocol"]
         )
         self.assertIn("directly applies austin-voice-scriptwriter", release_protocol)
-        self.assertIn("silent fact limits", release_protocol)
-        self.assertIn("ordinary conditional", release_protocol)
-        self.assertIn("never announce source verification", release_protocol)
+        self.assertIn("raw source/video material", release_protocol)
+        self.assertIn("do not invent Austin/client/team tests or results", release_protocol)
+        self.assertIn("The controller owns order, checkpoint, validation and publisher", release_protocol)
+        self.assertNotIn("silent fact limits", release_protocol)
+        self.assertNotIn("selection reason", release_protocol)
+        self.assertNotIn("source verification", release_protocol)
+        self.assertNotIn("evidence level", release_protocol)
+        self.assertNotIn("claim provenance", release_protocol)
         self.assertNotIn("austin-no-overtime-scripting", release_protocol)
 
         source = (ROOT / "scripts" / "run_daily_workflow.py").read_text(encoding="utf-8")
@@ -365,7 +380,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         packet = topic_packet(
             RUN_ID, BUSINESS_DATE, topic, 0, 1, 0, current,
         )
-        self.assertEqual(packet["writing_contract"]["skills"], ["austin-voice-scriptwriter"])
+        self.assertNotIn("writing_contract", packet)
 
     def test_runtime_reads_private_authority_and_returns_safe_ledger_only(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -490,7 +505,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertEqual(len(handoff["selected_topics"]), 1)
             self.assertEqual(handoff["topic_index"], 1)
             self.assertNotIn(topic_ids[2], json.dumps(handoff, ensure_ascii=False))
-            self.assertIn("writing_contract", handoff)
+            self.assertNotIn("writing_contract", handoff)
             self.assertNotIn("writing_phases", handoff["topic_input"])
             self.assertEqual(
                 handoff["topic_input"]["writer_owns_final_fields"],

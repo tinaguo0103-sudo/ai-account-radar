@@ -84,7 +84,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             }],
         }
 
-    def test_builds_content_driven_topic_card_and_silent_constraints(self):
+    def test_builds_content_driven_topic_card_without_control_plane_copy(self):
         handoff = workflow.build_scripts_handoff(
             "run_20260808_121000", "2026-08-08", self.fixture(), self.editorial()
         )
@@ -93,10 +93,6 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         topic = handoff["selected_topics"][0]
         self.assertEqual(topic["source_evidence"]["source"]["likes"], 0)
         self.assertNotIn("comments", topic["source_evidence"]["source"])
-        self.assertEqual(
-            topic["selection_reason"],
-            "来源事实与 Austin 工作流判断直接相关。",
-        )
         self.assertNotIn("editorial_thesis", topic)
         for blueprint_field in (
             "title", "hook", "structure", "unique_judgment", "persona_fit",
@@ -108,9 +104,14 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             topic["source_evidence"]["source_facts"],
             {"details": "A bounded public summary"},
         )
-        self.assertEqual(topic["source_evidence"]["fact_boundary"], "不能声称已经节省固定时长。")
-        self.assertEqual(topic["source_evidence"]["cannot_claim"], None)
+        self.assertNotIn("selection_reason", topic)
+        self.assertNotIn("fact_boundary", topic["source_evidence"])
+        self.assertNotIn("cannot_claim", topic["source_evidence"])
+        self.assertNotIn("provenance", topic["source_evidence"]["source"])
+        self.assertNotIn("missing_reasons", topic["source_evidence"]["source"])
         self.assertEqual(topic["source_evidence"]["video"]["asr_supplement"], "spoken supplement")
+        self.assertNotIn("visual_reading", topic["source_evidence"]["video"])
+        self.assertNotIn("run_id", topic["source_evidence"]["video"])
         encoded = json.dumps(handoff, ensure_ascii=False)
         self.assertNotIn("我的制作补充", encoded)
         self.assertNotIn("制作方向", encoded)
@@ -148,8 +149,8 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("title", topic)
         self.assertNotIn("hook", topic)
         self.assertNotIn("structure", topic)
-        self.assertIsNone(topic["source_evidence"]["fact_boundary"])
-        self.assertIsNone(topic["source_evidence"]["cannot_claim"])
+        self.assertNotIn("fact_boundary", topic["source_evidence"])
+        self.assertNotIn("cannot_claim", topic["source_evidence"])
         self.assertIsNone(topic["source_evidence"]["video"])
 
     def test_passes_existing_editorial_judgment_without_using_blueprint_fields(self):
@@ -172,7 +173,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         topic = workflow.build_scripts_handoff(
             "run_20260808_121000", "2026-08-08", fixture, editorial,
         )["selected_topics"][0]
-        self.assertEqual(topic["selection_reason"], "来源事实与 Austin 工作流判断直接相关。")
+        self.assertNotIn("selection_reason", topic)
         self.assertNotIn("editorial_thesis", topic)
         self.assertNotIn("title", topic)
         self.assertNotIn("hook", topic)
@@ -237,14 +238,13 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
         self.assertIn("current Automation Codex directly applies ai-account-editorial-director", protocol)
-        self.assertIn("current Automation Codex directly applies austin-voice-scriptwriter", protocol)
+        self.assertIn("directly applies austin-voice-scriptwriter", protocol)
         self.assertIn("directly reads the approved core Austin persona", protocol)
-        self.assertIn("A Python path, byte or hash ledger is not a substitute", protocol)
+        self.assertIn("approved core Austin persona", protocol)
         self.assertIn("short candidate-specific reason", protocol)
-        self.assertIn("one selected rich Topic Card at a time", protocol)
-        self.assertIn("No full-batch script submission exists", protocol)
+        self.assertIn("one current rich Topic Card", protocol)
+        self.assertIn("accepts the next one after the current submission", protocol)
         self.assertIn("material_or_angle_insufficiency", protocol)
-        self.assertIn("one selected rich Topic Card at a time", protocol)
         self.assertNotIn("austin-no-overtime-scripting", protocol)
         self.assertNotIn("Facts-first Draft", protocol)
         self.assertNotIn("Author Edit", protocol)

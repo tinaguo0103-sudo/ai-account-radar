@@ -1304,13 +1304,6 @@ def compact_video_understanding(package: dict[str, Any] | None) -> dict[str, Any
             for row in keyframes
             if isinstance(row, dict)
         ],
-        "visual_reading": {
-            "direct_view_required": True,
-            "same_run_only": True,
-            "source_text_context": ["asr_supplement", "screen_facts"],
-            "observations_must_be_separated_from_interpretation": True,
-        },
-        "unresolved": package.get("unresolved_terms") or package.get("unresolved") or [],
     }
 
 
@@ -1328,9 +1321,6 @@ def compact_video_evidence(package: dict[str, Any] | None) -> dict[str, Any] | N
     if not isinstance(keyframes, list):
         keyframes = []
     evidence = {
-        "status": package.get("status"),
-        "run_id": package.get("run_id"),
-        "source_url": package.get("source_url"),
         "caption_timeline": package.get("caption_timeline") or [],
         "asr_supplement": asr.get("text") or package.get("asr_supplement") or None,
         "screen_facts": [
@@ -1351,7 +1341,6 @@ def compact_video_evidence(package: dict[str, Any] | None) -> dict[str, Any] | N
             for row in keyframes
             if isinstance(row, dict)
         ],
-        "unresolved": package.get("unresolved_terms") or package.get("unresolved") or [],
     }
     representatives = package.get("representative_packages")
     if isinstance(representatives, list):
@@ -1434,18 +1423,10 @@ def build_scripts_handoff(
                     "comments": ("comments", "评论数"),
                     "favorites": ("favorites", "收藏数"),
                     "shares": ("shares", "分享数"),
-                    "provenance": ("fact_provenance", "provenance", "事实来源"),
-                    "missing_reasons": ("fact_missing_reasons", "missing_reasons", "事实缺失原因"),
                 }.items()
                 if first_context_value(source_rows, *aliases) is not None
             },
             "source_facts": compact_source_facts(source_rows),
-            "fact_boundary": first_context_value(
-                rows, "fact_boundary", "fact_boundary_note", "事实边界",
-            ),
-            "cannot_claim": first_context_value(
-                rows, "cannot_claim", "cannot_claim_notes", "不能声称的部分", "不能照搬",
-            ),
             "sources": [
                 {
                     key: source.get(key)
@@ -1464,7 +1445,6 @@ def build_scripts_handoff(
         selected_topics.append({
             "topic_id": topic_id,
             "trend_event_id": candidate.get("trend_event_id") or topic_id,
-            "selection_reason": str(topic.get("selection_reason") or "").strip(),
             "source_evidence": source_evidence,
         })
     return {

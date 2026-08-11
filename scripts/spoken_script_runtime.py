@@ -36,10 +36,9 @@ DIRECT_WRITER_STAGE_CONTRACT = {
     "input_scope": [
         "one_same_run_rich_topic_card",
         "current_topic_raw_source_and_video_evidence",
-        "fact_boundary_silent_constraint",
-        "cannot_claim_silent_constraint",
-        "short_candidate_specific_selection_reason",
         "approved_austin_persona_cases_and_samples_read_transiently",
+        "simple_truthfulness_requirement",
+        "simple_spoken_script_output",
     ],
     "skills": [
         "austin-voice-scriptwriter",
@@ -436,7 +435,6 @@ def topic_packet(
             "current_topic_only": True,
             "previous_topic_body_included": False,
         },
-        "writing_contract": _writing_contract_snapshot(writer_contract),
         "required_script_input": {
             "keys": ["packet_id", "script"],
             "failure_keys": ["packet_id", "failure"],
