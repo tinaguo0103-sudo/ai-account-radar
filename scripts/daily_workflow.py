@@ -248,7 +248,7 @@ class DailyWorkflow:
             if existing["status"] == status and existing["payload_json"] == encoded:
                 return {"action": "noop", **dict(existing)}
             if (
-                stage == "scripts"
+                stage in {"collection_enrichment", "editorial", "scripts"}
                 and existing["status"] == "in_progress"
                 and status in {"in_progress", "completed", "completed_with_failures"}
             ):

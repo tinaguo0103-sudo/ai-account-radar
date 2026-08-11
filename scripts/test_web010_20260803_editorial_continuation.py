@@ -82,7 +82,7 @@ class EditorialContinuationTest(unittest.TestCase):
         self.assertIn("submit before the next topic is exposed", prompt)
         self.assertNotIn("evidence shortage forces observe", prompt)
 
-    def test_public_editorial_handoff_uses_completed_deep_read_candidates(self) -> None:
+    def test_public_editorial_handoff_uses_full_trusted_pool(self) -> None:
         complete = [{"candidate_id": "trend:complete"}]
         all_candidates = complete + [{"candidate_id": "trend:metadata-only"}]
         self.assertEqual(
@@ -90,7 +90,7 @@ class EditorialContinuationTest(unittest.TestCase):
                 "editorial_candidates": complete,
                 "candidates": all_candidates,
             }),
-            complete,
+            all_candidates,
         )
         self.assertEqual(
             workflow.editorial_handoff_candidates({"candidates": all_candidates}),

@@ -47,6 +47,19 @@ trusted collection artifact review pool
 
 ## Stage 1: Editorial Decision
 
+### Two-pass video funnel
+
+When the exact-run handoff declares `editorial_phase=screening`, inspect every trusted
+candidate in the supplied pool and return one candidate-local screening row for each.
+Each row says whether the existing deterministic video stage should read that candidate's
+representative video sources and why. This is a 0..N request, not a score, quota, or
+eligibility gate: traffic and persona facts remain evidence for the later editorial
+judgment. Do not emit title, hook, structure, or final select/observe/reject fields in
+this pass. When the handoff later declares `editorial_phase=final`, inspect the same full
+pool again together with only the same-run media actually requested and return the
+existing final editorial result. A failed or unrequested video remains candidate-local;
+never replace it with another run, title inference, or another candidate's media.
+
 输入只允许：精确来源事实、研究 dossier、证据化 hook、账号四方向、persona facts 与检索的风格片段。
 
 视频候选还必须直接打开当前 same-run handoff 中的代表关键帧路径，再结合对应时间点的

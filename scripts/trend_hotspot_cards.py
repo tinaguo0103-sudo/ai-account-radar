@@ -602,12 +602,17 @@ def build_hotspot_cards(
 def representative_candidates(
     cards: list[dict[str, Any]],
     candidates: list[dict[str, Any]],
+    requested_candidate_ids: set[str] | None = None,
 ) -> list[dict[str, Any]]:
     by_source = {_source_identity(row): row for row in candidates}
     output = []
     seen: set[str] = set()
     for card in cards:
-        if not card.get("qualification", {}).get("eligible_for_deep_read"):
+        candidate_id = str(card.get("candidate_id") or "")
+        if requested_candidate_ids is not None:
+            if candidate_id not in requested_candidate_ids:
+                continue
+        elif not card.get("qualification", {}).get("eligible_for_deep_read"):
             continue
         for source_id in card.get("representative_source_ids", []):
             row = by_source.get(str(source_id))
@@ -684,9 +689,14 @@ def attach_understanding(
         )
         attempted = completed + failed
         if not card.get("qualification", {}).get("eligible_for_deep_read"):
-            deep_status = "not_qualified"
-            deep_reason = "not_high_potential"
-            card["review_stage"] = "signal_only"
+            if "editorial_screening" in card:
+                deep_status = "not_requested"
+                deep_reason = "editorial_screening_did_not_request"
+                card["review_stage"] = "not_requested_for_deep_read"
+            else:
+                deep_status = "not_qualified"
+                deep_reason = "not_high_potential"
+                card["review_stage"] = "signal_only"
         elif completed and failed:
             deep_status = "completed_with_failures"
             deep_reason = "representative_sources_partially_completed"
@@ -776,7 +786,11 @@ def viewable_keyframe_failure(
     return ""
 
 
-def deep_read_counts(cards: list[dict[str, Any]]) -> dict[str, int]:
+def deep_read_counts(
+    cards: list[dict[str, Any]],
+    *,
+    model_owned_pool: bool = False,
+) -> dict[str, int]:
     high_potential = [
         card for card in cards
         if card.get("qualification", {}).get("eligible_for_deep_read")
@@ -798,11 +812,13 @@ def deep_read_counts(cards: list[dict[str, Any]]) -> dict[str, int]:
         "deep_read_attempted_total": len(attempted),
         "deep_read_completed_total": len(completed),
         "deep_read_failed_total": len(failed),
-        "editorial_candidate_total": len(editorial_candidates(cards)),
+        "editorial_candidate_total": (
+            len(cards) if model_owned_pool else len(editorial_candidates(cards))
+        ),
     }
     if summary["deep_read_completed_total"] + summary["deep_read_failed_total"] > summary["deep_read_attempted_total"]:
         raise ValueError("deep_read_count_conflict")
-    if summary["editorial_candidate_total"] != summary["deep_read_completed_total"]:
+    if not model_owned_pool and summary["editorial_candidate_total"] != summary["deep_read_completed_total"]:
         raise ValueError("editorial_deep_read_count_conflict")
     return summary
 

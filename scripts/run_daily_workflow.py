@@ -36,6 +36,7 @@ from trend_hotspot_cards import (
     deep_read_counts,
     editorial_candidates,
     representative_candidates,
+    select_representative_sources,
     validate_candidate_specific_decisions,
 )
 from website_publisher_client import publish_terminal
@@ -764,8 +765,11 @@ def normalize_collection_candidates(
 
 
 def editorial_handoff_candidates(collection: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return the deeply read candidates owned by the editorial stage."""
-    return collection.get("editorial_candidates") or collection.get("candidates", [])
+    """Return every trusted same-run card for model-owned editorial screening."""
+    return [
+        row for row in (collection.get("candidates") or [])
+        if isinstance(row, dict) and str(row.get("candidate_id") or "")
+    ]
 
 
 SOURCE_LEDGER_NAMES = ("configured_account", "recommendation", "dynamic_search")
@@ -936,44 +940,113 @@ def normalize_source_ledger(
     return [by_source[source] for source in SOURCE_LEDGER_NAMES]
 
 
-def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, Any]:
+def enrich(
+    args: argparse.Namespace,
+    collection: dict[str, Any],
+    *,
+    requested_candidate_ids: set[str] | None = None,
+    screening_rows: list[dict[str, Any]] | None = None,
+) -> dict[str, Any]:
     value = json.loads(json.dumps(collection, ensure_ascii=False))
     if value.get("run_id") != args.run_id:
         raise WorkflowConflict("collection_wrong_run")
     items, identity_failures = normalize_items(value.get("content_items", []))
+    source_candidates = value.get("legacy_candidates")
+    if not isinstance(source_candidates, list) or not source_candidates:
+        source_candidates = value.get("candidates", [])
     legacy_candidates, video_candidates, candidate_failures = normalize_collection_candidates(
-        value.get("candidates", []),
+        source_candidates,
         items=items,
         run_id=args.run_id,
     )
     source_ledger = (
         normalize_source_ledger(value, video_candidates=video_candidates)
-        if "source_ledger" in value else []
+        if (
+            "source_local_identities" in value
+            or "source_ledger" in value
+            and (bool(value.get("source_ledger")) or requested_candidate_ids is None)
+        ) else []
     )
     hotspot_cards = build_hotspot_cards(
         legacy_candidates,
         items=items,
         run_id=args.run_id,
     )
+    screening_reason_by_id = {
+        str(row.get("candidate_id") or ""): str(row.get("reason") or "").strip()
+        for row in screening_rows or []
+        if isinstance(row, dict)
+    }
+    video_source_ids = {
+        source_url(row) for row in video_candidates if source_url(row)
+    }
+    for card in hotspot_cards:
+        candidate_id = str(card.get("candidate_id") or "")
+        available_video_source_ids = sorted(
+            str(source.get("source_id") or "")
+            for source in card.get("sources", [])
+            if str(source.get("source_id") or "") in video_source_ids
+        )
+        if requested_candidate_ids is not None:
+            requested = candidate_id in requested_candidate_ids
+            if requested and not available_video_source_ids:
+                raise WorkflowConflict("editorial_screening_video_request_invalid")
+            card["editorial_screening"] = {
+                "requested": requested,
+                "reason": screening_reason_by_id.get(candidate_id, ""),
+                "available_video_source_ids": available_video_source_ids,
+            }
+            card["qualification"]["eligible_for_deep_read"] = requested
+            card["qualification"]["status"] = (
+                "requested_for_deep_read" if requested else "not_requested_by_editorial"
+            )
+            card["qualification"]["deep_read_eligibility_owner"] = (
+                EDITORIAL_SKILL
+            )
+            selected_representatives = select_representative_sources(
+                card.get("sources", [])
+            ) if requested else []
+            card["representative_source_ids"] = [
+                source_id for source_id in selected_representatives
+                if source_id in video_source_ids
+            ]
+            if requested and not card["representative_source_ids"]:
+                card["representative_source_ids"] = available_video_source_ids[:1]
     representative_video_candidates = representative_candidates(
         hotspot_cards,
         video_candidates,
+        requested_candidate_ids,
     )
+    requested_source_ids = {
+        source_url(row) for row in representative_video_candidates if source_url(row)
+    }
     packages: list[dict[str, Any]]
     producer_failures: list[dict[str, Any]]
     if args.qa_frozen_packages:
         packages = read_json(args.qa_frozen_packages)
         if any(str(row.get("run_id") or "") != str(value.get("run_id") or "") for row in packages):
             raise WorkflowConflict("video_package_run_mismatch")
+        if requested_candidate_ids is not None:
+            packages = [
+                row for row in packages
+                if source_url(row) in requested_source_ids
+            ]
         producer_failures = [
-            {"item_id": f"douyin:{row.get('aweme_id')}", "reason": row.get("failure")}
+            {
+                "item_id": f"douyin:{row.get('aweme_id')}",
+                "source_url": row.get("source_url"),
+                "reason": row.get("failure"),
+            }
             for row in packages if row.get("status") == "failed"
         ]
+    elif args.video_mode == "normal" and requested_candidate_ids is not None and not representative_video_candidates:
+        packages, producer_failures = [], []
     elif args.video_mode == "normal":
         produced = produce(args, discovered_candidates=representative_video_candidates)
         packages = produced["packages"]
         producer_failures = [{
             "item_id": str(row.get("item_id") or row.get("candidate_id") or ""),
+            "source_url": row.get("source_url"),
             "reason": str(row.get("reason") or row.get("failure") or "video_understanding_failed"),
         } for row in produced["failures"]]
     else:
@@ -993,8 +1066,15 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         require_viewable_keyframes=args.video_mode == "normal",
         run_id=args.run_id,
     )
-    qualified_editorial_candidates = editorial_candidates(hotspot_cards)
-    deep_read_summary = deep_read_counts(hotspot_cards)
+    qualified_editorial_candidates = (
+        hotspot_cards
+        if requested_candidate_ids is not None
+        else editorial_candidates(hotspot_cards)
+    )
+    deep_read_summary = deep_read_counts(
+        hotspot_cards,
+        model_owned_pool=requested_candidate_ids is not None,
+    )
     value.update({
         "content_items": items,
         "legacy_candidates": legacy_candidates,
@@ -1005,6 +1085,9 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         "hotspot_cards": hotspot_cards,
         "hotspot_card_count": len(hotspot_cards),
         "representative_source_count": len(representative_video_candidates),
+        "trusted_candidate_count": len(hotspot_cards),
+        "screening_requested_candidate_ids": sorted(requested_candidate_ids or set()),
+        "screening_requested_source_ids": sorted(requested_source_ids),
         "deep_read_summary": deep_read_summary,
         **deep_read_summary,
         "understanding_results": understanding_results,
@@ -1013,6 +1096,52 @@ def enrich(args: argparse.Namespace, collection: dict[str, Any]) -> dict[str, An
         "substitute_count": 0,
     })
     return value
+
+
+def validate_editorial_screening(
+    run_id: str,
+    result: dict[str, Any],
+    candidates: list[dict[str, Any]],
+) -> tuple[list[dict[str, Any]], set[str]]:
+    """Validate the first pass without making any visible editorial decision."""
+    if result.get("run_id") != run_id or not isinstance(result.get("screening"), list):
+        raise WorkflowConflict("editorial_screening_result_invalid")
+    allowed = {str(row.get("candidate_id") or "") for row in candidates}
+    rows = result["screening"]
+    identities = [str(row.get("candidate_id") or "") for row in rows if isinstance(row, dict)]
+    if (
+        len(rows) != len(identities)
+        or set(identities) != allowed
+        or len(identities) != len(set(identities))
+    ):
+        raise WorkflowConflict("editorial_screening_coverage_incomplete")
+    by_id = {str(row.get("candidate_id") or ""): row for row in candidates}
+    requested: set[str] = set()
+    normalized: list[dict[str, Any]] = []
+    for row in rows:
+        if not isinstance(row, dict):
+            raise WorkflowConflict("editorial_screening_row_invalid")
+        identity = str(row.get("candidate_id") or "")
+        request = row.get("request_deep_read")
+        reason = str(row.get("reason") or "").strip()
+        if identity not in by_id or not isinstance(request, bool) or not reason:
+            raise WorkflowConflict("editorial_screening_row_invalid")
+        available = (
+            by_id[identity].get("editorial_screening", {})
+            .get("available_video_source_ids", [])
+        )
+        if request and (
+            not isinstance(available, list) or not available
+        ):
+            raise WorkflowConflict("editorial_screening_video_request_invalid")
+        if request:
+            requested.add(identity)
+        normalized.append({
+            "candidate_id": identity,
+            "request_deep_read": request,
+            "reason": reason,
+        })
+    return normalized, requested
 
 
 def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dict[str, Any]]) -> None:
@@ -1522,6 +1651,7 @@ def main() -> int:
             )
             print(json.dumps(summary, ensure_ascii=False), flush=True)
             return 0
+        model_owned_funnel = args.video_mode == "normal"
         collection_stage = workflow.stage(args.run_id, "collection_enrichment")
         if collection_stage:
             collection = collection_stage["payload"]
@@ -1540,13 +1670,24 @@ def main() -> int:
                     read_json(args.video_discovery_checkpoint),
                     run_id=args.run_id,
                 )
-            elif args.video_mode == "normal":
+            elif args.video_mode == "normal" and not (
+                args.collection_fixture
+                and any(
+                    str(row.get("discovery_source") or "") == "dynamic_search"
+                    for row in collected.get("candidates", [])
+                    if isinstance(row, dict)
+                )
+            ):
                 collected = merge_video_discovery_checkpoint(
                     collected,
                     load_discovery_payload(args, args.run_id, Path(args.artifact_root).resolve()),
                     run_id=args.run_id,
                 )
-            collection = enrich(args, collected)
+            collection = enrich(
+                args,
+                collected,
+                requested_candidate_ids=set() if model_owned_funnel else None,
+            )
             completed_item_ids = {
                 str(row["item_id"]) for row in collection["content_items"]
             }
@@ -1559,25 +1700,140 @@ def main() -> int:
                 for row in collection["item_failures"]
                 if str(row["item_id"]) not in completed_item_ids
             ])
-            stage_status = "completed_with_failures" if collection["item_failures"] else (
-                "completed" if collection["content_items"] else "completed_empty"
+            stage_status = (
+                "in_progress"
+                if model_owned_funnel and collection.get("candidates")
+                else "completed_with_failures" if collection["item_failures"] else (
+                    "completed" if collection["content_items"] else "completed_empty"
+                )
             )
             workflow.commit_stage(args.run_id, "collection_enrichment", collection, stage_status)
+            collection_stage = workflow.stage(args.run_id, "collection_enrichment")
         editorial_stage = workflow.stage(args.run_id, "editorial")
         editorial_handoff = editorial_handoff_candidates(collection)
-        if editorial_stage:
-            editorial = editorial_stage["payload"]
-        elif not editorial_handoff:
+        submitted_editorial = (
+            read_json(args.editorial_result_file)
+            if args.editorial_result_file else None
+        )
+        screening_complete = bool(
+            editorial_stage
+            and editorial_stage["payload"].get("phase") == "screening_complete"
+        )
+        legacy_direct_submission = bool(
+            isinstance(submitted_editorial, dict)
+            and "topics" in submitted_editorial
+            and "screening" not in submitted_editorial
+        )
+        if not editorial_handoff:
+            # In the normal model-owned path an empty trusted pool is a truthful
+            # empty result; Python must not invent visible editorial decisions.
             editorial = {
                 "run_id": args.run_id,
-                "topics": complete_editorial_ledger(
+                "topics": [] if model_owned_funnel else complete_editorial_ledger(
                     collection.get("hotspot_cards", []),
                     [],
                 ),
             }
             workflow.commit_stage(args.run_id, "editorial", editorial, "completed")
+        elif editorial_stage and editorial_stage["status"] == "completed":
+            # A later public wake may carry only a per-topic script item. Reuse
+            # the committed model result instead of reopening editorial.
+            editorial = editorial_stage["payload"]
+        elif model_owned_funnel and not screening_complete and not legacy_direct_submission:
+            if not submitted_editorial:
+                workflow.mark_waiting(args.run_id)
+                emit_handoff(args, {
+                    "ok": True,
+                    "action": "editorial_required",
+                    "stage": "editorial",
+                    "editorial_phase": "screening",
+                    "skill_names": [EDITORIAL_SKILL],
+                    "candidate_topics": editorial_handoff,
+                    "screening_result_contract": {
+                        "run_id": args.run_id,
+                        "screening": [
+                            {
+                                "candidate_id": "<trusted candidate id>",
+                                "request_deep_read": False,
+                                "reason": "candidate-local screening reason",
+                            }
+                        ],
+                        "coverage": "one row per trusted candidate",
+                        "request_range": "0..N",
+                    },
+                    "stage_contract": {
+                        "automation_codex_is_sole_ai_owner": True,
+                        "direct_skill": EDITORIAL_SKILL,
+                        "full_trusted_pool_screening": True,
+                        "video_processing_is_model_requested_only": True,
+                    },
+                })
+                return 0
+            screening_rows, requested = validate_editorial_screening(
+                args.run_id, submitted_editorial, editorial_handoff,
+            )
+            workflow.commit_stage(
+                args.run_id,
+                "editorial",
+                {
+                    "run_id": args.run_id,
+                    "business_date": args.business_date,
+                    "phase": "screening_complete",
+                    "screening": screening_rows,
+                    "requested_candidate_ids": sorted(requested),
+                },
+                "in_progress",
+            )
+            collection = enrich(
+                args,
+                collection,
+                requested_candidate_ids=requested,
+                screening_rows=screening_rows,
+            )
+            collection_status = (
+                "completed_with_failures" if collection["item_failures"]
+                else "completed"
+            )
+            workflow.commit_stage(
+                args.run_id, "collection_enrichment", collection, collection_status,
+            )
+            editorial_handoff = editorial_handoff_candidates(collection)
+            workflow.mark_waiting(args.run_id)
+            emit_handoff(args, {
+                "ok": True,
+                "action": "editorial_required",
+                "stage": "editorial",
+                "editorial_phase": "final",
+                "skill_names": [EDITORIAL_SKILL],
+                "candidate_topics": editorial_handoff,
+                "stage_contract": {
+                    "automation_codex_is_sole_ai_owner": True,
+                    "direct_skill": EDITORIAL_SKILL,
+                    "full_trusted_pool_final_judgment": True,
+                    "same_run_media_only": True,
+                    "screening_requested_candidate_ids": sorted(requested),
+                },
+            })
+            return 0
+        elif model_owned_funnel and screening_complete and not submitted_editorial:
+            workflow.mark_waiting(args.run_id)
+            emit_handoff(args, {
+                "ok": True,
+                "action": "editorial_required",
+                "stage": "editorial",
+                "editorial_phase": "final",
+                "skill_names": [EDITORIAL_SKILL],
+                "candidate_topics": editorial_handoff,
+                "stage_contract": {
+                    "automation_codex_is_sole_ai_owner": True,
+                    "direct_skill": EDITORIAL_SKILL,
+                    "full_trusted_pool_final_judgment": True,
+                    "same_run_media_only": True,
+                },
+            })
+            return 0
         else:
-            if not args.editorial_result_file:
+            if not submitted_editorial:
                 workflow.mark_waiting(args.run_id)
                 emit_handoff(args, {
                     "ok": True,
@@ -1593,7 +1849,7 @@ def main() -> int:
                     },
                 })
                 return 0
-            judged_editorial = read_json(args.editorial_result_file)
+            judged_editorial = submitted_editorial
             validate_editorial(args.run_id, judged_editorial, editorial_handoff)
             if not (args.video_mode == "disabled" and not args.qa_frozen_packages):
                 try:
@@ -1609,6 +1865,14 @@ def main() -> int:
                     judged_editorial["topics"],
                 ),
             }
+            if collection_stage and collection_stage["status"] == "in_progress":
+                collection_status = (
+                    "completed_with_failures" if collection["item_failures"]
+                    else "completed"
+                )
+                workflow.commit_stage(
+                    args.run_id, "collection_enrichment", collection, collection_status,
+                )
             workflow.record_skill_diagnostic(
                 args.run_id, "editorial", "direct", SKILLS[0],
                 {
