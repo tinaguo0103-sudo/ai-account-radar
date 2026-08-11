@@ -347,8 +347,11 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         )
         self.assertIn("directly applies austin-voice-scriptwriter", release_protocol)
         self.assertIn("raw source/video material", release_protocol)
-        self.assertIn("do not invent Austin/client/team tests or results", release_protocol)
+        self.assertIn("stay truthful about Austin/client/team tests and results", release_protocol)
+        self.assertIn("compose the complete body before filling title/hook/structure", release_protocol)
         self.assertIn("The controller owns order, checkpoint, validation and publisher", release_protocol)
+        self.assertNotIn("Seedance", release_protocol)
+        self.assertNotIn("candidate-specific reason", release_protocol)
         self.assertNotIn("silent fact limits", release_protocol)
         self.assertNotIn("selection reason", release_protocol)
         self.assertNotIn("source verification", release_protocol)
@@ -509,7 +512,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertNotIn("writing_phases", handoff["topic_input"])
             self.assertEqual(
                 handoff["topic_input"]["writer_owns_final_fields"],
-                ["title", "hook", "structure", "body"],
+                ["body", "title", "hook", "structure"],
             )
             self.assertNotIn("PRIVATE_PERSONA", json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn("reference_selection", json.dumps(handoff, ensure_ascii=False))

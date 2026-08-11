@@ -11,8 +11,9 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-VOICE_SKILL_DIR = ROOT / "skills" / "austin-voice-scriptwriter"
-VOICE_MODULE_PATH = VOICE_SKILL_DIR / "scripts" / "austin_voice.py"
+VOICE_SKILL_DIR = ROOT / "skills" / "austin-no-overtime-scripting"
+VOICE_MODULE_PATH = VOICE_SKILL_DIR / "scripts" / "austin_voice_legacy.py"
+NORMAL_VOICE_SKILL_DIR = ROOT / "skills" / "austin-voice-scriptwriter"
 SCRIPTING_MODULE_PATH = ROOT / "skills" / "austin-no-overtime-scripting" / "scripts" / "austin_scripting.py"
 
 
@@ -32,17 +33,17 @@ SCRIPTING = load_module(SCRIPTING_MODULE_PATH, "austin_scripting_research_fusion
 
 def render_package_document(raw_topic: dict[str, str]) -> str:
     topic = SCRIPTING.normalize_topic(raw_topic, record_id=raw_topic["record_id"])
-    old_env = os.environ.get("AUSTIN_VOICE_SCRIPT_SKILL_DIR")
-    os.environ["AUSTIN_VOICE_SCRIPT_SKILL_DIR"] = str(VOICE_SKILL_DIR)
+    old_env = os.environ.get("AUSTIN_LEGACY_VOICE_RENDERER_PATH")
+    os.environ["AUSTIN_LEGACY_VOICE_RENDERER_PATH"] = str(VOICE_MODULE_PATH)
     try:
         with tempfile.TemporaryDirectory() as temp_dir:
             result = SCRIPTING.render_full_execution_package(topic, Path(temp_dir), run_date="2026-07-02")
             return Path(result["document_path"]).read_text(encoding="utf-8")
     finally:
         if old_env is None:
-            os.environ.pop("AUSTIN_VOICE_SCRIPT_SKILL_DIR", None)
+            os.environ.pop("AUSTIN_LEGACY_VOICE_RENDERER_PATH", None)
         else:
-            os.environ["AUSTIN_VOICE_SCRIPT_SKILL_DIR"] = old_env
+            os.environ["AUSTIN_LEGACY_VOICE_RENDERER_PATH"] = old_env
 
 
 def markdown_section(document: str, heading: str) -> str:
@@ -192,19 +193,33 @@ VOICE_AGENT_TOPIC = {
 
 
 class AustinVoiceResearchFusionTest(unittest.TestCase):
+    def test_normal_voice_skill_has_no_retired_template_sources(self) -> None:
+        skill = (NORMAL_VOICE_SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        self.assertFalse((NORMAL_VOICE_SKILL_DIR / "references" / "public_voice_style.md").exists())
+        self.assertFalse((NORMAL_VOICE_SKILL_DIR / "scripts" / "austin_voice.py").exists())
+        self.assertNotIn("## 写作顺序", skill)
+        self.assertNotIn("public_voice_style.md", skill)
+        self.assertNotIn("scripts/austin_voice.py", skill)
+        self.assertIn("完整、可直接朗读的 body", skill)
+
+        retired_loader = SCRIPTING_MODULE_PATH.read_text(encoding="utf-8")
+        self.assertNotIn("AUSTIN_VOICE_SCRIPT_SKILL_DIR", retired_loader)
+        self.assertIn("austin_voice_legacy.py", retired_loader)
+        self.assertTrue(VOICE_MODULE_PATH.is_file())
+
     def test_research_context_enters_generation_input_and_package(self) -> None:
         topic = SCRIPTING.normalize_topic(VOICE_AGENT_TOPIC, record_id=VOICE_AGENT_TOPIC["record_id"])
-        old_env = os.environ.get("AUSTIN_VOICE_SCRIPT_SKILL_DIR")
-        os.environ["AUSTIN_VOICE_SCRIPT_SKILL_DIR"] = str(VOICE_SKILL_DIR)
+        old_env = os.environ.get("AUSTIN_LEGACY_VOICE_RENDERER_PATH")
+        os.environ["AUSTIN_LEGACY_VOICE_RENDERER_PATH"] = str(VOICE_MODULE_PATH)
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 result = SCRIPTING.render_full_execution_package(topic, Path(temp_dir), run_date="2026-07-02")
                 document = Path(result["document_path"]).read_text(encoding="utf-8")
         finally:
             if old_env is None:
-                os.environ.pop("AUSTIN_VOICE_SCRIPT_SKILL_DIR", None)
+                os.environ.pop("AUSTIN_LEGACY_VOICE_RENDERER_PATH", None)
             else:
-                os.environ["AUSTIN_VOICE_SCRIPT_SKILL_DIR"] = old_env
+                os.environ["AUSTIN_LEGACY_VOICE_RENDERER_PATH"] = old_env
 
         self.assertIn("搜索来源：未找到可核验的 xAI Voice Agent Builder 官方资料", result["production_context"])
         self.assertIn("表达模式：同类 voice-agent 内容常用", result["production_context"])
@@ -247,7 +262,7 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
             ROOT / "skills" / "austin-no-overtime-scripting" / "SKILL.md",
             ROOT / "skills" / "austin-no-overtime-scripting" / "scripts" / "austin_scripting.py",
             ROOT / "skills" / "austin-voice-scriptwriter" / "SKILL.md",
-            ROOT / "skills" / "austin-voice-scriptwriter" / "scripts" / "austin_voice.py",
+            VOICE_MODULE_PATH,
         ]
         source = "\n".join(path.read_text(encoding="utf-8") for path in paths)
 

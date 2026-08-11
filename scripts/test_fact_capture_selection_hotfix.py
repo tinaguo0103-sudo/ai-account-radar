@@ -121,9 +121,10 @@ class FactCaptureSelectionHotfixTests(unittest.TestCase):
             .read_text(encoding="utf-8")
         )
         protocol = " ".join(release["externalSchedule"]["outerAgentProtocol"])
-        self.assertIn("one short candidate-specific reason plus trusted evidence IDs", protocol)
+        self.assertIn("substantive reason per candidate", protocol)
         self.assertIn("traffic, recency, source count and persona remain evidence", protocol)
-        self.assertIn("low traffic is not a bonus", protocol)
+        self.assertNotIn("low traffic is not a bonus", protocol)
+        self.assertNotIn("trusted evidence IDs", protocol)
 
     def test_discovery_uses_bounded_multi_direction_query_ledger(self):
         source = (

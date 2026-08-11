@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import tempfile
 import unittest
@@ -12,9 +11,6 @@ import run_daily_workflow as workflow
 ROOT = Path(__file__).resolve().parents[1]
 RELEASE_CONFIG = ROOT / "config" / "web010_single_daily_workflow_release.json"
 VOICE_SKILL = ROOT / "skills" / "austin-voice-scriptwriter" / "SKILL.md"
-NO_OVERTIME_SKILL = ROOT / "skills" / "austin-no-overtime-scripting" / "SKILL.md"
-KNOWN_GOOD_VOICE_SHA256 = "7cac5ccadbeb6e808b8d737bc9318c54e22209c6fcc37385a96515e9c94c0ede"
-KNOWN_GOOD_VOICE_GIT_BLOB = "82e18672b687fa04ecafc1a6da2606499ac1ffcc"
 
 
 class SpokenScriptRestorationTests(unittest.TestCase):
@@ -207,45 +203,40 @@ class SpokenScriptRestorationTests(unittest.TestCase):
                 selected,
             )
 
-    def test_voice_skill_is_exact_known_good_and_has_no_later_meta_contract(self):
+    def test_voice_skill_is_minimal_and_retired_renderer_is_absent(self):
         voice = VOICE_SKILL.read_text(encoding="utf-8")
-        no_overtime = NO_OVERTIME_SKILL.read_text(encoding="utf-8")
-        self.assertEqual(
-            hashlib.sha256(VOICE_SKILL.read_bytes()).hexdigest(),
-            KNOWN_GOOD_VOICE_SHA256,
-        )
-        voice_bytes = VOICE_SKILL.read_bytes()
-        git_blob_header = f"blob {len(voice_bytes)}\0".encode("ascii")
-        self.assertEqual(
-            hashlib.sha1(git_blob_header + voice_bytes).hexdigest(),
-            KNOWN_GOOD_VOICE_GIT_BLOB,
-        )
-        self.assertIn("## 写作顺序", voice)
-        self.assertIn("## 必须像口播", voice)
-        self.assertIn("## 资源", voice)
+        self.assertIn("当前一个已选题", voice)
+        self.assertIn("完整、可直接朗读的 body", voice)
+        self.assertIn("topic_id/title/hook/structure/body", voice)
         for retired in (
-            "Facts-first Draft",
-            "Austin Author Edit",
-            "anti-template",
-            "Semantic Plan",
-            "austin_private_context_reading.md",
+            "## 写作顺序",
+            "## 来源与核验只留在后台",
+            "## 必须像口播",
+            "## 可借用语气",
+            "## 禁止口吻",
+            "public_voice_style.md",
+            "scripts/austin_voice.py",
         ):
             self.assertNotIn(retired, voice)
-        self.assertIn("不虚构经历", no_overtime)
-        self.assertIn("Writer child 不得递归启动 Codex", no_overtime)
+        self.assertFalse((VOICE_SKILL.parent / "references" / "public_voice_style.md").exists())
+        self.assertFalse((VOICE_SKILL.parent / "scripts" / "austin_voice.py").exists())
+        self.assertTrue((ROOT / "skills" / "austin-no-overtime-scripting" / "scripts" / "austin_voice_legacy.py").exists())
 
     def test_release_contract_uses_one_owner_and_direct_skill_stages(self):
         config = json.loads(RELEASE_CONFIG.read_text(encoding="utf-8"))
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
         self.assertIn("current Automation Codex directly applies ai-account-editorial-director", protocol)
         self.assertIn("directly applies austin-voice-scriptwriter", protocol)
-        self.assertIn("directly reads the approved core Austin persona", protocol)
-        self.assertIn("approved core Austin persona", protocol)
-        self.assertIn("short candidate-specific reason", protocol)
-        self.assertIn("one current rich Topic Card", protocol)
-        self.assertIn("accepts the next one after the current submission", protocol)
+        self.assertIn("approved Austin persona, cases and samples", protocol)
+        self.assertIn("current rich Topic Card", protocol)
+        self.assertIn("compose the complete body before filling title/hook/structure", protocol)
+        self.assertIn("exposes one topic at a time", protocol)
         self.assertIn("material_or_angle_insufficiency", protocol)
         self.assertNotIn("austin-no-overtime-scripting", protocol)
+        self.assertNotIn("Seedance", protocol)
+        self.assertNotIn("same-run representative keyframe", protocol)
+        self.assertNotIn("source verification", protocol)
+        self.assertNotIn("candidate-specific reason", protocol)
         self.assertNotIn("Facts-first Draft", protocol)
         self.assertNotIn("Author Edit", protocol)
         self.assertNotIn("Semantic Plan", protocol)

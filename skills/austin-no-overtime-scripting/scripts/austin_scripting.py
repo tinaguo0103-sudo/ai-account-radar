@@ -1249,16 +1249,15 @@ def full_script_opening(topic: dict[str, Any], validation: ValidationResult) -> 
 
 def voice_skill_candidates() -> list[Path]:
     candidates: list[Path] = []
-    env_dir = os.getenv("AUSTIN_VOICE_SCRIPT_SKILL_DIR", "").strip()
-    if env_dir:
-        candidates.append(Path(env_dir).expanduser())
-    candidates.append(Path.home() / ".codex" / "skills" / VOICE_SKILL_NAME)
+    env_path = os.getenv("AUSTIN_LEGACY_VOICE_RENDERER_PATH", "").strip()
+    if env_path:
+        candidates.append(Path(env_path).expanduser())
+    candidates.append(Path(__file__).resolve().with_name("austin_voice_legacy.py"))
     return candidates
 
 
 def load_voice_skill_module() -> Any | None:
-    for skill_dir in voice_skill_candidates():
-        module_path = skill_dir / "scripts" / "austin_voice.py"
+    for module_path in voice_skill_candidates():
         if not module_path.exists():
             continue
         try:

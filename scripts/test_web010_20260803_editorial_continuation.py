@@ -79,14 +79,20 @@ class EditorialContinuationTest(unittest.TestCase):
             "failures": [],
         }, {"trend:one"})
 
-    def test_release_protocol_supersedes_evidence_gate(self) -> None:
+    def test_release_protocol_keeps_stage_contract_without_creative_rules(self) -> None:
         root = Path(__file__).resolve().parents[1]
         contract = json.loads((root / "config/web010_single_daily_workflow_release.json").read_text())
         prompt = "\n".join(contract["externalSchedule"]["outerAgentProtocol"]).lower()
-        self.assertIn("evidence quantity is not recommendation eligibility", prompt)
-        self.assertIn("research failure never automatically changes select to observe", prompt)
-        self.assertIn("one current rich topic card", prompt)
-        self.assertIn("accepts the next one after the current submission", prompt)
+        self.assertIn("applies ai-account-editorial-director", prompt)
+        self.assertIn("controller validates and commits", prompt)
+        self.assertIn("stay truthful about austin/client/team tests and results", prompt)
+        self.assertIn("compose the complete body before filling title/hook/structure", prompt)
+        self.assertIn("current rich topic card", prompt)
+        self.assertIn("exposes one topic at a time", prompt)
+        self.assertNotIn("evidence quantity is not recommendation eligibility", prompt)
+        self.assertNotIn("research failure never automatically changes select to observe", prompt)
+        self.assertNotIn("seedance", prompt)
+        self.assertNotIn("keyframe", prompt)
         self.assertNotIn("evidence shortage forces observe", prompt)
 
     def test_public_editorial_handoff_uses_full_trusted_pool(self) -> None:

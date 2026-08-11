@@ -431,7 +431,7 @@ def topic_packet(
         "topic_input": {
             "packet_id": packet_id,
             "topic_id": topic["topic_id"],
-            "writer_owns_final_fields": ["title", "hook", "structure", "body"],
+            "writer_owns_final_fields": ["body", "title", "hook", "structure"],
             "current_topic_only": True,
             "previous_topic_body_included": False,
         },
