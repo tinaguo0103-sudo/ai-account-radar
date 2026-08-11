@@ -76,26 +76,15 @@ Austin 的解释和尚未发生的拟议测试分开。不能用标题、摘要�
 判断、相同动作或实验三项同时为真。共享产品、实体、工具或大类不构成重复。每个 observe/reject
 理由在隐藏其余候选后仍须成立，不能使用“不是今天主线”“不如另一题”或名额竞争作为语义。
 
-输出必须包括：
+输出保持为现有简单 editorial result：
 
-- `editorial_thesis`：先写这张卡自己的 `thesis`、具体 `audience_conflict`、`why_now`，以及
-  `evidence_boundary` 中的 `source_facts`、`interpretation`、`proposed_test`。这些是模型拥有的
-  语义判断与事实边界，必须先于运营字段形成；不得把视频时间线或画面顺序当作 thesis。
 - `decision`: `select|observe|reject`
-- `standalone_eligibility`: 独立 `decision` 与 candidate-local `reason`
-- 选择与不选择理由
-- 被舍弃的常见讲法
-- Austin 自然角度
-- 2-3 个标题方向与最终可见标题
-- 标题理由、来源标题钩子及借用/舍弃说明
-- `recommendation_status`: `生成脚本包|存素材|观察|不做`。`补证据` 不是推荐状态；研究仅是已选题的可选内容增强。
-- near miss / gap
-- 公开主编判断摘要
-- research dossier hash 与支撑 angle/title/hook 的 evidence IDs
-- 面向用户的中文 `source_read`、中文 `audience_hook` 与 `research_confidence`
-- 3-5 拍内容结构（推荐制作时必填）
+- `selection_reason`: 一句候选特有、基于原始事实的理由；理由说明题目本身为什么值得做、观察或拒绝，不替写作者提出全文 thesis。
+- `evidence_source_ids`: 支撑该理由的可信原始来源 ID。
+- `standalone_eligibility`: 如当前流程要求，记录该题在隐藏其他候选时的独立判断与理由。
 
-其中 `selection_reason` 和 `unique_judgment` 必须是这张候选卡自己的实质判断：指出来源里的具体事实或细节、受影响的人或动作、会带来的后果，以及 Austin 在这里要承担的取舍；同时把来源事实到主结论的桥说完整，解释这个细节为什么支持当前角度，并区分来源事实、Austin 的解释和尚未发生的拟议测试。不要从一个功能、清单或热度信号直接跳到宽泛结论，不要只把标题换一种说法，也不要用“值得关注”“适合账号”之类的口号代替判断。自由成文即可，不新增小节、顺序、长度、清单或评分要求。
+可以保留现有结果中的其他业务元数据以兼容旧 checkpoint，但不要生成或要求
+`editorial_thesis`、`audience_conflict`、`why_now`、`evidence_boundary`、`unique_judgment`、标题、钩子、结构、金句或拟议测试计划来指导 writer。视频观察、来源事实和拟议测试仍是后台证据；正文的主张、论证和收束交给 writer 自己完成。`selection_reason` 不得退化成“值得关注”“适合账号”之类的口号，也不能把视频按时间线复述成脚本提纲。
 
 Stage 1 禁止看到或输出实验、验证、资产、母场景、旧 04 字段、deterministic angle/title hint。标题借原始市场入口但不能照抄，也不能凭 persona 发明内容主张。
 

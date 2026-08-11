@@ -27,7 +27,7 @@ _DEFAULT_PRIVATE_SKILL_ROOT = (
     Path.home()
     / ".codex"
     / "skills"
-    / "austin-voice-scriptwriter"
+    / "austin-no-overtime-scripting"
 )
 
 DIRECT_WRITER_STAGE_CONTRACT = {
@@ -35,13 +35,11 @@ DIRECT_WRITER_STAGE_CONTRACT = {
     "topology": "one_automation_codex_direct_writer_stage_per_selected_topic",
     "input_scope": [
         "one_same_run_rich_topic_card",
-        "austin_thesis_audience_conflict_and_why_now",
-        "model_owned_evidence_boundary",
-        "source_facts_and_details",
-        "fact_boundary",
-        "cannot_claim",
-        "short_selection_reason",
-        "substantive_editorial_judgment",
+        "current_topic_raw_source_and_video_evidence",
+        "fact_boundary_silent_constraint",
+        "cannot_claim_silent_constraint",
+        "short_candidate_specific_selection_reason",
+        "approved_austin_persona_cases_and_samples_read_transiently",
     ],
     "skills": [
         "austin-voice-scriptwriter",

@@ -956,18 +956,6 @@ def validate_candidate_specific_decisions(
             str(value) not in allowed_sources for value in source_ids
         ):
             raise ValueError("editorial_candidate_evidence_source_invalid")
-        basis = topic.get("decision_basis")
-        if not isinstance(basis, dict) or any(
-            not _text(basis.get(key))
-            for key in ("traffic", "content", "persona", "differentiation")
-        ):
-            raise ValueError("editorial_candidate_basis_incomplete")
-        if topic.get("decision") in {"select", "observe", "reject"}:
-            angle = _text(topic.get("unique_judgment"))
-            if not angle or any(phrase in angle for phrase in GENERIC_ANGLE_PHRASES):
-                raise ValueError("editorial_primary_angle_not_concrete")
-            if angle.casefold() == normalized_reason:
-                raise ValueError("editorial_primary_angle_reason_not_distinct")
 
 
 def complete_editorial_ledger(

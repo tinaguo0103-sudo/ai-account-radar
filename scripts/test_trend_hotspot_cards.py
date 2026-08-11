@@ -400,17 +400,20 @@ class TrendHotspotCardsTest(unittest.TestCase):
             ledger[1]["differentiation"]["primary_angle"],
         )
         invalid = {**topic, "unique_judgment": "换成自己的语言"}
-        with self.assertRaisesRegex(ValueError, "editorial_primary_angle_not_concrete"):
-            validate_candidate_specific_decisions([invalid], cards)
+        validate_candidate_specific_decisions([invalid], cards)
         missing_observe_angle = {**observed_topic, "unique_judgment": ""}
-        with self.assertRaisesRegex(ValueError, "editorial_primary_angle_not_concrete"):
-            validate_candidate_specific_decisions([topic, missing_observe_angle], cards)
+        validate_candidate_specific_decisions([topic, missing_observe_angle], cards)
         reused_reason = {
             **observed_topic,
             "unique_judgment": observed_topic["selection_reason"],
         }
-        with self.assertRaisesRegex(ValueError, "editorial_primary_angle_reason_not_distinct"):
-            validate_candidate_specific_decisions([topic, reused_reason], cards)
+        validate_candidate_specific_decisions([topic, reused_reason], cards)
+        duplicate_reason = {
+            **observed_topic,
+            "selection_reason": topic["selection_reason"],
+        }
+        with self.assertRaisesRegex(ValueError, "editorial_candidate_reason_reused"):
+            validate_candidate_specific_decisions([topic, duplicate_reason], cards)
 
     def test_legacy_repeated_angle_becomes_event_cards_without_cross_event_merge(self):
         rows = [

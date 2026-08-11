@@ -94,9 +94,10 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertEqual(topic["source_evidence"]["source"]["likes"], 0)
         self.assertNotIn("comments", topic["source_evidence"]["source"])
         self.assertEqual(
-            topic["editorial_thesis"]["thesis"],
-            "长任务真正要留下的是恢复点。",
+            topic["selection_reason"],
+            "来源事实与 Austin 工作流判断直接相关。",
         )
+        self.assertNotIn("editorial_thesis", topic)
         for blueprint_field in (
             "title", "hook", "structure", "unique_judgment", "persona_fit",
             "workflow_context", "traffic_opportunity", "differentiation", "cluster_synthesis",
@@ -171,39 +172,20 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         topic = workflow.build_scripts_handoff(
             "run_20260808_121000", "2026-08-08", fixture, editorial,
         )["selected_topics"][0]
-        self.assertEqual(
-            topic["editorial_thesis"],
-            {
-                "thesis": "长任务真正要留下的是恢复点。",
-                "audience_conflict": "做长任务的人想继续推进，却常常只能从头重做。",
-                "why_now": "同一 run 的来源给出了失败后恢复的具体事实。",
-                "evidence_boundary": {
-                    "source_facts": "来源记录了同一批次的 checkpoint 与恢复结果。",
-                    "interpretation": "恢复点比单次运行时长更能决定流程是否可用。",
-                    "proposed_test": "可以在失败后只继续未完成阶段来验证这个判断。",
-                },
-                "unique_judgment": "The source changes the cost of a real recovery decision.",
-                "decision_basis": {
-                    "content": "A source-owned workflow consequence.",
-                    "persona": "A concrete Austin business angle.",
-                    "differentiation": "A judgment not interchangeable with a tool summary.",
-                },
-                "evidence_source_ids": ["douyin:100"],
-            },
-        )
+        self.assertEqual(topic["selection_reason"], "来源事实与 Austin 工作流判断直接相关。")
+        self.assertNotIn("editorial_thesis", topic)
         self.assertNotIn("title", topic)
         self.assertNotIn("hook", topic)
         self.assertNotIn("structure", topic)
 
-    def test_selected_editorial_without_model_thesis_fails_closed(self):
+    def test_selected_editorial_without_model_thesis_is_accepted(self):
         editorial = self.editorial()
         del editorial["topics"][0]["editorial_thesis"]
-        with self.assertRaisesRegex(workflow.WorkflowConflict, "editorial_thesis_missing"):
-            workflow.validate_editorial(
-                "run_20260803_110453",
-                {"run_id": "run_20260803_110453", "topics": editorial["topics"]},
-                [{"candidate_id": "douyin:100"}],
-            )
+        workflow.validate_editorial(
+            "run_20260803_110453",
+            {"run_id": "run_20260803_110453", "topics": editorial["topics"]},
+            [{"candidate_id": "douyin:100"}],
+        )
 
     def test_simple_result_accepts_item_local_material_failure(self):
         selected = {"douyin:100"}
@@ -258,7 +240,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("current Automation Codex directly applies austin-voice-scriptwriter", protocol)
         self.assertIn("directly reads the approved core Austin persona", protocol)
         self.assertIn("A Python path, byte or hash ledger is not a substitute", protocol)
-        self.assertIn("substantive editorial judgment", protocol)
+        self.assertIn("short candidate-specific reason", protocol)
         self.assertIn("one selected rich Topic Card at a time", protocol)
         self.assertIn("No full-batch script submission exists", protocol)
         self.assertIn("material_or_angle_insufficiency", protocol)

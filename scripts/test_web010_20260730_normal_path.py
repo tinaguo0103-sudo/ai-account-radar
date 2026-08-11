@@ -104,7 +104,11 @@ class CollectionAdapterTests(unittest.TestCase):
         result = {
             "run_id": RUN_ID,
             "topics": [
-                {"candidate_id": row["candidate_id"], "decision": "observe"}
+                {
+                    "candidate_id": row["candidate_id"],
+                    "decision": "observe",
+                    "selection_reason": f"candidate-specific reason {row['candidate_id']}",
+                }
                 for row in candidates
             ],
         }

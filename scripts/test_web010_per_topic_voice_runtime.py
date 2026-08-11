@@ -17,6 +17,7 @@ from daily_workflow import DailyWorkflow
 from run_daily_workflow import build_scripts_handoff, enrich
 from spoken_script_runtime import (
     LEGACY_WRITER_CHILD_SNAPSHOT,
+    _default_context_paths,
     load_austin_authority,
     load_writer_contract,
     new_checkpoint,
@@ -335,7 +336,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             )["externalSchedule"]["outerAgentProtocol"]
         )
         self.assertIn("directly applies austin-voice-scriptwriter", release_protocol)
-        self.assertIn("Fact boundaries and cannot-claim notes are silent constraints", release_protocol)
+        self.assertIn("silent fact limits", release_protocol)
         self.assertIn("ordinary conditional", release_protocol)
         self.assertIn("never announce source verification", release_protocol)
         self.assertNotIn("austin-no-overtime-scripting", release_protocol)
@@ -407,6 +408,18 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertTrue(all(set(row) == {"source_id", "role", "sha256", "read_status", "excerpt_ids"} for row in authority["sources"]))
             self.assertNotIn("evidence-playbook", encoded)
             self.assertNotIn("project_prd", encoded)
+
+    def test_default_private_authority_uses_existing_user_owned_sources(self):
+        paths = _default_context_paths()
+        self.assertIn("austin-no-overtime-scripting", str(paths["AUSTIN_PRIVATE_REFERENCE_ROOT"]))
+        self.assertNotIn("austin-voice-scriptwriter/references/private", str(paths["AUSTIN_PRIVATE_REFERENCE_ROOT"]))
+        for key in (
+            "AUSTIN_PRIVATE_REFERENCE_ROOT",
+            "AUSTIN_CASE_REFERENCE_FILE",
+            "AUSTIN_APPROVED_SCRIPT_MVP",
+            "AUSTIN_APPROVED_SCRIPT_DIRECTOR",
+        ):
+            self.assertTrue(paths[key].exists(), key)
 
     def test_public_per_topic_checkpoint_resume_and_noop(self):
         with tempfile.TemporaryDirectory() as directory:

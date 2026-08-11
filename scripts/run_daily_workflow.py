@@ -1194,12 +1194,10 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
             )
             if not valid_duplicate:
                 raise WorkflowConflict("editorial_standalone_decision_demotion")
-        if row["decision"] == "select" and not all(
-            str(row.get(key) or "") for key in ("title", "hook", "structure", "selection_reason")
-        ):
-            raise WorkflowConflict("editorial_selected_incomplete")
-        if row["decision"] == "select":
-            model_editorial_thesis(row)
+        if row["decision"] in {"select", "observe", "reject"} and not str(
+            row.get("selection_reason") or ""
+        ).strip():
+            raise WorkflowConflict("editorial_candidate_reason_missing")
         if row["decision"] in {"observe", "reject"}:
             basis = row.get("decision_basis")
             if isinstance(basis, dict) and not all(
@@ -1365,24 +1363,6 @@ def compact_video_evidence(package: dict[str, Any] | None) -> dict[str, Any] | N
     return evidence
 
 
-def model_editorial_thesis(topic: dict[str, Any]) -> dict[str, Any]:
-    """Validate and carry model-owned meaning without authoring a fallback."""
-    value = topic.get("editorial_thesis")
-    if not isinstance(value, dict):
-        raise WorkflowConflict("editorial_thesis_missing")
-    if any(not str(value.get(key) or "").strip() for key in (
-        "thesis", "audience_conflict", "why_now",
-    )):
-        raise WorkflowConflict("editorial_thesis_incomplete")
-    boundary = value.get("evidence_boundary")
-    if not isinstance(boundary, dict) or any(
-        not str(boundary.get(key) or "").strip()
-        for key in ("source_facts", "interpretation", "proposed_test")
-    ):
-        raise WorkflowConflict("editorial_evidence_boundary_incomplete")
-    return json.loads(json.dumps(value, ensure_ascii=False))
-
-
 def compact_source_facts(rows: list[dict[str, Any]]) -> dict[str, Any]:
     """Expose source-owned facts/details without forwarding editorial blueprints."""
     facts: dict[str, Any] = {}
@@ -1439,7 +1419,6 @@ def build_scripts_handoff(
         item = items.get(str(candidate.get("item_id") or topic_id), {})
         rows = [topic, candidate, item]
         source_rows = [candidate, item]
-        editorial_thesis = model_editorial_thesis(topic)
         source_evidence = {
             "source": {
                 key: first_context_value(source_rows, *aliases)
@@ -1485,7 +1464,7 @@ def build_scripts_handoff(
         selected_topics.append({
             "topic_id": topic_id,
             "trend_event_id": candidate.get("trend_event_id") or topic_id,
-            "editorial_thesis": editorial_thesis,
+            "selection_reason": str(topic.get("selection_reason") or "").strip(),
             "source_evidence": source_evidence,
         })
     return {
