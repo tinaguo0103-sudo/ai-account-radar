@@ -765,30 +765,43 @@ def normalize_collection_candidates(
 
 
 def _compact_editorial_source(source: dict[str, Any]) -> dict[str, Any]:
-    """Keep source facts and status without forwarding the enriched card."""
+    """Keep candidate-local facts without forwarding collection bookkeeping."""
+    title = source.get("title")
+    summary = source.get("summary")
+    engagement = source.get("engagement")
+    compact_engagement = {
+        key: engagement.get(key)
+        for key in ("likes", "comments", "favorites", "shares")
+        if isinstance(engagement, dict) and engagement.get(key) is not None
+    }
     keys = (
-        "source_id", "url", "platform", "author", "title", "summary",
-        "published_at", "published_display", "recency", "recency_cohort",
-        "engagement", "signal_source", "source_role", "business_signal_role",
+        "source_id", "url", "platform", "author", "title",
+        "published_display", "recency_cohort", "signal_source",
+        "source_role", "business_signal_role",
         "understanding_status", "understanding_failure",
     )
-    return {
+    output = {
         key: source.get(key)
         for key in keys
         if source.get(key) not in (None, "", [], {})
     }
+    if compact_engagement:
+        output["engagement"] = compact_engagement
+    if summary not in (None, "", [], {}) and summary != title:
+        output["summary"] = summary
+    return output
 
 
 def _compact_editorial_card(
     card: dict[str, Any],
     package: dict[str, Any] | None,
 ) -> dict[str, Any]:
-    """Expose the full identity index and readable evidence, not legacy payloads."""
+    """Expose a readable full-pool index and candidate-local same-run evidence."""
     output = {
         key: card.get(key)
         for key in (
             "candidate_id", "run_id", "item_id", "representative_item_id",
-            "trend_event_id", "event_name", "title", "source_url",
+            "trend_event_id", "title", "source_url",
             "fact_boundary", "cannot_claim", "source_count", "merged_input_count",
         )
         if card.get(key) not in (None, "", [], {})
@@ -806,9 +819,12 @@ def _compact_editorial_card(
     })
     screening = card.get("editorial_screening")
     if isinstance(screening, dict):
+        # The first-pass reason can contain a screening recommendation such as
+        # "先观察". Final editorial must judge the candidate itself, so expose
+        # only the media request facts needed to locate candidate-local evidence.
         output["editorial_screening"] = {
             key: screening.get(key)
-            for key in ("available_video_source_ids", "requested", "reason")
+            for key in ("available_video_source_ids", "requested")
             if key == "available_video_source_ids"
             or screening.get(key) not in (None, "", [], {})
         }
@@ -818,27 +834,28 @@ def _compact_editorial_card(
             key: deep_read.get(key)
             for key in (
                 "requested_count", "attempted_count", "completed_count",
-                "failed_count", "status", "reason", "information_gain_stop",
-                "max_sources",
+                "failed_count", "status",
             )
             if deep_read.get(key) is not None
         }
     qualification = card.get("qualification")
     if isinstance(qualification, dict):
-        output["qualification"] = {
-            key: qualification.get(key)
-            for key in (
-                "status", "traffic_state", "traffic_reason", "persona_state",
-                "persona_reason", "recency_cohorts",
-                "traffic_comparison_contract", "authenticity_state",
-                "official_time_is_not_traffic_qualification",
-            )
-            if qualification.get(key) not in (None, "", [], {})
+        output["signal_evidence"] = {
+            "traffic_state": qualification.get("traffic_state"),
+            "recency_cohorts": qualification.get("recency_cohorts"),
+            "persona_state": qualification.get("persona_state"),
+            "authenticity_state": qualification.get("authenticity_state"),
+        }
+        output["signal_evidence"] = {
+            key: value
+            for key, value in output["signal_evidence"].items()
+            if value not in (None, "", [], {})
         }
     if package:
         evidence = compact_video_evidence(package)
         if evidence is not None:
             output["video_evidence"] = {
+                "candidate_local": True,
                 "status": package.get("status"),
                 "run_id": package.get("run_id"),
                 "source_url": package.get("source_url"),

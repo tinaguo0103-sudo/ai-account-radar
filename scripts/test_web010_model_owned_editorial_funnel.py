@@ -86,6 +86,19 @@ class ModelOwnedEditorialFunnelTests(unittest.TestCase):
         self.assertNotIn("cluster_synthesis", cards[0])
         self.assertIn("sources", cards[0])
         self.assertIsNone(cards[0]["video_evidence"])
+        self.assertNotIn("reason", cards[0]["editorial_screening"])
+
+    def test_final_handoff_does_not_turn_screening_or_deep_read_state_into_decision(self):
+        normalized = enrich(args(), collection(), requested_candidate_ids=set())
+        cards = editorial_handoff_candidates(normalized)
+        for card in cards:
+            self.assertNotIn("reason", card.get("editorial_screening", {}))
+            self.assertNotIn("reason", card.get("deep_read", {}))
+            self.assertNotIn("status", card.get("signal_evidence", {}))
+        self.assertEqual(
+            {row["candidate_id"] for row in cards},
+            {row["candidate_id"] for row in normalized["candidates"]},
+        )
 
     def test_editorial_handoff_keeps_requested_video_observations(self):
         normalized = enrich(args(), collection(), requested_candidate_ids=set())
@@ -128,6 +141,7 @@ class ModelOwnedEditorialFunnelTests(unittest.TestCase):
         handoff = editorial_handoff_candidates(enriched)
         observed = next(row for row in handoff if row["candidate_id"] == requested)
         representative = observed["video_evidence"]["representative_sources"][0]
+        self.assertTrue(observed["video_evidence"]["candidate_local"])
         self.assertEqual(representative["asr_supplement"], "现场旁白")
         self.assertEqual(representative["screen_facts"][0]["text"], "画面文字")
         self.assertEqual(representative["keyframes"][0]["time_second"], 1)
