@@ -764,10 +764,101 @@ def normalize_collection_candidates(
     return list(normalized.values()), list(video_by_item.values()), failures
 
 
+def _compact_editorial_source(source: dict[str, Any]) -> dict[str, Any]:
+    """Keep source facts and status without forwarding the enriched card."""
+    keys = (
+        "source_id", "url", "platform", "author", "title", "summary",
+        "published_at", "published_display", "recency", "recency_cohort",
+        "engagement", "signal_source", "source_role", "business_signal_role",
+        "understanding_status", "understanding_failure",
+    )
+    return {
+        key: source.get(key)
+        for key in keys
+        if source.get(key) not in (None, "", [], {})
+    }
+
+
+def _compact_editorial_card(
+    card: dict[str, Any],
+    package: dict[str, Any] | None,
+) -> dict[str, Any]:
+    """Expose the full identity index and readable evidence, not legacy payloads."""
+    output = {
+        key: card.get(key)
+        for key in (
+            "candidate_id", "run_id", "item_id", "representative_item_id",
+            "trend_event_id", "event_name", "title", "source_url",
+            "fact_boundary", "cannot_claim", "source_count", "merged_input_count",
+        )
+        if card.get(key) not in (None, "", [], {})
+    }
+    sources = [
+        _compact_editorial_source(source)
+        for source in card.get("sources", [])
+        if isinstance(source, dict)
+    ]
+    output["sources"] = sources
+    output["business_signal_roles"] = sorted({
+        str(source.get("business_signal_role"))
+        for source in sources
+        if source.get("business_signal_role")
+    })
+    screening = card.get("editorial_screening")
+    if isinstance(screening, dict):
+        output["editorial_screening"] = {
+            key: screening.get(key)
+            for key in ("available_video_source_ids", "requested", "reason")
+            if key == "available_video_source_ids"
+            or screening.get(key) not in (None, "", [], {})
+        }
+    deep_read = card.get("deep_read")
+    if isinstance(deep_read, dict):
+        output["deep_read"] = {
+            key: deep_read.get(key)
+            for key in (
+                "requested_count", "attempted_count", "completed_count",
+                "failed_count", "status", "reason", "information_gain_stop",
+                "max_sources",
+            )
+            if deep_read.get(key) is not None
+        }
+    qualification = card.get("qualification")
+    if isinstance(qualification, dict):
+        output["qualification"] = {
+            key: qualification.get(key)
+            for key in (
+                "status", "traffic_state", "traffic_reason", "persona_state",
+                "persona_reason", "recency_cohorts",
+                "traffic_comparison_contract", "authenticity_state",
+                "official_time_is_not_traffic_qualification",
+            )
+            if qualification.get(key) not in (None, "", [], {})
+        }
+    if package:
+        evidence = compact_video_evidence(package)
+        if evidence is not None:
+            output["video_evidence"] = {
+                "status": package.get("status"),
+                "run_id": package.get("run_id"),
+                "source_url": package.get("source_url"),
+                **evidence,
+            }
+    else:
+        output["video_evidence"] = None
+    return output
+
+
 def editorial_handoff_candidates(collection: dict[str, Any]) -> list[dict[str, Any]]:
-    """Return every trusted same-run card for model-owned editorial screening."""
+    """Return every trusted card with only source facts and same-run evidence."""
+    packages = {
+        str(row.get("candidate_id") or ""): row.get("package")
+        for row in (collection.get("understanding_results") or [])
+        if isinstance(row, dict) and str(row.get("candidate_id") or "")
+    }
     return [
-        row for row in (collection.get("candidates") or [])
+        _compact_editorial_card(row, packages.get(str(row.get("candidate_id") or "")))
+        for row in (collection.get("candidates") or [])
         if isinstance(row, dict) and str(row.get("candidate_id") or "")
     ]
 
@@ -1213,6 +1304,54 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
             )
             if reason.strip() in evidence_only_reasons:
                 raise WorkflowConflict("editorial_nonselect_evidence_gate_forbidden")
+
+
+def validate_editorial_understanding_consistency(
+    run_id: str,
+    result: dict[str, Any],
+    collection: dict[str, Any],
+) -> None:
+    """Reject only contradictions between final decisions and committed media state."""
+    if result.get("run_id") != run_id or not isinstance(result.get("topics"), list):
+        raise WorkflowConflict("editorial_result_invalid")
+    cards = {
+        str(row.get("candidate_id") or ""): row
+        for row in collection.get("candidates", [])
+        if isinstance(row, dict) and str(row.get("candidate_id") or "")
+    }
+    packages = {
+        str(row.get("candidate_id") or ""): row.get("package")
+        for row in collection.get("understanding_results", [])
+        if isinstance(row, dict) and str(row.get("candidate_id") or "")
+    }
+    for row in result["topics"]:
+        identity = str(row.get("candidate_id") or "")
+        card = cards.get(identity)
+        if card is None:
+            raise WorkflowConflict("editorial_result_identity_conflict")
+        deep_read = card.get("deep_read") if isinstance(card.get("deep_read"), dict) else {}
+        status = str(deep_read.get("status") or "")
+        if status not in {"completed", "completed_with_failures"}:
+            continue
+        package = packages.get(identity)
+        if not isinstance(package, dict) or package.get("status") not in {
+            "completed", "completed_with_failures",
+        }:
+            raise WorkflowConflict("editorial_completed_material_conflict")
+        if row.get("decision") == "failed":
+            raise WorkflowConflict("editorial_completed_material_conflict")
+        if row.get("decision") not in {"select", "observe", "reject"}:
+            continue
+        analyzed_source_ids = {
+            str(source.get("source_id") or "")
+            for source in card.get("sources", [])
+            if isinstance(source, dict) and source.get("understanding_status") == "analyzed"
+        }
+        evidence_ids = {
+            str(value) for value in (row.get("evidence_source_ids") or [])
+        }
+        if not analyzed_source_ids or not evidence_ids.intersection(analyzed_source_ids):
+            raise WorkflowConflict("editorial_completed_evidence_missing")
 
 
 def validate_scripts(run_id: str, result: dict[str, Any], selected: set[str]) -> None:
@@ -1874,6 +2013,9 @@ def main() -> int:
                 return 0
             judged_editorial = submitted_editorial
             validate_editorial(args.run_id, judged_editorial, editorial_handoff)
+            validate_editorial_understanding_consistency(
+                args.run_id, judged_editorial, collection,
+            )
             if not (args.video_mode == "disabled" and not args.qa_frozen_packages):
                 try:
                     validate_candidate_specific_decisions(

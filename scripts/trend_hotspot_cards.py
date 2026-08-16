@@ -206,6 +206,7 @@ def _source(candidate: dict[str, Any], item: dict[str, Any] | None) -> dict[str,
         "provenance": provenance,
         "signal_source": _text(candidate.get("discovery_source") or candidate.get("候选来源方式")),
         "account_role": "auxiliary_signal",
+        "business_signal_role": _business_signal_role(platform, url, candidate),
         "source_role": (
             "conflicting_view"
             if _text(first("viewpoint_role", "观点关系")) == "conflicting_view"
@@ -217,14 +218,26 @@ def _source(candidate: dict[str, Any], item: dict[str, Any] | None) -> dict[str,
     return source
 
 
+def _business_signal_role(
+    platform: Any,
+    url: str,
+    candidate: dict[str, Any],
+) -> str:
+    """Name the business signal without pretending it is a content authority."""
+    platform_key = _text(platform).casefold()
+    signal_source = _text(
+        candidate.get("discovery_source") or candidate.get("候选来源方式")
+    ).casefold()
+    if platform_key in {"douyin", "抖音"} or "douyin.com" in url.casefold():
+        return "primary_content_signal"
+    if platform_key in {"aihot", "aihot热点"} or signal_source == "aihot热点":
+        return "weak_trend_signal"
+    return "supporting_signal"
+
+
 def _source_role(source: dict[str, Any], *, strongest_id: str) -> str:
     if source.get("source_role") == "conflicting_view":
         return "conflicting_view"
-    host = urlsplit(str(source.get("url") or "")).netloc.lower()
-    if host and "douyin.com" not in host:
-        return "original_or_official"
-    if source.get("source_id") == strongest_id:
-        return "traffic_signal"
     title = _text(source.get("title")).casefold()
     if any(word in title for word in ("实测", "教程", "演示", "复盘", "案例")):
         return "scene_or_demo"
@@ -259,17 +272,9 @@ def select_representative_sources(
     if not sources:
         return []
     limit = min(max(1, default_count), hard_cap, len(sources))
-    priority = {
-        "original_or_official": 0,
-        "traffic_signal": 1,
-        "scene_or_demo": 2,
-        "conflicting_view": 3,
-        "independent_view": 4,
-    }
     ordered = sorted(
         sources,
         key=lambda row: (
-            priority.get(str(row.get("source_role")), 9),
             -(float(row.get("engagement", {}).get("likes") or -1)),
             str(row.get("source_id")),
         ),
@@ -446,8 +451,8 @@ def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
             int(traffic.get("independent_source_count") or 0) >= 2
             and int(traffic.get("time_source_count") or 0) >= 1
         )
-        official_with_time = any(
-            source.get("source_role") == "original_or_official"
+        weak_signal_with_time = any(
+            source.get("business_signal_role") == "weak_trend_signal"
             and (source.get("published_at") or source.get("published_display") or source.get("recency"))
             for source in card.get("sources", [])
         )
@@ -466,9 +471,9 @@ def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
             traffic_reason = (
                 f"{int(traffic.get('independent_source_count') or 0)} 个独立来源在同一时间窗指向同一事件"
             )
-        elif official_with_time:
+        elif weak_signal_with_time:
             traffic_reason = (
-                "存在带时间的原始或官方事件信号，但缺少相对互动或多源佐证，"
+                "存在带时间的弱趋势事件信号，但缺少相对互动或多源佐证，"
                 "保留为热点线索"
             )
         elif visible_likes and not recent_signal:
@@ -495,7 +500,7 @@ def qualify_hotspot_cards(cards: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "recency_cohorts": sorted(cohorts),
             "traffic_comparison_contract": "same_platform_same_recency_cohort",
             "authenticity_state": (
-                "official_with_time" if official_with_time else "not_established_by_official_time"
+                "weak_trend_with_time" if weak_signal_with_time else "not_established_by_official_time"
             ),
             "official_time_is_not_traffic_qualification": True,
             "relative_basis": {

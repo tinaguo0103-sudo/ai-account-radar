@@ -267,9 +267,30 @@ class TrendHotspotCardsTest(unittest.TestCase):
         cards, _ = attach_understanding(cards, [], [])
         card = cards[0]
         self.assertEqual(card["qualification"]["status"], "signal_only")
-        self.assertEqual(card["qualification"]["authenticity_state"], "official_with_time")
+        self.assertEqual(card["qualification"]["authenticity_state"], "weak_trend_with_time")
         self.assertEqual(card["deep_read"]["status"], "not_qualified")
         self.assertEqual(card["review_stage"], "signal_only")
+
+    def test_business_signal_roles_do_not_follow_url_host(self):
+        douyin = candidate("1", "抖音现场", "抖音现场", platform="抖音", likes=10)
+        ai_hot = candidate("2", "官方模型消息", "官方模型消息", platform="AIHOT")
+        ai_hot.update({
+            "source_url": "https://example.com/official-model",
+            "published_at": "2026-07-31T02:00:00Z",
+        })
+        cards = build_hotspot_cards(
+            [douyin, ai_hot], items=items([douyin, ai_hot]), run_id=RUN_ID,
+        )
+        sources = {
+            source["url"]: source
+            for card in cards
+            for source in card["sources"]
+        }
+        self.assertEqual(sources[douyin["source_url"]]["business_signal_role"], "primary_content_signal")
+        self.assertEqual(sources[ai_hot["source_url"]]["business_signal_role"], "weak_trend_signal")
+        self.assertNotIn(sources[ai_hot["source_url"]]["source_role"], {
+            "original_or_official", "traffic_signal",
+        })
 
     def test_eligible_without_attempt_cannot_be_understanding_failure(self):
         low = candidate("1", "低互动工作流", "低互动工作流", likes=1)

@@ -98,17 +98,20 @@ class EditorialContinuationTest(unittest.TestCase):
     def test_public_editorial_handoff_uses_full_trusted_pool(self) -> None:
         complete = [{"candidate_id": "trend:complete"}]
         all_candidates = complete + [{"candidate_id": "trend:metadata-only"}]
+        first = workflow.editorial_handoff_candidates({
+            "editorial_candidates": complete,
+            "candidates": all_candidates,
+        })
+        second = workflow.editorial_handoff_candidates({"candidates": all_candidates})
         self.assertEqual(
-            workflow.editorial_handoff_candidates({
-                "editorial_candidates": complete,
-                "candidates": all_candidates,
-            }),
-            all_candidates,
+            [row["candidate_id"] for row in first],
+            [row["candidate_id"] for row in all_candidates],
         )
         self.assertEqual(
-            workflow.editorial_handoff_candidates({"candidates": all_candidates}),
-            all_candidates,
+            [row["candidate_id"] for row in second],
+            [row["candidate_id"] for row in all_candidates],
         )
+        self.assertTrue(all("sources" in row for row in first))
 
 
 if __name__ == "__main__":
