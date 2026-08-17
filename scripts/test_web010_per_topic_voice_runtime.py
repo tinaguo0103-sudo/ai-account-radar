@@ -7,16 +7,14 @@ import sys
 import tempfile
 import threading
 import unittest
-import zipfile
 from types import SimpleNamespace
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
+from unittest import mock
 
 from daily_workflow import DailyWorkflow, WorkflowConflict
 from run_daily_workflow import build_scripts_handoff, enrich
 from spoken_script_runtime import (
-    _default_context_paths,
-    load_austin_authority,
     load_writer_contract,
     new_checkpoint,
     sanitize_handoff,
@@ -287,7 +285,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         write_json(path, payload)
         return path
 
-    def test_direct_writer_stage_contract_has_no_selector_or_style_payload(self):
+    def test_direct_writer_stage_contract_has_no_default_reference_authority(self):
         contract = load_writer_contract()
         self.assertEqual(contract["schema_version"], 1)
         self.assertEqual(
@@ -303,12 +301,11 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             [
                 "one_same_run_rich_topic_card",
                 "current_topic_raw_source_and_video_evidence",
-                "user_original_persona_cases_and_samples_read_transiently",
                 "simple_truthfulness_requirement",
                 "simple_spoken_script_output",
             ],
         )
-        self.assertEqual(contract["private_authority"], "automation_codex_reads_user_original_sources_transiently")
+        self.assertNotIn("private_authority", contract)
         self.assertEqual(contract["previous_topic_body"], "forbidden")
         self.assertEqual(contract["other_topic_identity"], "forbidden")
         self.assertEqual(contract["editorial_batch_deliberation"], "forbidden")
@@ -349,9 +346,10 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         )
         self.assertIn("directly applies austin-voice-scriptwriter", release_protocol)
         self.assertIn("raw source/video material", release_protocol)
-        self.assertIn("full original user materials", release_protocol)
-        self.assertIn("config/web010_austin_private_context_allowlist.json", release_protocol)
-        self.assertIn("legacy private Skill files", release_protocol)
+        self.assertIn("only the current rich Topic Card", release_protocol)
+        self.assertNotIn("full original user materials", release_protocol)
+        self.assertNotIn("web010_austin_private_context_allowlist", release_protocol)
+        self.assertNotIn("legacy private Skill files", release_protocol)
         self.assertIn("stay truthful about Austin/client/team tests and results", release_protocol)
         self.assertIn("compose the complete body before filling title/hook/structure", release_protocol)
         self.assertIn("The controller owns order, checkpoint, validation and publisher", release_protocol)
@@ -368,6 +366,58 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         self.assertNotIn("--script-reference-selection-file", source)
         self.assertNotIn("set_reference_selection", source)
         self.assertNotIn("austin-no-overtime-scripting", source)
+        runtime = (ROOT / "scripts" / "spoken_script_runtime.py").read_text(encoding="utf-8")
+        for forbidden in (
+            "load_austin_authority",
+            "_context_allowlist",
+            "AUSTIN_PRIVATE_CONTEXT_ALLOWLIST",
+            "AUSTIN_PRIVATE_REFERENCE_ROOT",
+            "AUSTIN_CASE_REFERENCE_FILE",
+            "AUSTIN_APPROVED_SCRIPT_MVP",
+            "AUSTIN_APPROVED_SCRIPT_DIRECTOR",
+        ):
+            self.assertNotIn(forbidden, runtime)
+        self.assertFalse((ROOT / "config" / "web010_austin_private_context_allowlist.json").exists())
+
+    def test_default_writer_does_not_read_private_sources_or_environment_paths(self):
+        topic = {
+            "topic_id": "topic-default-only",
+            "source_evidence": {
+                "source": {"title": "same-run source"},
+                "video": {"keyframes": []},
+            },
+        }
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            sentinel = root / "production_context.md"
+            sentinel.write_text("PRIVATE_TEMPLATE_SENTINEL", encoding="utf-8")
+            env = {
+                "AUSTIN_PRIVATE_CONTEXT_ALLOWLIST": str(root / "allowlist.json"),
+                "AUSTIN_PRIVATE_REFERENCE_ROOT": str(root),
+                "AUSTIN_CASE_REFERENCE_FILE": str(root / "full_topic_cards.json"),
+                "AUSTIN_APPROVED_SCRIPT_MVP": str(root / "mvp.md"),
+                "AUSTIN_APPROVED_SCRIPT_DIRECTOR": str(root / "director.md"),
+            }
+            with mock.patch.dict(os.environ, env, clear=False):
+                with mock.patch("builtins.open", side_effect=AssertionError("private source read")):
+                    contract = load_writer_contract()
+                    packet = topic_packet(
+                        RUN_ID, BUSINESS_DATE, topic, 0, 1, 0, contract,
+                    )
+            self.assertEqual(
+                contract["input_scope"],
+                [
+                    "one_same_run_rich_topic_card",
+                    "current_topic_raw_source_and_video_evidence",
+                    "simple_truthfulness_requirement",
+                    "simple_spoken_script_output",
+                ],
+            )
+            encoded = json.dumps(packet, ensure_ascii=False)
+            self.assertNotIn("PRIVATE_TEMPLATE_SENTINEL", encoded)
+            self.assertNotIn("allowlist", encoded)
+            self.assertNotIn("private_context", encoded)
+            self.assertEqual(packet["topic_input"]["topic_id"], "topic-default-only")
 
     def test_retired_checkpoint_contract_cannot_restore_legacy_writer_context(self):
         topic = {
@@ -388,74 +438,16 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         }
         with self.assertRaisesRegex(WorkflowConflict, "scripts_checkpoint_writing_contract_conflict"):
             validate_checkpoint(checkpoint, RUN_ID, BUSINESS_DATE, [topic], current)
+        checkpoint = new_checkpoint(
+            RUN_ID, BUSINESS_DATE, [topic], current,
+        )
+        checkpoint["private_authority"] = "legacy/private_runtime.json"
+        with self.assertRaisesRegex(WorkflowConflict, "scripts_checkpoint_private_context_retired"):
+            validate_checkpoint(checkpoint, RUN_ID, BUSINESS_DATE, [topic], current)
         packet = topic_packet(
             RUN_ID, BUSINESS_DATE, topic, 0, 1, 0, current,
         )
         self.assertNotIn("writing_contract", packet)
-
-    def test_runtime_reads_only_original_full_sources_and_returns_safe_ledger(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            project = root / "project"
-            samples = project / "00_资料库" / "03_口播风格样稿"
-            samples.mkdir(parents=True)
-            (samples / "封面skill 口播稿final.md").write_text("owned sample cover", encoding="utf-8")
-            (samples / "热点监控及脚本落地_1500字口播脚本.md").write_text("owned sample radar", encoding="utf-8")
-            case_dir = project / "00_资料库" / "04_案例库"
-            case_dir.mkdir(parents=True)
-            docx = case_dir / "我的案例库.docx"
-            with zipfile.ZipFile(docx, "w") as archive:
-                archive.writestr("word/document.xml", "<document>owned edits</document>")
-            legacy = project / "legacy" / "private"
-            legacy.mkdir(parents=True)
-            (legacy / "production_context.md").write_text("LEGACY_TEMPLATE_SENTINEL", encoding="utf-8")
-            (legacy / "private_runtime.json").write_text(
-                json.dumps({"style_rules": {}, "case_anchors": []}), encoding="utf-8",
-            )
-            authority = load_austin_authority(project_root=project)
-            encoded = json.dumps(authority, ensure_ascii=False)
-            self.assertEqual(authority["read_status"], "complete")
-            self.assertEqual(
-                [row["source_id"] for row in authority["sources"]],
-                [
-                    "austin-original-sample-cover",
-                    "austin-original-sample-radar",
-                    "austin-original-persona-cases-edits",
-                ],
-            )
-            self.assertTrue(all(row["excerpt_ids"] == "full_text" for row in authority["sources"]))
-            self.assertTrue(all(row["read_mode"] == "full_source" for row in authority["sources"]))
-            self.assertNotIn("LEGACY_TEMPLATE_SENTINEL", encoded)
-            self.assertNotIn("production_context", encoded)
-            self.assertNotIn("private_runtime", encoded)
-            self.assertNotIn("approved_austin_script_module", encoded)
-            self.assertTrue(all(set(row) == {"source_id", "role", "sha256", "read_status", "excerpt_ids", "read_mode"} for row in authority["sources"]))
-
-    def test_allowlist_rejects_legacy_paths_and_excerpt_selection(self):
-        with tempfile.TemporaryDirectory() as directory:
-            root = Path(directory)
-            allowlist = root / "allowlist.json"
-            allowlist.write_text(json.dumps({
-                "schema_version": 1,
-                "allowlist_id": "bad",
-                "sources": [{
-                    "source_id": "legacy",
-                    "role": "user_persona",
-                    "kind": "text",
-                    "path_env": "AUSTIN_PRIVATE_REFERENCE_ROOT",
-                    "relative_path": "production_context.md",
-                    "excerpt_ids": ["opening"],
-                    "line_ranges": [[1, 2]],
-                }],
-            }), encoding="utf-8")
-            with self.assertRaisesRegex(WorkflowConflict, "austin_private_context_source_invalid"):
-                load_austin_authority(project_root=root, allowlist_path=allowlist)
-
-    def test_default_private_authority_uses_existing_user_owned_sources(self):
-        paths = _default_context_paths()
-        self.assertEqual(set(paths), {"AUSTIN_PROJECT_ROOT"})
-        self.assertNotIn("austin-no-overtime-scripting", str(paths["AUSTIN_PROJECT_ROOT"]))
-        self.assertNotIn("output/runs", str(paths["AUSTIN_PROJECT_ROOT"]))
 
     def test_public_per_topic_checkpoint_resume_and_noop(self):
         with tempfile.TemporaryDirectory() as directory:
