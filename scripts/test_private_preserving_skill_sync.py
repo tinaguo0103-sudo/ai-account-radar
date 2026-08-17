@@ -10,12 +10,14 @@ import unittest
 from pathlib import Path
 
 import private_preserving_skill_sync as sync
+import sync_ai_account_editorial_director_skill as editorial_cli
 import sync_austin_scripting_skill as scripting_cli
 import sync_austin_voice_scriptwriter_skill as voice_cli
 
 
 ROOT = Path(__file__).resolve().parents[1]
 CLI_MODULES = (
+    ("sync_ai_account_editorial_director_skill", editorial_cli),
     ("sync_austin_scripting_skill", scripting_cli),
     ("sync_austin_voice_scriptwriter_skill", voice_cli),
 )
@@ -81,7 +83,7 @@ class PrivatePreservingSkillSyncTests(unittest.TestCase):
         write(active / "examples" / "private" / "case.json", b"private-case")
         return source, active, backups
 
-    def test_both_formal_clis_fresh_install_and_dry_run(self):
+    def test_all_formal_clis_fresh_install_and_dry_run(self):
         for script in SCRIPTS:
             with self.subTest(script=script.name), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -106,7 +108,7 @@ class PrivatePreservingSkillSyncTests(unittest.TestCase):
                 self.assertIn("private_files=0", install.stdout)
                 self.assertNotIn(str(root), install.stdout)
 
-    def test_both_formal_clis_update_managed_preserve_private_and_clean_stale(self):
+    def test_all_formal_clis_update_managed_preserve_private_and_clean_stale(self):
         for script in SCRIPTS:
             with self.subTest(script=script.name), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
@@ -174,13 +176,9 @@ class PrivatePreservingSkillSyncTests(unittest.TestCase):
             self.assertEqual(result.private_files, 0)
             self.assertEqual(snapshot(active), snapshot(source))
 
-    def test_both_formal_clis_replace_failure_rolls_back_original(self):
-        cli_modules = (
-            ("austin-no-overtime-scripting", scripting_cli),
-            ("austin-voice-scriptwriter", voice_cli),
-        )
-        for skill_name, cli_module in cli_modules:
-            with self.subTest(skill_name=skill_name), tempfile.TemporaryDirectory() as tmp:
+    def test_all_formal_clis_replace_failure_rolls_back_original(self):
+        for module_name, cli_module in CLI_MODULES:
+            with self.subTest(module=module_name), tempfile.TemporaryDirectory() as tmp:
                 root = Path(tmp)
                 source, active, backups = self.fixture(root)
                 original = snapshot(active)
@@ -355,7 +353,7 @@ class PrivatePreservingSkillSyncTests(unittest.TestCase):
             self.assertNotIn("private-persona", text)
             self.assertIn("private_files=2", text)
 
-    def test_both_formal_clis_sanitize_subprocess_filesystem_failures(self):
+    def test_all_formal_clis_sanitize_subprocess_filesystem_failures(self):
         failure_cases = (
             "private_directory_unreadable",
             "private_file_unreadable",
