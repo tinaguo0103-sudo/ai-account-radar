@@ -16,7 +16,7 @@ trusted collection artifact review pool
 -> optional exact source enhancement
 -> persona-native editorial decision
 -> optional selected hard-claim research or claim softening
--> dynamic global ranking (0..N, no cap)
+-> model-owned global final selection (0..10)
 -> operational field mapping
 -> lossless paginated Topic Cards
 ```
@@ -67,14 +67,16 @@ ASR/OCR。先把画面里实际看见的主体、动作、镜头或屏幕变化�
 Austin 的解释和尚未发生的拟议测试分开。不能用标题、摘要或 ASR/OCR 代替看图，也不能把
 其他 run 的图片带进当前候选；关键帧缺失或无法读取时，当前候选保持 item-local 失败或不选。
 
-先逐题完成独立资格判断，再看全批排序。对每个候选先回答反事实问题：如果今天只有这一题，
+先逐题完成独立资格判断，再看全批取舍。对每个候选先回答反事实问题：如果今天只有这一题，
 它是否值得 Austin 制作一篇完整脚本？把答案写入 `standalone_eligibility.decision` 和只基于该卡
-用户价值、persona fit、独特判断、时效与真实来源身份的 `reason`。所有 standalone select 在
-排序前锁定；ranking 只能排序，不能降级。
+用户价值、persona fit、独特判断、时效与真实来源身份的 `reason`。随后同一个主编在完整候选池中
+比较当天的时效性、独特性、账号价值、证据强度和真实重复关系，最终保留自然的 0..10 条 `select`。
+独立有价值但本批优先级不足的题可以进入 `observe`，理由必须说明该题自身的比较结果；不得用
+统一“名额不足”话术，也不得由 Python 代替取舍。
 
-唯一允许的跨候选降级是真重复，并须显式记录 `duplicate_relation`：相同用户冲突、相同核心
-判断、相同动作或实验三项同时为真。共享产品、实体、工具或大类不构成重复。每个 observe/reject
-理由在隐藏其余候选后仍须成立，不能使用“不是今天主线”“不如另一题”或名额竞争作为语义。
+真正重复仍须显式记录 `duplicate_relation`：相同用户冲突、相同核心判断、相同动作或实验三项
+同时为真。共享产品、实体、工具或大类不构成重复。每个 observe/reject 理由在隐藏其余候选后仍
+须成立，不能用“不是今天主线”或“名额竞争”代替候选自身判断。
 
 输出保持为现有简单 editorial result：
 
@@ -114,12 +116,14 @@ Stage 1 不能为自己的内容质量签发通过结论。生成时的自我批
 
 ## Global Ranking
 
-对全部 Stage 1 决策做一次全日排序：
+对全部 Stage 1 决策做一次全日比较和排序：
 
 - 严格 1:1 覆盖，位置唯一为 `1..N`；
-- 只决定顺序和公开取舍，不改变 eligibility、推荐动作、标题、角度或理由；
-- 没有 Top3、配额或截断；所有质量通过的 `select` 候选保持推荐制作；
-- 分页只是展示机制，不能删除或降级候选。
+- 模型决定最终自然保留的 `0..10` 条 `select`；独立判断是输入，不是不可降级的锁；
+- 可以把独立有价值但当天优先级不足的题调整为 `observe`，但必须保留候选特有的比较理由；
+- 不设最低数、来源配额、固定分数或关键词规则。Python 只校验最终 `select` 不超过十条，
+  超过十条返回 typed failure 并等待同一模型重新提交，绝不截断、排序或替选；
+- 分页只是展示机制，不能删除、补位或隐式筛选候选。
 
 ## Stage 2: Operational Mapping
 

@@ -39,13 +39,26 @@ class EditorialStandaloneEligibilityTest(unittest.TestCase):
         candidates = [candidate("strong"), candidate("useful")]
         validate_editorial(RUN, {"run_id": RUN, "topics": [row("strong"), row("useful")]}, candidates)
 
-    def test_ranking_cannot_demote_standalone_select(self) -> None:
+    def test_global_ranking_may_demote_standalone_select_with_local_reason(self) -> None:
         demoted = row("useful", "observe")
         demoted["standalone_eligibility"] = {"decision": "select", "reason": "worthwhile alone"}
-        with self.assertRaisesRegex(WorkflowConflict, "editorial_standalone_decision_demotion"):
-            validate_editorial(RUN, {"run_id": RUN, "topics": [row("strong"), demoted]}, [candidate("strong"), candidate("useful")])
+        validate_editorial(
+            RUN, {"run_id": RUN, "topics": [row("strong"), demoted]},
+            [candidate("strong"), candidate("useful")],
+        )
 
-    def test_true_duplicate_may_demote_but_near_topic_may_not(self) -> None:
+    def test_global_ranking_cannot_promote_standalone_nonselect(self) -> None:
+        promoted = row("narrow", "select")
+        promoted["standalone_eligibility"] = {
+            "decision": "observe", "reason": "not enough value alone",
+        }
+        with self.assertRaisesRegex(WorkflowConflict, "editorial_standalone_decision_promotion"):
+            validate_editorial(
+                RUN, {"run_id": RUN, "topics": [row("strong"), promoted]},
+                [candidate("strong"), candidate("narrow")],
+            )
+
+    def test_true_duplicate_may_demote_but_invalid_duplicate_relation_fails(self) -> None:
         duplicate = row("duplicate", "observe")
         duplicate["standalone_eligibility"] = {"decision": "select", "reason": "worthwhile alone"}
         duplicate["duplicate_relation"] = {

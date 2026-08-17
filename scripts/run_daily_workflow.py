@@ -47,6 +47,7 @@ ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_ROOT = Path.home() / ".codex" / "skills"
 EDITORIAL_SKILL = "ai-account-editorial-director"
 WRITER_SKILL = "austin-voice-scriptwriter"
+MAX_FINAL_EDITORIAL_SELECT = 10
 SKILLS = (EDITORIAL_SKILL, WRITER_SKILL)
 WRITER_SKILLS = (WRITER_SKILL,)
 
@@ -1260,6 +1261,12 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
     identities = [str(row.get("candidate_id") or "") for row in result["topics"]]
     if set(identities) != allowed or len(identities) != len(set(identities)):
         raise WorkflowConflict("editorial_result_coverage_incomplete")
+    selected_count = sum(
+        1 for row in result["topics"]
+        if isinstance(row, dict) and row.get("decision") == "select"
+    )
+    if selected_count > MAX_FINAL_EDITORIAL_SELECT:
+        raise WorkflowConflict("editorial_select_limit_exceeded")
     rows_by_identity = {
         str(row.get("candidate_id") or ""): row for row in result["topics"]
     }
@@ -1277,31 +1284,31 @@ def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dic
         } or not str(standalone.get("reason") or "").strip()):
             raise WorkflowConflict("editorial_standalone_eligibility_missing")
         if requires_standalone and row["decision"] != standalone["decision"]:
+            if standalone["decision"] != "select" or row["decision"] not in {"observe", "reject"}:
+                raise WorkflowConflict("editorial_standalone_decision_promotion")
             duplicate = row.get("duplicate_relation")
-            representative_id = str(
-                duplicate.get("duplicate_of") if isinstance(duplicate, dict) else ""
-            )
-            representative = rows_by_identity.get(representative_id)
-            representative_standalone = (
-                representative.get("standalone_eligibility")
-                if isinstance(representative, dict) else None
-            )
-            valid_duplicate = (
-                standalone["decision"] == "select"
-                and row["decision"] in {"observe", "reject"}
-                and isinstance(duplicate, dict)
-                and representative_id in allowed
-                and representative_id != identity
-                and isinstance(representative, dict)
-                and representative.get("decision") == "select"
-                and isinstance(representative_standalone, dict)
-                and representative_standalone.get("decision") == "select"
-                and all(duplicate.get(key) is True for key in (
-                    "same_user_conflict", "same_core_judgment", "same_action_or_experiment",
-                ))
-            )
-            if not valid_duplicate:
-                raise WorkflowConflict("editorial_standalone_decision_demotion")
+            if isinstance(duplicate, dict):
+                representative_id = str(duplicate.get("duplicate_of") or "")
+                representative = rows_by_identity.get(representative_id)
+                representative_standalone = (
+                    representative.get("standalone_eligibility")
+                    if isinstance(representative, dict) else None
+                )
+                valid_duplicate = (
+                    standalone["decision"] == "select"
+                    and row["decision"] in {"observe", "reject"}
+                    and representative_id in allowed
+                    and representative_id != identity
+                    and isinstance(representative, dict)
+                    and representative.get("decision") == "select"
+                    and isinstance(representative_standalone, dict)
+                    and representative_standalone.get("decision") == "select"
+                    and all(duplicate.get(key) is True for key in (
+                        "same_user_conflict", "same_core_judgment", "same_action_or_experiment",
+                    ))
+                )
+                if not valid_duplicate:
+                    raise WorkflowConflict("editorial_standalone_decision_demotion")
         if row["decision"] in {"select", "observe", "reject"} and not str(
             row.get("selection_reason") or ""
         ).strip():
