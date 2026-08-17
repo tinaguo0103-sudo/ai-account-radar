@@ -227,7 +227,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         protocol = "\n".join(config["externalSchedule"]["outerAgentProtocol"])
         self.assertIn("current Automation Codex directly applies ai-account-editorial-director", protocol)
         self.assertIn("directly applies austin-voice-scriptwriter", protocol)
-        self.assertIn("approved Austin persona, cases and samples", protocol)
+        self.assertIn("full original user materials", protocol)
         self.assertIn("current rich Topic Card", protocol)
         self.assertIn("compose the complete body before filling title/hook/structure", protocol)
         self.assertIn("exposes one topic at a time", protocol)

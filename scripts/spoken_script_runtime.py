@@ -23,27 +23,20 @@ DEFAULT_PRIVATE_CONTEXT_ALLOWLIST = (
     / "web010_austin_private_context_allowlist.json"
 )
 
-_DEFAULT_PRIVATE_SKILL_ROOT = (
-    Path.home()
-    / ".codex"
-    / "skills"
-    / "austin-no-overtime-scripting"
-)
-
 DIRECT_WRITER_STAGE_CONTRACT = {
     "schema_version": 1,
     "topology": "one_automation_codex_direct_writer_stage_per_selected_topic",
     "input_scope": [
         "one_same_run_rich_topic_card",
         "current_topic_raw_source_and_video_evidence",
-        "approved_austin_persona_cases_and_samples_read_transiently",
+        "user_original_persona_cases_and_samples_read_transiently",
         "simple_truthfulness_requirement",
         "simple_spoken_script_output",
     ],
     "skills": [
         "austin-voice-scriptwriter",
     ],
-    "private_authority": "automation_codex_reads_approved_writer_authority_transiently",
+    "private_authority": "automation_codex_reads_user_original_sources_transiently",
     "previous_topic_body": "forbidden",
     "other_topic_identity": "forbidden",
     "editorial_batch_deliberation": "forbidden",
@@ -51,53 +44,9 @@ DIRECT_WRITER_STAGE_CONTRACT = {
     "raw_text_persistence": "forbidden",
 }
 
-# Checkpoints written by f68bf927 may still carry the superseded two-skill
-# snapshot. It is accepted only while resuming that historical checkpoint; all
-# newly emitted packets use DIRECT_WRITER_STAGE_CONTRACT above.
-LEGACY_WRITER_CHILD_SNAPSHOT = {
-    "schema_version": 1,
-    "topology": "one_fresh_bounded_writer_child_per_selected_topic",
-    "skills": [
-        "austin-no-overtime-scripting",
-        "austin-voice-scriptwriter",
-    ],
-    "private_authority": "writer_child_reads_allowlist_transiently",
-    "previous_topic_body": "forbidden",
-    "other_topic_identity": "forbidden",
-    "editorial_batch_deliberation": "forbidden",
-    "recursive_child_execution": "forbidden",
-    "raw_text_persistence": "forbidden",
-}
-
-# A task may resume an in-progress checkpoint created by the immediately
-# previous per-topic runtime. It still has no private text or script body, so
-# accepting this safe snapshot does not reopen the retired batch path.
-LEGACY_COMPATIBILITY_SNAPSHOT = {
-    "schema_version": 1,
-    "phase_order": ["facts_first_draft", "austin_author_edit"],
-    "facts_first_private_context": "forbidden_until_draft_complete",
-    "author_edit_after_draft": "draft_complete",
-    "raw_text_persistence": "forbidden",
-}
-
-
 def _default_context_paths() -> dict[str, Path]:
-    skill_root = _DEFAULT_PRIVATE_SKILL_ROOT
     workspace = Path(__file__).resolve().parents[2]
-    production_root = workspace / "ai_account_radar" / "output" / "runs"
-    return {
-        "AUSTIN_PRIVATE_REFERENCE_ROOT": skill_root / "references" / "private",
-        "AUSTIN_CASE_REFERENCE_FILE": skill_root / "examples" / "private" / "full_topic_cards.json",
-        "AUSTIN_PROJECT_ROOT": workspace,
-        "AUSTIN_APPROVED_SCRIPT_MVP": (
-            production_root / "run_20260805_080110" / "scripts"
-            / "0f51191cbf21c6b2677f.md"
-        ),
-        "AUSTIN_APPROVED_SCRIPT_DIRECTOR": (
-            production_root / "run_20260803_110453" / "scripts"
-            / "b4cf842748e23795e5c9.md"
-        ),
-    }
+    return {"AUSTIN_PROJECT_ROOT": workspace}
 
 
 def _context_allowlist(path: str | Path | None = None) -> dict[str, Any]:
@@ -110,9 +59,8 @@ def _context_allowlist(path: str | Path | None = None) -> dict[str, Any]:
     except (OSError, json.JSONDecodeError) as error:
         raise WorkflowConflict("austin_private_context_allowlist_unreadable") from error
     allowed_roles = {
-        "user_persona", "user_original_cases", "user_original_case_cards",
-        "user_original_sample", "user_original_edit_pairs",
-        "approved_austin_script_module",
+        "user_persona", "user_original_cases", "user_original_sample",
+        "user_original_edit_pairs",
     }
     if (
         not isinstance(value, dict)
@@ -128,13 +76,14 @@ def _context_allowlist(path: str | Path | None = None) -> dict[str, Any]:
         source_id = str(source_row.get("source_id") or "")
         role = str(source_row.get("role") or "")
         excerpt_ids = source_row.get("excerpt_ids")
+        relative = str(source_row.get("relative_path") or "")
         if (
             not source_id or source_id in seen or role not in allowed_roles
-            or not source_row.get("path_env")
-            or not isinstance(excerpt_ids, list)
-            or not excerpt_ids
-            or any(not isinstance(item, str) or not item for item in excerpt_ids)
-            or source_row.get("kind") not in {"text", "json", "docx"}
+            or source_row.get("path_env") != "AUSTIN_PROJECT_ROOT"
+            or not relative or Path(relative).is_absolute() or ".." in Path(relative).parts
+            or excerpt_ids != ["full_text"]
+            or source_row.get("kind") not in {"text", "docx"}
+            or any(key in source_row for key in ("line_ranges", "json_paths", "paragraph_anchors"))
         ):
             raise WorkflowConflict("austin_private_context_source_invalid")
         seen.add(source_id)
@@ -142,6 +91,8 @@ def _context_allowlist(path: str | Path | None = None) -> dict[str, Any]:
 
 
 def _resolve_context_path(source_row: dict[str, Any]) -> Path:
+    if source_row.get("path_env") != "AUSTIN_PROJECT_ROOT":
+        raise WorkflowConflict("austin_private_context_path_forbidden")
     defaults = _default_context_paths()
     path_env = str(source_row["path_env"])
     base_value = os.environ.get(path_env)
@@ -166,17 +117,11 @@ def _authority_sources(
 
 
 def load_austin_authority(
-    private_root: str | Path | None = None,
-    case_file: str | Path | None = None,
     project_root: str | Path | None = None,
     allowlist_path: str | Path | None = None,
 ) -> dict[str, Any]:
     """Verify the allowlist and return safe provenance; raw text stays transient."""
-    overrides = {
-        "AUSTIN_PRIVATE_REFERENCE_ROOT": private_root,
-        "AUSTIN_CASE_REFERENCE_FILE": case_file,
-        "AUSTIN_PROJECT_ROOT": project_root,
-    }
+    overrides = {"AUSTIN_PROJECT_ROOT": project_root}
     previous: dict[str, str | None] = {}
     for key, value in overrides.items():
         if value is not None:
@@ -209,7 +154,8 @@ def load_austin_authority(
                 "role": role,
                 "sha256": hashlib.sha256(raw).hexdigest(),
                 "read_status": "read",
-                "excerpt_ids": ",".join(str(item) for item in source_row["excerpt_ids"]),
+                "excerpt_ids": "full_text",
+                "read_mode": "full_source",
             })
     finally:
         for key, value in previous.items():
@@ -347,17 +293,7 @@ def validate_checkpoint(
     if checkpoint.get("selected_topic_ids") != selected_topic_ids(selected_topics):
         raise WorkflowConflict("scripts_checkpoint_selection_conflict")
     contract = checkpoint.get("writing_contract")
-    if contract is None:
-        # A pre-reset in-progress checkpoint may still carry the old safe metadata.
-        # It is accepted for resume, but the next packet uses the direct-stage contract.
-        legacy = checkpoint.get("editing_reference")
-        if checkpoint.get("schema_version") not in {2, RUNTIME_SCHEMA_VERSION} or not isinstance(legacy, dict):
-            raise WorkflowConflict("scripts_checkpoint_writing_contract_conflict")
-    elif contract not in (
-        _writing_contract_snapshot(writer_contract),
-        LEGACY_WRITER_CHILD_SNAPSHOT,
-        LEGACY_COMPATIBILITY_SNAPSHOT,
-    ):
+    if contract != _writing_contract_snapshot(writer_contract):
         raise WorkflowConflict("scripts_checkpoint_writing_contract_conflict")
     _validate_completed_items(checkpoint.get("completed_items"), checkpoint["selected_topic_ids"])
 
