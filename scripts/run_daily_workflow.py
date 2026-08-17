@@ -1728,19 +1728,20 @@ def _write_refresh_backup(
     if existing is not None:
         return existing
     root = terminal_refresh_backup_root(args)
-    root.mkdir(parents=True, exist_ok=True)
-    revision_numbers = []
-    for path in root.glob("revision_*"):
-        match = re.fullmatch(r"revision_(\d+)", path.name)
-        if match:
-            revision_numbers.append(int(match.group(1)))
-    revision_id = f"revision_{max(revision_numbers, default=0) + 1:03d}"
-    final_root = root / revision_id
-    if final_root.exists():
-        raise WorkflowConflict("terminal_refresh_backup_conflict")
-    temporary_root = Path(tempfile.mkdtemp(prefix=".revision_", dir=root))
+    temporary_root: Path | None = None
     files: list[dict[str, Any]] = []
     try:
+        root.mkdir(parents=True, exist_ok=True)
+        revision_numbers = []
+        for path in root.glob("revision_*"):
+            match = re.fullmatch(r"revision_(\d+)", path.name)
+            if match:
+                revision_numbers.append(int(match.group(1)))
+        revision_id = f"revision_{max(revision_numbers, default=0) + 1:03d}"
+        final_root = root / revision_id
+        if final_root.exists():
+            raise WorkflowConflict("terminal_refresh_backup_conflict")
+        temporary_root = Path(tempfile.mkdtemp(prefix=".revision_", dir=root))
         state = workflow.read_run(args.run_id)
         run = state["run"]
         safe_run = {
@@ -1830,9 +1831,9 @@ def _write_refresh_backup(
         os.replace(temporary_root, final_root)
         return final_root
     except (OSError, sqlite3.Error) as error:
-        raise WorkflowConflict("terminal_refresh_backup_failed") from error
+        raise WorkflowConflict("terminal_refresh_backup_failed") from None
     finally:
-        if temporary_root.exists():
+        if temporary_root is not None and temporary_root.exists():
             shutil.rmtree(temporary_root, ignore_errors=True)
 
 
@@ -1909,7 +1910,10 @@ def _terminal_refresh_editorial(
 def terminal_refresh(
     args: argparse.Namespace, workflow: DailyWorkflow,
 ) -> dict[str, Any]:
-    state = workflow.read_run(args.run_id)
+    try:
+        state = workflow.read_run(args.run_id)
+    except KeyError:
+        raise WorkflowConflict("terminal_refresh_run_missing") from None
     run = state["run"]
     current_editorial = workflow.stage(args.run_id, "editorial")
     current_scripts = workflow.stage(args.run_id, "scripts")
@@ -1973,12 +1977,14 @@ def terminal_refresh(
     try:
         _clear_current_script_artifacts(args)
         workflow.refresh_terminal_run(args.run_id, args.business_date, editorial)
-    except Exception:
+    except Exception as error:
         try:
             _restore_script_artifacts(backup, args)
         except Exception as restore_error:
             raise WorkflowConflict("terminal_refresh_rollback_failed") from restore_error
-        raise
+        if isinstance(error, WorkflowConflict):
+            raise
+        raise WorkflowConflict("terminal_refresh_transaction_failed") from None
     return {
         "refresh_action": "applied",
         "backup_path": str(backup),
@@ -2136,6 +2142,16 @@ def main() -> int:
             "error": "terminal_refresh_workflow_db_missing",
         }, ensure_ascii=False))
         return 2
+    if args.terminal_refresh:
+        try:
+            DailyWorkflow.validate_identity(args.run_id, args.business_date)
+        except ValueError as error:
+            print(json.dumps({
+                "ok": False,
+                "action": "terminal_refresh_failed",
+                "error": str(error),
+            }, ensure_ascii=False), flush=True)
+            return 2
     try:
         DailyWorkflow.validate_identity(args.run_id, args.business_date)
         if args.video_mode == "normal" and not args.terminal_refresh:

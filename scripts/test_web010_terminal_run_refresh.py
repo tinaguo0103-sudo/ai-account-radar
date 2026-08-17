@@ -1,13 +1,19 @@
 from __future__ import annotations
 
 import copy
+import contextlib
+import io
 import json
+import os
+import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import patch
 
+import run_daily_workflow
 from daily_workflow import DailyWorkflow
 from run_daily_workflow import terminal_refresh
 
@@ -137,6 +143,58 @@ class TerminalRunRefreshTests(unittest.TestCase):
         self.workflow.db.close()
         self.temp.cleanup()
 
+    def artifact_snapshot(self) -> dict[str, bytes]:
+        return {
+            str(path.relative_to(self.artifact_root)): path.read_bytes()
+            for path in self.artifact_root.rglob("*")
+            if path.is_file()
+        }
+
+    def cli_argv(
+        self, run_id: str = RUN_ID, business_date: str = BUSINESS_DATE,
+    ) -> list[str]:
+        return [
+            str(Path(__file__).with_name("run_daily_workflow.py")),
+            "--terminal-refresh",
+            "--run-id", run_id,
+            "--business-date", business_date,
+            "--workflow-db", str(self.db_path),
+            "--artifact-root", str(self.artifact_root),
+            "--editorial-result-file", str(self.args.editorial_result_file),
+            "--video-mode", "disabled",
+        ]
+
+    def run_public_cli(
+        self, run_id: str = RUN_ID, business_date: str = BUSINESS_DATE,
+    ) -> subprocess.CompletedProcess[str]:
+        self.workflow.db.close()
+        env = os.environ.copy()
+        env["PYTHONDONTWRITEBYTECODE"] = "1"
+        result = subprocess.run(
+            [sys.executable, *self.cli_argv(run_id, business_date)],
+            cwd=Path(__file__).resolve().parent.parent,
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        self.workflow = DailyWorkflow(self.db_path)
+        return result
+
+    def assert_typed_cli_error(
+        self, result: subprocess.CompletedProcess[str], error: str,
+    ) -> None:
+        self.assertEqual(result.returncode, 2)
+        self.assertEqual(result.stderr, "")
+        self.assertNotIn("Traceback", result.stdout)
+        self.assertNotIn("Traceback", result.stderr)
+        payload = json.loads(result.stdout)
+        self.assertEqual(payload, {
+            "ok": False,
+            "action": "terminal_refresh_failed",
+            "error": error,
+        })
+
     def test_refresh_backs_up_old_state_and_returns_scripts_required(self) -> None:
         old_db = self.db_path.read_bytes()
         result = terminal_refresh(self.args, self.workflow)
@@ -192,17 +250,55 @@ class TerminalRunRefreshTests(unittest.TestCase):
 
     def test_refresh_transaction_failure_restores_old_artifacts(self) -> None:
         before = self.script_path.read_text(encoding="utf-8")
+        before_db = self.db_path.read_bytes()
+        self.workflow.db.close()
+        output = io.StringIO()
         with patch.object(
             DailyWorkflow,
             "refresh_terminal_run",
             side_effect=RuntimeError("injected transaction failure"),
-        ), self.assertRaisesRegex(RuntimeError, "injected transaction failure"):
-            terminal_refresh(self.args, self.workflow)
+        ), patch.object(sys, "argv", self.cli_argv()), contextlib.redirect_stdout(output):
+            exit_code = run_daily_workflow.main()
+        self.workflow = DailyWorkflow(self.db_path)
+        self.assertEqual(exit_code, 2)
+        self.assertEqual(json.loads(output.getvalue()), {
+            "ok": False,
+            "action": "terminal_refresh_failed",
+            "error": "terminal_refresh_transaction_failed",
+        })
         self.assertEqual(self.script_path.read_text(encoding="utf-8"), before)
+        self.assertEqual(self.db_path.read_bytes(), before_db)
         state = self.workflow.read_run(RUN_ID)
         self.assertEqual(state["run"]["status"], "completed")
         self.assertEqual(state["run"]["publish_status"], "applied")
         self.assertIsNotNone(self.workflow.stage(RUN_ID, "scripts"))
+        self.assertTrue((self.artifact_root / RUN_ID / "revision_backups").is_dir())
+
+    def test_wrong_date_is_typed_and_does_not_mark_recoverable(self) -> None:
+        before_db = self.db_path.read_bytes()
+        before_artifacts = self.artifact_snapshot()
+        result = self.run_public_cli(business_date="2026-08-18")
+        self.assert_typed_cli_error(result, "wrong_business_date")
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+        self.assertEqual(self.artifact_snapshot(), before_artifacts)
+
+    def test_missing_run_is_typed_without_mutation(self) -> None:
+        before_db = self.db_path.read_bytes()
+        before_artifacts = self.artifact_snapshot()
+        result = self.run_public_cli(run_id="run_20260817_080001")
+        self.assert_typed_cli_error(result, "terminal_refresh_run_missing")
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+        self.assertEqual(self.artifact_snapshot(), before_artifacts)
+
+    def test_backup_filesystem_failure_is_typed_without_mutation(self) -> None:
+        blocker = self.artifact_root / RUN_ID / "revision_backups"
+        blocker.write_text("not a directory", encoding="utf-8")
+        before_db = self.db_path.read_bytes()
+        before_artifacts = self.artifact_snapshot()
+        result = self.run_public_cli()
+        self.assert_typed_cli_error(result, "terminal_refresh_backup_failed")
+        self.assertEqual(self.db_path.read_bytes(), before_db)
+        self.assertEqual(self.artifact_snapshot(), before_artifacts)
 
     def test_non_terminal_run_is_rejected_without_backup(self) -> None:
         pending_db = self.root / "pending.sqlite3"
