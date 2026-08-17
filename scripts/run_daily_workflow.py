@@ -11,6 +11,7 @@ import json
 import os
 import re
 import shutil
+import sqlite3
 import subprocess
 import sys
 import tempfile
@@ -19,7 +20,7 @@ import uuid
 from pathlib import Path
 from typing import Any
 
-from daily_workflow import DailyWorkflow, WorkflowConflict, canonical
+from daily_workflow import DailyWorkflow, TERMINAL, WorkflowConflict, canonical
 from daily_pipeline import current_douyin_artifact
 from collected_artifact_adoption import adopt_collected_artifacts
 from douyin_video_understanding_producer import (
@@ -1667,6 +1668,324 @@ def write_script_artifacts(root: Path, run_id: str, scripts: list[dict[str, Any]
         target.write_text(text, encoding="utf-8")
 
 
+def terminal_refresh_backup_root(args: argparse.Namespace) -> Path:
+    return (
+        Path(args.artifact_root).resolve()
+        / args.run_id
+        / "revision_backups"
+    )
+
+
+def _refresh_backup_for(
+    args: argparse.Namespace, editorial_sha256: str,
+) -> Path | None:
+    root = terminal_refresh_backup_root(args)
+    if not root.is_dir():
+        return None
+    for manifest_path in sorted(root.glob("revision_*/manifest.json")):
+        try:
+            manifest = read_json(manifest_path)
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            manifest.get("run_id") == args.run_id
+            and manifest.get("business_date") == args.business_date
+            and manifest.get("new_editorial_sha256") == editorial_sha256
+        ):
+            return manifest_path.parent
+    return None
+
+
+def _backup_file(
+    temporary_root: Path,
+    files: list[dict[str, Any]],
+    source: Path,
+    relative_target: str,
+    role: str,
+) -> None:
+    if source.is_symlink() or not source.is_file():
+        raise WorkflowConflict("terminal_refresh_backup_file_invalid")
+    destination = temporary_root / "files" / relative_target
+    destination.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(source, destination)
+    raw = destination.read_bytes()
+    files.append({
+        "path": str(destination.relative_to(temporary_root)),
+        "target": relative_target,
+        "role": role,
+        "sha256": hashlib.sha256(raw).hexdigest(),
+        "bytes": len(raw),
+    })
+
+
+def _write_refresh_backup(
+    args: argparse.Namespace,
+    workflow: DailyWorkflow,
+    editorial: dict[str, Any],
+) -> Path:
+    editorial_sha256 = hashlib.sha256(canonical(editorial).encode()).hexdigest()
+    existing = _refresh_backup_for(args, editorial_sha256)
+    if existing is not None:
+        return existing
+    root = terminal_refresh_backup_root(args)
+    root.mkdir(parents=True, exist_ok=True)
+    revision_numbers = []
+    for path in root.glob("revision_*"):
+        match = re.fullmatch(r"revision_(\d+)", path.name)
+        if match:
+            revision_numbers.append(int(match.group(1)))
+    revision_id = f"revision_{max(revision_numbers, default=0) + 1:03d}"
+    final_root = root / revision_id
+    if final_root.exists():
+        raise WorkflowConflict("terminal_refresh_backup_conflict")
+    temporary_root = Path(tempfile.mkdtemp(prefix=".revision_", dir=root))
+    files: list[dict[str, Any]] = []
+    try:
+        state = workflow.read_run(args.run_id)
+        run = state["run"]
+        safe_run = {
+            key: run.get(key)
+            for key in (
+                "run_id", "business_date", "status", "publish_status",
+                "publish_error", "publish_key", "created_at", "updated_at",
+                "published_at",
+            )
+        }
+        metadata = {
+            "run": safe_run,
+            "stage_statuses": [
+                {"stage": row["stage"], "status": row["status"],
+                 "committed_at": row["committed_at"]}
+                for row in state["stages"]
+            ],
+        }
+        metadata_path = temporary_root / "files" / "terminal_metadata.json"
+        metadata_path.parent.mkdir(parents=True, exist_ok=True)
+        metadata_path.write_text(canonical(metadata) + "\n", encoding="utf-8")
+        metadata_raw = metadata_path.read_bytes()
+        files.append({
+            "path": str(metadata_path.relative_to(temporary_root)),
+            "target": "terminal_metadata.json",
+            "role": "terminal_metadata",
+            "sha256": hashlib.sha256(metadata_raw).hexdigest(),
+            "bytes": len(metadata_raw),
+        })
+        for stage in ("editorial", "scripts"):
+            value = workflow.stage(args.run_id, stage)
+            if value is None:
+                raise WorkflowConflict("terminal_refresh_stages_incomplete")
+            stage_snapshot = {
+                "stage": stage,
+                "status": value["status"],
+                "committed_at": value["committed_at"],
+                "payload": value["payload"],
+            }
+            relative = f"stages/{stage}.json"
+            target = temporary_root / "files" / relative
+            target.parent.mkdir(parents=True, exist_ok=True)
+            target.write_text(canonical(stage_snapshot) + "\n", encoding="utf-8")
+            raw = target.read_bytes()
+            files.append({
+                "path": str(target.relative_to(temporary_root)),
+                "target": relative,
+                "role": "stage_snapshot",
+                "sha256": hashlib.sha256(raw).hexdigest(),
+                "bytes": len(raw),
+            })
+        handoff = workflow_handoff_path(args)
+        if not handoff.is_file():
+            raise WorkflowConflict("terminal_refresh_handoff_missing")
+        handoff_value = read_json(handoff)
+        if (
+            handoff_value.get("run_id") != args.run_id
+            or handoff_value.get("business_date") != args.business_date
+        ):
+            raise WorkflowConflict("terminal_refresh_handoff_identity_conflict")
+        _backup_file(
+            temporary_root, files, handoff, "handoff/workflow_handoff.json",
+            "workflow_handoff",
+        )
+        artifact_root = Path(args.artifact_root).resolve() / args.run_id
+        scripts_root = artifact_root / "scripts"
+        if scripts_root.exists() and not scripts_root.is_dir():
+            raise WorkflowConflict("terminal_refresh_script_artifact_invalid")
+        if scripts_root.is_dir():
+            for source in sorted(path for path in scripts_root.rglob("*") if path.is_file()):
+                relative = str(source.relative_to(artifact_root))
+                _backup_file(
+                    temporary_root, files, source, relative,
+                    "script_artifact",
+                )
+        manifest = {
+            "schema_version": 1,
+            "kind": "terminal_run_revision_backup",
+            "revision_id": revision_id,
+            "run_id": args.run_id,
+            "business_date": args.business_date,
+            "new_editorial_sha256": editorial_sha256,
+            "files": files,
+            "secret_material_included": False,
+        }
+        atomic_replace_json(temporary_root / "manifest.json", manifest)
+        os.replace(temporary_root, final_root)
+        return final_root
+    except (OSError, sqlite3.Error) as error:
+        raise WorkflowConflict("terminal_refresh_backup_failed") from error
+    finally:
+        if temporary_root.exists():
+            shutil.rmtree(temporary_root, ignore_errors=True)
+
+
+def _clear_current_script_artifacts(args: argparse.Namespace) -> None:
+    scripts_root = Path(args.artifact_root).resolve() / args.run_id / "scripts"
+    if not scripts_root.exists():
+        return
+    if not scripts_root.is_dir() or scripts_root.is_symlink():
+        raise WorkflowConflict("terminal_refresh_script_artifact_invalid")
+    for path in sorted(scripts_root.rglob("*")):
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise WorkflowConflict("terminal_refresh_script_artifact_invalid")
+        if path.is_file():
+            path.unlink()
+
+
+def _restore_script_artifacts(backup: Path, args: argparse.Namespace) -> None:
+    manifest = read_json(backup / "manifest.json")
+    artifact_root = Path(args.artifact_root).resolve() / args.run_id
+    for entry in manifest.get("files", []):
+        if entry.get("role") != "script_artifact":
+            continue
+        source = backup / str(entry.get("path") or "")
+        target = artifact_root / str(entry.get("target") or "")
+        if not source.is_file():
+            raise WorkflowConflict("terminal_refresh_backup_unreadable")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+
+def _scripts_match_selected(
+    stage: dict[str, Any] | None, selected: set[str],
+) -> bool:
+    if not stage or stage.get("status") not in {"completed", "completed_with_failures"}:
+        return False
+    payload = stage.get("payload")
+    if not isinstance(payload, dict) or payload.get("failures"):
+        return False
+    identities = [str(row.get("topic_id") or "") for row in payload.get("scripts", [])]
+    return len(identities) == len(selected) and set(identities) == selected
+
+
+def _terminal_refresh_editorial(
+    args: argparse.Namespace, workflow: DailyWorkflow,
+) -> dict[str, Any]:
+    collection_stage = workflow.stage(args.run_id, "collection_enrichment")
+    if not collection_stage:
+        raise WorkflowConflict("terminal_refresh_collection_missing")
+    collection = collection_stage["payload"]
+    candidates = editorial_handoff_candidates(collection)
+    cards = collection.get("hotspot_cards") or collection.get("candidates") or []
+    if not candidates or len(cards) != len(candidates):
+        raise WorkflowConflict("terminal_refresh_editorial_pool_incomplete")
+    submitted = read_json(args.editorial_result_file)
+    if submitted.get("business_date") not in (None, "", args.business_date):
+        raise WorkflowConflict("terminal_refresh_editorial_date_conflict")
+    validate_editorial(args.run_id, submitted, candidates)
+    validate_editorial_understanding_consistency(args.run_id, submitted, collection)
+    try:
+        validate_candidate_specific_decisions(submitted["topics"], candidates)
+    except ValueError as error:
+        raise WorkflowConflict(str(error)) from None
+    topics = complete_editorial_ledger(cards, submitted["topics"])
+    if len(topics) != len(candidates):
+        raise WorkflowConflict("terminal_refresh_editorial_coverage_incomplete")
+    return {
+        **submitted,
+        "run_id": args.run_id,
+        "business_date": args.business_date,
+        "topics": topics,
+    }
+
+
+def terminal_refresh(
+    args: argparse.Namespace, workflow: DailyWorkflow,
+) -> dict[str, Any]:
+    state = workflow.read_run(args.run_id)
+    run = state["run"]
+    current_editorial = workflow.stage(args.run_id, "editorial")
+    current_scripts = workflow.stage(args.run_id, "scripts")
+    if run["status"] not in TERMINAL:
+        if (
+            run["status"] == "waiting"
+            and current_editorial is not None
+            and (current_scripts is None or current_scripts.get("status") == "in_progress")
+        ):
+            editorial = _terminal_refresh_editorial(args, workflow)
+            editorial_sha256 = hashlib.sha256(canonical(editorial).encode()).hexdigest()
+            backup = _refresh_backup_for(args, editorial_sha256)
+            if (
+                backup is not None
+                and canonical(current_editorial.get("payload")) == canonical(editorial)
+            ):
+                return {
+                    "refresh_action": "noop",
+                    "backup_path": str(backup),
+                    "selected_count": sum(
+                        row.get("decision") == "select"
+                        for row in editorial.get("topics", [])
+                    ),
+                }
+        raise WorkflowConflict("terminal_refresh_run_not_terminal")
+    if run["publish_status"] != "applied":
+        raise WorkflowConflict("terminal_refresh_run_not_published")
+    editorial = _terminal_refresh_editorial(args, workflow)
+    editorial_sha256 = hashlib.sha256(canonical(editorial).encode()).hexdigest()
+    backup = _refresh_backup_for(args, editorial_sha256)
+    selected = {
+        str(row.get("candidate_id") or "")
+        for row in editorial.get("topics", [])
+        if row.get("decision") == "select"
+    }
+    current_is_editorial = bool(
+        current_editorial
+        and canonical(current_editorial.get("payload")) == canonical(editorial)
+    )
+    already_waiting = (
+        current_is_editorial
+        and backup is not None
+        and run["status"] == "waiting"
+        and run["publish_status"] == "not_ready"
+        and (current_scripts is None or current_scripts.get("status") == "in_progress")
+    )
+    already_published = (
+        current_is_editorial
+        and backup is not None
+        and run["status"] in TERMINAL
+        and run["publish_status"] == "applied"
+        and _scripts_match_selected(current_scripts, selected)
+    )
+    if already_waiting or already_published:
+        return {
+            "refresh_action": "noop",
+            "backup_path": str(backup),
+            "selected_count": len(selected),
+        }
+    backup = _write_refresh_backup(args, workflow, editorial)
+    try:
+        _clear_current_script_artifacts(args)
+        workflow.refresh_terminal_run(args.run_id, args.business_date, editorial)
+    except Exception:
+        try:
+            _restore_script_artifacts(backup, args)
+        except Exception as restore_error:
+            raise WorkflowConflict("terminal_refresh_rollback_failed") from restore_error
+        raise
+    return {
+        "refresh_action": "applied",
+        "backup_path": str(backup),
+        "selected_count": len(selected),
+    }
+
+
 def collection_checkpoint_path(args: argparse.Namespace) -> Path:
     return Path(args.artifact_root).resolve() / args.run_id / "workflow_collection.json"
 
@@ -1744,6 +2063,7 @@ def main() -> int:
     parser.add_argument("--run-id")
     parser.add_argument("--business-date", required=True)
     parser.add_argument("--status-only", action="store_true")
+    parser.add_argument("--terminal-refresh", action="store_true")
     parser.add_argument("--workflow-db", type=Path, default=ROOT / "output/state/daily_workflow.sqlite3")
     parser.add_argument("--source-db", default=str(ROOT / "output/state/source_control.sqlite3"))
     parser.add_argument("--artifact-root", type=Path, default=ROOT / "output/runs")
@@ -1765,6 +2085,13 @@ def main() -> int:
     args = parser.parse_args()
     workflow: DailyWorkflow | None = None
     execution_lock: WorkflowExecutionLock | None = None
+    if args.terminal_refresh and args.status_only:
+        print(json.dumps({
+            "ok": False,
+            "action": "terminal_refresh_failed",
+            "error": "terminal_refresh_status_only_conflict",
+        }, ensure_ascii=False))
+        return 2
     if args.status_only:
         try:
             status = DailyWorkflow.read_business_date(args.workflow_db, args.business_date)
@@ -1802,18 +2129,57 @@ def main() -> int:
     if not args.run_id:
         print(json.dumps({"ok": False, "error": "run_id_required"}, ensure_ascii=False))
         return 2
+    if args.terminal_refresh and not args.workflow_db.is_file():
+        print(json.dumps({
+            "ok": False,
+            "action": "terminal_refresh_failed",
+            "error": "terminal_refresh_workflow_db_missing",
+        }, ensure_ascii=False))
+        return 2
     try:
         DailyWorkflow.validate_identity(args.run_id, args.business_date)
-        if args.video_mode == "normal":
+        if args.video_mode == "normal" and not args.terminal_refresh:
             readiness = check_runtime_readiness(args.video_runtime_config)
             args.video_runtime_config = readiness["config_path"]
             args.video_policy = readiness["policy_path"]
-        prepare_replay_inputs(args)
+        if not args.terminal_refresh:
+            prepare_replay_inputs(args)
         execution_lock = WorkflowExecutionLock(args.workflow_db)
         if not execution_lock.acquire():
             emit_busy_handoff(args)
             return 0
         workflow = DailyWorkflow(args.workflow_db)
+        if args.terminal_refresh:
+            try:
+                if not args.editorial_result_file:
+                    raise WorkflowConflict("terminal_refresh_editorial_result_required")
+                if args.scripts_result_file or args.script_item_file:
+                    raise WorkflowConflict("terminal_refresh_script_input_forbidden")
+                outcome = terminal_refresh(args, workflow)
+                emit_handoff(args, {
+                    "ok": True,
+                    "action": "scripts_required",
+                    "stage": "scripts",
+                    "status": "waiting",
+                    "publish_status": "not_ready",
+                    "terminal_refresh": True,
+                    **outcome,
+                })
+                return 0
+            except (WorkflowConflict, ProjectionError, ValueError, OSError) as error:
+                print(json.dumps({
+                    "ok": False,
+                    "action": "terminal_refresh_failed",
+                    "error": str(error),
+                }, ensure_ascii=False), flush=True)
+                return 2
+            except Exception:
+                print(json.dumps({
+                    "ok": False,
+                    "action": "terminal_refresh_failed",
+                    "error": "terminal_refresh_unexpected_error",
+                }, ensure_ascii=False), flush=True)
+                return 2
         mode = workflow.begin(args.run_id, args.business_date)
         if mode == "new":
             pending = workflow.latest_pending(args.business_date)

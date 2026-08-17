@@ -232,6 +232,62 @@ class DailyWorkflow:
         value["payload"] = json.loads(value.pop("payload_json"))
         return value
 
+    def refresh_terminal_run(
+        self, run_id: str, business_date: str, editorial: dict[str, Any]
+    ) -> dict[str, Any]:
+        """Reset only the downstream stages of an exact published terminal run."""
+        self.validate_identity(run_id, business_date)
+        row = self.db.execute(
+            "SELECT * FROM daily_runs WHERE run_id=?", (run_id,)
+        ).fetchone()
+        if not row:
+            raise WorkflowConflict("terminal_refresh_run_missing")
+        if row["business_date"] != business_date:
+            raise WorkflowConflict("terminal_refresh_run_date_conflict")
+        if row["status"] not in TERMINAL:
+            raise WorkflowConflict("terminal_refresh_run_not_terminal")
+        if row["publish_status"] != "applied":
+            raise WorkflowConflict("terminal_refresh_run_not_published")
+        current_editorial = self.db.execute(
+            "SELECT 1 FROM stage_results WHERE run_id=? AND stage='editorial'",
+            (run_id,),
+        ).fetchone()
+        current_scripts = self.db.execute(
+            "SELECT 1 FROM stage_results WHERE run_id=? AND stage='scripts'",
+            (run_id,),
+        ).fetchone()
+        if not current_editorial or not current_scripts:
+            raise WorkflowConflict("terminal_refresh_stages_incomplete")
+        now = datetime.now(timezone.utc).isoformat()
+        encoded = canonical(editorial)
+        with self.db:
+            self.db.execute(
+                """UPDATE stage_results
+                   SET status='completed',payload_json=?,committed_at=?
+                   WHERE run_id=? AND stage='editorial'""",
+                (encoded, now, run_id),
+            )
+            self.db.execute(
+                "DELETE FROM stage_results WHERE run_id=? AND stage='scripts'",
+                (run_id,),
+            )
+            self.db.execute(
+                "DELETE FROM skill_diagnostics WHERE run_id=? AND stage='scripts'",
+                (run_id,),
+            )
+            self.db.execute(
+                """UPDATE daily_runs SET status='waiting',publish_status='not_ready',
+                   publish_error='',publish_key='',published_at='',updated_at=?
+                   WHERE run_id=?""",
+                (now, run_id),
+            )
+        return {
+            "run_id": run_id,
+            "business_date": business_date,
+            "status": "waiting",
+            "publish_status": "not_ready",
+        }
+
     def commit_stage(
         self, run_id: str, stage: str, payload: dict[str, Any], status: str
     ) -> dict[str, Any]:
