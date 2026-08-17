@@ -233,7 +233,12 @@ class DailyWorkflow:
         return value
 
     def refresh_terminal_run(
-        self, run_id: str, business_date: str, editorial: dict[str, Any]
+        self,
+        run_id: str,
+        business_date: str,
+        editorial: dict[str, Any],
+        *,
+        scripts_only: bool = False,
     ) -> dict[str, Any]:
         """Reset only the downstream stages of an exact published terminal run."""
         self.validate_identity(run_id, business_date)
@@ -261,12 +266,13 @@ class DailyWorkflow:
         now = datetime.now(timezone.utc).isoformat()
         encoded = canonical(editorial)
         with self.db:
-            self.db.execute(
-                """UPDATE stage_results
-                   SET status='completed',payload_json=?,committed_at=?
-                   WHERE run_id=? AND stage='editorial'""",
-                (encoded, now, run_id),
-            )
+            if not scripts_only:
+                self.db.execute(
+                    """UPDATE stage_results
+                       SET status='completed',payload_json=?,committed_at=?
+                       WHERE run_id=? AND stage='editorial'""",
+                    (encoded, now, run_id),
+                )
             self.db.execute(
                 "DELETE FROM stage_results WHERE run_id=? AND stage='scripts'",
                 (run_id,),

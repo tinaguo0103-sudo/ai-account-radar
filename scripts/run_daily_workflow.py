@@ -189,7 +189,8 @@ def handoff_summary(document: dict[str, Any], path: Path) -> dict[str, Any]:
     }
     for key in (
         "stage", "status", "publish_status", "candidate_count",
-        "selected_count", "script_count", "item_failure_count",
+        "selected_count", "script_count", "item_failure_count", "refresh_action",
+        "refresh_mode", "backup_path",
     ):
         if key in document:
             summary[key] = document[key]
@@ -1677,7 +1678,7 @@ def terminal_refresh_backup_root(args: argparse.Namespace) -> Path:
 
 
 def _refresh_backup_for(
-    args: argparse.Namespace, editorial_sha256: str,
+    args: argparse.Namespace, editorial_sha256: str, refresh_mode: str = "editorial",
 ) -> Path | None:
     root = terminal_refresh_backup_root(args)
     if not root.is_dir():
@@ -1691,6 +1692,7 @@ def _refresh_backup_for(
             manifest.get("run_id") == args.run_id
             and manifest.get("business_date") == args.business_date
             and manifest.get("new_editorial_sha256") == editorial_sha256
+            and manifest.get("refresh_mode", "editorial") == refresh_mode
         ):
             return manifest_path.parent
     return None
@@ -1722,9 +1724,10 @@ def _write_refresh_backup(
     args: argparse.Namespace,
     workflow: DailyWorkflow,
     editorial: dict[str, Any],
+    refresh_mode: str = "editorial",
 ) -> Path:
     editorial_sha256 = hashlib.sha256(canonical(editorial).encode()).hexdigest()
-    existing = _refresh_backup_for(args, editorial_sha256)
+    existing = _refresh_backup_for(args, editorial_sha256, refresh_mode)
     if existing is not None:
         return existing
     root = terminal_refresh_backup_root(args)
@@ -1824,6 +1827,7 @@ def _write_refresh_backup(
             "run_id": args.run_id,
             "business_date": args.business_date,
             "new_editorial_sha256": editorial_sha256,
+            "refresh_mode": refresh_mode,
             "files": files,
             "secret_material_included": False,
         }
@@ -1907,9 +1911,191 @@ def _terminal_refresh_editorial(
     }
 
 
+def _selected_editorial_ids(editorial: dict[str, Any]) -> set[str]:
+    return {
+        str(row.get("candidate_id") or "")
+        for row in editorial.get("topics", [])
+        if row.get("decision") == "select"
+    }
+
+
+def _validate_revision_backup(
+    root: Path,
+    args: argparse.Namespace,
+    revision_id: str,
+) -> dict[str, Any]:
+    manifest_path = root / revision_id / "manifest.json"
+    if not manifest_path.is_file():
+        raise WorkflowConflict("terminal_refresh_revision_authority_missing")
+    try:
+        manifest = read_json(manifest_path)
+    except (OSError, json.JSONDecodeError):
+        raise WorkflowConflict("terminal_refresh_revision_authority_invalid") from None
+    if (
+        not isinstance(manifest, dict)
+        or manifest.get("kind") != "terminal_run_revision_backup"
+        or manifest.get("revision_id") != revision_id
+        or manifest.get("run_id") != args.run_id
+        or manifest.get("business_date") != args.business_date
+        or manifest.get("secret_material_included") is not False
+        or not isinstance(manifest.get("files"), list)
+        or not manifest["files"]
+    ):
+        raise WorkflowConflict("terminal_refresh_revision_authority_invalid")
+    required_targets = {
+        "terminal_metadata.json",
+        "stages/editorial.json",
+        "stages/scripts.json",
+        "handoff/workflow_handoff.json",
+    }
+    targets = {
+        entry.get("target") for entry in manifest["files"]
+        if isinstance(entry, dict)
+    }
+    if not required_targets <= targets:
+        raise WorkflowConflict("terminal_refresh_revision_authority_invalid")
+    revision_root = manifest_path.parent.resolve()
+    for entry in manifest["files"]:
+        if not isinstance(entry, dict):
+            raise WorkflowConflict("terminal_refresh_revision_authority_invalid")
+        relative = entry.get("path")
+        if not isinstance(relative, str) or not relative or Path(relative).is_absolute():
+            raise WorkflowConflict("terminal_refresh_revision_authority_invalid")
+        candidate = revision_root / relative
+        if candidate.is_symlink():
+            raise WorkflowConflict("terminal_refresh_revision_authority_invalid")
+        source = candidate.resolve()
+        try:
+            source.relative_to(revision_root)
+        except ValueError:
+            raise WorkflowConflict("terminal_refresh_revision_authority_invalid") from None
+        if not source.is_file():
+            raise WorkflowConflict("terminal_refresh_revision_authority_invalid")
+        raw = source.read_bytes()
+        if (
+            entry.get("bytes") != len(raw)
+            or entry.get("sha256") != hashlib.sha256(raw).hexdigest()
+        ):
+            raise WorkflowConflict("terminal_refresh_revision_authority_invalid")
+    return manifest
+
+
+def _scripts_only_revision_authority(args: argparse.Namespace) -> Path:
+    root = terminal_refresh_backup_root(args)
+    _validate_revision_backup(root, args, "revision_001")
+    return root
+
+
+def _scripts_only_reset_state(
+    backup: Path,
+    workflow: DailyWorkflow,
+    run: dict[str, Any],
+) -> str:
+    current_scripts = workflow.stage(run["run_id"], "scripts")
+    if (
+        run["status"] == "waiting"
+        and run["publish_status"] == "not_ready"
+        and (current_scripts is None or current_scripts.get("status") == "in_progress")
+    ):
+        return "waiting"
+    if run["status"] in TERMINAL and run["publish_status"] == "applied":
+        try:
+            snapshot = read_json(backup / "files" / "stages" / "scripts.json")
+        except (OSError, json.JSONDecodeError):
+            raise WorkflowConflict("terminal_refresh_revision_authority_invalid") from None
+        if (
+            not isinstance(snapshot, dict)
+            or snapshot.get("stage") != "scripts"
+            or not isinstance(snapshot.get("payload"), dict)
+        ):
+            raise WorkflowConflict("terminal_refresh_revision_authority_invalid")
+        if current_scripts is not None and canonical(current_scripts.get("payload")) == canonical(snapshot.get("payload")):
+            return "not_applied"
+        return "completed"
+    raise WorkflowConflict("terminal_refresh_scripts_only_state_conflict")
+
+
+def _terminal_scripts_only_refresh(
+    args: argparse.Namespace, workflow: DailyWorkflow,
+) -> dict[str, Any]:
+    try:
+        state = workflow.read_run(args.run_id)
+    except KeyError:
+        raise WorkflowConflict("terminal_refresh_run_missing") from None
+    run = state["run"]
+    collection_stage = workflow.stage(args.run_id, "collection_enrichment")
+    current_editorial = workflow.stage(args.run_id, "editorial")
+    if (
+        not collection_stage
+        or collection_stage.get("status") != "completed"
+        or not current_editorial
+        or current_editorial.get("status") != "completed"
+    ):
+        raise WorkflowConflict("terminal_refresh_authority_incomplete")
+    if run["status"] not in TERMINAL and not (
+        run["status"] == "waiting" and run["publish_status"] == "not_ready"
+    ):
+        raise WorkflowConflict("terminal_refresh_run_not_terminal")
+    if run["status"] in TERMINAL and run["publish_status"] != "applied":
+        raise WorkflowConflict("terminal_refresh_run_not_published")
+    editorial = _terminal_refresh_editorial(args, workflow)
+    current_payload = current_editorial.get("payload")
+    if not isinstance(current_payload, dict):
+        raise WorkflowConflict("terminal_refresh_editorial_authority_invalid")
+    if canonical(current_payload) != canonical(editorial):
+        if _selected_editorial_ids(current_payload) != _selected_editorial_ids(editorial):
+            raise WorkflowConflict("terminal_refresh_selected_identity_changed")
+        raise WorkflowConflict("terminal_refresh_editorial_changed")
+    editorial_sha256 = hashlib.sha256(canonical(editorial).encode()).hexdigest()
+    backup = _refresh_backup_for(args, editorial_sha256, "scripts_only")
+    revision_root = _scripts_only_revision_authority(args)
+    selected = _selected_editorial_ids(editorial)
+    if backup is not None:
+        _validate_revision_backup(revision_root, args, backup.name)
+        state_after = _scripts_only_reset_state(backup, workflow, run)
+        if state_after == "waiting":
+            return {
+                "refresh_action": "resume",
+                "refresh_mode": "scripts_only",
+                "backup_path": str(backup),
+                "selected_count": len(selected),
+            }
+        if state_after == "completed":
+            return {
+                "refresh_action": "noop",
+                "refresh_mode": "scripts_only",
+                "backup_path": str(backup),
+                "selected_count": len(selected),
+            }
+    if run["status"] not in TERMINAL:
+        raise WorkflowConflict("terminal_refresh_run_not_terminal")
+    backup = _write_refresh_backup(args, workflow, editorial, "scripts_only")
+    try:
+        _clear_current_script_artifacts(args)
+        workflow.refresh_terminal_run(
+            args.run_id, args.business_date, current_payload, scripts_only=True,
+        )
+    except Exception as error:
+        try:
+            _restore_script_artifacts(backup, args)
+        except Exception as restore_error:
+            raise WorkflowConflict("terminal_refresh_rollback_failed") from restore_error
+        if isinstance(error, WorkflowConflict):
+            raise
+        raise WorkflowConflict("terminal_refresh_transaction_failed") from None
+    return {
+        "refresh_action": "applied",
+        "refresh_mode": "scripts_only",
+        "backup_path": str(backup),
+        "selected_count": len(selected),
+    }
+
+
 def terminal_refresh(
     args: argparse.Namespace, workflow: DailyWorkflow,
 ) -> dict[str, Any]:
+    if getattr(args, "scripts_only_terminal_refresh", False):
+        return _terminal_scripts_only_refresh(args, workflow)
     try:
         state = workflow.read_run(args.run_id)
     except KeyError:
@@ -2070,6 +2256,7 @@ def main() -> int:
     parser.add_argument("--business-date", required=True)
     parser.add_argument("--status-only", action="store_true")
     parser.add_argument("--terminal-refresh", action="store_true")
+    parser.add_argument("--scripts-only-terminal-refresh", action="store_true")
     parser.add_argument("--workflow-db", type=Path, default=ROOT / "output/state/daily_workflow.sqlite3")
     parser.add_argument("--source-db", default=str(ROOT / "output/state/source_control.sqlite3"))
     parser.add_argument("--artifact-root", type=Path, default=ROOT / "output/runs")
@@ -2089,6 +2276,8 @@ def main() -> int:
     parser.add_argument("--search-query", default="")
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
     args = parser.parse_args()
+    if args.scripts_only_terminal_refresh:
+        args.terminal_refresh = True
     workflow: DailyWorkflow | None = None
     execution_lock: WorkflowExecutionLock | None = None
     if args.terminal_refresh and args.status_only:
@@ -2162,6 +2351,13 @@ def main() -> int:
             prepare_replay_inputs(args)
         execution_lock = WorkflowExecutionLock(args.workflow_db)
         if not execution_lock.acquire():
+            if args.scripts_only_terminal_refresh:
+                print(json.dumps({
+                    "ok": False,
+                    "action": "terminal_refresh_failed",
+                    "error": "terminal_refresh_lock_occupied",
+                }, ensure_ascii=False), flush=True)
+                return 2
             emit_busy_handoff(args)
             return 0
         workflow = DailyWorkflow(args.workflow_db)
@@ -2172,12 +2368,17 @@ def main() -> int:
                 if args.scripts_result_file or args.script_item_file:
                     raise WorkflowConflict("terminal_refresh_script_input_forbidden")
                 outcome = terminal_refresh(args, workflow)
+                refreshed_run = workflow.read_run(args.run_id)["run"]
                 emit_handoff(args, {
                     "ok": True,
-                    "action": "scripts_required",
+                    "action": (
+                        "scripts_required"
+                        if refreshed_run["status"] == "waiting"
+                        else "noop"
+                    ),
                     "stage": "scripts",
-                    "status": "waiting",
-                    "publish_status": "not_ready",
+                    "status": refreshed_run["status"],
+                    "publish_status": refreshed_run["publish_status"],
                     "terminal_refresh": True,
                     **outcome,
                 })
