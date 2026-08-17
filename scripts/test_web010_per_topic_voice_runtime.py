@@ -384,7 +384,11 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             "topic_id": "topic-default-only",
             "source_evidence": {
                 "source": {"title": "same-run source"},
-                "video": {"keyframes": []},
+                "video": {
+                    "asr": "spoken evidence",
+                    "ocr": ["visible evidence"],
+                    "keyframes": [{"timestamp_ms": 1200, "observation": "visual evidence"}],
+                },
             },
         }
         with tempfile.TemporaryDirectory() as directory:
@@ -418,6 +422,10 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertNotIn("allowlist", encoded)
             self.assertNotIn("private_context", encoded)
             self.assertEqual(packet["topic_input"]["topic_id"], "topic-default-only")
+            self.assertEqual(
+                packet["selected_topics"][0]["source_evidence"],
+                topic["source_evidence"],
+            )
 
     def test_retired_checkpoint_contract_cannot_restore_legacy_writer_context(self):
         topic = {

@@ -89,10 +89,11 @@ class EditorialContinuationTest(unittest.TestCase):
         self.assertIn("compose the complete body before filling title/hook/structure", prompt)
         self.assertIn("current rich topic card", prompt)
         self.assertIn("exposes one topic at a time", prompt)
+        self.assertIn("source video, asr, ocr and keyframes only as factual, case and visual evidence", prompt)
+        self.assertIn("standalone article subject", prompt)
         self.assertNotIn("evidence quantity is not recommendation eligibility", prompt)
         self.assertNotIn("research failure never automatically changes select to observe", prompt)
         self.assertNotIn("seedance", prompt)
-        self.assertNotIn("keyframe", prompt)
         self.assertNotIn("evidence shortage forces observe", prompt)
 
     def test_public_editorial_handoff_uses_full_trusted_pool(self) -> None:
