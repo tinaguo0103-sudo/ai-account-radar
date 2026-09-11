@@ -22,6 +22,9 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
             SKILL_DIR / "SKILL.md",
             SKILL_DIR / "references" / "austin-profile.md",
             SKILL_DIR / "references" / "case-index.md",
+            SKILL_DIR / "references" / "argument-development.md",
+            SKILL_DIR / "references" / "voice-excerpts.md",
+            SKILL_DIR / "references" / "revision.md",
             SKILL_DIR / "references" / "cases" / "radar-to-selection-board.md",
             SKILL_DIR / "references" / "cases" / "commercial-video-delivery.md",
             SKILL_DIR / "references" / "voice-samples" / "cover-skill-original.md",
@@ -35,6 +38,9 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("我的案例库.docx", index)
         self.assertIn("不是关键词、分数、embedding 或代码选择器", index)
         self.assertIn("不规定开头、结构或结尾", (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8"))
+        self.assertIn("大多数人看到这条热点", (SKILL_DIR / "references" / "argument-development.md").read_text(encoding="utf-8"))
+        self.assertIn("voice-samples/cover-skill-original.md", (SKILL_DIR / "references" / "voice-excerpts.md").read_text(encoding="utf-8"))
+        self.assertIn("不使用字数、短语、段落或评分门禁", (SKILL_DIR / "references" / "revision.md").read_text(encoding="utf-8"))
 
     def test_every_case_index_entry_resolves_without_source_docx(self) -> None:
         index = (SKILL_DIR / "references" / "case-index.md").read_text(encoding="utf-8")
@@ -72,6 +78,7 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
             "full_topic_cards.json",
         ):
             self.assertNotIn(retired, skill)
+        self.assertNotIn("AI 可以承担信息压缩、候选生成、视觉试错、版本扩展和部分中间工作；Austin 自己负责", skill)
         self.assertNotIn("three_round_learning.md", managed)
         self.assertNotIn("public_voice_style.md", managed)
         self.assertNotIn("derived style", managed.lower())
@@ -82,7 +89,7 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("每篇先读取 `references/austin-profile.md`", skill)
         self.assertIn("最相关的一到两份", skill)
         self.assertIn("完整 body", skill)
-        self.assertIn("按需读取一份", skill)
+        self.assertIn("只在需要时打开一份", skill)
         for forbidden in ("字数门禁", "固定开场", "固定提纲", "正文评分器", "禁词表", "embedding"):
             self.assertNotIn(forbidden, skill)
 
