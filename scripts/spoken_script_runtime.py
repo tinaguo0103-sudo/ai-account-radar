@@ -20,6 +20,7 @@ DIRECT_WRITER_STAGE_CONTRACT = {
     "input_scope": [
         "one_same_run_rich_topic_card",
         "current_topic_raw_source_and_video_evidence",
+        "optional_current_topic_author_input",
         "simple_truthfulness_requirement",
         "simple_spoken_script_output",
     ],

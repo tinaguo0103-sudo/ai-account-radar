@@ -301,6 +301,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             [
                 "one_same_run_rich_topic_card",
                 "current_topic_raw_source_and_video_evidence",
+                "optional_current_topic_author_input",
                 "simple_truthfulness_requirement",
                 "simple_spoken_script_output",
             ],
@@ -347,6 +348,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         self.assertIn("directly applies austin-voice-scriptwriter", release_protocol)
         self.assertIn("raw source/video material", release_protocol)
         self.assertIn("only the current rich Topic Card", release_protocol)
+        self.assertIn("explicitly supplies author_input", release_protocol)
         self.assertNotIn("full original user materials", release_protocol)
         self.assertNotIn("web010_austin_private_context_allowlist", release_protocol)
         self.assertNotIn("legacy private Skill files", release_protocol)
@@ -411,9 +413,10 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertEqual(
                 contract["input_scope"],
                 [
-                    "one_same_run_rich_topic_card",
-                    "current_topic_raw_source_and_video_evidence",
-                    "simple_truthfulness_requirement",
+                "one_same_run_rich_topic_card",
+                "current_topic_raw_source_and_video_evidence",
+                "optional_current_topic_author_input",
+                "simple_truthfulness_requirement",
                     "simple_spoken_script_output",
                 ],
             )

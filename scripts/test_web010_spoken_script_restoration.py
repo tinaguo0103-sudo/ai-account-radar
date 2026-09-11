@@ -101,6 +101,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
             {"details": "A bounded public summary"},
         )
         self.assertNotIn("selection_reason", topic)
+        self.assertNotIn("author_input", topic)
         self.assertNotIn("fact_boundary", topic["source_evidence"])
         self.assertNotIn("cannot_claim", topic["source_evidence"])
         self.assertNotIn("provenance", topic["source_evidence"]["source"])
@@ -148,6 +149,21 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("fact_boundary", topic["source_evidence"])
         self.assertNotIn("cannot_claim", topic["source_evidence"])
         self.assertIsNone(topic["source_evidence"]["video"])
+
+    def test_forwards_explicit_current_topic_author_input(self):
+        fixture = self.fixture()
+        fixture["candidates"][0]["author_input"] = "我真正关心的是失败后有没有回音。"
+        topic = workflow.build_scripts_handoff(
+            "run_20260808_121000", "2026-08-08", fixture, self.editorial()
+        )["selected_topics"][0]
+        self.assertEqual(topic["author_input"], "我真正关心的是失败后有没有回音。")
+        self.assertNotIn("author_input", topic["source_evidence"])
+
+        fixture["candidates"][0]["author_input"] = {"should": "not become a schema"}
+        without_text = workflow.build_scripts_handoff(
+            "run_20260808_121000", "2026-08-08", fixture, self.editorial()
+        )["selected_topics"][0]
+        self.assertNotIn("author_input", without_text)
 
     def test_passes_existing_editorial_judgment_without_using_blueprint_fields(self):
         fixture = self.fixture()
@@ -206,7 +222,8 @@ class SpokenScriptRestorationTests(unittest.TestCase):
     def test_voice_skill_is_minimal_and_retired_renderer_is_absent(self):
         voice = VOICE_SKILL.read_text(encoding="utf-8")
         self.assertIn("当前一个已选题", voice)
-        self.assertIn("输入只有当前题目的 same-run 原始事实/视频材料", voice)
+        self.assertIn("输入是当前题目的 same-run 原始事实/视频材料", voice)
+        self.assertIn("当前调用方明确提供了本题作者补充", voice)
         self.assertIn("热点或话题是文章主体", voice)
         self.assertIn("视频、ASR、OCR 和关键帧只提供事实、案例与视觉证据", voice)
         self.assertIn("即使不播放或介绍原视频也能独立成立", voice)
@@ -214,6 +231,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("用户提供的人设、案例和样稿", voice)
         self.assertIn("完整、可直接朗读的 body", voice)
         self.assertIn("topic_id/title/hook/structure/body", voice)
+        self.assertIn("来源索引、过程状态和验收说明属于调用方的交接信息", voice)
         for retired in (
             "## 写作顺序",
             "## 来源与核验只留在后台",
@@ -234,6 +252,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertIn("current Automation Codex directly applies ai-account-editorial-director", protocol)
         self.assertIn("directly applies austin-voice-scriptwriter", protocol)
         self.assertIn("only the current rich Topic Card", protocol)
+        self.assertIn("explicitly supplies author_input", protocol)
         self.assertIn("current rich Topic Card", protocol)
         self.assertIn("Treat the hotspot or topic as the standalone article subject", protocol)
         self.assertIn("source video, ASR, OCR and keyframes only as factual, case and visual evidence", protocol)

@@ -1612,6 +1612,11 @@ def build_scripts_handoff(
             "trend_event_id": candidate.get("trend_event_id") or topic_id,
             "source_evidence": source_evidence,
         })
+        # Only an explicitly named current-topic note crosses this boundary;
+        # editorial blueprints and legacy/private context remain excluded.
+        author_input = first_context_value([topic, candidate, item], "author_input")
+        if isinstance(author_input, str) and author_input.strip():
+            selected_topics[-1]["author_input"] = author_input.strip()
     return {
         "ok": True,
         "action": "scripts_required",
