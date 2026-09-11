@@ -2,7 +2,11 @@
 
 ## Khazix Writer
 
-Portions of `references/khazix-craft-reference.md` are copied or adapted from:
+The complete writing system in the following Git-managed port references is copied or adapted from the frozen upstream listed below:
+
+- `references/khazix-writer-port.md`
+- `references/khazix-content-methodology.md`
+- `references/khazix-style-examples.md`
 
 - Repository: https://github.com/KKKKhazix/khazix-skills
 - Commit: `3fa874169134f65b14e8a27164386510bc867037`

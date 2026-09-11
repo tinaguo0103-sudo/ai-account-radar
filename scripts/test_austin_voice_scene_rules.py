@@ -200,7 +200,7 @@ class AustinVoiceResearchFusionTest(unittest.TestCase):
         self.assertNotIn("## 写作顺序", skill)
         self.assertNotIn("public_voice_style.md", skill)
         self.assertNotIn("scripts/austin_voice.py", skill)
-        self.assertIn("完整、可直接朗读的 body", skill)
+        self.assertIn("完整、自然、可直接朗读的 body", skill)
 
         retired_loader = SCRIPTING_MODULE_PATH.read_text(encoding="utf-8")
         self.assertNotIn("AUSTIN_VOICE_SCRIPT_SKILL_DIR", retired_loader)

@@ -1,6 +1,6 @@
 interface:
   display_name: "Austin口播写作"
-  short_description: "把选题写成 Austin 真人口播稿"
-  default_prompt: "Use $austin-voice-scriptwriter to develop this confirmed topic from its available materials into a complete Austin article, using the optional third-party craft reference only where it helps the current material, then adapt the finished article into an editable spoken draft; add first-party public research when concrete support is missing."
+  short_description: "把选题写成 Austin 完整观点文章与自然口播"
+  default_prompt: "Use $austin-voice-scriptwriter to research this topic from first-party sources, write a complete Austin article with the full writing system, and then adapt the frozen article into a natural spoken draft."
 policy:
   allow_implicit_invocation: true

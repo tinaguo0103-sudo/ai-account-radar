@@ -219,22 +219,23 @@ class SpokenScriptRestorationTests(unittest.TestCase):
                 selected,
             )
 
-    def test_voice_skill_is_minimal_and_retired_renderer_is_absent(self):
+    def test_voice_skill_keeps_simple_runtime_boundary_and_retired_renderer_is_absent(self):
         voice = VOICE_SKILL.read_text(encoding="utf-8")
         self.assertIn("当前一个已选题", voice)
-        self.assertIn("输入是当前题目的 same-run 原始事实/视频材料", voice)
-        self.assertIn("当前调用已经提供的相关项目材料", voice)
+        self.assertIn("当前同一 run 原始材料", voice)
+        self.assertIn("当前 Topic Card", voice)
         self.assertIn("可核验的公开一手资料", voice)
         self.assertIn("可编辑初稿", voice)
-        self.assertIn("当前调用方明确提供了本题作者补充", voice)
+        self.assertIn("Austin 身份、亲历和真实案例权威", voice)
         self.assertIn("热点或话题是文章主体", voice)
-        self.assertIn("视频、ASR、OCR 和关键帧只提供事实、案例与视觉证据", voice)
-        self.assertIn("即使不播放或介绍原视频也能独立成立", voice)
-        self.assertIn("不沿用原视频的讲述顺序、措辞、修辞结构或结论", voice)
+        self.assertIn("视频、ASR、OCR、关键帧和来源文章只提供事实与证据", voice)
+        self.assertIn("即使读者不看原视频，文章也必须独立成立", voice)
+        self.assertIn("不能决定正文叙述顺序、措辞、修辞结构或结论", voice)
         self.assertNotIn("用户提供的人设、案例和样稿", voice)
-        self.assertIn("完整、可直接朗读的 body", voice)
+        self.assertIn("完整、自然、可直接朗读的 body", voice)
         self.assertIn("topic_id/title/hook/structure/body", voice)
-        self.assertIn("来源索引、过程状态和验收说明属于调用方的交接信息", voice)
+        self.assertIn("来源索引、过程状态和验收说明不得进入文章或口播", voice)
+        self.assertIn("不改变正常 runtime contract", voice)
         for retired in (
             "## 写作顺序",
             "## 来源与核验只留在后台",
