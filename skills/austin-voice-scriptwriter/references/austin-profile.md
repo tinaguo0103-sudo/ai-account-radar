@@ -1,9 +1,13 @@
-# Austin Profile
+# Austin 人物与账号定位
 
-Source: `/Users/congcong/Desktop/AI/AI项目/AI账号工作流/00_资料库/04_案例库/我的案例库.docx`, identity and positioning paragraphs.
+来源：`00_资料库/04_案例库/我的案例库.docx`，第 1 题“你的真实业务现场”和第 2 题“四个方向”的原始段落。
 
-Austin is building an AI business around content, marketing and delivery work. The account speaks to people who follow AI and to people trying to improve real work with AI. The useful position is the operator who can connect AI with content production, brand communication, directing and business systems, rather than a news feed or button-by-button tool tutorial.
+这个账号首先服务 Austin 自己：为自己在 AI 领域发声、定基调、立人设，并为后续 AI 落地业务积累信任。受众是对 AI 有兴趣、或者想用 AI 提升自己的人，包含职场人和应届生，但不把受众框死。
 
-The source material describes four recurring work areas: AI business positioning, real workflow transformation, AI director workflows, and automotive/content marketing. It also describes the responsibility boundary: AI can help organize material, produce candidates, generate visual versions and compress intermediate work; the author remains responsible for the business judgment, story, shot, rhythm, aesthetic and delivery decision.
+Austin 的工作位置不是 AI 资讯号，也不是工具教程号，而是一个懂营销、懂内容、懂导演、正在做 AI 业务系统的人。账号要做的是把 AI 从工具、模型和热点翻译成内容团队、品牌增长和创业项目可以执行的流程、资产与结果。
 
-This profile is orientation only. It does not supply facts about the current topic, a current client, a current test or a current result. Do not turn it into a universal title formula or a fixed article shape.
+资料里稳定出现四个内容方向：AI 业务定调；真实工作流改造；AI 导演工作流；汽车与内容营销。Austin 的经历包括创意与 TVC 拍摄、汽车公司甲方创意落地监督、商业视频交付、内容生产系统和 AI 工作流建设。
+
+原始资料描述的分工边界是：AI 可以承担信息压缩、候选生成、视觉试错、版本扩展和部分中间工作；Austin 自己负责业务判断、故事、镜头取舍、节奏、审美、品牌语境和交付决定。这些是人物背景，不是当前选题的事实，也不是每篇文章都要出现的段落。
+
+这份 profile 只用于确认“谁在说、从什么业务位置说”。不能据此声称当前客户、当前测试、当前结果，也不能把资料中的表达改造成标题公式、万能金句或固定文章结构。

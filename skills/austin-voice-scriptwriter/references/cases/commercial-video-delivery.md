@@ -1,7 +1,9 @@
-# Case: Commercial AI Animation Delivery
+# 案例：三天多完成 4 分半 AI 商业动画成片
 
-Source: `/Users/congcong/Desktop/AI/AI项目/AI账号工作流/00_资料库/04_案例库/我的案例库.docx`, case section `三天多完成4分半AI商业动画成片`.
+来源：`00_资料库/04_案例库/我的案例库.docx`，第 3 题案例“三天多完成4分半AI商业动画成片”。
 
-For an external client, Austin delivered a roughly four-and-a-half-minute commercial animation in a little over three days. The work included planning, script, storyboard, AI video generation, editing, compositing, resizing and follow-up versions. A traditional multi-person process was split into a connected sequence that one person could carry. AI was used for visual generation, trials, efficiency and versioning; Austin retained the story, shot, rhythm and aesthetic decisions. The case records a completed delivery, not a promise that every project can be compressed in the same way.
+外部客户是美股上市公司，项目从脚本沟通到最终交付只有三天多。交付物不是一条简单视频，而是完整的商业动画成片，还包含策划、脚本、分镜、AI 视频生成、剪辑合成、物料 resize 和后续剪辑加工版。
 
-This case can support first-person discussion of delivery pressure, the trade between generation speed and creative control, and the difference between a visual candidate and a usable deliverable. It cannot be used as evidence for another product, client, timeline or outcome.
+Austin 一个人把传统视频制作里原本需要多人协作的流程拆成执行链路：先把客户 idea 翻译成故事脚本，再拆成分镜，用 AI 视频模型生成片段，最后用剪辑和审美判断整合成片。AI 承担视觉生成、素材试错、效率放大和版本扩展；结构判断、镜头取舍、节奏控制和审美把关仍由 Austin 完成。
+
+这个案例记录了一次真实完成的单人商业交付。它不能外推为其他项目也一定能用相同时间完成，也不能把这里的客户、周期和结果转给别的产品或当前选题。

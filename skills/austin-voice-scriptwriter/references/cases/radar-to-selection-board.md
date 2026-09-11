@@ -1,7 +1,9 @@
-# Case: From AI Hotspots to a Selection Board
+# 案例：从全网 AI 热点到飞书选题台
 
-Source: `/Users/congcong/Desktop/AI/AI项目/AI账号工作流/00_资料库/04_案例库/我的案例库.docx`, case section `从全网AI热点到飞书选题台`.
+来源：`00_资料库/04_案例库/我的案例库.docx`，第 3 题案例“从全网AI热点到飞书选题台”。
 
-The starting problem was volume without fit: AI hotspots, model news, agent news and competitor material arrived faster than the account could judge them, while only a small part belonged in this account. Austin built a radar connecting hotspot capture, competitor sampling, public-account parsing, Douyin observation and a Feishu execution board. AI helped classify, match and generate candidate titles and angles. The intended change was not merely finding news; it was judging whether a piece of information could become a business viewpoint, a workflow change or a director method.
+当时的问题不是热点太少，而是 AI 热点、模型更新、Agent 新闻和对标账号内容每天都很多，真正适合这个账号的选题却很少。很多信息只能做资讯号或工具号，不能直接变成自己的业务表达。
 
-The case supports a claim about designing a judgment path for content material. It does not prove that any current source is suitable, that the current radar has a specific result, or that a current article should follow the same stages.
+Austin 把热点抓取、对标账号采样、公众号全文解析、抖音内容观察和飞书执行台串成一个信息雷达。系统先做采集、去重、摘要和分类，再判断内容能不能映射到四个方向，最后生成候选 Brief。AI 负责信息压缩、语义分类、选题匹配、标题候选和角度拆解；Austin 要判断这条信息能不能转成业务观点、工作流案例或导演方法。
+
+案例记录的结果是：每天面对的从一堆原始信息变成一批经过筛选的候选选题。它能支持“信息如何变成判断路径”的真实讨论，但不能证明某个当前热点一定适合，也不能要求当前文章复刻这条路径。

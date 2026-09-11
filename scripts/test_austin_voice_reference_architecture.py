@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import re
 import unittest
 from pathlib import Path
 
@@ -32,8 +33,20 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         index = (SKILL_DIR / "references" / "case-index.md").read_text(encoding="utf-8")
         self.assertIn("我的案例库.docx", profile)
         self.assertIn("我的案例库.docx", index)
-        self.assertIn("not a deterministic selector", index)
+        self.assertIn("不是关键词、分数、embedding 或代码选择器", index)
         self.assertIn("不规定开头、结构或结尾", (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8"))
+
+    def test_every_case_index_entry_resolves_without_source_docx(self) -> None:
+        index = (SKILL_DIR / "references" / "case-index.md").read_text(encoding="utf-8")
+        links = re.findall(r"`(cases/[^`]+\.md)`", index)
+        self.assertEqual(len(links), 9)
+        for relative in links:
+            path = SKILL_DIR / "references" / relative
+            self.assertTrue(path.is_file(), path)
+            text = path.read_text(encoding="utf-8")
+            self.assertIn("来源：", text)
+            self.assertTrue("不能" in text or "不允许" in text, path)
+        self.assertNotIn("no separate managed excerpt", index)
 
     def test_voice_samples_are_exact_user_originals(self) -> None:
         parity = {
