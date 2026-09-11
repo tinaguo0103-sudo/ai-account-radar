@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import unittest
 from pathlib import Path
@@ -8,7 +9,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[1]
 SKILL_DIR = ROOT / "skills" / "austin-voice-scriptwriter"
-PROJECT_ROOT = ROOT.parent
+PROJECT_ROOT = Path(os.environ.get("AI_ACCOUNT_WORKFLOW_ROOT", str(ROOT.parent)))
 SOURCE_DIR = PROJECT_ROOT / "00_资料库"
 
 
@@ -24,9 +25,11 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
             SKILL_DIR / "references" / "case-index.md",
             SKILL_DIR / "references" / "argument-development.md",
             SKILL_DIR / "references" / "content-methodology.md",
+            SKILL_DIR / "references" / "khazix-craft-reference.md",
             SKILL_DIR / "references" / "spoken-adaptation.md",
             SKILL_DIR / "references" / "voice-excerpts.md",
             SKILL_DIR / "references" / "revision.md",
+            SKILL_DIR / "THIRD_PARTY_NOTICES.md",
             SKILL_DIR / "references" / "cases" / "radar-to-selection-board.md",
             SKILL_DIR / "references" / "cases" / "commercial-video-delivery.md",
             SKILL_DIR / "references" / "voice-samples" / "cover-skill-original.md",
@@ -47,7 +50,63 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("文章先完整成立", methodology)
         self.assertIn("文章本身写完整", adaptation)
         self.assertIn("voice-samples/cover-skill-original.md", (SKILL_DIR / "references" / "voice-excerpts.md").read_text(encoding="utf-8"))
-        self.assertIn("不使用字数、短语、段落或评分门禁", (SKILL_DIR / "references" / "revision.md").read_text(encoding="utf-8"))
+        self.assertIn("不使用扫描命中、数字、固定句式、模板分类或评分决定通过和拒绝", (SKILL_DIR / "references" / "revision.md").read_text(encoding="utf-8"))
+
+    def test_khazix_craft_is_substantial_optional_and_identity_safe(self) -> None:
+        skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        craft = (SKILL_DIR / "references" / "khazix-craft-reference.md").read_text(encoding="utf-8")
+        notice = (SKILL_DIR / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
+
+        self.assertIn("按目录只读取 `references/khazix-craft-reference.md` 的相关部分", skill)
+        self.assertIn("第三方 craft 示例只说明文章可以怎样形成、推进和修改", skill)
+        self.assertIn("两者冲突时，以 Austin 身份和当前事实为准", skill)
+        self.assertIn("不预先填写最终 thesis", skill)
+        self.assertIn("references/spoken-adaptation.md", skill)
+        for section in (
+            "## 题目怎样展开",
+            "## 文章怎样有运动",
+            "## 表达怎样有温度",
+            "## 开头与结尾",
+            "## 偏好与避雷",
+            "## 修改展示",
+            "## 主观自检",
+        ):
+            self.assertIn(section, craft)
+        for tool in (
+            "调查实验型",
+            "产品体验型",
+            "现象解读型",
+            "方法论分享型",
+            "逐一展示与升番",
+            "回环呼应",
+            "反向论证",
+            "人物画像",
+            "尼玛",
+            "4000 到 8000 字",
+            "AI 初稿",
+        ):
+            self.assertIn(tool, craft)
+        for excluded_identity_or_footer in (
+            "在AI行业深耕三年",
+            "公众号「数字生命卡兹克」",
+            "wzglyay@virxact.com",
+            "随手点个赞",
+            "给我个星标",
+        ):
+            self.assertNotIn(excluded_identity_or_footer, craft)
+        self.assertIn("3fa874169134f65b14e8a27164386510bc867037", notice)
+        self.assertIn("Copyright (c) 2026 数字生命卡兹克", notice)
+        self.assertIn("Permission is hereby granted", notice)
+        self.assertNotIn("THIRD_PARTY_NOTICES.md", skill)
+
+    def test_khazix_preferences_do_not_become_deterministic_gates(self) -> None:
+        skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        craft = (SKILL_DIR / "references" / "khazix-craft-reference.md").read_text(encoding="utf-8")
+        revision = (SKILL_DIR / "references" / "revision.md").read_text(encoding="utf-8")
+        self.assertIn("可选工具箱，不是人格来源、统一模板、逐项清单或质量门禁", skill)
+        self.assertIn("不做零命中检查", craft)
+        self.assertIn("不输出分数、不统计命中、不形成通过门禁", craft)
+        self.assertIn("不使用扫描命中、数字、固定句式、模板分类或评分决定通过和拒绝", revision)
 
     def test_every_case_index_entry_resolves_without_source_docx(self) -> None:
         index = (SKILL_DIR / "references" / "case-index.md").read_text(encoding="utf-8")
@@ -97,7 +156,7 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("最相关的一到两份", skill)
         self.assertIn("完整 body", skill)
         self.assertIn("只在需要时打开一份", skill)
-        for forbidden in ("字数门禁", "固定开场", "固定提纲", "正文评分器", "禁词表", "embedding"):
+        for forbidden in ("字数门禁", "固定开场", "固定提纲", "正文评分器", "embedding"):
             self.assertNotIn(forbidden, skill)
         self.assertIn("完整文章", skill)
         self.assertIn("自然口播", skill)
