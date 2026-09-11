@@ -23,6 +23,8 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
             SKILL_DIR / "references" / "austin-profile.md",
             SKILL_DIR / "references" / "case-index.md",
             SKILL_DIR / "references" / "argument-development.md",
+            SKILL_DIR / "references" / "content-methodology.md",
+            SKILL_DIR / "references" / "spoken-adaptation.md",
             SKILL_DIR / "references" / "voice-excerpts.md",
             SKILL_DIR / "references" / "revision.md",
             SKILL_DIR / "references" / "cases" / "radar-to-selection-board.md",
@@ -39,6 +41,11 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("不是关键词、分数、embedding 或代码选择器", index)
         self.assertIn("不规定开头、结构或结尾", (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8"))
         self.assertIn("大多数人看到这条热点", (SKILL_DIR / "references" / "argument-development.md").read_text(encoding="utf-8"))
+        methodology = (SKILL_DIR / "references" / "content-methodology.md").read_text(encoding="utf-8")
+        adaptation = (SKILL_DIR / "references" / "spoken-adaptation.md").read_text(encoding="utf-8")
+        self.assertIn("判断随着材料变清楚", methodology)
+        self.assertIn("文章先完整成立", methodology)
+        self.assertIn("文章本身写完整", adaptation)
         self.assertIn("voice-samples/cover-skill-original.md", (SKILL_DIR / "references" / "voice-excerpts.md").read_text(encoding="utf-8"))
         self.assertIn("不使用字数、短语、段落或评分门禁", (SKILL_DIR / "references" / "revision.md").read_text(encoding="utf-8"))
 
@@ -92,6 +99,8 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("只在需要时打开一份", skill)
         for forbidden in ("字数门禁", "固定开场", "固定提纲", "正文评分器", "禁词表", "embedding"):
             self.assertNotIn(forbidden, skill)
+        self.assertIn("完整文章", skill)
+        self.assertIn("自然口播", skill)
 
 
 if __name__ == "__main__":
