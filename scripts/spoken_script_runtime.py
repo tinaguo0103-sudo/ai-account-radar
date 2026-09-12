@@ -562,6 +562,11 @@ def topic_packet(
     if phase == "complete":
         raise WorkflowConflict("scripts_checkpoint_already_complete")
     packet_id = _packet_id(run_id, business_date, topic, phase)
+    # Article creation receives the rich current topic card and its same-run
+    # evidence. Adaptation receives only identity plus the frozen artifact;
+    # carrying the original topic here would silently reintroduce the old
+    # raw/video/editorial context on a retry.
+    packet_topic = topic if phase == "article_required" else {"topic_id": topic_id}
     packet: dict[str, Any] = {
         "ok": True,
         "action": phase,
@@ -569,7 +574,7 @@ def topic_packet(
         "status": "waiting",
         "run_id": run_id,
         "business_date": business_date,
-        "selected_topics": [topic],
+        "selected_topics": [packet_topic],
         "topic_index": index,
         "selected_count": selected_count,
         "completed_count": completed_count,
@@ -618,6 +623,7 @@ def topic_packet(
             "source": "frozen_same_topic_article_only",
             "article_sha256": metadata["sha256"],
             "article_artifact_required": True,
+            "read_complete_artifact_body": True,
         }
         packet["required_spoken_adaptation_input"] = {
             "keys": ["packet_id", "article_sha256", "script"],

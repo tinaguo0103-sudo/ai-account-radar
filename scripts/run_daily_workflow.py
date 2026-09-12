@@ -2721,7 +2721,7 @@ def main() -> int:
             )
             script_topics = all_handoff["selected_topics"]
             writer_authority = script_runtime.writer_authority_manifest(
-                source_root=ROOT.parent / "ai_account_radar" / "skills" / WRITER_SKILL,
+                source_root=ROOT / "skills" / WRITER_SKILL,
                 require_source_parity=True,
             )
             checkpoint = script_runtime.ensure_checkpoint(

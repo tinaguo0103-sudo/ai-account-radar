@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import hashlib
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -14,6 +15,7 @@ from spoken_script_runtime import (
     first_unfinished_index,
     load_writer_contract,
     new_checkpoint,
+    read_article_artifact,
     submit_article,
     submit_spoken_adaptation,
     topic_packet,
@@ -30,8 +32,18 @@ BUSINESS_DATE = "2026-09-12"
 class WriterExecutionStabilityTest(unittest.TestCase):
     def topics(self):
         return [
-            {"topic_id": "topic:one", "source_evidence": {"source": {"title": "one"}}},
-            {"topic_id": "topic:two", "source_evidence": {"source": {"title": "two"}}},
+            {
+                "topic_id": "topic:one",
+                "editorial_reason": "rich card reason must stay in article phase",
+                "source_evidence": {
+                    "source": {"title": "one-rich-source", "summary": "raw-fact-sentinel"},
+                    "video": {"asr": "ASR-sentinel", "ocr": ["OCR-sentinel"], "keyframes": []},
+                },
+            },
+            {
+                "topic_id": "topic:two",
+                "source_evidence": {"source": {"title": "two-rich-source"}},
+            },
         ]
 
     def workflow(self, root: Path, topics=None):
@@ -82,6 +94,18 @@ class WriterExecutionStabilityTest(unittest.TestCase):
             self.assertFalse(article_outcome["complete"])
             self.assertEqual(article_outcome["handoff"]["action"], "spoken_adaptation_required")
             self.assertEqual(article_outcome["handoff"]["topic_input"]["topic_id"], "topic:one")
+            spoken_packet = article_outcome["handoff"]
+            self.assertEqual(spoken_packet["selected_topics"], [{"topic_id": "topic:one"}])
+            encoded_spoken_packet = json.dumps(spoken_packet, ensure_ascii=False)
+            for forbidden in (
+                "source_evidence", "editorial_reason", "one-rich-source", "raw-fact-sentinel",
+                "ASR-sentinel", "OCR-sentinel", "keyframes",
+            ):
+                self.assertNotIn(forbidden, encoded_spoken_packet)
+            self.assertEqual(
+                spoken_packet["topic_input"]["spoken_adaptation_contract"]["read_complete_artifact_body"],
+                True,
+            )
             article_path = Path(
                 article_outcome["handoff"]["topic_input"]["article_artifact"]["path"]
             )
@@ -91,6 +115,15 @@ class WriterExecutionStabilityTest(unittest.TestCase):
                 hashlib.sha256(article_path.read_bytes()).hexdigest(),
                 article_outcome["handoff"]["topic_input"]["article_artifact"]["artifact_sha256"],
             )
+            frozen = read_article_artifact(
+                article_outcome["handoff"]["topic_input"]["article_artifact"],
+                run_id=RUN_ID,
+                business_date=BUSINESS_DATE,
+                topic_id="topic:one",
+                artifact_root=root,
+            )
+            self.assertEqual(frozen["body"], "同题完整文章")
+            self.assertEqual(frozen["topic_id"], "topic:one")
             stored = workflow.stage(RUN_ID, "scripts")["payload"]
             spoken_outcome = submit_spoken_adaptation(
                 workflow, RUN_ID, BUSINESS_DATE, topics, stored, contract,
@@ -200,6 +233,35 @@ class WriterExecutionStabilityTest(unittest.TestCase):
         self.assertTrue(manifest["active_skill"]["sha256"])
         self.assertEqual(len(manifest["required_managed_references"]), 7)
         self.assertTrue(all(row["sha256"] for row in manifest["required_managed_references"]))
+
+    def test_fresh_archive_authority_does_not_depend_on_sibling_production_and_mismatch_fails_closed(self):
+        from run_daily_workflow import ROOT as WORKFLOW_ROOT
+
+        runtime_source = (WORKFLOW_ROOT / "scripts" / "run_daily_workflow.py").read_text(encoding="utf-8")
+        self.assertIn('source_root=ROOT / "skills" / WRITER_SKILL', runtime_source)
+        self.assertNotIn('ROOT.parent / "ai_account_radar" / "skills"', runtime_source)
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_copy = root / "fresh-archive" / "skills" / "austin-voice-scriptwriter"
+            active_copy = root / "fresh-active" / "austin-voice-scriptwriter"
+            shutil.copytree(WORKFLOW_ROOT / "skills" / "austin-voice-scriptwriter", source_copy)
+            shutil.copytree(Path.home() / ".codex" / "skills" / "austin-voice-scriptwriter", active_copy)
+            manifest = writer_authority_manifest(
+                active_root=active_copy,
+                source_root=source_copy,
+                require_source_parity=True,
+            )
+            self.assertTrue(manifest["source_active_exact_parity"])
+            (source_copy / "SKILL.md").write_text(
+                (source_copy / "SKILL.md").read_text(encoding="utf-8") + "\narchive mismatch\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(WorkflowConflict, "writer_authority_parity_conflict"):
+                writer_authority_manifest(
+                    active_root=active_copy,
+                    source_root=source_copy,
+                    require_source_parity=True,
+                )
 
 
 if __name__ == "__main__":
