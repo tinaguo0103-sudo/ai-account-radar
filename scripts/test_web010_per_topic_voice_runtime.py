@@ -260,17 +260,33 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
         topic = handoff["selected_topics"][0]
         path = root / f"submission-{index}.json"
         if failure:
-            payload = {
-                "packet_id": handoff["topic_input"]["packet_id"],
-                "failure": {
+            payload = {"packet_id": handoff["topic_input"]["packet_id"]}
+            if handoff["action"] == "article_required":
+                payload["failure"] = {
                     "topic_id": topic["topic_id"],
                     "reason": "material_insufficiency",
                     "detail": "该题的同一 run 材料不足以支撑独特的公开判断。",
+                }
+            else:
+                payload["article_sha256"] = handoff["topic_input"]["article_artifact"]["sha256"]
+                payload["failure"] = {
+                    "topic_id": topic["topic_id"],
+                    "reason": "material_insufficiency",
+                    "detail": "该题的同一 run 材料不足以支撑独特的公开判断。",
+                }
+        elif handoff["action"] == "article_required":
+            payload = {
+                "packet_id": handoff["topic_input"]["packet_id"],
+                "article": {
+                    "topic_id": topic["topic_id"],
+                    "title": f"题目 {index} 的完整文章",
+                    "body": f"这是题目 {index} 的同题完整文章，先讲清楚事实，再展开判断。",
                 },
             }
         else:
             payload = {
                 "packet_id": handoff["topic_input"]["packet_id"],
+                "article_sha256": handoff["topic_input"]["article_artifact"]["sha256"],
                 "script": {
                     "topic_id": topic["topic_id"],
                     "title": f"题目 {index} 的判断",
@@ -492,7 +508,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 config,
             )
             self.assertEqual(editorial_stage_call.returncode, 0, editorial_stage_call.stderr + editorial_stage_call.stdout)
-            self.assertEqual(last_json(editorial_stage_call.stdout)["action"], "scripts_required")
+            self.assertEqual(last_json(editorial_stage_call.stdout)["action"], "article_required")
 
             workflow = DailyWorkflow(root / f"{RUN_ID}.sqlite3")
             collection_stage = workflow.stage(RUN_ID, "collection_enrichment")
@@ -523,17 +539,17 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             second = self.execute(
                 command + [
                     "--editorial-result-file", str(editorial),
-                    "--script-item-file", str(first_submission),
+                    "--article-item-file", str(first_submission),
                 ],
                 config,
             )
             self.assertEqual(second.returncode, 0, second.stderr + second.stdout)
             handoff_path = root / "runs" / RUN_ID / "workflow_handoff.json"
             handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-            self.assertEqual(handoff["action"], "scripts_required")
+            self.assertEqual(handoff["action"], "spoken_adaptation_required")
             self.assertEqual(len(handoff["selected_topics"]), 1)
-            self.assertEqual(handoff["topic_index"], 1)
-            self.assertNotIn(topic_ids[2], json.dumps(handoff, ensure_ascii=False))
+            self.assertEqual(handoff["topic_index"], 0)
+            self.assertNotIn(topic_ids[1], json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn("writing_contract", handoff)
             self.assertNotIn("writing_phases", handoff["topic_input"])
             self.assertEqual(
@@ -548,19 +564,36 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             self.assertNotIn('"austin_authority_read":', json.dumps(handoff, ensure_ascii=False))
             self.assertNotIn('"austin_private_context":', json.dumps(handoff, ensure_ascii=False))
 
-            for index, topic_id in enumerate(topic_ids[1:], start=1):
-                handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-                self.assertEqual(handoff["action"], "scripts_required")
-                self.assertEqual(handoff["selected_topics"][0]["topic_id"], topic_id)
-                submission = self.submission_file(root, handoff, index)
-                result = self.execute(
-                    command + ["--editorial-result-file", str(editorial), "--script-item-file", str(submission)],
-                    config,
-                )
+            for index, topic_id in enumerate(topic_ids):
+                # The first topic already has its article checkpoint above.
+                if index == 0:
+                    spoken = self.submission_file(root, handoff, index)
+                    result = self.execute(
+                        command + ["--editorial-result-file", str(editorial), "--script-item-file", str(spoken)],
+                        config,
+                    )
+                else:
+                    article_handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+                    self.assertEqual(article_handoff["action"], "article_required")
+                    self.assertEqual(article_handoff["selected_topics"][0]["topic_id"], topic_id)
+                    article = self.submission_file(root, article_handoff, index)
+                    result = self.execute(
+                        command + ["--editorial-result-file", str(editorial), "--article-item-file", str(article)],
+                        config,
+                    )
+                    self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
+                    spoken_handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
+                    self.assertEqual(spoken_handoff["action"], "spoken_adaptation_required")
+                    self.assertEqual(spoken_handoff["selected_topics"][0]["topic_id"], topic_id)
+                    spoken = self.submission_file(root, spoken_handoff, index)
+                    result = self.execute(
+                        command + ["--editorial-result-file", str(editorial), "--script-item-file", str(spoken)],
+                        config,
+                    )
                 self.assertEqual(result.returncode, 0, result.stderr + result.stdout)
                 if index < len(topic_ids) - 1:
                     next_handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
-                    self.assertEqual(next_handoff["action"], "scripts_required")
+                    self.assertEqual(next_handoff["action"], "article_required")
                     self.assertEqual(next_handoff["topic_index"], index + 1)
                     self.assertNotIn(topic_id, json.dumps(next_handoff, ensure_ascii=False))
 
@@ -628,7 +661,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 cwd=production_shaped_cwd,
             )
             self.assertEqual(editorial_stage_call.returncode, 0, editorial_stage_call.stderr + editorial_stage_call.stdout)
-            self.assertEqual(last_json(editorial_stage_call.stdout)["action"], "scripts_required")
+            self.assertEqual(last_json(editorial_stage_call.stdout)["action"], "article_required")
             workflow = DailyWorkflow(root / f"{run_id}.sqlite3")
             collection_stage = workflow.stage(run_id, "collection_enrichment")
             editorial_stage = workflow.stage(run_id, "editorial")
@@ -651,7 +684,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             )
             submission = self.submission_file(root, handoff, 0, failure=True)
             terminal = self.execute(
-                command + ["--editorial-result-file", str(editorial), "--script-item-file", str(submission)],
+                command + ["--editorial-result-file", str(editorial), "--article-item-file", str(submission)],
                 qa_private_missing,
                 cwd=production_shaped_cwd,
             )

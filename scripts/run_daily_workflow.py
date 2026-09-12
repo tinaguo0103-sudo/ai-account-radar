@@ -1815,16 +1815,20 @@ def _write_refresh_backup(
             "workflow_handoff",
         )
         artifact_root = Path(args.artifact_root).resolve() / args.run_id
-        scripts_root = artifact_root / "scripts"
-        if scripts_root.exists() and not scripts_root.is_dir():
-            raise WorkflowConflict("terminal_refresh_script_artifact_invalid")
-        if scripts_root.is_dir():
-            for source in sorted(path for path in scripts_root.rglob("*") if path.is_file()):
-                relative = str(source.relative_to(artifact_root))
-                _backup_file(
-                    temporary_root, files, source, relative,
-                    "script_artifact",
-                )
+        for directory_name, role in (
+            ("scripts", "script_artifact"),
+            ("articles", "article_artifact"),
+        ):
+            artifact_dir = artifact_root / directory_name
+            if artifact_dir.exists() and (artifact_dir.is_symlink() or not artifact_dir.is_dir()):
+                raise WorkflowConflict("terminal_refresh_artifact_invalid")
+            if artifact_dir.is_dir():
+                for source in sorted(path for path in artifact_dir.rglob("*") if path.is_file()):
+                    relative = str(source.relative_to(artifact_root))
+                    _backup_file(
+                        temporary_root, files, source, relative,
+                        role,
+                    )
         manifest = {
             "schema_version": 1,
             "kind": "terminal_run_revision_backup",
@@ -1859,6 +1863,24 @@ def _clear_current_script_artifacts(args: argparse.Namespace) -> None:
             path.unlink()
 
 
+def _clear_current_article_artifacts(args: argparse.Namespace) -> None:
+    articles_root = Path(args.artifact_root).resolve() / args.run_id / "articles"
+    if not articles_root.exists():
+        return
+    if not articles_root.is_dir() or articles_root.is_symlink():
+        raise WorkflowConflict("terminal_refresh_article_artifact_invalid")
+    for path in sorted(articles_root.rglob("*")):
+        if path.is_symlink() or (path.exists() and not path.is_file()):
+            raise WorkflowConflict("terminal_refresh_article_artifact_invalid")
+        if path.is_file():
+            path.unlink()
+
+
+def _clear_current_writer_artifacts(args: argparse.Namespace) -> None:
+    _clear_current_script_artifacts(args)
+    _clear_current_article_artifacts(args)
+
+
 def _restore_script_artifacts(backup: Path, args: argparse.Namespace) -> None:
     manifest = read_json(backup / "manifest.json")
     artifact_root = Path(args.artifact_root).resolve() / args.run_id
@@ -1871,6 +1893,25 @@ def _restore_script_artifacts(backup: Path, args: argparse.Namespace) -> None:
             raise WorkflowConflict("terminal_refresh_backup_unreadable")
         target.parent.mkdir(parents=True, exist_ok=True)
         shutil.copyfile(source, target)
+
+
+def _restore_article_artifacts(backup: Path, args: argparse.Namespace) -> None:
+    manifest = read_json(backup / "manifest.json")
+    artifact_root = Path(args.artifact_root).resolve() / args.run_id
+    for entry in manifest.get("files", []):
+        if entry.get("role") != "article_artifact":
+            continue
+        source = backup / str(entry.get("path") or "")
+        target = artifact_root / str(entry.get("target") or "")
+        if not source.is_file():
+            raise WorkflowConflict("terminal_refresh_backup_unreadable")
+        target.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(source, target)
+
+
+def _restore_writer_artifacts(backup: Path, args: argparse.Namespace) -> None:
+    _restore_script_artifacts(backup, args)
+    _restore_article_artifacts(backup, args)
 
 
 def _scripts_match_selected(
@@ -2076,13 +2117,13 @@ def _terminal_scripts_only_refresh(
         raise WorkflowConflict("terminal_refresh_run_not_terminal")
     backup = _write_refresh_backup(args, workflow, editorial, "scripts_only")
     try:
-        _clear_current_script_artifacts(args)
+        _clear_current_writer_artifacts(args)
         workflow.refresh_terminal_run(
             args.run_id, args.business_date, current_payload, scripts_only=True,
         )
     except Exception as error:
         try:
-            _restore_script_artifacts(backup, args)
+            _restore_writer_artifacts(backup, args)
         except Exception as restore_error:
             raise WorkflowConflict("terminal_refresh_rollback_failed") from restore_error
         if isinstance(error, WorkflowConflict):
@@ -2166,11 +2207,11 @@ def terminal_refresh(
         }
     backup = _write_refresh_backup(args, workflow, editorial)
     try:
-        _clear_current_script_artifacts(args)
+        _clear_current_writer_artifacts(args)
         workflow.refresh_terminal_run(args.run_id, args.business_date, editorial)
     except Exception as error:
         try:
-            _restore_script_artifacts(backup, args)
+            _restore_writer_artifacts(backup, args)
         except Exception as restore_error:
             raise WorkflowConflict("terminal_refresh_rollback_failed") from restore_error
         if isinstance(error, WorkflowConflict):
@@ -2271,6 +2312,7 @@ def main() -> int:
     parser.add_argument("--qa-frozen-packages")
     parser.add_argument("--editorial-result-file")
     parser.add_argument("--scripts-result-file")
+    parser.add_argument("--article-item-file")
     parser.add_argument("--script-item-file")
     parser.add_argument("--video-mode", choices=("normal", "disabled"), default="normal")
     parser.add_argument("--video-runtime-config", default="")
@@ -2370,7 +2412,7 @@ def main() -> int:
             try:
                 if not args.editorial_result_file:
                     raise WorkflowConflict("terminal_refresh_editorial_result_required")
-                if args.scripts_result_file or args.script_item_file:
+                if args.scripts_result_file or args.article_item_file or args.script_item_file:
                     raise WorkflowConflict("terminal_refresh_script_input_forbidden")
                 outcome = terminal_refresh(args, workflow)
                 refreshed_run = workflow.read_run(args.run_id)["run"]
@@ -2671,11 +2713,17 @@ def main() -> int:
         elif selected_topics:
             if args.scripts_result_file:
                 raise WorkflowConflict("whole_batch_scripts_submission_forbidden")
+            if args.article_item_file and args.script_item_file:
+                raise WorkflowConflict("writer_phase_input_conflict")
             writer_contract = script_runtime.load_writer_contract()
             all_handoff = build_scripts_handoff(
                 args.run_id, args.business_date, collection, editorial,
             )
             script_topics = all_handoff["selected_topics"]
+            writer_authority = script_runtime.writer_authority_manifest(
+                source_root=ROOT.parent / "ai_account_radar" / "skills" / WRITER_SKILL,
+                require_source_parity=True,
+            )
             checkpoint = script_runtime.ensure_checkpoint(
                 workflow,
                 args.run_id,
@@ -2683,18 +2731,25 @@ def main() -> int:
                 script_topics,
                 writer_contract,
             )
-            if args.script_item_file:
-                index = script_runtime.first_unfinished_index(checkpoint)
-                if index >= len(script_topics):
-                    raise WorkflowConflict("scripts_checkpoint_incomplete_status")
-                outcome = script_runtime.submit_topic(
+            index = script_runtime.first_unfinished_index(checkpoint)
+            if index >= len(script_topics):
+                raise WorkflowConflict("scripts_checkpoint_incomplete_status")
+            current_phase = script_runtime.topic_phase(
+                checkpoint, script_topics[index]["topic_id"],
+            )
+            if args.article_item_file:
+                if current_phase != "article_required":
+                    raise WorkflowConflict("article_checkpoint_already_complete")
+                outcome = script_runtime.submit_article(
                     workflow,
                     args.run_id,
                     args.business_date,
                     script_topics,
                     checkpoint,
                     writer_contract,
-                    read_json(args.script_item_file),
+                    read_json(args.article_item_file),
+                    artifact_root=args.artifact_root,
+                    writer_authority=writer_authority,
                 )
                 workflow.record_skill_diagnostic(
                     args.run_id,
@@ -2703,6 +2758,8 @@ def main() -> int:
                     WRITER_SKILL,
                     {
                         "provenance": skill_diagnostics()[1],
+                        "writer_authority": writer_authority,
+                        "phase": "article",
                         "execution_mode": "direct_automation_codex",
                     },
                 )
@@ -2712,6 +2769,7 @@ def main() -> int:
                     next_handoff.update({
                         "skill_names": list(WRITER_SKILLS),
                         "batch_contract": all_handoff["batch_contract"],
+                        "writer_authority": writer_authority,
                     })
                     emit_handoff(args, next_handoff)
                     return 0
@@ -2720,26 +2778,72 @@ def main() -> int:
                 for name, diagnostic in zip(WRITER_SKILLS, skill_diagnostics()[1:]):
                     workflow.record_skill_diagnostic(
                         args.run_id, "scripts", "batch", name,
-                        {"provenance": diagnostic},
+                        {"provenance": diagnostic, "writer_authority": writer_authority},
+                    )
+                write_script_artifacts(args.artifact_root, args.run_id, scripts["scripts"])
+                scripts_finalized = True
+            elif args.script_item_file:
+                if current_phase != "spoken_adaptation_required":
+                    raise WorkflowConflict("spoken_before_article")
+                outcome = script_runtime.submit_spoken_adaptation(
+                    workflow,
+                    args.run_id,
+                    args.business_date,
+                    script_topics,
+                    checkpoint,
+                    writer_contract,
+                    read_json(args.script_item_file),
+                    artifact_root=args.artifact_root,
+                    writer_authority=writer_authority,
+                )
+                workflow.record_skill_diagnostic(
+                    args.run_id,
+                    "scripts",
+                    script_topics[index]["topic_id"],
+                    WRITER_SKILL,
+                    {
+                        "provenance": skill_diagnostics()[1],
+                        "writer_authority": writer_authority,
+                        "phase": "spoken_adaptation",
+                        "execution_mode": "direct_automation_codex",
+                    },
+                )
+                if not outcome["complete"]:
+                    workflow.mark_waiting(args.run_id)
+                    next_handoff = outcome["handoff"]
+                    next_handoff.update({
+                        "skill_names": list(WRITER_SKILLS),
+                        "batch_contract": all_handoff["batch_contract"],
+                        "writer_authority": writer_authority,
+                    })
+                    emit_handoff(args, next_handoff)
+                    return 0
+                scripts = outcome["scripts"]
+                validate_scripts(args.run_id, scripts, selected)
+                for name, diagnostic in zip(WRITER_SKILLS, skill_diagnostics()[1:]):
+                    workflow.record_skill_diagnostic(
+                        args.run_id, "scripts", "batch", name,
+                        {"provenance": diagnostic, "writer_authority": writer_authority},
                     )
                 write_script_artifacts(args.artifact_root, args.run_id, scripts["scripts"])
                 scripts_finalized = True
             else:
-                index = script_runtime.first_unfinished_index(checkpoint)
-                if index >= len(script_topics):
-                    raise WorkflowConflict("scripts_checkpoint_incomplete_status")
                 topic_packet_value = script_runtime.topic_packet(
                     args.run_id,
                     args.business_date,
                     script_topics[index],
                     index,
                     len(script_topics),
-                    len(checkpoint["completed_items"]),
+                    script_runtime.terminal_topic_count(checkpoint),
                     writer_contract,
+                    checkpoint=checkpoint,
+                    writer_authority=writer_authority,
+                    artifact_root=args.artifact_root,
                 )
                 handoff = {**topic_packet_value, **{
                     "skill_names": list(WRITER_SKILLS),
                     "batch_contract": all_handoff["batch_contract"],
+                    "writer_authority": writer_authority,
                 }}
                 workflow.mark_waiting(args.run_id)
                 emit_handoff(args, handoff)

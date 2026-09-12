@@ -168,7 +168,7 @@ class PublicV2FlowTest(unittest.TestCase):
             })
             first = self.execute(command + ["--editorial-result-file", str(editorial)], config)
             self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
-            self.assertEqual(last_json(first.stdout)["action"], "scripts_required")
+            self.assertEqual(last_json(first.stdout)["action"], "article_required")
             workflow = DailyWorkflow(root / "workflow.sqlite3")
             collection_stage = workflow.stage(run_id, "collection_enrichment")
             editorial_stage = workflow.stage(run_id, "editorial")
@@ -176,13 +176,30 @@ class PublicV2FlowTest(unittest.TestCase):
             all_handoff = build_scripts_handoff(
                 run_id, "2026-07-28", collection_stage["payload"], editorial_stage["payload"],
             )
-            handoff = topic_packet(
+            article_handoff = topic_packet(
                 run_id, "2026-07-28", all_handoff["selected_topics"][0], 0, 1,
                 len(scripts_stage["payload"]["completed_items"]), load_writer_contract(),
+            )
+            article = root / "article.json"
+            write(article, {
+                "packet_id": article_handoff["topic_input"]["packet_id"],
+                "article": {
+                    "topic_id": identities[0], "title": "完整文章标题",
+                    "body": "这是同一题的完整文章，先展开事实，再形成判断。",
+                },
+            })
+            article_call = self.execute(command + [
+                "--editorial-result-file", str(editorial),
+                "--article-item-file", str(article),
+            ], config)
+            self.assertEqual(article_call.returncode, 0, article_call.stderr + article_call.stdout)
+            handoff = json.loads(
+                (root / "runs" / run_id / "workflow_handoff.json").read_text(encoding="utf-8")
             )
             scripts = root / "scripts.json"
             write(scripts, {
                 "packet_id": handoff["topic_input"]["packet_id"],
+                "article_sha256": handoff["topic_input"]["article_artifact"]["sha256"],
                 "script": {
                     "topic_id": identities[0], "title": "稿件", "hook": "钩子",
                     "structure": "结构", "body": "完整正文",

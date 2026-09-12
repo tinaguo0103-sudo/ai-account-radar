@@ -221,42 +221,64 @@ class TerminalRunRefreshTests(unittest.TestCase):
         )
         topic = handoff["selected_topics"][index]
         checkpoint = self.workflow.stage(RUN_ID, "scripts")
-        completed_count = len(
-            (checkpoint or {"payload": {"completed_items": []}})["payload"].get(
-                "completed_items", [],
-            )
-        )
+        checkpoint_payload = (checkpoint or {"payload": {"completed_items": []}})["payload"]
+        completed_count = run_daily_workflow.script_runtime.terminal_topic_count(
+            checkpoint_payload,
+        ) if checkpoint else 0
         contract = run_daily_workflow.script_runtime.load_writer_contract()
         packet = run_daily_workflow.script_runtime.topic_packet(
             RUN_ID, BUSINESS_DATE, topic, index, len(handoff["selected_topics"]),
-            completed_count, contract,
+            completed_count, contract, checkpoint=checkpoint_payload if checkpoint else None,
+            artifact_root=self.artifact_root,
         )
+
+        def invoke(item_file: Path, option: str) -> tuple[int, dict, int]:
+            self.workflow.db.close()
+            output = io.StringIO()
+            posts: list[tuple[Path, str]] = []
+            argv = [
+                str(Path(__file__).with_name("run_daily_workflow.py")),
+                "--run-id", RUN_ID,
+                "--business-date", BUSINESS_DATE,
+                "--workflow-db", str(self.db_path),
+                "--artifact-root", str(self.artifact_root),
+                option, str(item_file),
+                "--video-mode", "disabled",
+            ]
+
+            def fake_publish(db_path: Path, run_id: str) -> None:
+                posts.append((Path(db_path), run_id))
+
+            with patch.object(run_daily_workflow, "publish_terminal", side_effect=fake_publish), \
+                    patch.object(sys, "argv", argv), contextlib.redirect_stdout(output):
+                exit_code = run_daily_workflow.main()
+            self.workflow = DailyWorkflow(self.db_path)
+            return exit_code, json.loads(output.getvalue().splitlines()[-1]), len(posts)
+
+        post_count = 0
+        if packet["action"] == "article_required":
+            article_file = self.root / f"article_item_{index}.json"
+            write_json(article_file, {
+                "packet_id": packet["topic_input"]["packet_id"],
+                "article": {
+                    "topic_id": topic["topic_id"],
+                    "title": "frozen article",
+                    "body": "QA-private same-topic article body",
+                },
+            })
+            exit_code, _, post_count = invoke(article_file, "--article-item-file")
+            if exit_code != 0:
+                return exit_code, _, post_count
+            handoff_path = self.artifact_root / RUN_ID / "workflow_handoff.json"
+            packet = json.loads(handoff_path.read_text(encoding="utf-8"))
         item_file = self.root / f"script_item_{index}.json"
         write_json(item_file, {
             "packet_id": packet["topic_input"]["packet_id"],
+            "article_sha256": packet["topic_input"]["article_artifact"]["sha256"],
             "script": script(topic["topic_id"], "frozen-qa"),
         })
-        self.workflow.db.close()
-        output = io.StringIO()
-        posts: list[tuple[Path, str]] = []
-        argv = [
-            str(Path(__file__).with_name("run_daily_workflow.py")),
-            "--run-id", RUN_ID,
-            "--business-date", BUSINESS_DATE,
-            "--workflow-db", str(self.db_path),
-            "--artifact-root", str(self.artifact_root),
-            "--script-item-file", str(item_file),
-            "--video-mode", "disabled",
-        ]
-
-        def fake_publish(db_path: Path, run_id: str) -> None:
-            posts.append((Path(db_path), run_id))
-
-        with patch.object(run_daily_workflow, "publish_terminal", side_effect=fake_publish), \
-                patch.object(sys, "argv", argv), contextlib.redirect_stdout(output):
-            exit_code = run_daily_workflow.main()
-        self.workflow = DailyWorkflow(self.db_path)
-        return exit_code, json.loads(output.getvalue().splitlines()[-1]), len(posts)
+        exit_code, summary, second_posts = invoke(item_file, "--script-item-file")
+        return exit_code, summary, post_count + second_posts
 
     def assert_typed_cli_error(
         self, result: subprocess.CompletedProcess[str], error: str,
@@ -370,7 +392,7 @@ class TerminalRunRefreshTests(unittest.TestCase):
             posts += post_count
             self.assertEqual(post_count, 0 if index < 7 else 1)
             if index < 7:
-                self.assertEqual(summary["action"], "scripts_required")
+                self.assertEqual(summary["action"], "article_required")
         self.assertEqual(posts, 1)
         state = self.workflow.read_run(RUN_ID)
         self.assertEqual(state["run"]["status"], "completed")

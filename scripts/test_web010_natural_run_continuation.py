@@ -265,7 +265,7 @@ class NaturalRunContinuationTest(unittest.TestCase):
             self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
             first_lines = [json.loads(line) for line in first.stdout.splitlines() if line.strip()]
             self.assertEqual(first_lines[0]["action"], "waiting_stage")
-            self.assertEqual(first_lines[-1]["action"], "scripts_required")
+            self.assertEqual(first_lines[-1]["action"], "article_required")
             handoff_path = Path(first_lines[-1]["handoff_path"])
             status_command = [
                 sys.executable,
@@ -281,7 +281,7 @@ class NaturalRunContinuationTest(unittest.TestCase):
             interrupted = self.execute(status_command)
             interrupted_value = last_json(interrupted.stdout)
             self.assertEqual(interrupted_value["status"], "waiting")
-            self.assertEqual(interrupted_value["next_action"], "scripts_required")
+            self.assertEqual(interrupted_value["next_action"], "article_required")
             fixture.unlink()
             (root / "runs" / RUN_ID / "workflow_collection.json").unlink()
             workflow = DailyWorkflow(root / "workflow.sqlite3")
@@ -292,14 +292,32 @@ class NaturalRunContinuationTest(unittest.TestCase):
                 RUN_ID, BUSINESS_DATE,
                 collection_stage["payload"], editorial_stage["payload"],
             )
-            scripts_handoff = topic_packet(
+            article_handoff = topic_packet(
                 RUN_ID, BUSINESS_DATE, all_handoff["selected_topics"][0], 0, 1,
                 len(scripts_stage["payload"]["completed_items"]),
                 load_writer_contract(),
             )
+            article = root / "article.json"
+            write_json(article, {
+                "packet_id": article_handoff["topic_input"]["packet_id"],
+                "article": {
+                    "topic_id": candidate_ids[0],
+                    "title": "AI workflow article",
+                    "body": "这是一篇先展开事实和判断、再进入口播适配的完整文章。",
+                },
+            })
+            article_result = self.execute(command + [
+                "--editorial-result-file",
+                str(editorial),
+                "--article-item-file",
+                str(article),
+            ])
+            self.assertEqual(article_result.returncode, 0, article_result.stderr + article_result.stdout)
+            scripts_handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
             scripts = root / "scripts.json"
             write_json(scripts, {
                 "packet_id": scripts_handoff["topic_input"]["packet_id"],
+                "article_sha256": scripts_handoff["topic_input"]["article_artifact"]["sha256"],
                 "script": {
                     "topic_id": candidate_ids[0],
                     "title": "AI workflow",
