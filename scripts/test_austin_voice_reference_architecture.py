@@ -102,12 +102,43 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
             "文化升维",
             "人物画像法",
             "英雄之旅叙事弧",
-            "尼玛",
+            "情绪表达",
             "4000 到 8000 字",
         ):
             self.assertIn(preserved_method, port)
         self.assertIn("## 19. 谦逊铺垫的进阶写法", examples)
         self.assertIn("## 4. 创意案例工作法", methodology)
+
+    def test_austin_surface_voice_overrides_third_party_lexical_signatures(self) -> None:
+        skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        port = (SKILL_DIR / "references" / "khazix-writer-port.md").read_text(encoding="utf-8")
+        examples = (SKILL_DIR / "references" / "khazix-style-examples.md").read_text(encoding="utf-8")
+        adaptation = (SKILL_DIR / "references" / "spoken-adaptation.md").read_text(encoding="utf-8")
+
+        self.assertIn("Austin 的表层语言以当前材料中的自然说话位置", skill)
+        self.assertIn("不是候选措辞", skill)
+        self.assertIn("不沿用示例的开头、连接词、口癖、粗口和收束方式", skill)
+        read_order = skill.split("## 必读顺序", 1)[1]
+        self.assertLess(read_order.index("references/voice-excerpts.md"), read_order.index("references/khazix-style-examples.md"))
+
+        self.assertIn("上游示例中的固定开头、口癖、粗口、推荐词组、典型转场和标志性结尾", port)
+        self.assertIn("功能地图，不保留可主动套用的措辞清单", port)
+        self.assertIn("这些是开场功能，不是句式", port)
+        self.assertNotIn("这些词组可以主动、自然地使用", port)
+        self.assertNotIn("故事是这样的。」「事情是这样的。", port)
+        self.assertIn("## 表层语言隔离", examples)
+        self.assertIn("这里不是禁词表", examples)
+        self.assertIn("验收对象是整篇作者辨识度", examples)
+        self.assertIn("第三方写作示例只保留推进功能", adaptation)
+
+    def test_surface_voice_review_remains_model_owned_and_non_deterministic(self) -> None:
+        skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        port = (SKILL_DIR / "references" / "khazix-writer-port.md").read_text(encoding="utf-8")
+
+        self.assertIn("不得建立禁词表、短语替换、频次阈值", skill)
+        self.assertIn("不是字符串禁用表", port)
+        self.assertIn("不做短语替换，也不维护禁词或次数清单", port)
+        self.assertIn("不按词频、命中数或数字分数把结果交给 runtime", port)
 
     def test_identity_autonomy_and_output_boundaries(self) -> None:
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
