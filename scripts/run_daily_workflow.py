@@ -1682,36 +1682,23 @@ def apply_clean_writer_result(
     selected: set[str],
     writer_contract: dict[str, Any],
     writer_authority: dict[str, Any],
-    result: dict[str, Any],
 ) -> dict[str, Any]:
-    """Apply one cached batch result through the existing article/spoken gate."""
-    identity = result.get("identity")
-    if not isinstance(identity, dict) or not identity.get("identity_hash"):
-        raise WorkflowConflict("clean_writer_context_identity_missing")
+    """Run ordered clean turns and submit each result through public checkpoints."""
     authority = json.loads(json.dumps(writer_authority, ensure_ascii=False))
-    authority["clean_writer_context"] = {
-        key: identity[key]
-        for key in (
-            "identity_hash", "thread_id", "model", "reasoning_effort",
-            "ephemeral", "context_kind", "input_root", "manifest_sha256",
-        )
-        if key in identity
-    }
-    by_topic = result.get("by_topic")
-    if not isinstance(by_topic, dict):
-        raise WorkflowConflict("clean_writer_context_output_schema_invalid")
-    for index, topic in enumerate(script_topics):
-        topic_id = str(topic["topic_id"])
+    index = script_runtime.first_unfinished_index(
+        workflow.stage(args.run_id, "scripts")["payload"],
+    )
+    while index < len(script_topics):
         checkpoint_stage = workflow.stage(args.run_id, "scripts")
         if not checkpoint_stage or checkpoint_stage.get("status") != "in_progress":
             break
         checkpoint = checkpoint_stage["payload"]
+        topic = script_topics[index]
+        topic_id = str(topic["topic_id"])
         phase = script_runtime.topic_phase(checkpoint, topic_id)
         if phase == "complete":
+            index += 1
             continue
-        row = by_topic.get(topic_id)
-        if not isinstance(row, dict):
-            raise WorkflowConflict("clean_writer_context_output_topic_missing")
         packet = script_runtime.topic_packet(
             args.run_id,
             args.business_date,
@@ -1724,6 +1711,33 @@ def apply_clean_writer_result(
             writer_authority=authority,
             artifact_root=args.artifact_root,
         )
+        frozen_article = None
+        if phase == "spoken_adaptation_required":
+            frozen_article = packet["topic_input"]["article_artifact"]
+        result = clean_writer_context.run_clean_writer_context(
+            artifact_root=args.artifact_root,
+            run_id=args.run_id,
+            business_date=args.business_date,
+            selected_topics=script_topics,
+            writer_authority=writer_authority,
+            current_topic=topic,
+            phase=phase,
+            frozen_article=frozen_article,
+        )
+        identity = result.get("identity")
+        if not isinstance(identity, dict) or not identity.get("identity_hash"):
+            raise WorkflowConflict("clean_writer_context_identity_missing")
+        authority["clean_writer_context"] = {
+            key: identity[key]
+            for key in (
+                "identity_hash", "thread_id", "model", "reasoning_effort",
+                "ephemeral", "context_kind", "input_root", "manifest_sha256",
+            )
+            if key in identity
+        }
+        row = result.get("output")
+        if not isinstance(row, dict):
+            raise WorkflowConflict("clean_writer_context_output_schema_invalid")
         if phase == "article_required":
             if row.get("article") is not None:
                 submitted_article = {
@@ -1733,7 +1747,7 @@ def apply_clean_writer_result(
             else:
                 submitted_article = {
                     "packet_id": packet["topic_input"]["packet_id"],
-                    "failure": row.get("article_failure"),
+                    "failure": row.get("failure"),
                 }
             script_runtime.submit_article(
                 workflow,
@@ -1756,15 +1770,18 @@ def apply_clean_writer_result(
                     "writer_authority": authority,
                     "phase": "article",
                     "execution_mode": "fresh_non_user_visible_clean_writer_context",
+                    "turn_sequence": result.get("turn", {}).get("sequence"),
                 },
             )
             if row.get("article") is None:
+                index += 1
                 continue
             checkpoint_stage = workflow.stage(args.run_id, "scripts")
             if not checkpoint_stage or checkpoint_stage.get("status") != "in_progress":
                 break
             checkpoint = checkpoint_stage["payload"]
         if script_runtime.topic_phase(checkpoint, topic_id) != "spoken_adaptation_required":
+            index += 1
             continue
         packet = script_runtime.topic_packet(
             args.run_id,
@@ -1778,6 +1795,30 @@ def apply_clean_writer_result(
             writer_authority=authority,
             artifact_root=args.artifact_root,
         )
+        spoken_result = clean_writer_context.run_clean_writer_context(
+            artifact_root=args.artifact_root,
+            run_id=args.run_id,
+            business_date=args.business_date,
+            selected_topics=script_topics,
+            writer_authority=writer_authority,
+            current_topic=topic,
+            phase="spoken_adaptation_required",
+            frozen_article=packet["topic_input"]["article_artifact"],
+        )
+        spoken_identity = spoken_result.get("identity")
+        if not isinstance(spoken_identity, dict) or spoken_identity.get("identity_hash") != identity.get("identity_hash"):
+            raise WorkflowConflict("clean_writer_context_identity_conflict")
+        authority["clean_writer_context"] = {
+            key: spoken_identity[key]
+            for key in (
+                "identity_hash", "thread_id", "model", "reasoning_effort",
+                "ephemeral", "context_kind", "input_root", "manifest_sha256",
+            )
+            if key in spoken_identity
+        }
+        row = spoken_result.get("output")
+        if not isinstance(row, dict):
+            raise WorkflowConflict("clean_writer_context_output_schema_invalid")
         if row.get("script") is not None:
             submitted_spoken = {
                 "packet_id": packet["topic_input"]["packet_id"],
@@ -1788,7 +1829,7 @@ def apply_clean_writer_result(
             submitted_spoken = {
                 "packet_id": packet["topic_input"]["packet_id"],
                 "article_sha256": packet["topic_input"]["spoken_adaptation_contract"]["article_sha256"],
-                "failure": row.get("spoken_failure"),
+                "failure": row.get("failure"),
             }
         script_runtime.submit_spoken_adaptation(
             workflow,
@@ -1811,11 +1852,18 @@ def apply_clean_writer_result(
                 "writer_authority": authority,
                 "phase": "spoken_adaptation",
                 "execution_mode": "fresh_non_user_visible_clean_writer_context",
+                "turn_sequence": spoken_result.get("turn", {}).get("sequence"),
             },
         )
+        index += 1
     scripts_stage = workflow.stage(args.run_id, "scripts")
     if not scripts_stage or scripts_stage.get("status") == "in_progress":
         raise WorkflowConflict("clean_writer_context_checkpoint_incomplete")
+    clean_writer_context.finalize_clean_writer_context(
+        artifact_root=args.artifact_root,
+        run_id=args.run_id,
+        selected_topic_ids=[str(row["topic_id"]) for row in script_topics],
+    )
     scripts = scripts_stage["payload"]
     validate_scripts(args.run_id, scripts, selected)
     return scripts
@@ -2902,13 +2950,6 @@ def main() -> int:
             if index >= len(script_topics):
                 raise WorkflowConflict("scripts_checkpoint_incomplete_status")
             if args.writer_context == "clean":
-                clean_result = clean_writer_context.run_clean_writer_context(
-                    artifact_root=args.artifact_root,
-                    run_id=args.run_id,
-                    business_date=args.business_date,
-                    selected_topics=script_topics,
-                    writer_authority=writer_authority,
-                )
                 scripts = apply_clean_writer_result(
                     args,
                     workflow,
@@ -2916,7 +2957,6 @@ def main() -> int:
                     selected,
                     writer_contract,
                     writer_authority,
-                    clean_result,
                 )
                 write_script_artifacts(args.artifact_root, args.run_id, scripts["scripts"])
                 scripts_finalized = True
