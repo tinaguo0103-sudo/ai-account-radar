@@ -310,17 +310,19 @@ def _output_schema() -> dict[str, Any]:
 
 def _prompt(run_id: str, business_date: str, topic: Mapping[str, Any], phase: str, *, common_references_read: bool = False) -> str:
     topic_id = str(topic["topic_id"])
+    article_guidance = ""
     if phase == "article_required":
         if common_references_read:
             skill_instruction = "The active R4 Skill and shared managed references were already read earlier in this same context. Do not mechanically reread them."
             source_instruction = "Read current_topic.json for this topic."
-            extra = "Use the already-read case index and voice excerpts only as needed; when this topic truly needs a recorded Austin fact, open one or two matching files under skill/references/cases/. When fuller Austin speech rhythm is genuinely necessary, open one matching file under skill/references/voice-samples/. These paths are real, readable files; do not infer details from an index."
+            extra = "Use the already-read case index and voice excerpts only as needed. When this topic touches content, brand, director, growth, or workflow and a matching controlled case would make the mechanism or consequence concrete, open one or two matching files under skill/references/cases/. If a case would only add a generic takeaway or does not match, do not force it. Use a case only as bounded Austin experience/reference; never recast the current topic as an Austin test. When fuller Austin speech rhythm is genuinely necessary, open one matching file under skill/references/voice-samples/. These paths are real, readable files; do not infer details from an index."
         else:
             skill_instruction = "Read skill/SKILL.md completely and follow the active R4 contract."
             source_instruction = "Read every required managed reference under skill/references/ completely, then read current_topic.json."
-            extra = "Read case-index.md and, only when this topic truly needs a recorded Austin fact, open one or two matching files under skill/references/cases/. When fuller Austin speech rhythm is genuinely necessary, open one matching file under skill/references/voice-samples/. These paths are real, readable files; do not infer details from an index."
+            extra = "Read case-index.md. When this topic touches content, brand, director, growth, or workflow and a matching controlled case would make the mechanism or consequence concrete, open one or two matching files under skill/references/cases/. If a case would only add a generic takeaway or does not match, do not force it. Use a case only as bounded Austin experience/reference; never recast the current topic as an Austin test. When fuller Austin speech rhythm is genuinely necessary, open one matching file under skill/references/voice-samples/. These paths are real, readable files; do not infer details from an index."
         output_instruction = "Return one object with article set and script/failure null."
         stage = "article"
+        article_guidance = "Write a material-led, topic-specific article. Preserve the source's own concrete scenes, mechanisms, uncertainty, and counterconditions before drawing any broader business implication; do not collapse this topic into a generic workflow or acceptance essay."
     else:
         skill_instruction = "The active R4 Skill and shared managed references were already read earlier in this same context." if common_references_read else "Read skill/SKILL.md completely and follow the active R4 contract."
         source_instruction = "Read frozen_article.json completely; it is the only current-topic prose input."
@@ -339,6 +341,8 @@ do not produce a batch, do not process another topic, and do not create a child 
 another model context. {skill_instruction}
 {extra}
 {source_instruction}
+
+{article_guidance}
 
 The runtime may expose bounded public first-party read-only research. If current material is
 not enough and that capability is available, use only public pages, never log in, handle a
