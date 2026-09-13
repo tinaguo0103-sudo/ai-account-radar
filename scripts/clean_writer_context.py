@@ -41,6 +41,7 @@ _FORBIDDEN_TOPIC_KEYS = {
 _ALLOWED_TOPIC_KEYS = {"topic_id", "trend_event_id", "source_evidence", "author_input"}
 _REFERENCE_FILES = tuple(script_runtime.ARTICLE_REQUIRED_REFERENCES)
 _PATH_LINK_RE = re.compile(r"(?:^|[`( ])((?:cases|voice-samples)/[A-Za-z0-9._-]+\.md)(?:[`), .]|$)")
+_READ_TRACE_VERSION = 1
 
 
 Runner = Callable[[list[str], str, Path, Path], Any]
@@ -289,14 +290,21 @@ def _output_schema() -> dict[str, Any]:
     return {"type": "object", "additionalProperties": False, "required": ["run_id", "business_date", "topic_id", "phase", "article", "script", "failure"], "properties": {"run_id": {"type": "string"}, "business_date": {"type": "string"}, "topic_id": {"type": "string"}, "phase": {"type": "string", "enum": sorted(_TURN_PHASES)}, "article": {"anyOf": [{"type": "null"}, article]}, "script": {"anyOf": [{"type": "null"}, script]}, "failure": {"anyOf": [{"type": "null"}, failure]}}}
 
 
-def _prompt(run_id: str, business_date: str, topic: Mapping[str, Any], phase: str) -> str:
+def _prompt(run_id: str, business_date: str, topic: Mapping[str, Any], phase: str, *, common_references_read: bool = False) -> str:
     topic_id = str(topic["topic_id"])
     if phase == "article_required":
-        source_instruction = "Read every required managed reference under skill/references/ completely, then read current_topic.json."
+        if common_references_read:
+            skill_instruction = "The active R4 Skill and shared managed references were already read earlier in this same context. Do not mechanically reread them."
+            source_instruction = "Read current_topic.json for this topic."
+            extra = "Use the already-read case index and voice excerpts only as needed; when this topic truly needs a recorded Austin fact, open one or two matching files under skill/references/cases/. When fuller Austin speech rhythm is genuinely necessary, open one matching file under skill/references/voice-samples/. These paths are real, readable files; do not infer details from an index."
+        else:
+            skill_instruction = "Read skill/SKILL.md completely and follow the active R4 contract."
+            source_instruction = "Read every required managed reference under skill/references/ completely, then read current_topic.json."
+            extra = "Read case-index.md and, only when this topic truly needs a recorded Austin fact, open one or two matching files under skill/references/cases/. When fuller Austin speech rhythm is genuinely necessary, open one matching file under skill/references/voice-samples/. These paths are real, readable files; do not infer details from an index."
         output_instruction = "Return one object with article set and script/failure null."
         stage = "article"
-        extra = "Read case-index.md and, only when this topic truly needs a recorded Austin fact, open one or two matching files under skill/references/cases/. When fuller Austin speech rhythm is genuinely necessary, open one matching file under skill/references/voice-samples/. These paths are real, readable files; do not infer details from an index."
     else:
+        skill_instruction = "The active R4 Skill and shared managed references were already read earlier in this same context." if common_references_read else "Read skill/SKILL.md completely and follow the active R4 contract."
         source_instruction = "Read frozen_article.json completely; it is the only current-topic prose input."
         output_instruction = "Return one object with script set and article/failure null."
         stage = "spoken adaptation"
@@ -310,7 +318,7 @@ Current phase: {phase}
 
 Use only files under the current working directory. This is one controlled {stage} turn;
 do not produce a batch, do not process another topic, and do not create a child agent or
-another model context. Read skill/SKILL.md completely and follow the active R4 contract.
+another model context. {skill_instruction}
 {extra}
 {source_instruction}
 
@@ -452,19 +460,64 @@ def _event_summaries(stdout: str, input_root: Path, expected_thread: str = "") -
     return summaries, thread_id
 
 
-def _validate_read_trace(events: list[dict[str, Any]], phase: str) -> None:
-    """Require the model's public command trace to show the R4 authority read."""
+def _default_read_trace() -> dict[str, Any]:
+    return {
+        "schema_version": _READ_TRACE_VERSION,
+        "common_references_read": False,
+        "article_current_topic_reads": 0,
+        "spoken_frozen_article_reads": 0,
+        "spoken_reference_reads": 0,
+    }
+
+
+def _read_trace_state(identity: Mapping[str, Any], receipt: Mapping[str, Any]) -> dict[str, Any]:
+    """Read the cumulative authority-read evidence for this one context."""
+    value = identity.get("read_trace")
+    if value is None:
+        value = receipt.get("read_trace")
+    if value is None:
+        return _default_read_trace()
+    if not isinstance(value, dict):
+        raise WorkflowConflict("clean_writer_context_read_trace_invalid")
+    state = _default_read_trace()
+    state.update(value)
+    if state.get("schema_version") != _READ_TRACE_VERSION or not isinstance(state.get("common_references_read"), bool):
+        raise WorkflowConflict("clean_writer_context_read_trace_invalid")
+    for key in ("article_current_topic_reads", "spoken_frozen_article_reads", "spoken_reference_reads"):
+        try:
+            state[key] = int(state.get(key, 0))
+        except (TypeError, ValueError):
+            raise WorkflowConflict("clean_writer_context_read_trace_invalid") from None
+        if state[key] < 0:
+            raise WorkflowConflict("clean_writer_context_read_trace_invalid")
+    return state
+
+
+def _validate_read_trace(events: list[dict[str, Any]], phase: str, state: Mapping[str, Any] | None = None) -> dict[str, Any]:
+    """Require per-turn reads while accumulating shared R4 authority evidence."""
     commands = [str(item.get("command") or "") for item in events if item.get("command")]
     if not commands:
         raise WorkflowConflict("clean_writer_context_skill_read_trace_missing")
-    required = ["skill/SKILL.md"]
+    next_state = _default_read_trace()
+    if state is not None:
+        next_state.update(state)
     if phase == "article_required":
-        required.extend(f"skill/{relative}" for relative in _REFERENCE_FILES)
+        required = ["current_topic.json"]
+        if not next_state.get("common_references_read"):
+            required = ["skill/SKILL.md", *[f"skill/{relative}" for relative in _REFERENCE_FILES], *required]
     else:
-        required.append("skill/references/spoken-adaptation.md")
+        required = ["skill/references/spoken-adaptation.md", "frozen_article.json"]
     missing = [relative for relative in required if not any(relative in command for command in commands)]
     if missing:
         raise WorkflowConflict("clean_writer_context_skill_read_trace_incomplete")
+    if phase == "article_required":
+        next_state["common_references_read"] = True
+        next_state["article_current_topic_reads"] = int(next_state.get("article_current_topic_reads", 0)) + 1
+    else:
+        next_state["spoken_frozen_article_reads"] = int(next_state.get("spoken_frozen_article_reads", 0)) + 1
+        next_state["spoken_reference_reads"] = int(next_state.get("spoken_reference_reads", 0)) + 1
+    next_state["schema_version"] = _READ_TRACE_VERSION
+    return next_state
 
 
 class _AppServerSession:
@@ -678,7 +731,7 @@ class _AppServerSession:
             _atomic_text(self.stderr_path, stderr)
 
 
-def _write_turn_input(paths: Mapping[str, Path], run_id: str, business_date: str, topic: Mapping[str, Any], phase: str, frozen_article: Mapping[str, Any] | None) -> tuple[str, str]:
+def _write_turn_input(paths: Mapping[str, Path], run_id: str, business_date: str, topic: Mapping[str, Any], phase: str, frozen_article: Mapping[str, Any] | None, *, common_references_read: bool = False) -> tuple[str, str]:
     input_root, current, frozen = paths["input"], paths["input"] / "current_topic.json", paths["input"] / "frozen_article.json"
     if phase == "article_required":
         frozen.unlink(missing_ok=True)
@@ -694,7 +747,7 @@ def _write_turn_input(paths: Mapping[str, Path], run_id: str, business_date: str
         _atomic_json(frozen, {"run_id": run_id, "business_date": business_date, "phase": phase, "article": article})
         frozen.chmod(0o444)
         active = frozen
-    prompt = _prompt(run_id, business_date, topic, phase)
+    prompt = _prompt(run_id, business_date, topic, phase, common_references_read=common_references_read)
     _atomic_text(paths["prompt"], prompt)
     paths["prompt"].chmod(0o444)
     return _sha256(prompt.encode("utf-8")), _sha256(active.read_bytes())
@@ -836,7 +889,16 @@ def run_clean_writer_context(*, artifact_root: Path | str, run_id: str, business
     if identity.get("codex_bin") != binary:
         identity["codex_bin"] = binary
         _atomic_json(paths["identity"], identity)
-    prompt_hash, input_hash = _write_turn_input(paths, run_id, business_date, current, phase, frozen_article)
+    read_trace = _read_trace_state(identity, receipt)
+    prompt_hash, input_hash = _write_turn_input(
+        paths,
+        run_id,
+        business_date,
+        current,
+        phase,
+        frozen_article,
+        common_references_read=bool(read_trace.get("common_references_read")),
+    )
     sequence = int(existing.get("sequence")) if existing else len(records) + 1
     attempt_count = int(existing.get("attempt_count", 0)) + 1 if existing else 1
     thread_id = str(identity.get("thread_id") or receipt.get("thread_id") or "")
@@ -863,7 +925,7 @@ def run_clean_writer_context(*, artifact_root: Path | str, run_id: str, business
     _atomic_json(turn_path, record)
     try:
         raw_output, observed_thread, events = _invoke_fake_or_session(paths=paths, prompt=paths["prompt"].read_text(encoding="utf-8"), schema=_output_schema(), thread_id=thread_id, binary=binary, runner=runner)
-        _validate_read_trace(events, phase)
+        read_trace = _validate_read_trace(events, phase, read_trace)
         # Record the context identity before validating model prose.  A bad
         # turn must be resumable on the same Thread, never treated as a reason
         # to start a second fresh context.
@@ -874,6 +936,10 @@ def run_clean_writer_context(*, artifact_root: Path | str, run_id: str, business
             _atomic_json(paths["identity"], identity)
             receipt.update({"thread_id": thread_id, "context_start_count": 1})
             _receipt_write(paths, identity_hash, receipt)
+        identity["read_trace"] = read_trace
+        receipt["read_trace"] = read_trace
+        _atomic_json(paths["identity"], identity)
+        _receipt_write(paths, identity_hash, receipt)
         output = _validate_turn_output(json.loads(raw_output), run_id, business_date, current, phase)
         if thread_id and observed_thread and thread_id != observed_thread:
             raise WorkflowConflict("clean_writer_context_thread_identity_conflict")

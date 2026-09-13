@@ -35,8 +35,9 @@ class CleanWriterContextTest(unittest.TestCase):
         self.temp.cleanup()
 
     @staticmethod
-    def fake_runner(calls, *, fail_on=None, batch=False):
+    def fake_runner(calls, *, fail_on=None, batch=False, read_plans=None):
         def run(command, prompt, input_root, output_path):
+            call_index = len(calls)
             calls.append({"command": list(command), "prompt": prompt})
             topic_id = next(line.split(": ", 1)[1] for line in prompt.splitlines() if line.startswith("Current topic:"))
             phase = next(line.split(": ", 1)[1] for line in prompt.splitlines() if line.startswith("Current phase:"))
@@ -53,6 +54,9 @@ class CleanWriterContextTest(unittest.TestCase):
             output_path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
             started = "" if any("thread-synthetic-1" in str(row["command"]) for row in calls[:-1]) else '{"type":"thread.started","thread_id":"thread-synthetic-1"}\n'
             reads = ["skill/SKILL.md"] + (list(script_runtime.ARTICLE_REQUIRED_REFERENCES) if phase == "article_required" else ["references/spoken-adaptation.md"])
+            reads.append("current_topic.json" if phase == "article_required" else "frozen_article.json")
+            if read_plans is not None and call_index < len(read_plans):
+                reads = list(read_plans[call_index])
             commands = "".join(json.dumps({"type": "item.completed", "item": {"type": "command_execution", "command": f"sed -n '1,1p' {input_root / ('skill/' + relative if relative.startswith('references/') else relative)}"}}) + "\n" for relative in reads)
             return SimpleNamespace(returncode=0, stdout=started + '{"type":"turn.started"}\n' + commands + '{"type":"turn.completed"}\n', stderr="")
         return run
@@ -122,6 +126,68 @@ class CleanWriterContextTest(unittest.TestCase):
         receipt = json.loads((self.root / "resume" / RUN_ID / "clean_writer_context" / "receipt.json").read_text())
         self.assertEqual(receipt["status"], "active")
         self.assertEqual(receipt["invocation_count"], 1)
+
+    def test_first_article_requires_complete_common_reference_trace(self):
+        calls = []
+        reads = ["skill/SKILL.md", *list(script_runtime.ARTICLE_REQUIRED_REFERENCES)[:-1], "current_topic.json"]
+        with self.assertRaisesRegex(WorkflowConflict, "skill_read_trace_incomplete"):
+            self._run(root_name="trace-first-missing", calls=calls, read_plans=[reads])
+        receipt = json.loads((self.root / "trace-first-missing" / RUN_ID / "clean_writer_context" / "receipt.json").read_text())
+        self.assertEqual(receipt["status"], "failed")
+        self.assertNotIn("read_trace", receipt)
+
+    def test_later_article_uses_cumulative_common_trace_and_reads_current_topic(self):
+        calls = []
+        first = self._run(root_name="trace-cumulative", calls=calls)
+        self.assertEqual(first["output"]["phase"], "article_required")
+        second = self._run(
+            root_name="trace-cumulative",
+            calls=calls,
+            current_index=1,
+            read_plans=[[], ["current_topic.json"]],
+        )
+        self.assertEqual(second["output"]["phase"], "article_required")
+        self.assertIn("Do not mechanically reread", calls[1]["prompt"])
+        self.assertNotIn("Read every required managed reference", calls[1]["prompt"])
+        receipt = json.loads((self.root / "trace-cumulative" / RUN_ID / "clean_writer_context" / "receipt.json").read_text())
+        self.assertTrue(receipt["read_trace"]["common_references_read"])
+        self.assertEqual(receipt["read_trace"]["article_current_topic_reads"], 2)
+
+    def test_later_article_missing_current_topic_fails_after_cumulative_trace(self):
+        calls = []
+        self._run(root_name="trace-current-required", calls=calls)
+        with self.assertRaisesRegex(WorkflowConflict, "skill_read_trace_incomplete"):
+            self._run(
+                root_name="trace-current-required",
+                calls=calls,
+                current_index=1,
+                read_plans=[[], ["skill/SKILL.md"]],
+            )
+        receipt = json.loads((self.root / "trace-current-required" / RUN_ID / "clean_writer_context" / "receipt.json").read_text())
+        self.assertEqual(receipt["status"], "failed")
+        self.assertTrue(receipt["read_trace"]["common_references_read"])
+        self.assertEqual(receipt["read_trace"]["article_current_topic_reads"], 1)
+
+    def test_spoken_requires_frozen_article_and_spoken_reference(self):
+        for root_name, reads in (
+            ("trace-spoken-reference", ["frozen_article.json"]),
+            ("trace-spoken-frozen", ["skill/references/spoken-adaptation.md"]),
+        ):
+            calls = []
+            first = self._run(root_name=root_name, calls=calls)
+            article_meta = script_runtime.write_article_artifact(self.root / root_name, RUN_ID, BUSINESS_DATE, first["output"]["article"])
+            article_meta.pop("created", None)
+            with self.assertRaisesRegex(WorkflowConflict, "skill_read_trace_incomplete"):
+                self._run(
+                    root_name=root_name,
+                    calls=calls,
+                    phase="spoken_adaptation_required",
+                    frozen_article=article_meta,
+                    read_plans=[[], reads],
+                )
+            receipt = json.loads((self.root / root_name / RUN_ID / "clean_writer_context" / "receipt.json").read_text())
+            self.assertTrue(receipt["read_trace"]["common_references_read"])
+            self.assertEqual(receipt["read_trace"]["spoken_frozen_article_reads"], 0)
 
     def test_completed_turn_is_cached_without_requiring_codex_binary(self):
         calls = []
