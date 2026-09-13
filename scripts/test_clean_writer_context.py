@@ -126,6 +126,10 @@ class CleanWriterContextTest(unittest.TestCase):
         receipt = json.loads((self.root / "resume" / RUN_ID / "clean_writer_context" / "receipt.json").read_text())
         self.assertEqual(receipt["status"], "active")
         self.assertEqual(receipt["invocation_count"], 1)
+        turn = json.loads((self.root / "resume" / RUN_ID / "clean_writer_context" / "turns" / "turn-0002.json").read_text())
+        self.assertNotIn("error", turn)
+        ledger = (self.root / "resume" / RUN_ID / "clean_writer_context" / "events.jsonl").read_text().splitlines()
+        self.assertEqual(receipt["event_count"], len(ledger))
 
     def test_first_article_requires_complete_common_reference_trace(self):
         calls = []
@@ -230,6 +234,158 @@ class CleanWriterContextTest(unittest.TestCase):
             "params": {"item": {"type": "agent_message", "content": [{"type": "output_text", "text": "{}"}]}},
         }, pieces)
         self.assertEqual(pieces, ["{}"])
+
+    def test_app_server_acceptance_and_event_ledger_callbacks_are_incremental(self):
+        session = clean._AppServerSession("/bin/echo", self.root, self.root / "stderr.log")
+        session.process = object()
+        session.thread_id = "thread-incremental"
+        messages = iter([
+            {"id": "clean-turn-1", "result": {"turn": {"id": "turn-incremental", "threadId": "thread-incremental", "status": "inProgress"}}},
+            {"method": "turn/started", "params": {"threadId": "thread-incremental", "turn": {"id": "turn-incremental", "status": "inProgress"}}},
+            {"method": "item/completed", "params": {"threadId": "thread-incremental", "turnId": "turn-incremental", "item": {"type": "command_execution", "command": "sed -n '1,1p' current_topic.json"}}},
+            {"method": "item/agentMessage/delta", "params": {"threadId": "thread-incremental", "turnId": "turn-incremental", "delta": "{}"}},
+            {"method": "turn/completed", "params": {"threadId": "thread-incremental", "turn": {"id": "turn-incremental", "status": "completed", "items": [{"type": "agent_message", "content": [{"type": "output_text", "text": "{}"}]}]}}},
+        ])
+        session._send = lambda value: None
+        session._read = lambda timeout=clean.DEFAULT_TIMEOUT_SECONDS, **kwargs: next(messages)
+        timeline, accepted, snapshots = [], [], []
+        session.configure_persistence(
+            on_event=lambda event: timeline.append(event),
+            on_turn_accepted=lambda thread_id, turn_id: (timeline.append({"accepted": True}), accepted.append((thread_id, turn_id))),
+            on_output_snapshot=lambda value: snapshots.append(value),
+        )
+        self.assertEqual(session.turn("return {}", {}), "{}")
+        self.assertEqual(accepted, [("thread-incremental", "turn-incremental")])
+        self.assertTrue(timeline[0].get("accepted"))
+        self.assertEqual(timeline[1].get("type"), "turn/started")
+        self.assertEqual(timeline[-1].get("status"), "completed")
+        self.assertEqual(snapshots[-1], "{}")
+        self.assertNotIn("delta", timeline[-1])
+        self.assertEqual(session.last_turn_state, "completed")
+
+    def test_app_server_same_turn_readback_states_are_typed(self):
+        session = clean._AppServerSession("/bin/echo", self.root, self.root / "stderr.log")
+        session.process = object()
+        session.thread_id = "thread-readback"
+        session.turn_statuses["turn-completed"] = "completed"
+        completed_readback = session.reconcile_turn("turn-completed", ["{}"])
+        self.assertEqual(completed_readback["state"], "completed")
+        session.turn_statuses["turn-failed"] = "failed"
+        self.assertEqual(session.reconcile_turn("turn-failed")["state"], "failed")
+        session.turn_statuses.clear()
+        session._rpc = lambda method, params, **kwargs: {"thread": {"status": {"type": "active"}}}
+        old_wait = clean.RECONCILE_WAIT_SECONDS
+        try:
+            clean.RECONCILE_WAIT_SECONDS = 0
+            self.assertEqual(session.reconcile_turn("turn-running")["state"], "running")
+        finally:
+            clean.RECONCILE_WAIT_SECONDS = old_wait
+        session.process = None
+        self.assertEqual(session.reconcile_turn("turn-unknown")["state"], "unknown")
+
+    def test_silent_turn_fixture_recovers_same_identity_without_new_turn(self):
+        session = clean._AppServerSession("/bin/echo", self.root, self.root / "stderr.log")
+        session.process = object()
+        session.thread_id = "thread-silent"
+        sent = []
+        session._send = lambda value: sent.append(value)
+        reads = [
+            {"id": "clean-turn-1", "result": {"turn": {"id": "turn-silent", "threadId": "thread-silent", "status": "inProgress"}}},
+            WorkflowConflict("clean_writer_context_turn_timeout"),
+            {"id": "clean-2", "result": {"thread": {"status": {"type": "active"}}}},
+            {"method": "turn/completed", "params": {"threadId": "thread-silent", "turn": {"id": "turn-silent", "status": "completed", "items": [{"type": "agent_message", "content": [{"type": "output_text", "text": "{\"ok\":true}"}]}]}}},
+        ]
+
+        def read(timeout=clean.DEFAULT_TIMEOUT_SECONDS, **kwargs):
+            value = reads.pop(0)
+            if isinstance(value, Exception):
+                raise value
+            return value
+
+        session._read = read
+        accepted = []
+        session.configure_persistence(on_turn_accepted=lambda thread_id, turn_id: accepted.append((thread_id, turn_id)))
+        old_wait = clean.RECONCILE_WAIT_SECONDS
+        old_interrupt_wait = clean.RECONCILE_INTERRUPT_WAIT_SECONDS
+        try:
+            clean.RECONCILE_WAIT_SECONDS = 0.2
+            clean.RECONCILE_INTERRUPT_WAIT_SECONDS = 0.2
+            self.assertEqual(session.turn("return {}", {}), "{\"ok\":true}")
+        finally:
+            clean.RECONCILE_WAIT_SECONDS = old_wait
+            clean.RECONCILE_INTERRUPT_WAIT_SECONDS = old_interrupt_wait
+        self.assertEqual(accepted, [("thread-silent", "turn-silent")])
+        self.assertEqual([item["method"] for item in sent], ["turn/start", "thread/read"])
+        self.assertEqual(session.last_turn_id, "turn-silent")
+        self.assertEqual(session.last_turn_state, "completed")
+
+    def test_process_exit_marks_unknown_and_does_not_start_duplicate_turn(self):
+        calls = []
+        original = clean._AppServerSession
+
+        class SilentSession:
+            instances = []
+
+            def __init__(self, binary, input_root, stderr_path):
+                self.thread_id = "thread-process-exit"
+                self.last_turn_id = "turn-process-exit"
+                self.last_turn_state = "unknown"
+                self.last_turn_status = ""
+                self.last_turn_output = ""
+                self.last_events = []
+                self.callbacks = {}
+                self.turn_calls = 0
+                SilentSession.instances.append(self)
+
+            def start(self):
+                return None
+
+            def configure_persistence(self, **callbacks):
+                self.callbacks = callbacks
+
+            def turn(self, prompt, schema):
+                self.turn_calls += 1
+                self.callbacks["on_turn_accepted"](self.thread_id, self.last_turn_id)
+                raise WorkflowConflict("clean_writer_context_session_ended")
+
+            def reconcile_turn(self, turn_id):
+                calls.append(("reconcile", turn_id))
+                return {"state": "unknown", "turn_id": turn_id, "thread_id": self.thread_id, "status": "", "output": "", "detail": "fixture"}
+
+            def continue_turn(self, turn_id):
+                calls.append(("continue", turn_id))
+                return {"state": "unknown", "turn_id": turn_id, "thread_id": self.thread_id, "status": "", "output": "", "detail": "fixture"}
+
+        clean._SESSIONS.clear()
+        clean._AppServerSession = SilentSession
+        try:
+            def run_direct():
+                return clean.run_clean_writer_context(
+                    artifact_root=self.root / "process-exit",
+                    run_id=RUN_ID,
+                    business_date=BUSINESS_DATE,
+                    selected_topics=self.topics,
+                    writer_authority=self.authority,
+                    current_topic=self.topics[0],
+                    phase="article_required",
+                    codex_bin="/bin/echo",
+                    runner=None,
+                )
+
+            with self.assertRaisesRegex(WorkflowConflict, "session_ended"):
+                run_direct()
+            receipt_path = self.root / "process-exit" / RUN_ID / "clean_writer_context" / "receipt.json"
+            receipt = json.loads(receipt_path.read_text())
+            self.assertEqual(receipt["status"], "unknown")
+            self.assertEqual(receipt["active_turn_id"], "turn-process-exit")
+            self.assertEqual(SilentSession.instances[0].turn_calls, 1)
+            with self.assertRaisesRegex(WorkflowConflict, "status_unknown"):
+                run_direct()
+            self.assertEqual(SilentSession.instances[0].turn_calls, 1)
+            self.assertEqual(calls, [("reconcile", "turn-process-exit")])
+        finally:
+            clean._SESSIONS.clear()
+            clean._AppServerSession = original
 
     def test_embedded_absolute_command_path_is_rejected(self):
         with self.assertRaisesRegex(WorkflowConflict, "absolute_path_read"):

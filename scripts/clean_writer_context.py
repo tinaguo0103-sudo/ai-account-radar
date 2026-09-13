@@ -17,6 +17,8 @@ import shlex
 import shutil
 import subprocess
 import tempfile
+import time
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -30,6 +32,8 @@ WRITER_MODEL = "gpt-5.6-luna"
 WRITER_REASONING_EFFORT = "max"
 CONTEXT_KIND = "fresh_non_user_visible_content_only"
 DEFAULT_TIMEOUT_SECONDS = 900
+RECONCILE_WAIT_SECONDS = 30.0
+RECONCILE_INTERRUPT_WAIT_SECONDS = 15.0
 _TURN_PHASES = {"article_required", "spoken_adaptation_required"}
 _FORBIDDEN_PATH_TOKENS = (
     "AGENTS.md", ".git", "daily_workflow.sqlite3", "docs/", "qa正文", "old稿",
@@ -112,6 +116,20 @@ def _atomic_text(path: Path, value: str) -> None:
     finally:
         if os.path.exists(temporary):
             os.unlink(temporary)
+
+
+def _append_jsonl(path: Path, value: Mapping[str, Any]) -> None:
+    """Append one durable, machine-readable event without buffering a batch."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    encoded = (canonical(dict(value)) + "\n").encode("utf-8")
+    with path.open("ab") as handle:
+        handle.write(encoded)
+        handle.flush()
+        os.fsync(handle.fileno())
+
+
+def _utc_now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 def _read_json(path: Path) -> Any:
@@ -211,7 +229,7 @@ def _context_paths(artifact_root: Path | str, run_id: str) -> dict[str, Path]:
         "context": context, "input": context / "clean_root",
         "manifest": context / "clean_root" / "manifest.json", "prompt": context / "clean_root" / "writer_prompt.md",
         "schema": context / "clean_root" / "turn_output_schema.json", "output": context / "output.json",
-        "events": context / "events_summary.json", "identity": context / "identity.json",
+        "events": context / "events_summary.json", "event_ledger": context / "events.jsonl", "identity": context / "identity.json",
         "receipt": context / "receipt.json", "turns": context / "turns",
         "stderr": context / "app_server_stderr.log",
     }
@@ -521,7 +539,13 @@ def _validate_read_trace(events: list[dict[str, Any]], phase: str, state: Mappin
 
 
 class _AppServerSession:
-    """One headless App Server process and one ephemeral Thread."""
+    """One headless App Server process and one ephemeral Thread.
+
+    The controller deliberately keeps the protocol state in this one process.
+    Ephemeral App Server threads expose metadata-only ``thread/read`` and do
+    not provide a durable turn-history API, so a missing turn identity is an
+    unreconciled state rather than permission to create another context.
+    """
 
     def __init__(self, binary: str, input_root: Path, stderr_path: Path):
         self.binary, self.input_root, self.stderr_path = binary, input_root, stderr_path
@@ -529,7 +553,28 @@ class _AppServerSession:
         self.thread_id = ""
         self.events: list[dict[str, Any]] = []
         self.last_events: list[dict[str, Any]] = []
+        self.last_turn_id = ""
+        self.last_turn_status = ""
+        self.last_turn_state = "unknown"
+        self.last_turn_output = ""
+        self.last_turn_error = ""
+        self.turn_statuses: dict[str, str] = {}
+        self._on_event: Callable[[dict[str, Any]], None] | None = None
+        self._on_turn_accepted: Callable[[str, str], None] | None = None
+        self._on_output_snapshot: Callable[[str], None] | None = None
         self._counter = 0
+
+    def configure_persistence(
+        self,
+        *,
+        on_event: Callable[[dict[str, Any]], None] | None = None,
+        on_turn_accepted: Callable[[str, str], None] | None = None,
+        on_output_snapshot: Callable[[str], None] | None = None,
+    ) -> None:
+        """Attach run-scoped durable callbacks for the next controlled turn."""
+        self._on_event = on_event
+        self._on_turn_accepted = on_turn_accepted
+        self._on_output_snapshot = on_output_snapshot
 
     def _send(self, value: dict[str, Any]) -> None:
         if self.process is None or self.process.stdin is None:
@@ -537,7 +582,12 @@ class _AppServerSession:
         self.process.stdin.write(json.dumps(value, ensure_ascii=False, separators=(",", ":")) + "\n")
         self.process.stdin.flush()
 
-    def _read(self, timeout: float = DEFAULT_TIMEOUT_SECONDS) -> dict[str, Any]:
+    def _read(
+        self,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        *,
+        timeout_code: str = "clean_writer_context_turn_timeout",
+    ) -> dict[str, Any]:
         if self.process is None or self.process.stdout is None:
             raise WorkflowConflict("clean_writer_context_session_closed")
         selector = selectors.DefaultSelector()
@@ -545,7 +595,7 @@ class _AppServerSession:
         ready = selector.select(timeout)
         selector.close()
         if not ready:
-            raise WorkflowConflict("clean_writer_context_turn_timeout")
+            raise WorkflowConflict(timeout_code)
         line = self.process.stdout.readline()
         if not line:
             raise WorkflowConflict("clean_writer_context_session_ended")
@@ -568,8 +618,14 @@ class _AppServerSession:
             if value:
                 self.thread_id = value
         item = params.get("item") if isinstance(params.get("item"), dict) else {}
+        turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
+        turn_id = str(turn.get("id") or params.get("turnId") or "")
+        if turn_id and isinstance(turn.get("status"), str):
+            self.turn_statuses[turn_id] = str(turn["status"])
         if method == "item/agentMessage/delta" and text_parts is not None and isinstance(params.get("delta"), str):
             text_parts.append(params["delta"])
+            if self._on_output_snapshot is not None:
+                self._on_output_snapshot("".join(text_parts))
         if method in {"item/completed", "item/updated"} and text_parts is not None and item.get("type") in {"agent_message", "agentMessage"}:
             text = self._item_text(item)
             if isinstance(text, str) and text:
@@ -577,8 +633,9 @@ class _AppServerSession:
                 # item.  Keep the complete item once; never duplicate JSON.
                 text_parts.clear()
                 text_parts.append(text)
+                if self._on_output_snapshot is not None:
+                    self._on_output_snapshot(text)
         if method == "turn/completed" and text_parts is not None:
-            turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
             items = turn.get("items") if isinstance(turn.get("items"), list) else []
             for completed_item in items:
                 if not isinstance(completed_item, dict) or completed_item.get("type") not in {"agent_message", "agentMessage"}:
@@ -587,19 +644,29 @@ class _AppServerSession:
                 if isinstance(text, str) and text:
                     text_parts.clear()
                     text_parts.append(text)
+                    if self._on_output_snapshot is not None:
+                        self._on_output_snapshot(text)
         if method and isinstance(method, str):
             summary: dict[str, Any] = {"type": method}
             if isinstance(params.get("threadId"), str):
                 summary["thread_id"] = params["threadId"]
-            turn = params.get("turn") if isinstance(params.get("turn"), dict) else {}
-            if isinstance(turn.get("id"), str):
-                summary["turn_id"] = turn["id"]
+            elif method == "thread/started" and self.thread_id:
+                summary["thread_id"] = self.thread_id
+            if turn_id:
+                summary["turn_id"] = turn_id
+            if isinstance(turn.get("status"), str):
+                summary["status"] = turn["status"]
+            thread_status = params.get("status") if isinstance(params.get("status"), dict) else {}
+            if isinstance(thread_status.get("type"), str):
+                summary["thread_status"] = thread_status["type"]
             if isinstance(item.get("type"), str):
                 summary["item_type"] = item["type"]
             if isinstance(item.get("command"), str):
                 _command_scope(item["command"], self.input_root)
                 summary["command"] = item["command"][:500]
             self.events.append(summary)
+            if self._on_event is not None:
+                self._on_event(dict(summary))
         if method and "id" in message:
             self._send({"id": message.get("id"), "error": {"code": -32000, "message": "clean writer context is non-interactive"}})
 
@@ -620,12 +687,19 @@ class _AppServerSession:
                 parts.append(entry["text"])
         return "".join(parts)
 
-    def _rpc(self, method: str, params: dict[str, Any]) -> dict[str, Any]:
+    def _rpc(
+        self,
+        method: str,
+        params: dict[str, Any],
+        *,
+        timeout: float = DEFAULT_TIMEOUT_SECONDS,
+        text_parts: list[str] | None = None,
+    ) -> dict[str, Any]:
         self._counter += 1
         request_id = f"clean-{self._counter}"
         self._send({"id": request_id, "method": method, "params": params})
         while True:
-            message = self._read()
+            message = self._read(timeout, timeout_code="clean_writer_context_protocol_timeout")
             if message.get("id") == request_id:
                 if "error" in message:
                     raise WorkflowConflict(f"clean_writer_context_{method.replace('/', '_')}_failed")
@@ -633,7 +707,7 @@ class _AppServerSession:
                 if not isinstance(result, dict):
                     raise WorkflowConflict("clean_writer_context_protocol_invalid")
                 return result
-            self._consume_notification(message)
+            self._consume_notification(message, text_parts)
 
     def start(self) -> None:
         try:
@@ -661,48 +735,215 @@ class _AppServerSession:
             self.close()
             raise
 
+    @staticmethod
+    def _terminal_resolution(status: str) -> str:
+        if status == "completed":
+            return "completed"
+        if status == "failed":
+            return "failed"
+        if status == "interrupted":
+            return "interrupted"
+        return ""
+
+    def _resolution(self, state: str, turn_id: str, text_parts: list[str], *, detail: str = "") -> dict[str, Any]:
+        output = "".join(text_parts)
+        self.last_turn_id = turn_id
+        self.last_turn_status = self.turn_statuses.get(turn_id, "")
+        self.last_turn_state = state
+        self.last_turn_output = output
+        if detail:
+            self.last_turn_error = detail
+        return {"state": state, "thread_id": self.thread_id, "turn_id": turn_id, "status": self.last_turn_status, "output": output, "detail": detail}
+
+    def reconcile_turn(self, turn_id: str, text_parts: list[str] | None = None) -> dict[str, Any]:
+        """Read the exact Thread status using the installed supported API.
+
+        Ephemeral threads only support metadata-only ``thread/read``.  The
+        method therefore returns ``unknown`` when no terminal event carrying
+        this exact turn has been observed; it never invents a turn-history
+        method or starts a replacement turn.
+        """
+        parts = text_parts if text_parts is not None else []
+        known = self._terminal_resolution(self.turn_statuses.get(turn_id, ""))
+        if known:
+            return self._resolution(known, turn_id, parts)
+        if not turn_id or not self.thread_id or self.process is None:
+            return self._resolution("unknown", turn_id, parts, detail="no_live_same_turn_protocol")
+        try:
+            result = self._rpc(
+                "thread/read",
+                {"threadId": self.thread_id, "includeTurns": False},
+                timeout=min(DEFAULT_TIMEOUT_SECONDS, RECONCILE_INTERRUPT_WAIT_SECONDS),
+                text_parts=parts,
+            )
+        except WorkflowConflict as error:
+            known = self._terminal_resolution(self.turn_statuses.get(turn_id, ""))
+            if known:
+                return self._resolution(known, turn_id, parts)
+            return self._resolution("unknown", turn_id, parts, detail=str(error))
+        known = self._terminal_resolution(self.turn_statuses.get(turn_id, ""))
+        if known:
+            return self._resolution(known, turn_id, parts)
+        thread = result.get("thread") if isinstance(result.get("thread"), dict) else {}
+        status = thread.get("status") if isinstance(thread.get("status"), dict) else {}
+        if status.get("type") == "active":
+            return self._resolution("running", turn_id, parts, detail="thread/read:active")
+        # ``idle`` and ``systemError`` do not identify the requested turn on
+        # an ephemeral thread.  Without a terminal notification the state is
+        # deliberately unreconciled.
+        return self._resolution("unknown", turn_id, parts, detail=f"thread/read:{status.get('type', 'missing')}")
+
+    def continue_turn(self, turn_id: str, text_parts: list[str] | None = None) -> dict[str, Any]:
+        """Wait once for the same turn, then interrupt that exact turn.
+
+        This is the only bounded continuation path.  It never sends another
+        ``turn/start`` request and never opens another App Server process.
+        """
+        parts = text_parts if text_parts is not None else []
+        deadline = time.monotonic() + max(0.0, RECONCILE_WAIT_SECONDS)
+        while time.monotonic() < deadline:
+            try:
+                message = self._read(
+                    max(0.0, deadline - time.monotonic()),
+                    timeout_code="clean_writer_context_reconcile_timeout",
+                )
+            except WorkflowConflict:
+                break
+            if message.get("method"):
+                self._consume_notification(message, parts)
+            known = self._terminal_resolution(self.turn_statuses.get(turn_id, ""))
+            if known:
+                return self._resolution(known, turn_id, parts)
+        # The protocol exposes an exact-turn interrupt.  If it is accepted,
+        # wait briefly for the terminal event; otherwise retain unknown.
+        try:
+            self._rpc(
+                "turn/interrupt",
+                {"threadId": self.thread_id, "turnId": turn_id},
+                timeout=RECONCILE_INTERRUPT_WAIT_SECONDS,
+                text_parts=parts,
+            )
+        except WorkflowConflict as error:
+            known = self._terminal_resolution(self.turn_statuses.get(turn_id, ""))
+            if known:
+                return self._resolution(known, turn_id, parts)
+            return self._resolution("unknown", turn_id, parts, detail=str(error))
+        known = self._terminal_resolution(self.turn_statuses.get(turn_id, ""))
+        if known:
+            return self._resolution(known, turn_id, parts)
+        deadline = time.monotonic() + max(0.0, RECONCILE_INTERRUPT_WAIT_SECONDS)
+        while time.monotonic() < deadline:
+            try:
+                message = self._read(
+                    max(0.0, deadline - time.monotonic()),
+                    timeout_code="clean_writer_context_reconcile_timeout",
+                )
+            except WorkflowConflict:
+                break
+            if message.get("method"):
+                self._consume_notification(message, parts)
+            known = self._terminal_resolution(self.turn_statuses.get(turn_id, ""))
+            if known:
+                return self._resolution(known, turn_id, parts)
+        return self._resolution("unknown", turn_id, parts, detail="turn/interrupt:terminal_event_missing")
+
     def turn(self, prompt: str, schema: dict[str, Any]) -> str:
         if not self.thread_id:
             raise WorkflowConflict("clean_writer_context_thread_identity_missing")
         self._counter += 1
         request_id, turn_id, accepted = f"clean-turn-{self._counter}", "", False
-        self._send({"id": request_id, "method": "turn/start", "params": {"threadId": self.thread_id, "input": [{"type": "text", "text": prompt}], "model": WRITER_MODEL, "effort": WRITER_REASONING_EFFORT, "approvalPolicy": "never", "multiAgentMode": "explicitRequestOnly", "cwd": str(self.input_root), "sandboxPolicy": {"type": "readOnly", "networkAccess": True}, "outputSchema": schema, "turnTrigger": "clean_writer_context_controlled_turn"}})
         event_start = len(self.events)
         text_parts: list[str] = []
         completed, status = False, ""
-        # Keep reading until both the request response and terminal
-        # notification arrive; protocol implementations are allowed to emit
-        # `turn/completed` before the JSON-RPC response is flushed.
-        while not (completed and accepted):
-            message = self._read()
-            if message.get("id") == request_id:
-                if "error" in message:
-                    raise WorkflowConflict("clean_writer_context_turn_start_failed")
-                turn = message.get("result", {}).get("turn") if isinstance(message.get("result"), dict) else {}
-                if not isinstance(turn, dict):
-                    raise WorkflowConflict("clean_writer_context_turn_identity_missing")
-                turn_id, accepted = str(turn.get("id") or ""), True
-                if turn.get("threadId") and turn.get("threadId") != self.thread_id:
-                    raise WorkflowConflict("clean_writer_context_thread_identity_conflict")
-                continue
-            method = message.get("method")
-            params = message.get("params") if isinstance(message.get("params"), dict) else {}
-            if method == "turn/started":
-                started = params.get("turn") if isinstance(params.get("turn"), dict) else {}
-                if turn_id and started.get("id") and started.get("id") != turn_id:
-                    raise WorkflowConflict("clean_writer_context_turn_identity_conflict")
-            if method == "turn/completed":
-                done = params.get("turn") if isinstance(params.get("turn"), dict) else {}
-                if done.get("id") and turn_id and done.get("id") != turn_id:
-                    raise WorkflowConflict("clean_writer_context_turn_identity_conflict")
-                status, completed = str(done.get("status") or params.get("status") or ""), True
-            self._consume_notification(message, text_parts)
-        if not accepted or status not in {"completed", "success", ""}:
-            raise WorkflowConflict("clean_writer_context_turn_failed")
-        if not text_parts:
-            raise WorkflowConflict("clean_writer_context_output_missing")
-        self.last_events = self.events[event_start:]
-        return "".join(text_parts)
+        self.last_turn_id = ""
+        self.last_turn_status = ""
+        self.last_turn_state = "unknown"
+        self.last_turn_output = ""
+        self.last_turn_error = ""
+        self._send({"id": request_id, "method": "turn/start", "params": {"threadId": self.thread_id, "input": [{"type": "text", "text": prompt}], "model": WRITER_MODEL, "effort": WRITER_REASONING_EFFORT, "approvalPolicy": "never", "multiAgentMode": "explicitRequestOnly", "cwd": str(self.input_root), "sandboxPolicy": {"type": "readOnly", "networkAccess": True}, "outputSchema": schema, "turnTrigger": "clean_writer_context_controlled_turn"}})
+
+        def accept(value: str) -> None:
+            nonlocal turn_id, accepted
+            if value and turn_id and value != turn_id:
+                raise WorkflowConflict("clean_writer_context_turn_identity_conflict")
+            if value:
+                turn_id = value
+            if not turn_id:
+                raise WorkflowConflict("clean_writer_context_turn_identity_missing")
+            if not accepted:
+                accepted = True
+                self.turn_statuses.setdefault(turn_id, "inProgress")
+                if self._on_turn_accepted is not None:
+                    self._on_turn_accepted(self.thread_id, turn_id)
+
+        try:
+            # Keep reading until both the request response and terminal
+            # notification arrive; protocol implementations are allowed to
+            # emit ``turn/completed`` before the JSON-RPC response is flushed.
+            while not (completed and accepted):
+                message = self._read()
+                if message.get("id") == request_id:
+                    if "error" in message:
+                        raise WorkflowConflict("clean_writer_context_turn_start_failed")
+                    turn = message.get("result", {}).get("turn") if isinstance(message.get("result"), dict) else {}
+                    if not isinstance(turn, dict):
+                        raise WorkflowConflict("clean_writer_context_turn_identity_missing")
+                    if turn.get("threadId") and turn.get("threadId") != self.thread_id:
+                        raise WorkflowConflict("clean_writer_context_thread_identity_conflict")
+                    accept(str(turn.get("id") or ""))
+                    continue
+                method = message.get("method")
+                params = message.get("params") if isinstance(message.get("params"), dict) else {}
+                if method == "turn/started":
+                    started = params.get("turn") if isinstance(params.get("turn"), dict) else {}
+                    if started.get("id"):
+                        accept(str(started.get("id")))
+                    if turn_id and started.get("id") and started.get("id") != turn_id:
+                        raise WorkflowConflict("clean_writer_context_turn_identity_conflict")
+                if method == "turn/completed":
+                    done = params.get("turn") if isinstance(params.get("turn"), dict) else {}
+                    if done.get("id"):
+                        accept(str(done.get("id")))
+                    if done.get("id") and turn_id and done.get("id") != turn_id:
+                        raise WorkflowConflict("clean_writer_context_turn_identity_conflict")
+                    status, completed = str(done.get("status") or params.get("status") or ""), True
+                self._consume_notification(message, text_parts)
+            self.last_events = self.events[event_start:]
+            self.last_turn_id = turn_id
+            self.last_turn_status = status or self.turn_statuses.get(turn_id, "")
+            self.last_turn_output = "".join(text_parts)
+            self.last_turn_state = self._terminal_resolution(self.last_turn_status) or "unknown"
+            if self.last_turn_state != "completed":
+                raise WorkflowConflict("clean_writer_context_turn_failed")
+            if not text_parts:
+                raise WorkflowConflict("clean_writer_context_output_missing")
+            return self.last_turn_output
+        except WorkflowConflict as error:
+            self.last_events = self.events[event_start:]
+            self.last_turn_id = turn_id
+            self.last_turn_status = status or self.turn_statuses.get(turn_id, "")
+            self.last_turn_output = "".join(text_parts)
+            self.last_turn_error = str(error)
+            self.last_turn_state = self._terminal_resolution(self.last_turn_status) or "unknown"
+            if str(error) in {"clean_writer_context_turn_timeout", "clean_writer_context_session_ended", "clean_writer_context_protocol_timeout"}:
+                resolution = self.reconcile_turn(turn_id, text_parts)
+                if resolution["state"] == "running":
+                    resolution = self.continue_turn(turn_id, text_parts)
+                self.last_turn_state = str(resolution.get("state") or "unknown")
+                self.last_turn_status = str(resolution.get("status") or self.last_turn_status)
+                self.last_turn_output = str(resolution.get("output") or self.last_turn_output)
+                self.last_turn_error = str(resolution.get("detail") or error)
+                self.last_events = self.events[event_start:]
+                if resolution["state"] == "completed":
+                    if self.last_turn_output:
+                        return self.last_turn_output
+                    raise WorkflowConflict("clean_writer_context_output_missing") from None
+                if resolution["state"] == "failed":
+                    raise WorkflowConflict("clean_writer_context_turn_failed") from None
+                if resolution["state"] == "interrupted":
+                    raise WorkflowConflict("clean_writer_context_turn_interrupted") from None
+                raise WorkflowConflict("clean_writer_context_turn_status_unknown") from None
+            raise
 
     def close(self) -> None:
         process = self.process
@@ -765,6 +1006,31 @@ def _turn_records(paths: Mapping[str, Path]) -> list[dict[str, Any]]:
     return records
 
 
+def _turn_partial_path(paths: Mapping[str, Path], sequence: int) -> Path:
+    return paths["turns"] / f"turn-{sequence:04d}.output.partial"
+
+
+def _read_event_ledger(path: Path) -> list[dict[str, Any]]:
+    if not path.exists():
+        return []
+    try:
+        lines = path.read_text(encoding="utf-8").splitlines()
+    except OSError as error:
+        raise WorkflowConflict("clean_writer_context_event_ledger_invalid") from error
+    events: list[dict[str, Any]] = []
+    for line in lines:
+        if not line.strip():
+            continue
+        try:
+            value = json.loads(line)
+        except json.JSONDecodeError as error:
+            raise WorkflowConflict("clean_writer_context_event_ledger_invalid") from error
+        if not isinstance(value, dict) or not isinstance(value.get("type"), str):
+            raise WorkflowConflict("clean_writer_context_event_ledger_invalid")
+        events.append(value)
+    return events
+
+
 def _find_record(records: list[dict[str, Any]], topic_id: str, phase: str) -> dict[str, Any] | None:
     for record in records:
         if record.get("topic_id") == topic_id and record.get("phase") == phase:
@@ -792,11 +1058,78 @@ def _receipt_write(paths: Mapping[str, Path], identity_hash: str, value: dict[st
     _atomic_json(paths["receipt"], {**value, "identity_hash": identity_hash})
 
 
+def _write_event_summary_from_ledger(paths: Mapping[str, Path]) -> list[dict[str, Any]]:
+    events = _read_event_ledger(paths["event_ledger"])
+    _atomic_json(paths["events"], events)
+    return events
+
+
 def _result(output: dict[str, Any], identity: dict[str, Any], record: dict[str, Any], *, cached: bool, events: list[dict[str, Any]]) -> dict[str, Any]:
     return {"output": output, "identity": identity, "turn": record, "cached": cached, "events": events}
 
 
-def _invoke_fake_or_session(*, paths: Mapping[str, Path], prompt: str, schema: dict[str, Any], thread_id: str, binary: str, runner: Runner | None) -> tuple[str, str, list[dict[str, Any]]]:
+def _promote_completed_turn(
+    *,
+    paths: Mapping[str, Path],
+    identity: dict[str, Any],
+    receipt: dict[str, Any],
+    record: dict[str, Any],
+    turn_path: Path,
+    partial_path: Path,
+    run_id: str,
+    business_date: str,
+    topic: Mapping[str, Any],
+    phase: str,
+    identity_hash: str,
+    cached: bool,
+) -> dict[str, Any] | None:
+    """Promote a terminal same-turn output captured before a process exit."""
+    if record.get("protocol_state") != "completed" or record.get("read_trace_validated") is not True or not partial_path.is_file():
+        return None
+    try:
+        raw = partial_path.read_text(encoding="utf-8")
+        output = _validate_turn_output(json.loads(raw), run_id, business_date, topic, phase)
+    except (OSError, json.JSONDecodeError, WorkflowConflict):
+        return None
+    events = [event for event in _read_event_ledger(paths["event_ledger"]) if event.get("sequence") == record.get("sequence")]
+    record.update({
+        "status": "completed",
+        "output": output,
+        "output_sha256": _sha256(canonical(output).encode("utf-8")),
+        "events": events,
+        "recovered": True,
+        "recovered_at": _utc_now(),
+    })
+    _atomic_json(turn_path, record)
+    partial_path.unlink(missing_ok=True)
+    identity.update({"thread_id": record.get("thread_id") or identity.get("thread_id"), "active_turn_id": "", "active_turn_state": "completed"})
+    _atomic_json(paths["identity"], identity)
+    all_records = _turn_records(paths)
+    receipt.update({
+        "status": "active",
+        "thread_id": identity.get("thread_id") or receipt.get("thread_id", ""),
+        "active_turn_id": "",
+        "active_turn_state": "completed",
+        "completed_turn_count": sum(item.get("status") == "completed" for item in all_records),
+        "last_completed_sequence": record.get("sequence"),
+    })
+    _receipt_write(paths, identity_hash, receipt)
+    _write_event_summary_from_ledger(paths)
+    return _result(output, identity, record, cached=cached, events=events)
+
+
+def _invoke_fake_or_session(
+    *,
+    paths: Mapping[str, Path],
+    prompt: str,
+    schema: dict[str, Any],
+    thread_id: str,
+    binary: str,
+    runner: Runner | None,
+    on_event: Callable[[dict[str, Any]], None] | None = None,
+    on_turn_accepted: Callable[[str, str], None] | None = None,
+    on_output_snapshot: Callable[[str], None] | None = None,
+) -> tuple[str, str, list[dict[str, Any]]]:
     if runner is not None:
         command = _command(binary, paths, thread_id)
         result = runner(command, prompt, paths["input"], paths["output"])
@@ -841,6 +1174,11 @@ def _invoke_fake_or_session(*, paths: Mapping[str, Path], prompt: str, schema: d
                 _receipt_write(paths, str(receipt.get("identity_hash") or ""), receipt)
     if thread_id and session.thread_id != thread_id:
         raise WorkflowConflict("clean_writer_context_thread_identity_conflict")
+    session.configure_persistence(
+        on_event=on_event,
+        on_turn_accepted=on_turn_accepted,
+        on_output_snapshot=on_output_snapshot,
+    )
     text = session.turn(prompt, schema)
     _atomic_text(paths["output"], text)
     return text, session.thread_id, list(session.last_events)
@@ -862,7 +1200,7 @@ def run_clean_writer_context(*, artifact_root: Path | str, run_id: str, business
         if identity.get("identity_hash") != identity_hash or identity.get("model") != WRITER_MODEL or identity.get("reasoning_effort") != WRITER_REASONING_EFFORT:
             raise WorkflowConflict("clean_writer_context_identity_conflict")
     else:
-        identity = {**identity_seed, "identity_hash": identity_hash, "input_root": str(paths["input"]), "manifest_sha256": _sha256(paths["manifest"].read_bytes()), "codex_bin": "", "thread_id": "", "context_start_count": 0}
+        identity = {**identity_seed, "identity_hash": identity_hash, "input_root": str(paths["input"]), "manifest_sha256": _sha256(paths["manifest"].read_bytes()), "codex_bin": "", "thread_id": "", "context_start_count": 0, "active_turn_id": "", "active_turn_state": "", "event_count": 0}
         _atomic_json(paths["identity"], identity)
     if paths["receipt"].exists():
         try:
@@ -872,7 +1210,7 @@ def run_clean_writer_context(*, artifact_root: Path | str, run_id: str, business
         if receipt.get("identity_hash") != identity_hash:
             raise WorkflowConflict("clean_writer_context_identity_conflict")
     else:
-        receipt = {"schema_version": CONTEXT_SCHEMA_VERSION, "identity_hash": identity_hash, "status": "active", "invocation_count": 1, "context_start_count": 0, "turn_count": 0, "completed_turn_count": 0, "model": WRITER_MODEL, "reasoning_effort": WRITER_REASONING_EFFORT, "ephemeral": True, "context_kind": CONTEXT_KIND, "selected_topic_ids": _topic_ids(topics)}
+        receipt = {"schema_version": CONTEXT_SCHEMA_VERSION, "identity_hash": identity_hash, "status": "active", "invocation_count": 1, "context_start_count": 0, "turn_count": 0, "completed_turn_count": 0, "event_count": 0, "active_turn_id": "", "active_turn_state": "", "model": WRITER_MODEL, "reasoning_effort": WRITER_REASONING_EFFORT, "ephemeral": True, "context_kind": CONTEXT_KIND, "selected_topic_ids": _topic_ids(topics)}
         _receipt_write(paths, identity_hash, receipt, exclusive=True)
     records = _turn_records(paths)
     topic_id, existing = str(current["topic_id"]), _find_record(records, str(current["topic_id"]), phase)
@@ -882,6 +1220,24 @@ def run_clean_writer_context(*, artifact_root: Path | str, run_id: str, business
             raise WorkflowConflict("clean_writer_context_turn_record_invalid")
         output = _validate_turn_output(output, run_id, business_date, current, phase)
         return _result(output, identity, existing, cached=True, events=existing.get("events") or [])
+    if existing and existing.get("protocol_state") == "completed":
+        recovered = _promote_completed_turn(
+            paths=paths,
+            identity=identity,
+            receipt=receipt,
+            record=existing,
+            turn_path=paths["turns"] / f"turn-{int(existing.get('sequence', 0)):04d}.json",
+            partial_path=_turn_partial_path(paths, int(existing.get("sequence", 0))),
+            run_id=run_id,
+            business_date=business_date,
+            topic=current,
+            phase=phase,
+            identity_hash=identity_hash,
+            cached=True,
+        )
+        if recovered is not None:
+            return recovered
+        raise WorkflowConflict("clean_writer_context_turn_status_unknown")
     try:
         binary = resolve_codex_cli(codex_bin or os.environ.get("CODEX_BIN", ""))
     except FileNotFoundError:
@@ -890,15 +1246,6 @@ def run_clean_writer_context(*, artifact_root: Path | str, run_id: str, business
         identity["codex_bin"] = binary
         _atomic_json(paths["identity"], identity)
     read_trace = _read_trace_state(identity, receipt)
-    prompt_hash, input_hash = _write_turn_input(
-        paths,
-        run_id,
-        business_date,
-        current,
-        phase,
-        frozen_article,
-        common_references_read=bool(read_trace.get("common_references_read")),
-    )
     sequence = int(existing.get("sequence")) if existing else len(records) + 1
     attempt_count = int(existing.get("attempt_count", 0)) + 1 if existing else 1
     thread_id = str(identity.get("thread_id") or receipt.get("thread_id") or "")
@@ -909,7 +1256,7 @@ def run_clean_writer_context(*, artifact_root: Path | str, run_id: str, business
         receipt.update({"thread_id": thread_id, "context_start_count": 1})
         _atomic_json(paths["identity"], identity)
         _receipt_write(paths, identity_hash, receipt)
-    if (receipt.get("status") in {"failed", "running"} or (existing and existing.get("status") == "running")) and not thread_id and live_session is None:
+    if (receipt.get("status") in {"failed", "running", "unknown"} or (existing and existing.get("status") in {"running", "unknown"})) and not thread_id and live_session is None:
         # A receipt with no context-start evidence can be retried: the
         # previous attempt failed before App Server returned a Thread id, so
         # no fresh writer context was established.  Once a Thread id has been
@@ -920,11 +1267,122 @@ def run_clean_writer_context(*, artifact_root: Path | str, run_id: str, business
         receipt.update({"status": "active"})
         receipt.pop("error", None)
         _receipt_write(paths, identity_hash, receipt)
-    record = {"schema_version": CONTEXT_SCHEMA_VERSION, "sequence": sequence, "topic_id": topic_id, "phase": phase, "status": "running", "attempt_count": attempt_count, "thread_id": thread_id, "input_sha256": input_hash, "prompt_sha256": prompt_hash}
+    if existing and existing.get("protocol_state") in {"running", "unknown"} and not existing.get("turn_id") and (thread_id or int(receipt.get("context_start_count", 0) or 0) > 0):
+        # The request may have been accepted before its turn id was observed;
+        # the absence of an identity is itself unknown and cannot be retried.
+        raise WorkflowConflict("clean_writer_context_turn_status_unknown")
+    recovering_turn = bool(existing and existing.get("protocol_state") in {"running", "unknown"} and existing.get("turn_id"))
+    if recovering_turn and (runner is not None or live_session is None):
+        # An ephemeral Thread cannot be loaded by a new process.  A previous
+        # accepted turn must be reconciled in-place or stop as unknown; it may
+        # never be replaced with a new context/turn.
+        raise WorkflowConflict("clean_writer_context_context_recovery_unavailable")
+    if not recovering_turn:
+        prompt_hash, input_hash = _write_turn_input(
+            paths,
+            run_id,
+            business_date,
+            current,
+            phase,
+            frozen_article,
+            common_references_read=bool(read_trace.get("common_references_read")),
+        )
+    else:
+        prompt_hash = str(existing.get("prompt_sha256") or "")
+        input_hash = str(existing.get("input_sha256") or "")
+    record = dict(existing) if existing else {"schema_version": CONTEXT_SCHEMA_VERSION, "sequence": sequence, "topic_id": topic_id, "phase": phase, "status": "running", "attempt_count": attempt_count, "thread_id": thread_id, "input_sha256": input_hash, "prompt_sha256": prompt_hash}
+    if not existing:
+        record.update({"protocol_state": "submitted", "acceptance_state": "pending", "submitted_at": _utc_now(), "event_count": 0})
+    elif not recovering_turn:
+        previous_turn_id = str(record.get("turn_id") or "")
+        record.pop("error", None)
+        record.pop("error_at", None)
+        record.update({"status": "running", "attempt_count": attempt_count, "thread_id": thread_id, "input_sha256": input_hash, "prompt_sha256": prompt_hash, "protocol_state": "submitted", "acceptance_state": "pending", "submitted_at": _utc_now()})
+        if previous_turn_id:
+            record["previous_turn_id"] = previous_turn_id
     turn_path = paths["turns"] / f"turn-{sequence:04d}.json"
     _atomic_json(turn_path, record)
+
+    partial_path = _turn_partial_path(paths, sequence)
+    event_count = int(record.get("event_count", 0) or 0)
+    total_event_count = len(_read_event_ledger(paths["event_ledger"]))
+
+    def persist_event(summary: dict[str, Any]) -> None:
+        nonlocal event_count, total_event_count
+        event = dict(summary)
+        event.setdefault("sequence", sequence)
+        event.setdefault("recorded_at", _utc_now())
+        event_turn_id = str(event.get("turn_id") or "")
+        event_thread_id = str(event.get("thread_id") or "")
+        expected_thread = thread_id or str(record.get("thread_id") or "")
+        if event_thread_id and expected_thread and event_thread_id != expected_thread:
+            raise WorkflowConflict("clean_writer_context_thread_identity_conflict")
+        if event_turn_id and record.get("turn_id") and event_turn_id != record.get("turn_id"):
+            raise WorkflowConflict("clean_writer_context_turn_identity_conflict")
+        if event_thread_id and not record.get("thread_id"):
+            record["thread_id"] = event_thread_id
+        if event_turn_id and not record.get("turn_id"):
+            record.update({"turn_id": event_turn_id, "acceptance_state": "accepted_by_event", "accepted_at": _utc_now(), "protocol_state": "running"})
+        _append_jsonl(paths["event_ledger"], event)
+        event_count += 1
+        total_event_count += 1
+        record["event_count"] = event_count
+        if event.get("type") == "turn/completed" and event.get("status") in {"completed", "failed", "interrupted"}:
+            record.update({"protocol_state": event["status"], "terminal_observed_at": event.get("recorded_at")})
+        _atomic_json(turn_path, record)
+        identity.update({"thread_id": record.get("thread_id") or identity.get("thread_id", ""), "active_turn_id": record.get("turn_id", ""), "active_turn_state": record.get("protocol_state", "submitted"), "event_count": total_event_count})
+        _atomic_json(paths["identity"], identity)
+        receipt.update({"thread_id": identity.get("thread_id") or receipt.get("thread_id", ""), "active_turn_id": record.get("turn_id", ""), "active_turn_state": record.get("protocol_state", "submitted"), "event_count": total_event_count})
+        _receipt_write(paths, identity_hash, receipt)
+
+    def persist_turn_accepted(observed_thread: str, observed_turn: str) -> None:
+        if observed_thread and thread_id and observed_thread != thread_id:
+            raise WorkflowConflict("clean_writer_context_thread_identity_conflict")
+        record.update({"thread_id": observed_thread or thread_id, "turn_id": observed_turn, "accepted_at": _utc_now(), "acceptance_state": "accepted", "protocol_state": "running"})
+        _atomic_json(turn_path, record)
+        identity.update({"thread_id": observed_thread or thread_id, "active_turn_id": observed_turn, "active_turn_state": "running", "context_start_count": 1})
+        _atomic_json(paths["identity"], identity)
+        receipt.update({"thread_id": observed_thread or thread_id, "active_turn_id": observed_turn, "active_turn_state": "running", "context_start_count": 1, "status": "active"})
+        _receipt_write(paths, identity_hash, receipt)
+
+    def persist_output_snapshot(value: str) -> None:
+        # This is a recoverable output buffer, not a published artifact.  It
+        # lets a terminal event be promoted after a process exception without
+        # treating an un-terminated stream as completed.
+        _atomic_text(partial_path, value)
+
     try:
-        raw_output, observed_thread, events = _invoke_fake_or_session(paths=paths, prompt=paths["prompt"].read_text(encoding="utf-8"), schema=_output_schema(), thread_id=thread_id, binary=binary, runner=runner)
+        if recovering_turn:
+            session = live_session
+            if session is None:
+                raise WorkflowConflict("clean_writer_context_context_recovery_unavailable")
+            session.configure_persistence(on_event=persist_event, on_turn_accepted=persist_turn_accepted, on_output_snapshot=persist_output_snapshot)
+            resolution = session.reconcile_turn(str(record.get("turn_id") or ""))
+            if resolution.get("state") == "running":
+                resolution = session.continue_turn(str(record.get("turn_id") or ""))
+            if resolution.get("state") == "completed" and resolution.get("output"):
+                raw_output, observed_thread, events = str(resolution["output"]), session.thread_id, list(session.last_events)
+            elif resolution.get("state") == "failed":
+                raise WorkflowConflict("clean_writer_context_turn_failed")
+            elif resolution.get("state") == "interrupted":
+                raise WorkflowConflict("clean_writer_context_turn_interrupted")
+            else:
+                raise WorkflowConflict("clean_writer_context_turn_status_unknown")
+        else:
+            raw_output, observed_thread, events = _invoke_fake_or_session(
+                paths=paths,
+                prompt=paths["prompt"].read_text(encoding="utf-8"),
+                schema=_output_schema(),
+                thread_id=thread_id,
+                binary=binary,
+                runner=runner,
+                on_event=persist_event,
+                on_turn_accepted=persist_turn_accepted,
+                on_output_snapshot=persist_output_snapshot,
+            )
+            if runner is not None:
+                for event in events:
+                    persist_event(event)
         read_trace = _validate_read_trace(events, phase, read_trace)
         # Record the context identity before validating model prose.  A bad
         # turn must be resumable on the same Thread, never treated as a reason
@@ -940,33 +1398,83 @@ def run_clean_writer_context(*, artifact_root: Path | str, run_id: str, business
         receipt["read_trace"] = read_trace
         _atomic_json(paths["identity"], identity)
         _receipt_write(paths, identity_hash, receipt)
+        record["read_trace_validated"] = True
+        _atomic_json(turn_path, record)
         output = _validate_turn_output(json.loads(raw_output), run_id, business_date, current, phase)
         if thread_id and observed_thread and thread_id != observed_thread:
             raise WorkflowConflict("clean_writer_context_thread_identity_conflict")
         thread_id = observed_thread or thread_id
-        record.update({"status": "completed", "thread_id": thread_id, "output": output, "output_sha256": _sha256(canonical(output).encode("utf-8")), "events": events})
+        record.update({"status": "completed", "protocol_state": "completed", "thread_id": thread_id, "output": output, "output_sha256": _sha256(canonical(output).encode("utf-8")), "events": events, "completed_at": _utc_now()})
         _atomic_json(turn_path, record)
-        identity.update({"thread_id": thread_id, "context_start_count": 1, "event_count": sum(len(item.get("events") or []) for item in _turn_records(paths))})
+        partial_path.unlink(missing_ok=True)
+        identity.update({"thread_id": thread_id, "context_start_count": 1, "active_turn_id": "", "active_turn_state": "completed", "event_count": len(_read_event_ledger(paths["event_ledger"]))})
         _atomic_json(paths["identity"], identity)
         all_records = _turn_records(paths)
-        receipt.update({"status": "active", "thread_id": thread_id, "context_start_count": 1, "turn_count": sum(int(item.get("attempt_count", 1)) for item in all_records), "completed_turn_count": sum(item.get("status") == "completed" for item in all_records), "last_completed_sequence": sequence})
+        receipt.update({"status": "active", "thread_id": thread_id, "context_start_count": 1, "active_turn_id": "", "active_turn_state": "completed", "turn_count": sum(int(item.get("attempt_count", 1)) for item in all_records), "completed_turn_count": sum(item.get("status") == "completed" for item in all_records), "last_completed_sequence": sequence, "event_count": len(_read_event_ledger(paths["event_ledger"]))})
         _receipt_write(paths, identity_hash, receipt)
-        _atomic_json(paths["events"], [event for item in all_records for event in (item.get("events") or [])])
+        _write_event_summary_from_ledger(paths)
         return _result(output, identity, record, cached=False, events=events)
     except Exception as error:
         code = str(error) if isinstance(error, WorkflowConflict) else "clean_writer_context_unexpected_error"
-        record.update({"status": "failed", "error": code})
-        _atomic_json(turn_path, record)
-        # App Server creates the Thread before the first model turn.  Preserve
-        # that identity even when the turn itself fails so an in-process retry
-        # can resume the same context and a later process can fail typed.
         live_after_error = _SESSIONS.get(str(paths["context"]))
-        if not thread_id and live_after_error is not None and live_after_error.thread_id:
-            thread_id = live_after_error.thread_id
-            identity.update({"thread_id": thread_id, "context_start_count": 1})
-            _atomic_json(paths["identity"], identity)
-        receipt.update({"status": "failed", "error": code, "thread_id": thread_id, "context_start_count": 1 if thread_id else 0})
+        if live_after_error is not None:
+            if not thread_id and live_after_error.thread_id:
+                thread_id = live_after_error.thread_id
+                identity.update({"thread_id": thread_id, "context_start_count": 1})
+                _atomic_json(paths["identity"], identity)
+            if live_after_error.last_turn_id:
+                record["turn_id"] = live_after_error.last_turn_id
+            protocol_state = live_after_error.last_turn_state
+        else:
+            protocol_state = str(record.get("protocol_state") or "unknown")
+        transport_unknown_codes = {
+            "clean_writer_context_turn_timeout",
+            "clean_writer_context_session_ended",
+            "clean_writer_context_protocol_timeout",
+            "clean_writer_context_reconcile_timeout",
+            "clean_writer_context_turn_status_unknown",
+        }
+        if protocol_state == "unknown" and code not in transport_unknown_codes:
+            protocol_state = "failed"
+        if protocol_state == "completed" and (
+            code.startswith("clean_writer_context_output_")
+            or code.startswith("clean_writer_context_skill_read_trace_")
+        ):
+            # The model turn ended, but its typed/provenance contract failed;
+            # this is a known failed attempt that may be retried on the same
+            # existing context, not an unknown protocol state.
+            protocol_state = "failed"
+        if code == "clean_writer_context_turn_interrupted":
+            protocol_state = "interrupted"
+        if protocol_state not in {"completed", "failed", "interrupted", "running", "unknown"}:
+            protocol_state = "unknown" if code in transport_unknown_codes else "failed"
+        record.update({
+            "status": "unknown" if protocol_state == "unknown" else "failed",
+            "protocol_state": protocol_state,
+            "error": code,
+            "error_at": _utc_now(),
+            "thread_id": thread_id,
+        })
+        _atomic_json(turn_path, record)
+        identity.update({
+            "thread_id": thread_id,
+            "context_start_count": 1 if thread_id else 0,
+            "active_turn_id": record.get("turn_id", ""),
+            "active_turn_state": protocol_state,
+            "event_count": len(_read_event_ledger(paths["event_ledger"])),
+        })
+        _atomic_json(paths["identity"], identity)
+        receipt.update({
+            "status": "unknown" if protocol_state == "unknown" else "failed",
+            "error": code,
+            "thread_id": thread_id,
+            "context_start_count": 1 if thread_id else 0,
+            "active_turn_id": record.get("turn_id", ""),
+            "active_turn_state": protocol_state,
+            "event_count": identity.get("event_count", 0),
+        })
         _receipt_write(paths, identity_hash, receipt)
+        _write_event_summary_from_ledger(paths)
         if isinstance(error, WorkflowConflict):
             raise
         raise WorkflowConflict(code) from None
