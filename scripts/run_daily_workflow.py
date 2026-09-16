@@ -43,7 +43,6 @@ from trend_hotspot_cards import (
 from website_publisher_client import publish_terminal
 from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
 import spoken_script_runtime as script_runtime
-import clean_writer_context
 
 ROOT = Path(__file__).resolve().parents[1]
 ACTIVE_ROOT = Path.home() / ".codex" / "skills"
@@ -1509,12 +1508,25 @@ def compact_video_evidence(package: dict[str, Any] | None) -> dict[str, Any] | N
         ],
     }
     representatives = package.get("representative_packages")
-    if isinstance(representatives, list):
+    if isinstance(representatives, list) and representatives:
         evidence["representative_sources"] = [
             compact_video_evidence(row)
             for row in representatives
             if isinstance(row, dict)
         ]
+    else:
+        # A selected topic can be below the traffic/deep-read threshold while
+        # still carrying a committed same-run package. Do not drop that
+        # source-owned ASR/OCR/keyframe evidence merely because no
+        # representative was budgeted; the writer must be able to read the
+        # material that editorial selected.
+        available = package.get("available_packages")
+        if isinstance(available, list):
+            evidence["representative_sources"] = [
+                compact_video_evidence(row)
+                for row in available
+                if isinstance(row, dict)
+            ]
     return evidence
 
 
@@ -1540,6 +1552,84 @@ def compact_source_facts(rows: list[dict[str, Any]]) -> dict[str, Any]:
         if value not in (None, "", [], {}):
             facts[key] = value
     return facts
+
+
+def _same_run_material_path(value: Any, run_id: str) -> str | None:
+    """Return only a run-scoped source path; never pass an arbitrary local path."""
+    if not isinstance(value, str) or not value.strip():
+        return None
+    raw = value.strip()
+    path = Path(raw)
+    if path.is_absolute():
+        try:
+            resolved = path.resolve()
+        except OSError:
+            return None
+        if run_id not in resolved.parts and run_id not in str(resolved):
+            return None
+        return str(resolved)
+    if ".." in path.parts:
+        return None
+    return raw
+
+
+def compact_source_material(
+    run_id: str,
+    business_date: str,
+    candidate: dict[str, Any],
+    item: dict[str, Any],
+) -> dict[str, Any]:
+    """Preserve source-owned same-run material without forwarding editorial fields."""
+    # Content items are the source authority for raw text/OCR/payload paths;
+    # candidate fields are included only for explicitly source-owned originals.
+    rows = [item, candidate]
+    material: dict[str, Any] = {
+        "same_run": {"run_id": run_id, "business_date": business_date},
+    }
+    identities = {
+        "item_id": first_context_value(rows, "item_id"),
+        "candidate_id": first_context_value([candidate], "candidate_id"),
+        "source_id": first_context_value(rows, "source_id"),
+    }
+    material["source_record"] = {
+        key: value for key, value in identities.items()
+        if value not in (None, "", [], {})
+    }
+    fields = {
+        "title": ("原始来源标题", "source_title", "内容标题", "title"),
+        "url": ("source_url", "来源链接", "内容链接", "canonical_url", "url"),
+        "author": ("原始来源账号", "author", "作者", "账号名/公众号名", "账号"),
+        "published_at": ("published_at", "发布时间", "published_display"),
+        "raw_text": (
+            "原始发布文案", "正文", "正文文本", "正文/字幕/简介片段",
+            "source_text", "content_text", "text", "description",
+        ),
+        "caption_or_transcript": (
+            "caption", "caption_text", "字幕", "transcript", "asr_text",
+            "口播转写", "ASR",
+        ),
+        "ocr_text": ("截图/OCR文本", "ocr_text", "OCR"),
+        "source_type": ("来源类型", "source_type", "platform", "平台"),
+    }
+    for name, aliases in fields.items():
+        value = first_context_value(rows, *aliases)
+        if value not in (None, "", [], {}):
+            material[name] = value
+    raw_path = first_context_value(
+        rows, "原始payload路径", "raw_artifact_path", "raw_payload_path", "payload_path",
+    )
+    safe_path = _same_run_material_path(raw_path, run_id)
+    if safe_path:
+        material["raw_artifact_path"] = {
+            "path": safe_path,
+            "scope": "same_run",
+            "run_id": run_id,
+        }
+    material["availability"] = {
+        key: bool(material.get(key))
+        for key in ("raw_text", "caption_or_transcript", "ocr_text", "raw_artifact_path")
+    }
+    return material
 
 
 def build_scripts_handoff(
@@ -1593,6 +1683,9 @@ def build_scripts_handoff(
                 if first_context_value(source_rows, *aliases) is not None
             },
             "source_facts": compact_source_facts(source_rows),
+            "source_material": compact_source_material(
+                run_id, business_date, candidate, item,
+            ),
             "sources": [
                 {
                     key: source.get(key)
@@ -1673,200 +1766,6 @@ def write_script_artifacts(root: Path, run_id: str, scripts: list[dict[str, Any]
         if target.exists():
             raise WorkflowConflict("script_artifact_conflict")
         target.write_text(text, encoding="utf-8")
-
-
-def apply_clean_writer_result(
-    args: argparse.Namespace,
-    workflow: DailyWorkflow,
-    script_topics: list[dict[str, Any]],
-    selected: set[str],
-    writer_contract: dict[str, Any],
-    writer_authority: dict[str, Any],
-) -> dict[str, Any]:
-    """Run ordered clean turns and submit each result through public checkpoints."""
-    authority = json.loads(json.dumps(writer_authority, ensure_ascii=False))
-    index = script_runtime.first_unfinished_index(
-        workflow.stage(args.run_id, "scripts")["payload"],
-    )
-    while index < len(script_topics):
-        checkpoint_stage = workflow.stage(args.run_id, "scripts")
-        if not checkpoint_stage or checkpoint_stage.get("status") != "in_progress":
-            break
-        checkpoint = checkpoint_stage["payload"]
-        topic = script_topics[index]
-        topic_id = str(topic["topic_id"])
-        phase = script_runtime.topic_phase(checkpoint, topic_id)
-        if phase == "complete":
-            index += 1
-            continue
-        packet = script_runtime.topic_packet(
-            args.run_id,
-            args.business_date,
-            topic,
-            index,
-            len(script_topics),
-            script_runtime.terminal_topic_count(checkpoint),
-            writer_contract,
-            checkpoint=checkpoint,
-            writer_authority=authority,
-            artifact_root=args.artifact_root,
-        )
-        frozen_article = None
-        if phase == "spoken_adaptation_required":
-            frozen_article = packet["topic_input"]["article_artifact"]
-        result = clean_writer_context.run_clean_writer_context(
-            artifact_root=args.artifact_root,
-            run_id=args.run_id,
-            business_date=args.business_date,
-            selected_topics=script_topics,
-            writer_authority=writer_authority,
-            current_topic=topic,
-            phase=phase,
-            frozen_article=frozen_article,
-        )
-        identity = result.get("identity")
-        if not isinstance(identity, dict) or not identity.get("identity_hash"):
-            raise WorkflowConflict("clean_writer_context_identity_missing")
-        authority["clean_writer_context"] = {
-            key: identity[key]
-            for key in (
-                "identity_hash", "thread_id", "model", "reasoning_effort",
-                "ephemeral", "context_kind", "input_root", "manifest_sha256",
-            )
-            if key in identity
-        }
-        row = result.get("output")
-        if not isinstance(row, dict):
-            raise WorkflowConflict("clean_writer_context_output_schema_invalid")
-        if phase == "article_required":
-            if row.get("article") is not None:
-                submitted_article = {
-                    "packet_id": packet["topic_input"]["packet_id"],
-                    "article": row["article"],
-                }
-            else:
-                submitted_article = {
-                    "packet_id": packet["topic_input"]["packet_id"],
-                    "failure": row.get("failure"),
-                }
-            script_runtime.submit_article(
-                workflow,
-                args.run_id,
-                args.business_date,
-                script_topics,
-                checkpoint,
-                writer_contract,
-                submitted_article,
-                artifact_root=args.artifact_root,
-                writer_authority=authority,
-            )
-            workflow.record_skill_diagnostic(
-                args.run_id,
-                "scripts",
-                f"{topic_id}:article",
-                WRITER_SKILL,
-                {
-                    "provenance": skill_diagnostics()[1],
-                    "writer_authority": authority,
-                    "phase": "article",
-                    "execution_mode": "fresh_non_user_visible_clean_writer_context",
-                    "turn_sequence": result.get("turn", {}).get("sequence"),
-                },
-            )
-            if row.get("article") is None:
-                index += 1
-                continue
-            checkpoint_stage = workflow.stage(args.run_id, "scripts")
-            if not checkpoint_stage or checkpoint_stage.get("status") != "in_progress":
-                break
-            checkpoint = checkpoint_stage["payload"]
-        if script_runtime.topic_phase(checkpoint, topic_id) != "spoken_adaptation_required":
-            index += 1
-            continue
-        packet = script_runtime.topic_packet(
-            args.run_id,
-            args.business_date,
-            topic,
-            index,
-            len(script_topics),
-            script_runtime.terminal_topic_count(checkpoint),
-            writer_contract,
-            checkpoint=checkpoint,
-            writer_authority=authority,
-            artifact_root=args.artifact_root,
-        )
-        spoken_result = clean_writer_context.run_clean_writer_context(
-            artifact_root=args.artifact_root,
-            run_id=args.run_id,
-            business_date=args.business_date,
-            selected_topics=script_topics,
-            writer_authority=writer_authority,
-            current_topic=topic,
-            phase="spoken_adaptation_required",
-            frozen_article=packet["topic_input"]["article_artifact"],
-        )
-        spoken_identity = spoken_result.get("identity")
-        if not isinstance(spoken_identity, dict) or spoken_identity.get("identity_hash") != identity.get("identity_hash"):
-            raise WorkflowConflict("clean_writer_context_identity_conflict")
-        authority["clean_writer_context"] = {
-            key: spoken_identity[key]
-            for key in (
-                "identity_hash", "thread_id", "model", "reasoning_effort",
-                "ephemeral", "context_kind", "input_root", "manifest_sha256",
-            )
-            if key in spoken_identity
-        }
-        row = spoken_result.get("output")
-        if not isinstance(row, dict):
-            raise WorkflowConflict("clean_writer_context_output_schema_invalid")
-        if row.get("script") is not None:
-            submitted_spoken = {
-                "packet_id": packet["topic_input"]["packet_id"],
-                "article_sha256": packet["topic_input"]["spoken_adaptation_contract"]["article_sha256"],
-                "script": row["script"],
-            }
-        else:
-            submitted_spoken = {
-                "packet_id": packet["topic_input"]["packet_id"],
-                "article_sha256": packet["topic_input"]["spoken_adaptation_contract"]["article_sha256"],
-                "failure": row.get("failure"),
-            }
-        script_runtime.submit_spoken_adaptation(
-            workflow,
-            args.run_id,
-            args.business_date,
-            script_topics,
-            checkpoint,
-            writer_contract,
-            submitted_spoken,
-            artifact_root=args.artifact_root,
-            writer_authority=authority,
-        )
-        workflow.record_skill_diagnostic(
-            args.run_id,
-            "scripts",
-            f"{topic_id}:spoken",
-            WRITER_SKILL,
-            {
-                "provenance": skill_diagnostics()[1],
-                "writer_authority": authority,
-                "phase": "spoken_adaptation",
-                "execution_mode": "fresh_non_user_visible_clean_writer_context",
-                "turn_sequence": spoken_result.get("turn", {}).get("sequence"),
-            },
-        )
-        index += 1
-    scripts_stage = workflow.stage(args.run_id, "scripts")
-    if not scripts_stage or scripts_stage.get("status") == "in_progress":
-        raise WorkflowConflict("clean_writer_context_checkpoint_incomplete")
-    clean_writer_context.finalize_clean_writer_context(
-        artifact_root=args.artifact_root,
-        run_id=args.run_id,
-        selected_topic_ids=[str(row["topic_id"]) for row in script_topics],
-    )
-    scripts = scripts_stage["payload"]
-    validate_scripts(args.run_id, scripts, selected)
-    return scripts
 
 
 def terminal_refresh_backup_root(args: argparse.Namespace) -> Path:
@@ -2509,12 +2408,6 @@ def main() -> int:
     parser.add_argument("--scripts-result-file")
     parser.add_argument("--article-item-file")
     parser.add_argument("--script-item-file")
-    parser.add_argument(
-        "--writer-context",
-        choices=("direct", "clean"),
-        default="direct",
-        help="Writer execution topology; clean uses one fresh content-only context per exact run.",
-    )
     parser.add_argument("--video-mode", choices=("normal", "disabled"), default="normal")
     parser.add_argument("--video-runtime-config", default="")
     parser.add_argument("--video-policy", default="")
@@ -2916,25 +2809,11 @@ def main() -> int:
                 raise WorkflowConflict("whole_batch_scripts_submission_forbidden")
             if args.article_item_file and args.script_item_file:
                 raise WorkflowConflict("writer_phase_input_conflict")
-            if args.writer_context == "clean" and (args.article_item_file or args.script_item_file):
-                raise WorkflowConflict("clean_writer_context_submission_conflict")
-            writer_contract = (
-                clean_writer_context.clean_writer_contract()
-                if args.writer_context == "clean"
-                else script_runtime.load_writer_contract()
-            )
+            writer_contract = script_runtime.load_writer_contract()
             all_handoff = build_scripts_handoff(
                 args.run_id, args.business_date, collection, editorial,
             )
             script_topics = all_handoff["selected_topics"]
-            if args.writer_context == "clean":
-                all_handoff["batch_contract"] = {
-                    **all_handoff["batch_contract"],
-                    "writer_context_mode": "fresh_non_user_visible_content_only",
-                    "one_fresh_writer_context_per_exact_run": True,
-                    "one_ordered_article_then_spoken_pair_per_topic": True,
-                    "per_topic_model_processes": False,
-                }
             writer_authority = script_runtime.writer_authority_manifest(
                 source_root=ROOT / "skills" / WRITER_SKILL,
                 require_source_parity=True,
@@ -2949,18 +2828,7 @@ def main() -> int:
             index = script_runtime.first_unfinished_index(checkpoint)
             if index >= len(script_topics):
                 raise WorkflowConflict("scripts_checkpoint_incomplete_status")
-            if args.writer_context == "clean":
-                scripts = apply_clean_writer_result(
-                    args,
-                    workflow,
-                    script_topics,
-                    selected,
-                    writer_contract,
-                    writer_authority,
-                )
-                write_script_artifacts(args.artifact_root, args.run_id, scripts["scripts"])
-                scripts_finalized = True
-            elif args.article_item_file:
+            if args.article_item_file:
                 current_phase = script_runtime.topic_phase(
                     checkpoint, script_topics[index]["topic_id"],
                 )

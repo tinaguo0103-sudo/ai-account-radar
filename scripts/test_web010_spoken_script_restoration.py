@@ -165,6 +165,57 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         )["selected_topics"][0]
         self.assertNotIn("author_input", without_text)
 
+    def test_preserves_same_run_source_material_without_editorial_blueprints(self):
+        fixture = self.fixture()
+        fixture["content_items"][0].update({
+            "正文/字幕/简介片段": "同一 run 的来源原文片段，应交给写作者自行判断。",
+            "截图/OCR文本": "OCR only source evidence",
+            "原始payload路径": "/private/tmp/run_20260808_121000/sources/item.json",
+        })
+        fixture["candidates"][0]["原始发布文案"] = "原始发布文案，不是编辑提纲。"
+        topic = workflow.build_scripts_handoff(
+            "run_20260808_121000", "2026-08-08", fixture, self.editorial()
+        )["selected_topics"][0]
+        material = topic["source_evidence"]["source_material"]
+        self.assertEqual(
+            material["same_run"],
+            {"run_id": "run_20260808_121000", "business_date": "2026-08-08"},
+        )
+        self.assertEqual(material["raw_text"], "同一 run 的来源原文片段，应交给写作者自行判断。")
+        self.assertEqual(material["ocr_text"], "OCR only source evidence")
+        self.assertEqual(material["raw_artifact_path"]["scope"], "same_run")
+        self.assertNotIn("selection_reason", json.dumps(material, ensure_ascii=False))
+        self.assertNotIn("editorial_thesis", json.dumps(material, ensure_ascii=False))
+
+        fixture["content_items"][0]["原始payload路径"] = "/private/tmp/run_20260807_000000/old.json"
+        foreign = workflow.build_scripts_handoff(
+            "run_20260808_121000", "2026-08-08", fixture, self.editorial()
+        )["selected_topics"][0]["source_evidence"]["source_material"]
+        self.assertNotIn("raw_artifact_path", foreign)
+        self.assertFalse(foreign["availability"]["raw_artifact_path"])
+
+    def test_keeps_available_video_when_no_representative_was_budgeted(self):
+        fixture = self.fixture()
+        source_url = "https://www.douyin.com/video/100"
+        fixture["understanding_results"][0]["package"].update({
+            "source_url": source_url,
+            "representative_packages": [],
+            "available_packages": [{
+                "source_url": source_url,
+                "status": "completed",
+                "run_id": "run_20260808_121000",
+                "asr": {"text": "available same-run ASR"},
+                "screen_facts": [],
+                "keyframes": [],
+            }],
+        })
+        topic = workflow.build_scripts_handoff(
+            "run_20260808_121000", "2026-08-08", fixture, self.editorial()
+        )["selected_topics"][0]
+        sources = topic["source_evidence"]["video"]["representative_sources"]
+        self.assertEqual(len(sources), 1)
+        self.assertEqual(sources[0]["asr_supplement"], "available same-run ASR")
+
     def test_passes_existing_editorial_judgment_without_using_blueprint_fields(self):
         fixture = self.fixture()
         editorial = self.editorial()

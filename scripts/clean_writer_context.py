@@ -43,7 +43,8 @@ _FORBIDDEN_TOPIC_KEYS = {
     "qa_body", "private_style_context", "editing_reference", "austin_private_context",
 }
 _ALLOWED_TOPIC_KEYS = {"topic_id", "trend_event_id", "source_evidence", "author_input"}
-_REFERENCE_FILES = tuple(script_runtime.ARTICLE_REQUIRED_REFERENCES)
+_ARTICLE_REFERENCE_FILES = tuple(script_runtime.ARTICLE_REQUIRED_REFERENCES)
+_REFERENCE_FILES = tuple(script_runtime.ALL_REQUIRED_REFERENCES)
 _PATH_LINK_RE = re.compile(r"(?:^|[`( ])((?:cases|voice-samples)/[A-Za-z0-9._-]+\.md)(?:[`), .]|$)")
 _READ_TRACE_VERSION = 1
 
@@ -522,7 +523,7 @@ def _validate_read_trace(events: list[dict[str, Any]], phase: str, state: Mappin
     if phase == "article_required":
         required = ["current_topic.json"]
         if not next_state.get("common_references_read"):
-            required = ["skill/SKILL.md", *[f"skill/{relative}" for relative in _REFERENCE_FILES], *required]
+            required = ["skill/SKILL.md", *[f"skill/{relative}" for relative in _ARTICLE_REFERENCE_FILES], *required]
     else:
         required = ["skill/references/spoken-adaptation.md", "frozen_article.json"]
     missing = [relative for relative in required if not any(relative in command for command in commands)]
