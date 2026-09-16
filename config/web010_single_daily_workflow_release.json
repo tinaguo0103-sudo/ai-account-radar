@@ -3,28 +3,33 @@
   "taskId": "WEB-010",
   "candidateOnly": true,
   "externalSchedule": {
-    "existingId": "ai-rebuild",
-    "schedule": "08:00 start plus 5-minute same-task continuation window through 09:55 Asia/Shanghai",
-    "continuationRRuleCandidate": "FREQ=DAILY;BYHOUR=8,9;BYMINUTE=0,5,10,15,20,25,30,35,40,45,50,55;BYSECOND=0",
+    "existingId": "ai-git",
+    "schedule": "Daily 08:00 Asia/Shanghai; existing cadence unchanged",
     "publicEntrypoint": "DOUYIN_VIDEO_RUNTIME_CONFIG=<OWNER_ONLY_IGNORED_CONFIG> python3 scripts/run_daily_workflow.py --run-id <EXACT_RUN_ID> --business-date <SHANGHAI_DATE> --video-mode normal",
     "statusEntrypoint": "python3 scripts/run_daily_workflow.py --business-date <SHANGHAI_DATE> --status-only",
     "requiredRuntimeBindings": [
       "DOUYIN_VIDEO_RUNTIME_CONFIG"
     ],
     "outerAgentProtocol": [
-      "Every wake first uses the read-only status entrypoint. If the exact business date has no run, create one exact run only inside the continuation window. Otherwise reuse the one run_id returned by the workflow SQLite authority; never create a second run.",
+      "On an authorized invocation, first use the read-only status entrypoint for the exact business date. Reuse its exact run_id when present; do not create a second run for that date.",
       "Run the public entrypoint for that exact run. Read the final compact stdout summary and the exact run-scoped workflow_handoff.json it names; do not depend on one large stdout payload.",
       "For editorial_phase=screening, the current Automation Codex applies ai-account-editorial-director to every trusted same-run candidate and returns one candidate-local request_deep_read boolean plus substantive reason per candidate. The request is 0..N and is the only input to the existing deterministic video stage; traffic, recency, source count and persona remain evidence, not Python visibility gates. After that stage, apply the same Skill to the full pool with only the requested same-run media and write the existing final select|observe|reject|failed result. The controller never authors visible editorial fields.",
       "Once the public entrypoint process is running, wait for that live process to exit. Do not infer a hang from artifact or file-mtime silence and do not interrupt a live process on that basis; the existing Douyin bounded tail retry may remain silent for 600000ms. The existing total automation execution boundary remains unchanged.",
-      "When the public entrypoint reports waiting_stage or waiting_stage_process, end only this bounded outer turn. The same ai-rebuild heartbeat and fixed task wakes again in five minutes, reuses the exact run, and lets the process lock either report truthful waiting or resume the latest committed checkpoint.",
+      "When waiting_stage or waiting_stage_process is returned, preserve the exact run checkpoint. A subsequent authorized invocation resumes that run. This candidate does not add wakeups or change the existing daily schedule.",
       "When editorial is required, the current Automation Codex directly applies ai-account-editorial-director to the exact candidate batch and writes the existing simple editorial result. The controller validates and commits that result; it does not author editorial content.",
-      "When scripts_required is reached, the current Automation Codex directly applies austin-voice-scriptwriter to only the current rich Topic Card, its same-run raw source/video material and relevant existing project materials. Use available materials first; if they do not make the topic concrete enough, the writing owner may add verifiable first-party public research. Ask the user only for a necessary unpublished fact or stance. If the current caller explicitly supplies author_input for this topic, use it as optional natural material; when it is absent, do not invent author experience or load default/private references. Treat the hotspot or topic as the standalone article subject; use the source video, ASR, OCR and keyframes only as factual, case and visual evidence. Let the material expand into an independent article and judgment, make the article stand on its own without playing or introducing the source video, then adapt that completed article into an editable first draft spoken body; do not inherit its sequence, wording, rhetorical structure or conclusion. stay truthful about Austin/client/team tests and results, compose the complete body before filling title/hook/structure in the same simple result, and return only the existing topic_id/title/hook/structure/body result or item-local material_or_angle_insufficiency. During the article phase read the six article references; do not read spoken-adaptation.md until the article artifact is frozen. During spoken adaptation read only the frozen same-topic article and spoken-adaptation.md. The controller owns order, checkpoint, validation and publisher and exposes one topic at a time.",
-      "Run the same public entrypoint with the simple stage result files until local terminal completion.",
-      "The owner-only publisher client reads its runtime-only config and attempts one terminal snapshot. Publish pending is not a business failure. Later continuation wakes return terminal noop and never repeat completed upstream stages, Skills, or an applied Website POST."
+      "For article_required, the current Automation Codex opens the active austin-voice-scriptwriter SKILL.md identified by owner_invocation and follows its existing reading order, opening the full current references and any relevant cases it calls for. Read this topic's same-run source material; file reads and first-party research tools remain available. Reference hashes or historical reads are not Skill application. Submit required_article_input as packet_id plus article via --article-item-file. For spoken_adaptation_required, open the full frozen article and spoken-adaptation.md, then submit required_spoken_adaptation_input as packet_id, article_sha256 and script via --script-item-file. Use the packet's failure envelope for item-local insufficiency. The Skill owns creative decisions; the controller owns phase order and checkpoints.",
+      "Use each public packet's phase-specific result envelope. scripts_required is a compatibility stage marker, not a request for a bare script: invoke the same public entrypoint again to obtain article_required or spoken_adaptation_required. Resume from the returned exact checkpoint until local terminal completion.",
+      "The owner-only publisher client reads its runtime-only config and attempts one terminal snapshot. Publish pending is not a business failure. Later authorized invocations return terminal noop and never repeat completed upstream stages, Skills, or an applied Website POST."
     ],
-    "singleAutomationContinuation": true,
-    "maximumOuterTurnMinutes": 5,
-    "inPlaceUpdateOnly": true
+    "inPlaceUpdateOnly": true,
+    "status": "PAUSED",
+    "kind": "cron",
+    "rrule": "FREQ=DAILY;BYHOUR=8;BYMINUTE=0;BYSECOND=0",
+    "cwds": [
+      "/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar"
+    ],
+    "model": "gpt-5.6-luna",
+    "reasoningEffort": "max"
   },
   "runtimeTopology": [
     "collection_enrichment",

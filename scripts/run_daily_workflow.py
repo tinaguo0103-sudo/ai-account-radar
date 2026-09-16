@@ -2829,11 +2829,8 @@ def main() -> int:
             if index >= len(script_topics):
                 raise WorkflowConflict("scripts_checkpoint_incomplete_status")
             if args.article_item_file:
-                current_phase = script_runtime.topic_phase(
-                    checkpoint, script_topics[index]["topic_id"],
-                )
-                if current_phase != "article_required":
-                    raise WorkflowConflict("article_checkpoint_already_complete")
+                # submit_article owns duplicate/conflict validation, including a
+                # retry after the article was frozen but its response was lost.
                 outcome = script_runtime.submit_article(
                     workflow,
                     args.run_id,

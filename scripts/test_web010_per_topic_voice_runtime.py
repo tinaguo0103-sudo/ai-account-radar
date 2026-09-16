@@ -320,7 +320,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 "relevant_existing_materials_and_first_party_research_when_needed",
                 "optional_current_topic_author_input",
                 "simple_truthfulness_requirement",
-                "simple_spoken_script_output",
+                "phase_specific_article_and_spoken_envelopes",
             ],
         )
         self.assertNotIn("private_authority", contract)
@@ -362,19 +362,16 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 .read_text(encoding="utf-8")
             )["externalSchedule"]["outerAgentProtocol"]
         )
-        self.assertIn("directly applies austin-voice-scriptwriter", release_protocol)
-        self.assertIn("raw source/video material", release_protocol)
-        self.assertIn("only the current rich Topic Card", release_protocol)
-        self.assertIn("relevant existing project materials", release_protocol)
-        self.assertIn("verifiable first-party public research", release_protocol)
-        self.assertIn("editable first draft", release_protocol)
-        self.assertIn("explicitly supplies author_input", release_protocol)
+        self.assertIn("active austin-voice-scriptwriter SKILL.md", release_protocol)
+        self.assertIn("same-run source material", release_protocol)
+        self.assertIn("first-party research tools remain available", release_protocol)
+        self.assertIn("required_article_input", release_protocol)
+        self.assertIn("required_spoken_adaptation_input", release_protocol)
         self.assertNotIn("full original user materials", release_protocol)
         self.assertNotIn("web010_austin_private_context_allowlist", release_protocol)
         self.assertNotIn("legacy private Skill files", release_protocol)
-        self.assertIn("stay truthful about Austin/client/team tests and results", release_protocol)
-        self.assertIn("compose the complete body before filling title/hook/structure", release_protocol)
-        self.assertIn("The controller owns order, checkpoint, validation and publisher", release_protocol)
+        self.assertIn("The Skill owns creative decisions", release_protocol)
+        self.assertIn("the controller owns phase order and checkpoints", release_protocol)
         self.assertNotIn("Seedance", release_protocol)
         self.assertNotIn("candidate-specific reason", release_protocol)
         self.assertNotIn("silent fact limits", release_protocol)
@@ -438,7 +435,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 "relevant_existing_materials_and_first_party_research_when_needed",
                 "optional_current_topic_author_input",
                 "simple_truthfulness_requirement",
-                    "simple_spoken_script_output",
+                    "phase_specific_article_and_spoken_envelopes",
                 ],
             )
             encoded = json.dumps(packet, ensure_ascii=False)
@@ -487,6 +484,13 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             fixture = self.fixture(root)
             config = self.publisher_config(root)
             command = self.command(root, fixture)
+            fixture_data = json.loads(fixture.read_text())
+            for item_index, item in enumerate(fixture_data["content_items"]):
+                raw_path = root / RUN_ID / f"source-{item_index}.json"
+                write_json(raw_path, {"text": "SYNTHETIC_RAW_SOURCE", "item_id": item["item_id"]})
+                item["source_text"] = "SYNTHETIC_RAW_SOURCE"
+                item["raw_artifact_path"] = str(raw_path)
+            write_json(fixture, fixture_data)
             normalized = enrich(
                 SimpleNamespace(
                     run_id=RUN_ID,
@@ -509,6 +513,21 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             )
             self.assertEqual(editorial_stage_call.returncode, 0, editorial_stage_call.stderr + editorial_stage_call.stdout)
             self.assertEqual(last_json(editorial_stage_call.stdout)["action"], "article_required")
+
+            # Synthetic three-topic projection, not a replay of the 259-topic pool.
+            public_path = root / "runs" / RUN_ID / "workflow_handoff.json"
+            public_article = json.loads(public_path.read_text(encoding="utf-8"))
+            invocation = public_article["owner_invocation"]
+            self.assertTrue(Path(invocation["skill_entrypoint"]).read_text())
+            for reference in invocation["reference_paths"]:
+                self.assertTrue(Path(reference).read_text())
+            self.assertEqual(len(invocation["reference_paths"]), 6)
+            self.assertEqual(invocation["tools"]["file_reads"], "available")
+            self.assertEqual(invocation["tools"]["first_party_research"], "permitted_as_required_by_skill")
+            self.assertEqual(public_article["required_article_input"]["keys"], ["packet_id", "article"])
+            material = public_article["selected_topics"][0]["source_evidence"]["source_material"]
+            self.assertEqual(material["raw_text"], "SYNTHETIC_RAW_SOURCE")
+            self.assertEqual(json.loads(Path(material["raw_artifact_path"]["path"]).read_text())["text"], "SYNTHETIC_RAW_SOURCE")
 
             workflow = DailyWorkflow(root / f"{RUN_ID}.sqlite3")
             collection_stage = workflow.stage(RUN_ID, "collection_enrichment")
@@ -547,6 +566,19 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             handoff_path = root / "runs" / RUN_ID / "workflow_handoff.json"
             handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
             self.assertEqual(handoff["action"], "spoken_adaptation_required")
+            self.assertEqual(len(handoff["owner_invocation"]["reference_paths"]), 1)
+            self.assertTrue(handoff["owner_invocation"]["reference_paths"][0].endswith("spoken-adaptation.md"))
+            frozen_path = Path(handoff["topic_input"]["article_artifact"]["path"])
+            frozen_before = frozen_path.read_bytes()
+            duplicate = self.execute(
+                command + ["--article-item-file", str(first_submission)], config,
+            )
+            self.assertEqual(duplicate.returncode, 0, duplicate.stderr + duplicate.stdout)
+            self.assertEqual(last_json(duplicate.stdout)["action"], "spoken_adaptation_required")
+            self.assertEqual(frozen_path.read_bytes(), frozen_before)
+            resumed = self.execute(command, config)
+            self.assertEqual(resumed.returncode, 0, resumed.stderr + resumed.stdout)
+            self.assertEqual(last_json(resumed.stdout)["action"], "spoken_adaptation_required")
             self.assertEqual(len(handoff["selected_topics"]), 1)
             self.assertEqual(handoff["topic_index"], 0)
             self.assertNotIn(topic_ids[1], json.dumps(handoff, ensure_ascii=False))

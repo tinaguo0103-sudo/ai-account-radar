@@ -51,7 +51,7 @@ DIRECT_WRITER_STAGE_CONTRACT = {
         "relevant_existing_materials_and_first_party_research_when_needed",
         "optional_current_topic_author_input",
         "simple_truthfulness_requirement",
-        "simple_spoken_script_output",
+        "phase_specific_article_and_spoken_envelopes",
     ],
     "skills": [WRITER_SKILL_NAME],
     "previous_topic_body": "forbidden",
@@ -619,6 +619,36 @@ def topic_packet(
     }
     if writer_authority is not None:
         packet["writer_authority"] = writer_authority
+        active_skill = writer_authority["active_skill"]["path"]
+        active_root = Path(active_skill).parent
+        packet["owner_invocation"] = {
+            "skill_entrypoint": active_skill,
+            "phase": phase,
+            "reference_paths": [
+                str(active_root / relative)
+                for relative in PHASE_REQUIRED_REFERENCES[phase]
+            ],
+            "instruction": (
+                "Open the complete active SKILL.md and follow its existing reading order. "
+                "Open the full current article references and this topic's same-run raw "
+                "materials. Open relevant cases or original voice samples when the Skill "
+                "calls for them; resolve their paths relative to the active Skill. "
+                "Apply the Skill, then submit required_article_input."
+                if phase == "article_required" else
+                "Open the complete frozen article at topic_input.article_artifact.path "
+                "and the full spoken-adaptation reference. Apply that phase and submit "
+                "required_spoken_adaptation_input."
+            ),
+            "read_evidence_boundary": (
+                "Hashes, file inventories and historical reads do not establish current "
+                "Skill application or complete content reading."
+            ),
+            "tools": {
+                "file_reads": "available",
+                "first_party_research": "permitted_as_required_by_skill",
+                "recursive_model_execution": "forbidden",
+            },
+        }
     if phase == "article_required":
         packet["required_article_input"] = {
             "keys": ["packet_id", "article"],

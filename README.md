@@ -1,5 +1,8 @@
 # ai-account-radar
 
+当前 WEB-010 写作候选入口与双阶段 envelope 见 [Writer invocation contract](docs/writer_invocation_contract.md)。
+以下旧飞书/06/watcher 说明保留历史背景，不替代该候选合同，也不授予发布权限。
+
 `ai-account-radar` 是「AI账号信息雷达 + 今日候选池 + 飞书执行台」。
 
 ## 实施判断

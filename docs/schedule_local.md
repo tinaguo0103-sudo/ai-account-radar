@@ -11,18 +11,21 @@ python3 scripts/run_daily_workflow.py \
   --video-mode normal
 ```
 
-Codex heartbeat 的单回合执行窗口是有界的。正式候选仍只保留既有
-`ai-rebuild` 和同一个 fixed task，但在 08:00-09:55 之间每 5 分钟唤醒一次：
-首次唤醒创建当天唯一 exact run，后续唤醒只查询
+已核实的实际任务是 `ai-git`，当前 PAUSED，cron 每日 08:00（Asia/Shanghai），
+模型 gpt-5.6-luna、max，cwd 为正式 ai_account_radar 目录。候选保留这些字段，
+不新增五分钟唤醒、不修改实际 automation。经授权再次调用时，先查询
 `daily_workflow.sqlite3` 中该业务日期的唯一 run，并续接已提交 checkpoint。
 public CLI 在长阶段开始前把状态写为 `waiting`，通过同一 workflow 进程锁拒绝并发
 重复，并把完整下一步写入 run-scoped `workflow_handoff.json`。stdout 只返回小型
 摘要与 handoff 路径。长子进程仍在运行时，后续唤醒只得到
 `waiting_stage_process`；子进程完成后，下次唤醒才进入主编或脚本阶段。
 
-该续接窗口不是第二个 schedule、watcher 或业务 authority。当天 run terminal 后，
-剩余唤醒均为只读状态检查或 exact noop；已完成采集、浏览器、媒体、Skill 和已应用
-Website POST 不会重复。
+当天 run terminal 后，再次调用为只读状态检查或 exact noop；已完成采集、浏览器、
+媒体、Skill 和已应用 Website POST 不会重复。进程退出后的自动恢复与定时无人值守
+稳定性仍需真实 scheduler 验证，不因 checkpoint 存在而声称通过。
+
+写作公共调用合同见 `docs/writer_invocation_contract.md`：文章阶段返回
+`article_required`，冻结后返回 `spoken_adaptation_required`，必须使用各自 envelope。
 
 owner-only Website 的 endpoint、authority 与 Sites headers 全部由本机 ignored
 publisher config/client 封装，不进入 automation Prompt 或业务命令。Website
@@ -37,11 +40,13 @@ check-only、OCR/ASR 和风控边界见 `docs/ar050_video_understanding_runtime.
 `output/state/daily_workflow.sqlite3`，网站 D1 仅接收一次 terminal snapshot。正常调用图不读取
 或写入飞书 01/02/03/04/06，不发送 Topic Card、callback 或成功/失败通知。
 
-`ai-04-rebuild`、`ai-rebuild-2` 在发布候选中保持 PAUSED；下一次正常 `08:00`
-三阶段 first-real-flow 与网站 exact read-back 全绿后，才通过官方 control plane
-归档/删除。`watch_script_package_queue.py` 同样退出 active runtime，但保留为历史
-维护代码，不得被统一入口调用。live automation、watcher 和腾讯云资源不在 Dev
-修改。
+本候选不修改、归档或删除任何 automation。`watch_script_package_queue.py` 是历史
+维护代码，不得被统一入口调用。live automation、watcher 和腾讯云资源不在 Dev 修改。
+
+## 历史 watcher 与三任务迁移说明（非当前运行入口）
+
+以下保留历史背景，不是当前候选部署或写作指令；旧任务身份、watcher、06 包和迁移
+命令不能替代上述 ai-git 双阶段合同，也不授权执行。
 
 当前正式脚本包生成走本机轻量 watcher。原因是 `06 完整脚本与制作包` 需要 Codex 和全局私有 Skill 参与，不能退化成纯模板代码；但也不应该每小时固定消耗 Codex automation 额度。
 
