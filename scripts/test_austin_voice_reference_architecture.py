@@ -164,6 +164,8 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
 
         self.assertIn("主动检索可核验的公开一手资料", skill)
         self.assertIn("不要求用户先提供提纲、核心观点、问题清单或个人经历", skill)
+        self.assertIn("选题只是写作对象，不等于文章已经有观点", skill)
+        self.assertIn("自行形成一个有依据、可调整、愿意在本文表达的判断", skill)
         self.assertIn("只有写作必须依赖尚未公开的 Austin 亲历", skill)
         self.assertIn("第三方示例中的作者、经历、观点、客户、项目、测试和结果不是 Austin 的事实", skill)
         self.assertIn("不自动构成所有文章的结论", profile)
@@ -177,6 +179,15 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("没有固定公众号尾部", port)
         self.assertIn("topic_id/title/hook/structure/body", skill)
         self.assertNotIn("THIRD_PARTY_NOTICES.md", skill)
+
+    def test_writer_forms_judgment_before_draft_without_user_outline(self) -> None:
+        skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        port = (SKILL_DIR / "references" / "khazix-writer-port.md").read_text(encoding="utf-8")
+
+        self.assertIn("先根据当前材料、Austin 身份与必要研究形成一个有依据、可调整、愿意在本文表达的判断", skill)
+        self.assertIn("选题只是写作对象，不等于已有观点", port)
+        self.assertIn("不能先入结论再选择性忽略相反事实", port)
+        self.assertIn("材料只撑得起短稿时就停在短稿", port)
 
     def test_model_instructions_do_not_create_deterministic_prose_gates(self) -> None:
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
