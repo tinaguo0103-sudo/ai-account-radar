@@ -3,6 +3,9 @@ from __future__ import annotations
 import hashlib
 import os
 import re
+import shutil
+import sys
+import tempfile
 import unittest
 from pathlib import Path
 
@@ -84,7 +87,7 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
             "## 第三步：写作",
             "### 文章原型",
             "### 风格内核",
-            "### 表达风险边界",
+            "### 绝对禁区",
             "### 推荐口语化词组",
             "### 开头的几种必杀技",
             "### 逐一展示法（升番逻辑）",
@@ -117,6 +120,8 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("## 4. 创意案例工作法", methodology)
         self.assertIn("上游方法保留优先", methodology)
         self.assertIn("上游示例保留原文作为 craft 参考", examples)
+        self.assertIn("references/khazix-style-examples.md", port)
+        self.assertIn("references/khazix-content-methodology.md", port)
 
     def test_austin_surface_voice_overrides_third_party_lexical_signatures(self) -> None:
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
@@ -132,7 +137,7 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertLess(read_order.index("references/voice-excerpts.md"), read_order.index("references/khazix-style-examples.md"))
 
         self.assertIn("上游文本中的第三方作者、案例、第一人称和示例只说明写法功能", port)
-        self.assertIn("上游示例列出了一批高频口语化表达", port)
+        self.assertIn("Austin 的文章可以自然使用一批普通口语化表达", port)
         self.assertIn("这些词组不是每句话都要塞", port)
         self.assertNotIn("这些词组可以主动、自然地使用", port)
         self.assertNotIn("太特么赤鸡了", port)
@@ -146,7 +151,7 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         port = (SKILL_DIR / "references" / "khazix-writer-port.md").read_text(encoding="utf-8")
 
         self.assertIn("不得增加 Python、正则、分数、计数或 deterministic prose gate", skill)
-        self.assertIn("不是固定禁词表", port)
+        self.assertIn("它们是写作指令，不授权调用方实现代码扫描、计数、评分或 runtime 拒绝 gate", port)
         self.assertIn("只由模型在首次输出前复读和修复", port)
         self.assertIn("不授权调用方增加 Python、正则、评分、计数、拒绝或二次自动改写 gate", port)
 
@@ -192,6 +197,37 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertNotIn("three_round_learning.md", managed)
         self.assertNotIn("derived style", managed.lower())
         self.assertNotIn("keyword selector", managed.lower())
+
+    def test_isolated_candidate_authority_injection_parity_and_typed_mismatch(self) -> None:
+        scripts_dir = str(ROOT / "scripts")
+        if scripts_dir not in sys.path:
+            sys.path.insert(0, scripts_dir)
+        from daily_workflow import WorkflowConflict
+        from spoken_script_runtime import writer_authority_manifest
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source_copy = root / "fresh-source" / "skills" / "austin-voice-scriptwriter"
+            active_copy = root / "isolated-active" / "austin-voice-scriptwriter"
+            shutil.copytree(SKILL_DIR, source_copy)
+            shutil.copytree(SKILL_DIR, active_copy)
+
+            manifest = writer_authority_manifest(
+                active_root=active_copy,
+                source_root=source_copy,
+                require_source_parity=True,
+            )
+            self.assertTrue(manifest["source_active_exact_parity"])
+            (active_copy / "SKILL.md").write_text(
+                (active_copy / "SKILL.md").read_text(encoding="utf-8") + "\nisolated mismatch\n",
+                encoding="utf-8",
+            )
+            with self.assertRaisesRegex(WorkflowConflict, "writer_authority_parity_conflict"):
+                writer_authority_manifest(
+                    active_root=active_copy,
+                    source_root=source_copy,
+                    require_source_parity=True,
+                )
 
     def test_every_case_index_entry_resolves_without_source_docx(self) -> None:
         index = (SKILL_DIR / "references" / "case-index.md").read_text(encoding="utf-8")
