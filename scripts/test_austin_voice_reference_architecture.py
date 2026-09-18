@@ -12,6 +12,11 @@ SKILL_DIR = ROOT / "skills" / "austin-voice-scriptwriter"
 PROJECT_ROOT = Path(os.environ.get("AI_ACCOUNT_WORKFLOW_ROOT", str(ROOT.parent)))
 SOURCE_DIR = PROJECT_ROOT / "00_资料库"
 UPSTREAM_COMMIT = "3fa874169134f65b14e8a27164386510bc867037"
+UPSTREAM_HASHES = {
+    "khazix-writer/SKILL.md": "081bfbf5bc0f0c9a2c5a6410eaaa9de18a0cc50f932a1195f45df04e30018602",
+    "khazix-writer/references/content_methodology.md": "e9d12c563c04a8795cb1513b222c275df0ecfbc885149d02da2bc817a10bdcd2",
+    "khazix-writer/references/style_examples.md": "6ebf6f03072099c5f705d620fcbd2deeac15a2d4340617b72fa861d7f00cce7f",
+}
 
 
 def sha256(path: Path) -> str:
@@ -52,6 +57,8 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("我的案例库.docx", index)
         self.assertIn("不是关键词、分数、embedding 或代码选择器", index)
         self.assertIn(UPSTREAM_COMMIT, notice)
+        for source, digest in UPSTREAM_HASHES.items():
+            self.assertIn(f"- `{source}`: `{digest}`", notice)
         self.assertIn("Copyright (c) 2026 数字生命卡兹克", notice)
         self.assertIn("Permission is hereby granted", notice)
 
@@ -67,20 +74,20 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertNotIn("按目录只读取", skill)
         self.assertNotIn("只在需要时", skill.split("文章冻结后", 1)[0])
         self.assertGreaterEqual(len(port.splitlines()), 350)
-        self.assertGreaterEqual(len(methodology.splitlines()), 150)
-        self.assertGreaterEqual(len(examples.splitlines()), 400)
+        self.assertGreaterEqual(len(methodology.splitlines()), 136)
+        self.assertGreaterEqual(len(examples.splitlines()), 428)
 
         for section in (
             "## 核心价值观",
             "## 第一步：理解素材与选题判断",
-            "## 第二步：明确 AI 的角色边界",
+            "## 第二步：明确AI的角色边界",
             "## 第三步：写作",
             "### 文章原型",
             "### 风格内核",
-            "### 绝对禁区",
+            "### 表达风险边界",
             "### 推荐口语化词组",
             "### 开头的几种必杀技",
-            "### 逐一展示法，升番逻辑",
+            "### 逐一展示法（升番逻辑）",
             "### 创意案例的力量",
             "### 结构模板",
             "### 字数和格式",
@@ -103,11 +110,13 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
             "人物画像法",
             "英雄之旅叙事弧",
             "情绪表达",
-            "4000 到 8000 字",
+            "4000-8000字",
         ):
             self.assertIn(preserved_method, port)
         self.assertIn("## 19. 谦逊铺垫的进阶写法", examples)
         self.assertIn("## 4. 创意案例工作法", methodology)
+        self.assertIn("上游方法保留优先", methodology)
+        self.assertIn("上游示例保留原文作为 craft 参考", examples)
 
     def test_austin_surface_voice_overrides_third_party_lexical_signatures(self) -> None:
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
@@ -121,14 +130,13 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         read_order = skill.split("## 必读顺序", 1)[1]
         self.assertLess(read_order.index("references/voice-excerpts.md"), read_order.index("references/khazix-style-examples.md"))
 
-        self.assertIn("上游示例中的固定开头、口癖、粗口、推荐词组、典型转场和标志性结尾", port)
-        self.assertIn("功能地图，不保留可主动套用的措辞清单", port)
-        self.assertIn("这些是开场功能，不是句式", port)
+        self.assertIn("上游文本中的第三方作者、案例、第一人称和示例只说明写法功能", port)
+        self.assertIn("上游示例列出了一批高频口语化表达", port)
+        self.assertIn("这些词组不是每句话都要塞", port)
         self.assertNotIn("这些词组可以主动、自然地使用", port)
-        self.assertNotIn("故事是这样的。」「事情是这样的。", port)
-        self.assertIn("## 表层语言隔离", examples)
-        self.assertIn("这里不是禁词表", examples)
-        self.assertIn("验收对象是整篇作者辨识度", examples)
+        self.assertNotIn("太特么赤鸡了", port)
+        self.assertNotIn("不是哥们", port)
+        self.assertIn("上游示例保留原文作为 craft 参考", examples)
         self.assertIn("第三方写作示例只保留推进功能", adaptation)
 
     def test_surface_voice_review_remains_model_owned_and_non_deterministic(self) -> None:
@@ -136,8 +144,8 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         port = (SKILL_DIR / "references" / "khazix-writer-port.md").read_text(encoding="utf-8")
 
         self.assertIn("不得建立禁词表、短语替换、频次阈值", skill)
-        self.assertIn("不是字符串禁用表", port)
-        self.assertIn("不做短语替换，也不维护禁词或次数清单", port)
+        self.assertIn("不是固定禁词表", port)
+        self.assertIn("不做脱离上下文的短语替换", port)
         self.assertIn("不按词频、命中数或数字分数把结果交给 runtime", port)
 
     def test_identity_autonomy_and_output_boundaries(self) -> None:
@@ -150,7 +158,7 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("不要求用户先提供提纲、核心观点、问题清单或个人经历", skill)
         self.assertIn("只有写作必须依赖尚未公开的 Austin 亲历", skill)
         self.assertIn("第三方示例只用于理解写法", skill)
-        self.assertIn("本文件全部引文都是第三方写法示范", examples)
+        self.assertIn("这里的作者、人物、经历、观点、口癖和结尾全部是第三方写法示范", examples)
         self.assertIn("MIT License", notice)
         self.assertNotIn("wzglyay@virxact.com", port)
         self.assertNotIn("随手点个赞", port)
@@ -164,7 +172,7 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         port = (SKILL_DIR / "references" / "khazix-writer-port.md").read_text(encoding="utf-8")
         managed = "\n".join(path.read_text(encoding="utf-8") for path in SKILL_DIR.rglob("*.md"))
         self.assertIn("不得用 Python、正则、分数、计数或 deterministic prose gate", skill)
-        self.assertIn("不是 Python 扫描、评分器、正则 gate 或 runtime 拒绝条件", port)
+        self.assertIn("不是 Python、正则、关键词、长度、计数、评分或 runtime 拒绝条件", port)
         for retired in (
             "three_round_learning.md",
             "public_voice_style.md",

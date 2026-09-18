@@ -2,7 +2,7 @@
 
 ## Khazix Writer
 
-The complete writing system in the following Git-managed port references is copied or adapted from the frozen upstream listed below:
+The complete writing system in the following Git-managed references keeps the frozen upstream text as the base and applies only the minimal Austin identity, fact, footer, catchphrase and autonomous-first-draft boundaries recorded in the Dev handoff:
 
 - `references/khazix-writer-port.md`
 - `references/khazix-content-methodology.md`
@@ -11,6 +11,12 @@ The complete writing system in the following Git-managed port references is copi
 - Repository: https://github.com/KKKKhazix/khazix-skills
 - Commit: `3fa874169134f65b14e8a27164386510bc867037`
 - Source files: `khazix-writer/SKILL.md`, `khazix-writer/references/content_methodology.md`, and `khazix-writer/references/style_examples.md`
+
+Frozen source SHA-256 values:
+
+- `khazix-writer/SKILL.md`: `081bfbf5bc0f0c9a2c5a6410eaaa9de18a0cc50f932a1195f45df04e30018602`
+- `khazix-writer/references/content_methodology.md`: `e9d12c563c04a8795cb1513b222c275df0ecfbc885149d02da2bc817a10bdcd2`
+- `khazix-writer/references/style_examples.md`: `6ebf6f03072099c5f705d620fcbd2deeac15a2d4340617b72fa861d7f00cce7f`
 
 MIT License
 
