@@ -125,8 +125,9 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         adaptation = (SKILL_DIR / "references" / "spoken-adaptation.md").read_text(encoding="utf-8")
 
         self.assertIn("Austin 的表层语言以当前材料中的自然说话位置", skill)
-        self.assertIn("不是候选措辞", skill)
-        self.assertIn("不沿用示例的开头、连接词、口癖、粗口和收束方式", skill)
+        self.assertIn("普通表达、转场、标点和结尾方法可以按当前题与 Austin 语感学习", skill)
+        self.assertIn("只不直接挪用明显标志口癖", skill)
+        self.assertNotIn("不沿用示例的开头、连接词、口癖、粗口和收束方式", skill)
         read_order = skill.split("## 必读顺序", 1)[1]
         self.assertLess(read_order.index("references/voice-excerpts.md"), read_order.index("references/khazix-style-examples.md"))
 
@@ -137,19 +138,21 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertNotIn("太特么赤鸡了", port)
         self.assertNotIn("不是哥们", port)
         self.assertIn("上游示例保留原文作为 craft 参考", examples)
-        self.assertIn("第三方写作示例只保留推进功能", adaptation)
+        self.assertIn("第三方示例中的身份、事实、明显标志口癖", adaptation)
+        self.assertIn("普通表达、转场、标点和结尾方法可以按当前题现场形成", adaptation)
 
     def test_surface_voice_review_remains_model_owned_and_non_deterministic(self) -> None:
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
         port = (SKILL_DIR / "references" / "khazix-writer-port.md").read_text(encoding="utf-8")
 
-        self.assertIn("不得建立禁词表、短语替换、频次阈值", skill)
+        self.assertIn("不得增加 Python、正则、分数、计数或 deterministic prose gate", skill)
         self.assertIn("不是固定禁词表", port)
-        self.assertIn("不做脱离上下文的短语替换", port)
-        self.assertIn("不按词频、命中数或数字分数把结果交给 runtime", port)
+        self.assertIn("只由模型在首次输出前复读和修复", port)
+        self.assertIn("不授权调用方增加 Python、正则、评分、计数、拒绝或二次自动改写 gate", port)
 
     def test_identity_autonomy_and_output_boundaries(self) -> None:
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
+        profile = (SKILL_DIR / "references" / "austin-profile.md").read_text(encoding="utf-8")
         port = (SKILL_DIR / "references" / "khazix-writer-port.md").read_text(encoding="utf-8")
         examples = (SKILL_DIR / "references" / "khazix-style-examples.md").read_text(encoding="utf-8")
         notice = (SKILL_DIR / "THIRD_PARTY_NOTICES.md").read_text(encoding="utf-8")
@@ -157,7 +160,10 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         self.assertIn("主动检索可核验的公开一手资料", skill)
         self.assertIn("不要求用户先提供提纲、核心观点、问题清单或个人经历", skill)
         self.assertIn("只有写作必须依赖尚未公开的 Austin 亲历", skill)
-        self.assertIn("第三方示例只用于理解写法", skill)
+        self.assertIn("第三方示例中的作者、经历、观点、客户、项目、测试和结果不是 Austin 的事实", skill)
+        self.assertIn("不自动构成所有文章的结论", profile)
+        self.assertIn("不是每篇文章都要出现的段落", profile)
+        self.assertNotIn("每篇文章必须", profile)
         self.assertIn("这里的作者、人物、经历、观点、口癖和结尾全部是第三方写法示范", examples)
         self.assertIn("MIT License", notice)
         self.assertNotIn("wzglyay@virxact.com", port)
@@ -171,8 +177,8 @@ class AustinVoiceReferenceArchitectureTests(unittest.TestCase):
         skill = (SKILL_DIR / "SKILL.md").read_text(encoding="utf-8")
         port = (SKILL_DIR / "references" / "khazix-writer-port.md").read_text(encoding="utf-8")
         managed = "\n".join(path.read_text(encoding="utf-8") for path in SKILL_DIR.rglob("*.md"))
-        self.assertIn("不得用 Python、正则、分数、计数或 deterministic prose gate", skill)
-        self.assertIn("不是 Python、正则、关键词、长度、计数、评分或 runtime 拒绝条件", port)
+        self.assertIn("不得增加 Python、正则、分数、计数或 deterministic prose gate", skill)
+        self.assertIn("不授权调用方增加 Python、正则、评分、计数、拒绝或二次自动改写 gate", port)
         for retired in (
             "three_round_learning.md",
             "public_voice_style.md",
