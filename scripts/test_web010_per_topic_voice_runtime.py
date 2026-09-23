@@ -486,7 +486,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             command = self.command(root, fixture)
             fixture_data = json.loads(fixture.read_text())
             for item_index, item in enumerate(fixture_data["content_items"]):
-                raw_path = root / RUN_ID / f"source-{item_index}.json"
+                raw_path = root / "runs" / RUN_ID / f"source-{item_index}.json"
                 write_json(raw_path, {"text": "SYNTHETIC_RAW_SOURCE", "item_id": item["item_id"]})
                 item["source_text"] = "SYNTHETIC_RAW_SOURCE"
                 item["raw_artifact_path"] = str(raw_path)
@@ -541,6 +541,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 BUSINESS_DATE,
                 collection_stage["payload"],
                 editorial_stage["payload"],
+                artifact_root=root / "runs",
             )
             selected_topics = all_handoff["selected_topics"]
             contract = load_writer_contract()
@@ -703,6 +704,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 BUSINESS_DATE,
                 collection_stage["payload"],
                 editorial_stage["payload"],
+                artifact_root=root / "runs",
             )
             contract = load_writer_contract()
             handoff = topic_packet(

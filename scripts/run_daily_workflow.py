@@ -1258,6 +1258,11 @@ def validate_editorial_screening(
 def validate_editorial(run_id: str, result: dict[str, Any], candidates: list[dict[str, Any]]) -> None:
     if result.get("run_id") != run_id or not isinstance(result.get("topics"), list):
         raise WorkflowConflict("editorial_result_invalid")
+    if any(
+        isinstance(row, dict) and "author_input" in row
+        for row in result["topics"]
+    ):
+        raise WorkflowConflict("editorial_author_input_untrusted")
     allowed = {str(row.get("candidate_id")) for row in candidates}
     requires_standalone = run_id[4:12] >= "20260804"
     identities = [str(row.get("candidate_id") or "") for row in result["topics"]]
@@ -1554,23 +1559,43 @@ def compact_source_facts(rows: list[dict[str, Any]]) -> dict[str, Any]:
     return facts
 
 
-def _same_run_material_path(value: Any, run_id: str) -> str | None:
-    """Return only a run-scoped source path; never pass an arbitrary local path."""
+def _same_run_material_path(
+    value: Any,
+    run_id: str,
+    artifact_root: Path | str | None,
+) -> str | None:
+    """Return an existing artifact only when its resolved path is in this exact run."""
     if not isinstance(value, str) or not value.strip():
+        return None
+    if artifact_root is None or not run_id or Path(run_id).name != run_id:
         return None
     raw = value.strip()
     path = Path(raw)
-    if path.is_absolute():
-        try:
-            resolved = path.resolve()
-        except OSError:
-            return None
-        if run_id not in resolved.parts and run_id not in str(resolved):
-            return None
-        return str(resolved)
-    if ".." in path.parts:
+    if ".." in path.parts or not path.parts:
         return None
-    return raw
+    try:
+        resolved_artifact_root = Path(artifact_root).resolve(strict=True)
+        declared_run_root = resolved_artifact_root / run_id
+        if declared_run_root.is_symlink():
+            return None
+        run_root = declared_run_root.resolve(strict=True)
+        if run_root.name != run_id or run_root.parent != resolved_artifact_root:
+            return None
+        if path.is_absolute():
+            candidate = path
+        else:
+            # Relative paths are rooted at artifact_root and must name this run
+            # explicitly; an unbound relative path cannot establish provenance.
+            if path.parts[0] != run_id:
+                return None
+            candidate = resolved_artifact_root / path
+        resolved = candidate.resolve(strict=True)
+        resolved.relative_to(run_root)
+        if resolved == run_root or not resolved.is_file():
+            return None
+    except (OSError, RuntimeError, ValueError):
+        return None
+    return str(resolved)
 
 
 def compact_source_material(
@@ -1578,6 +1603,7 @@ def compact_source_material(
     business_date: str,
     candidate: dict[str, Any],
     item: dict[str, Any],
+    artifact_root: Path | str | None = None,
 ) -> dict[str, Any]:
     """Preserve source-owned same-run material without forwarding editorial fields."""
     # Content items are the source authority for raw text/OCR/payload paths;
@@ -1618,7 +1644,7 @@ def compact_source_material(
     raw_path = first_context_value(
         rows, "原始payload路径", "raw_artifact_path", "raw_payload_path", "payload_path",
     )
-    safe_path = _same_run_material_path(raw_path, run_id)
+    safe_path = _same_run_material_path(raw_path, run_id, artifact_root)
     if safe_path:
         material["raw_artifact_path"] = {
             "path": safe_path,
@@ -1637,6 +1663,8 @@ def build_scripts_handoff(
     business_date: str,
     collection: dict[str, Any],
     editorial: dict[str, Any],
+    *,
+    artifact_root: Path | str | None = None,
 ) -> dict[str, Any]:
     candidates = {
         str(row.get("candidate_id") or ""): row
@@ -1684,7 +1712,7 @@ def build_scripts_handoff(
             },
             "source_facts": compact_source_facts(source_rows),
             "source_material": compact_source_material(
-                run_id, business_date, candidate, item,
+                run_id, business_date, candidate, item, artifact_root,
             ),
             "sources": [
                 {
@@ -1706,9 +1734,11 @@ def build_scripts_handoff(
             "trend_event_id": candidate.get("trend_event_id") or topic_id,
             "source_evidence": source_evidence,
         })
-        # Only an explicitly named current-topic note crosses this boundary;
-        # editorial blueprints and legacy/private context remain excluded.
-        author_input = first_context_value([topic, candidate, item], "author_input")
+        # The exact current candidate row is the pre-editorial authority for an
+        # explicitly supplied current-topic note. Editorial rows are model-owned
+        # and validate_editorial rejects author_input there; source content
+        # items are not user-owned author intent.
+        author_input = first_context_value([candidate], "author_input")
         if isinstance(author_input, str) and author_input.strip():
             selected_topics[-1]["author_input"] = author_input.strip()
     return {
@@ -2812,6 +2842,7 @@ def main() -> int:
             writer_contract = script_runtime.load_writer_contract()
             all_handoff = build_scripts_handoff(
                 args.run_id, args.business_date, collection, editorial,
+                artifact_root=args.artifact_root,
             )
             script_topics = all_handoff["selected_topics"]
             writer_authority = script_runtime.writer_authority_manifest(

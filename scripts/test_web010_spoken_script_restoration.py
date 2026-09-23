@@ -109,6 +109,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertEqual(topic["source_evidence"]["video"]["asr_supplement"], "spoken supplement")
         self.assertNotIn("visual_reading", topic["source_evidence"]["video"])
         self.assertNotIn("run_id", topic["source_evidence"]["video"])
+        self.assertNotIn("author_seed", topic)
         encoded = json.dumps(handoff, ensure_ascii=False)
         self.assertNotIn("我的制作补充", encoded)
         self.assertNotIn("制作方向", encoded)
@@ -153,11 +154,27 @@ class SpokenScriptRestorationTests(unittest.TestCase):
     def test_forwards_explicit_current_topic_author_input(self):
         fixture = self.fixture()
         fixture["candidates"][0]["author_input"] = "我真正关心的是失败后有没有回音。"
+        editorial = self.editorial()
+        editorial["topics"][0]["author_input"] = "MODEL_AUTHORED_OVERRIDE"
+        with self.assertRaisesRegex(
+            workflow.WorkflowConflict, "editorial_author_input_untrusted",
+        ):
+            workflow.validate_editorial(
+                "run_20260808_121000", editorial, fixture["candidates"],
+            )
         topic = workflow.build_scripts_handoff(
-            "run_20260808_121000", "2026-08-08", fixture, self.editorial()
+            "run_20260808_121000", "2026-08-08", fixture, editorial,
         )["selected_topics"][0]
         self.assertEqual(topic["author_input"], "我真正关心的是失败后有没有回音。")
         self.assertNotIn("author_input", topic["source_evidence"])
+        self.assertNotIn("author_seed", topic)
+
+        fixture["candidates"][0].pop("author_input")
+        fixture["content_items"][0]["author_input"] = "SOURCE_CONTENT_IS_NOT_USER_INTENT"
+        source_only = workflow.build_scripts_handoff(
+            "run_20260808_121000", "2026-08-08", fixture, self.editorial()
+        )["selected_topics"][0]
+        self.assertNotIn("author_input", source_only)
 
         fixture["candidates"][0]["author_input"] = {"should": "not become a schema"}
         without_text = workflow.build_scripts_handoff(
@@ -166,33 +183,80 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         self.assertNotIn("author_input", without_text)
 
     def test_preserves_same_run_source_material_without_editorial_blueprints(self):
-        fixture = self.fixture()
-        fixture["content_items"][0].update({
-            "正文/字幕/简介片段": "同一 run 的来源原文片段，应交给写作者自行判断。",
-            "截图/OCR文本": "OCR only source evidence",
-            "原始payload路径": "/private/tmp/run_20260808_121000/sources/item.json",
-        })
-        fixture["candidates"][0]["原始发布文案"] = "原始发布文案，不是编辑提纲。"
-        topic = workflow.build_scripts_handoff(
-            "run_20260808_121000", "2026-08-08", fixture, self.editorial()
-        )["selected_topics"][0]
-        material = topic["source_evidence"]["source_material"]
-        self.assertEqual(
-            material["same_run"],
-            {"run_id": "run_20260808_121000", "business_date": "2026-08-08"},
-        )
-        self.assertEqual(material["raw_text"], "同一 run 的来源原文片段，应交给写作者自行判断。")
-        self.assertEqual(material["ocr_text"], "OCR only source evidence")
-        self.assertEqual(material["raw_artifact_path"]["scope"], "same_run")
-        self.assertNotIn("selection_reason", json.dumps(material, ensure_ascii=False))
-        self.assertNotIn("editorial_thesis", json.dumps(material, ensure_ascii=False))
+        run_id = "run_20260808_121000"
+        with tempfile.TemporaryDirectory() as directory:
+            artifact_root = Path(directory) / "runs"
+            run_root = artifact_root / run_id
+            valid_path = run_root / "sources" / "item.json"
+            valid_path.parent.mkdir(parents=True)
+            valid_path.write_text('{"text":"current run"}', encoding="utf-8")
 
-        fixture["content_items"][0]["原始payload路径"] = "/private/tmp/run_20260807_000000/old.json"
-        foreign = workflow.build_scripts_handoff(
-            "run_20260808_121000", "2026-08-08", fixture, self.editorial()
-        )["selected_topics"][0]["source_evidence"]["source_material"]
-        self.assertNotIn("raw_artifact_path", foreign)
-        self.assertFalse(foreign["availability"]["raw_artifact_path"])
+            fixture = self.fixture()
+            fixture["content_items"][0].update({
+                "正文/字幕/简介片段": "同一 run 的来源原文片段，应交给写作者自行判断。",
+                "字幕": "同一 run 的口播转写。",
+                "截图/OCR文本": "OCR only source evidence",
+                "原始payload路径": str(valid_path),
+            })
+            fixture["candidates"][0]["原始发布文案"] = "原始发布文案，不是编辑提纲。"
+            topic = workflow.build_scripts_handoff(
+                run_id, "2026-08-08", fixture, self.editorial(),
+                artifact_root=artifact_root,
+            )["selected_topics"][0]
+            material = topic["source_evidence"]["source_material"]
+            self.assertEqual(
+                material["same_run"],
+                {"run_id": run_id, "business_date": "2026-08-08"},
+            )
+            self.assertEqual(material["raw_text"], "同一 run 的来源原文片段，应交给写作者自行判断。")
+            self.assertEqual(material["caption_or_transcript"], "同一 run 的口播转写。")
+            self.assertEqual(material["ocr_text"], "OCR only source evidence")
+            self.assertEqual(material["raw_artifact_path"]["scope"], "same_run")
+            self.assertEqual(material["raw_artifact_path"]["run_id"], run_id)
+            self.assertEqual(material["raw_artifact_path"]["path"], str(valid_path.resolve()))
+            self.assertNotIn("selection_reason", json.dumps(material, ensure_ascii=False))
+            self.assertNotIn("editorial_thesis", json.dumps(material, ensure_ascii=False))
+
+            # A relative artifact is accepted only when it names the exact run
+            # under the supplied artifact root.
+            fixture["content_items"][0]["原始payload路径"] = f"{run_id}/sources/item.json"
+            relative = workflow.build_scripts_handoff(
+                run_id, "2026-08-08", fixture, self.editorial(),
+                artifact_root=artifact_root,
+            )["selected_topics"][0]["source_evidence"]["source_material"]
+            self.assertEqual(relative["raw_artifact_path"]["path"], str(valid_path.resolve()))
+
+            foreign_run = "run_20260807_000000"
+            foreign_path = artifact_root / foreign_run / "sources" / "old.json"
+            foreign_path.parent.mkdir(parents=True)
+            foreign_path.write_text('{"text":"foreign run"}', encoding="utf-8")
+            unbound_path = artifact_root / "archive" / "another-run" / "source.json"
+            unbound_path.parent.mkdir(parents=True)
+            unbound_path.write_text('{"text":"unbound foreign source"}', encoding="utf-8")
+            escaped_path = run_root / "sources" / "escape.json"
+            try:
+                escaped_path.symlink_to(foreign_path)
+            except OSError as error:
+                self.skipTest(f"symlink fixture unavailable: {error}")
+
+            invalid_paths = (
+                str(foreign_path),
+                "archive/another-run/source.json",
+                f"{run_id}/../../{foreign_run}/sources/old.json",
+                f"{run_id}/sources/escape.json",
+            )
+            for invalid_path in invalid_paths:
+                with self.subTest(raw_path=invalid_path):
+                    fixture["content_items"][0]["原始payload路径"] = invalid_path
+                    rejected = workflow.build_scripts_handoff(
+                        run_id, "2026-08-08", fixture, self.editorial(),
+                        artifact_root=artifact_root,
+                    )["selected_topics"][0]["source_evidence"]["source_material"]
+                    self.assertNotIn("raw_artifact_path", rejected)
+                    self.assertFalse(rejected["availability"]["raw_artifact_path"])
+                    self.assertEqual(rejected["raw_text"], "同一 run 的来源原文片段，应交给写作者自行判断。")
+                    self.assertEqual(rejected["caption_or_transcript"], "同一 run 的口播转写。")
+                    self.assertEqual(rejected["ocr_text"], "OCR only source evidence")
 
     def test_keeps_available_video_when_no_representative_was_budgeted(self):
         fixture = self.fixture()
