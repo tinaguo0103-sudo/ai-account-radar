@@ -29,7 +29,7 @@ scripts_required 仅为内部/兼容阶段标识；再次调用公共入口取�
 
 ## Release boundary
 
-候选绑定 ai-git，保留 PAUSED、每日 08:00、原 cwd、gpt-5.6-luna/max。
+候选 release target 为原位更新 ai-git，保留 PAUSED、每日 08:00 和原 cwd，模型目标为 gpt-6-luna/max。此文件和候选 metadata 不是 live automation 读回；实际任务仅由获准的 release lane 经官方 API 更新并验证。
 config/web010_single_daily_workflow_release.json 只保存待审合同；不得直接更新实际任务。
 后续需 PM 授权同一 release unit 的代码、已认可 R4 parity 和 automation prompt 对齐，
 再独立验证 scheduler 工具、完整文章/口播、真实 runtime 与 Website 读回。

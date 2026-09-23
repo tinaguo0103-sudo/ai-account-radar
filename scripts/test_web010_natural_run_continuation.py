@@ -367,7 +367,7 @@ class NaturalRunContinuationTest(unittest.TestCase):
         self.assertEqual(schedule["status"], "PAUSED")
         self.assertEqual(schedule["kind"], "cron")
         self.assertEqual(schedule["rrule"], "FREQ=DAILY;BYHOUR=8;BYMINUTE=0;BYSECOND=0")
-        self.assertEqual(schedule["model"], "gpt-5.6-luna")
+        self.assertEqual(schedule["model"], "gpt-6-luna")
         self.assertEqual(schedule["reasoningEffort"], "max")
         self.assertNotIn("continuationRRuleCandidate", schedule)
         self.assertNotIn("maximumOuterTurnMinutes", schedule)

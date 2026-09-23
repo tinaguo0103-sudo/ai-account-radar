@@ -85,12 +85,19 @@ class EditorialContinuationTest(unittest.TestCase):
         prompt = "\n".join(contract["externalSchedule"]["outerAgentProtocol"]).lower()
         self.assertIn("applies ai-account-editorial-director", prompt)
         self.assertIn("controller validates and commits", prompt)
-        self.assertIn("stay truthful about austin/client/team tests and results", prompt)
-        self.assertIn("compose the complete body before filling title/hook/structure", prompt)
-        self.assertIn("current rich topic card", prompt)
-        self.assertIn("exposes one topic at a time", prompt)
-        self.assertIn("source video, asr, ocr and keyframes only as factual, case and visual evidence", prompt)
-        self.assertIn("standalone article subject", prompt)
+        self.assertIn("article_required", prompt)
+        self.assertIn("spoken_adaptation_required", prompt)
+        self.assertIn("--article-item-file", prompt)
+        self.assertIn("--script-item-file", prompt)
+        self.assertIn("scripts_required is a compatibility stage marker", prompt)
+        self.assertIn("the skill owns creative decisions", prompt)
+        writer_skill = (
+            root / "skills" / "austin-voice-scriptwriter" / "SKILL.md"
+        ).read_text(encoding="utf-8")
+        self.assertIn(
+            "没有事实支持时明确说尚未试过、尚未确认或只是在推演，不虚构 Austin、客户或团队的亲历与结果。",
+            writer_skill,
+        )
         self.assertNotIn("evidence quantity is not recommendation eligibility", prompt)
         self.assertNotIn("research failure never automatically changes select to observe", prompt)
         self.assertNotIn("seedance", prompt)

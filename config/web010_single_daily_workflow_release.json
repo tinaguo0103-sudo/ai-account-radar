@@ -28,7 +28,7 @@
     "cwds": [
       "/Users/congcong/Desktop/AI/AI项目/AI账号工作流/ai_account_radar"
     ],
-    "model": "gpt-5.6-luna",
+    "model": "gpt-6-luna",
     "reasoningEffort": "max"
   },
   "runtimeTopology": [
