@@ -705,11 +705,13 @@ assert.deepEqual(
 assert.deepEqual(factShape.cards[0].fact_missing_reasons, {});
 const factContent = buildHomepageCardItems([{
   status: "success",
+  source_id: "source-account-1",
   account_name: "account-1",
   video_links: ["https://www.douyin.com/video/50000000009"],
   video_cards: factShape.cards,
 }])[0];
 assert.equal(factContent.published_at, "2026-07-30T00:00:00.000Z");
+assert.equal(factContent.source_provenance[0].source_id, "source-account-1");
 assert.deepEqual(
   ["likes", "comments", "favorites", "shares"].map((key) => factContent[key]),
   [0, 12, 3, 1],

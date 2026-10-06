@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import json
 import os
+import re
 import subprocess
 import sys
 import csv
@@ -21,6 +22,7 @@ from urllib.parse import urlparse
 from local_env import load_local_env
 from full_account_collection_contract import rejection_payload, validate_account_limit_argv
 from source_control import DEFAULT_DB, SourceControl
+from source_assembly import SOURCE_REGISTRY, SourcePackageError, import_source_package
 
 ROOT = Path(__file__).resolve().parents[1]
 OUT = ROOT / "output"
@@ -181,6 +183,90 @@ def wechat_terminal_failure(payload: dict[str, Any]) -> tuple[str, str]:
     return state, reason
 
 
+def source_run_row(run_id: str, source: str, status: str, *, planned: int = 0,
+                   succeeded: int = 0, failed: int = 0, item_count: int = 0,
+                   error: str = "", completed_at: str = "", source_id: str = "") -> dict[str, Any]:
+    return {
+        "id": f"{run_id}:{source}", "run_id": run_id, "source": source,
+        "source_id": source_id, "status": status, "planned_count": planned,
+        "succeeded_count": succeeded, "failed_count": failed,
+        "item_count": item_count, "error_summary": error[:240],
+        "completed_at": completed_at,
+    }
+
+
+def provider_source_run(run_id: str, source: str, outcome: dict[str, Any]) -> dict[str, Any]:
+    status = str(outcome.get("status") or "failed")
+    attempted = bool(outcome.get("attempted_at"))
+    if status in {"success", "updated_no_new_items"}:
+        site_status, succeeded, failed = "completed", 1, 0
+    elif status == "completed_empty":
+        site_status, succeeded, failed = "completed_empty", 1, 0
+    elif not attempted:
+        site_status, succeeded, failed = "not_attempted", 0, 0
+    elif status in {"blocked", "challenge", "login_required", "verification_required"}:
+        site_status, succeeded, failed = "blocked", 0, 1
+    elif status in {"partial", "completed_with_failures"}:
+        site_status, succeeded, failed = "partial", 0, 1
+    else:
+        site_status, succeeded, failed = "failed", 0, 1
+    return source_run_row(
+        run_id, source, site_status, planned=1 if attempted else 0,
+        succeeded=succeeded, failed=failed,
+        item_count=int(outcome.get("rows") or outcome.get("artifact_count") or 0),
+        error="" if succeeded else status, completed_at=str(outcome.get("attempted_at") or ""),
+        source_id=str(outcome.get("source_id") or ""),
+    )
+
+
+def source_events(outcomes: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    events = []
+    for row in outcomes:
+        if not row.get("attempted_at") or not row.get("source_id"):
+            continue
+        event_outcome = str(row.get("outcome") or row.get("status") or "failed")
+        failure = str(row.get("failure_class") or row.get("status") or "")
+        if event_outcome in {"success", "updated_no_new_items"}:
+            failure = ""
+        if not re.fullmatch(r"[a-z0-9_]{1,80}", failure):
+            failure = "source_attempt_failed" if failure else ""
+        events.append({
+            "source_id": str(row["source_id"]), "attempted_at": str(row["attempted_at"]),
+            "outcome": event_outcome, "failure_class": failure,
+            "artifact_count": int(row.get("artifact_count") or row.get("rows") or 0),
+            "verified_identity": str(row.get("verified_identity") or ""),
+            "substitute_count": 0,
+        })
+    return events
+
+
+def douyin_source_run(run_id: str, result: dict[str, Any], planned_fallback: int = 31) -> dict[str, Any]:
+    rows = [row for row in result.get("rows", []) if isinstance(row, dict)]
+    coverage = result.get("coverage") if isinstance(result.get("coverage"), dict) else {}
+    plan = result.get("source_plan") if isinstance(result.get("source_plan"), dict) else {}
+    planned = int(coverage.get("planned_accounts") or plan.get("planned_accounts") or planned_fallback)
+    attempted_rows = [row for row in rows if row.get("attempted_at")]
+    succeeded = sum(str(row.get("status") or "") in {"success", "updated_no_new_items"} for row in attempted_rows)
+    failed = sum(str(row.get("status") or "") not in {"success", "updated_no_new_items"} for row in attempted_rows)
+    not_attempted = max(0, planned - len(attempted_rows))
+    if not attempted_rows:
+        status = "not_attempted"
+    elif failed or not_attempted:
+        status = "partial" if succeeded or not_attempted else "failed"
+    else:
+        status = "completed"
+    item_count = sum(int(row.get("artifact_count") or 0) for row in rows)
+    completed_at = max((str(row.get("attempted_at") or "") for row in attempted_rows), default="")
+    error = ";".join(part for part in (
+        f"failed:{failed}" if failed else "",
+        f"not_attempted:{not_attempted}" if not_attempted else "",
+    ) if part)
+    return source_run_row(
+        run_id, "douyin", status, planned=planned, succeeded=succeeded,
+        failed=failed, item_count=item_count, error=error, completed_at=completed_at,
+    )
+
+
 def write_json(path: Path, payload: dict[str, Any]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
@@ -216,6 +302,7 @@ def downstream_usability_report(
     today_candidates: int,
     probe_result_path: Path = DOUYIN_CDP_RESULT,
     wechat_read_outcome: dict[str, Any] | None = None,
+    source_outcomes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     probe = read_json(probe_result_path)
     coverage = probe.get("coverage") if isinstance(probe.get("coverage"), dict) else {}
@@ -294,6 +381,7 @@ def downstream_usability_report(
         "probe_result_path": str(probe_result_path),
         "run_output_dir": str(output_dir),
         "today_candidates": today_candidates,
+        "source_outcomes": source_outcomes or [],
     }
 
 
@@ -303,7 +391,7 @@ def row_key(row: dict[str, Any]) -> str:
 
 def combine_manual_jsonl(paths: list[Path], output: Path) -> Path:
     rows: list[dict[str, Any]] = []
-    seen: set[str] = set()
+    positions: dict[str, int] = {}
     for path in paths:
         if not path.exists():
             continue
@@ -315,10 +403,24 @@ def combine_manual_jsonl(paths: list[Path], output: Path) -> Path:
             except json.JSONDecodeError:
                 continue
             key = row_key(row)
-            if key and key in seen:
+            if key and key in positions:
+                current = rows[positions[key]]
+                merged_sources = {
+                    json.dumps(source, ensure_ascii=False, sort_keys=True): source
+                    for source in [
+                        *(current.get("source_provenance") if isinstance(current.get("source_provenance"), list) else []),
+                        *(row.get("source_provenance") if isinstance(row.get("source_provenance"), list) else []),
+                    ]
+                    if isinstance(source, dict) and source.get("source_id")
+                }
+                if merged_sources:
+                    current["source_provenance"] = [merged_sources[value] for value in sorted(merged_sources)]
+                    current["source_ids"] = sorted({
+                        str(source["source_id"]) for source in current["source_provenance"]
+                    })
                 continue
             if key:
-                seen.add(key)
+                positions[key] = len(rows)
             rows.append(row)
     output.parent.mkdir(parents=True, exist_ok=True)
     output.write_text("\n".join(json.dumps(row, ensure_ascii=False) for row in rows) + ("\n" if rows else ""), encoding="utf-8")
@@ -433,6 +535,8 @@ def main() -> int:
     parser.add_argument("--no-feishu-runtime", action="store_true", help="Write exact local run artifacts with every Feishu path disabled.")
     parser.add_argument("--no-fetch-aihot", action="store_true", help="Skip AIHOT network fetch for an isolated test run.")
     parser.add_argument("--run-id", default="", help="Use an explicit run id across source, 03, editorial, 04, and card state.")
+    parser.add_argument("--business-date", default="", help="Exact Asia/Shanghai business date associated with --run-id.")
+    parser.add_argument("--source-package", default="", help="Exact-run source-only package directory; validated before source collection and manual merge.")
     parser.add_argument("--resolve-url-intake", action="store_true", help="Resolve URLs from Feishu 02 URL投喂入口 into ContentItem rows before sampling.")
     parser.add_argument("--fetch-wechat-public-fulltext", action="store_true", help="Discover exact public WeChat article URLs and parse their full text.")
     parser.add_argument("--wechat-public-config", default=str(DEFAULT_WECHAT_PUBLIC_CONFIG))
@@ -467,10 +571,63 @@ def main() -> int:
     douyin_artifacts = douyin_run_artifact_paths(run_id)
     runtime_source_config = douyin_artifacts["dir"] / "source_plan_config.json"
     runtime_source_config.parent.mkdir(parents=True, exist_ok=True)
+    runtime_source_config_value = SourceControl(args.source_db).export_runtime_config()
     runtime_source_config.write_text(
-        json.dumps(SourceControl(args.source_db).export_runtime_config(), ensure_ascii=False, indent=2),
-        encoding="utf-8",
+        json.dumps(runtime_source_config_value, ensure_ascii=False, indent=2), encoding="utf-8",
     )
+    run_match = re.fullmatch(r"run_(\d{8})_\d{6}(?:_[A-Za-z0-9_-]+)?", run_id)
+    derived_business_date = (
+        f"{run_match.group(1)[:4]}-{run_match.group(1)[4:6]}-{run_match.group(1)[6:8]}"
+        if run_match else ""
+    )
+    business_date = args.business_date or derived_business_date
+    if args.business_date and args.business_date != derived_business_date:
+        print(json.dumps({
+            "ok": False, "reason": "source_package_run_date_invalid",
+            "run_id": run_id, "business_date": args.business_date,
+        }, ensure_ascii=False))
+        return 2
+    try:
+        source_package = import_source_package(
+            args.source_package or None,
+            run_id=run_id,
+            business_date=business_date,
+            run_root=OUT / "runs" / run_id,
+            runtime_config=runtime_source_config_value,
+        )
+    except SourcePackageError as exc:
+        print(json.dumps({"ok": False, "reason": str(exc), "run_id": run_id}, ensure_ascii=False))
+        return 2
+    source_package_runs = list(source_package.get("source_runs") or []) if source_package else []
+    source_events = [
+        {
+            "source_id": row["source_id"],
+            "attempted_at": row["attempted_at"],
+            "outcome": row["outcome"],
+            "failure_class": row["failure_class"] if row["outcome"] not in {"success", "updated_no_new_items"} else "",
+            "artifact_count": row["artifact_count"],
+            "verified_identity": row["verified_identity"],
+            "substitute_count": 0,
+        }
+        for row in source_package_runs if row.get("attempted") is True
+    ]
+    if source_events:
+        try:
+            SourceControl(args.source_db).record_run_outcomes(run_id, source_events)
+        except Exception:
+            print(json.dumps({
+                "ok": False, "reason": "source_package_event_record_failed",
+                "run_id": run_id,
+            }, ensure_ascii=False))
+            return 2
+    if source_package:
+        manual_inputs.append(Path(source_package["manual_path"]))
+    else:
+        source_package_runs = [
+            source_run_row(run_id, str(meta["source"]), "not_attempted", source_id=source_id,
+                           error="source_package_not_provided")
+            for source_id, meta in sorted(SOURCE_REGISTRY.items())
+        ]
     run_started_at_ms = int(datetime.now(timezone.utc).timestamp() * 1000)
     step_env = os.environ.copy()
     step_env["RUN_ID"] = run_id
@@ -509,6 +666,28 @@ def main() -> int:
         ]
         steps.append(run_step("discover exact public WeChat article and parse full text", provider_cmd, env=step_env))
         wechat_read_outcome = stdout_json(steps[-1])
+        runtime_by_id = {
+            str(row.get("id") or row.get("source_id") or ""): row
+            for row in runtime_source_config_value.get("sources", []) if isinstance(row, dict)
+        }
+        wechat_events = []
+        for outcome in wechat_read_outcome.get("outcomes", []):
+            if not isinstance(outcome, dict):
+                continue
+            source_id = str(outcome.get("source_id") or "")
+            control_row = runtime_by_id.get(source_id, {})
+            outcome = dict(outcome)
+            outcome["verified_identity"] = str(control_row.get("verified_identity") or "")
+            source_package_runs.append(provider_source_run(run_id, "wechat", outcome))
+            wechat_events.extend(source_events([outcome]))
+        if wechat_events:
+            try:
+                SourceControl(args.source_db).record_run_outcomes(run_id, wechat_events)
+            except Exception:
+                print(json.dumps({
+                    "ok": False, "reason": "wechat_source_event_record_failed", "run_id": run_id,
+                }, ensure_ascii=False))
+                return 2
         wechat_freshness = {
             "ok": wechat_read_outcome.get("ok") is True,
             "state": str(wechat_read_outcome.get("status") or "provider_failed"),
@@ -532,6 +711,17 @@ def main() -> int:
             if wechat_freshness["state"] == "completed_with_failures":
                 steps[-1]["candidate_local_partial"] = True
                 steps[-1]["source_failure_reason"] = "one or more WeChat accounts failed with zero substitute rows"
+        if not wechat_read_outcome.get("outcomes"):
+            source_package_runs.append(source_run_row(
+                run_id, "wechat", "blocked", planned=1, failed=1,
+                error="wechat_source_outcome_missing",
+                source_id="feishu_recvlm0QvTIDMe",
+            ))
+    else:
+        source_package_runs.append(source_run_row(
+            run_id, "wechat", "not_attempted", error="collector_disabled",
+            source_id="feishu_recvlm0QvTIDMe",
+        ))
 
     fetch_douyin = not args.no_fetch_douyin
     if fetch_douyin:
@@ -578,6 +768,24 @@ def main() -> int:
                     state="collection_failed",
                     reason=str(douyin_artifact.get("reason") or douyin_step.get("stderr") or "douyin_current_run_rows_missing"),
                 )
+        source_package_runs.append(douyin_source_run(
+            run_id, read_json(douyin_artifacts["result"]),
+            planned_fallback=sum(
+                bool(row.get("default_enabled", True))
+                and ("抖音" in str(row.get("platform") or "") or "douyin" in str(row.get("platform") or "").lower())
+                for row in runtime_source_config_value.get("sources", []) if isinstance(row, dict)
+            ) or 31,
+        ))
+    else:
+        douyin_plan_count = sum(
+            bool(row.get("default_enabled", True))
+            and ("抖音" in str(row.get("platform") or "") or "douyin" in str(row.get("platform") or "").lower())
+            for row in runtime_source_config_value.get("sources", []) if isinstance(row, dict)
+        ) or 31
+        source_package_runs.append(source_run_row(
+            run_id, "douyin", "not_attempted", planned=douyin_plan_count,
+            error="collector_disabled",
+        ))
 
     manual_path = str(combine_manual_jsonl(
         manual_inputs,
@@ -602,12 +810,55 @@ def main() -> int:
         return steps[-1]["returncode"]
 
     output_dir = pipeline_output_dir(run_id, args.write_feishu, args.no_feishu_runtime)
+    sampler_log = read_json(output_dir / "content_sampler_log.json")
+    aihot_events = []
+    for outcome in sampler_log.get("source_runs", []):
+        if not isinstance(outcome, dict):
+            continue
+        row = dict(outcome)
+        source = str(row.get("source") or row.get("id") or "")
+        if source not in {"aihot_selected", "aihot_daily"}:
+            continue
+        attempted = bool(row.get("attempted"))
+        status = str(row.get("status") or "failed")
+        if not attempted:
+            site_status, succeeded, failed = "not_attempted", 0, 0
+        elif status == "completed_empty":
+            site_status, succeeded, failed = "completed_empty", 1, 0
+        elif status == "completed":
+            site_status, succeeded, failed = "completed", 1, 0
+        elif status == "partial":
+            site_status, succeeded, failed = "partial", 0, 1
+        elif status == "blocked":
+            site_status, succeeded, failed = "blocked", 0, 1
+        else:
+            site_status, succeeded, failed = "failed", 0, 1
+        source_package_runs.append(source_run_row(
+            run_id, source, site_status,
+            planned=int(row.get("attempt_count") or (1 if attempted else 0)),
+            succeeded=succeeded, failed=failed,
+            item_count=int(row.get("item_count") or row.get("artifact_count") or 0),
+            error=str(row.get("failure_class") or row.get("error_summary") or (status if failed else "")),
+            completed_at=str(row.get("attempted_at") or ""),
+            source_id=str(row.get("source_id") or ""),
+        ))
+        aihot_events.extend(source_events([row]))
+    if aihot_events:
+        try:
+            SourceControl(args.source_db).record_run_outcomes(run_id, aihot_events)
+        except Exception:
+            print(json.dumps({
+                "ok": False, "reason": "aihot_source_event_record_failed", "run_id": run_id,
+            }, ensure_ascii=False))
+            return 2
     today10_path = output_dir / "today_10_topics.csv"
     generated_count = today10_count(today10_path)
     downstream_report = downstream_usability_report(
         steps, output_dir, generated_count, active_douyin_probe_result,
         wechat_read_outcome=wechat_read_outcome,
+        source_outcomes=source_package_runs,
     )
+    downstream_report["source_package_input_sha256"] = str((source_package or {}).get("input_sha256") or "")
     if generated_count == 0:
         failures = collection_failure_steps(steps)
         log_path = write_run_log(
@@ -652,7 +903,9 @@ def main() -> int:
             generated_count,
             active_douyin_probe_result,
             wechat_read_outcome=wechat_read_outcome,
+            source_outcomes=source_package_runs,
         )
+        downstream_report["source_package_input_sha256"] = str((source_package or {}).get("input_sha256") or "")
         log_path = write_run_log(
             steps,
             "write-feishu" if args.write_feishu else "dry-run",

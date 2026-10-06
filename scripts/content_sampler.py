@@ -17,7 +17,7 @@ import os
 import re
 import sys
 import time
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta, timezone
 from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
@@ -119,6 +119,19 @@ def normalize_source_type(source_type: str) -> str:
     return SOURCE_TYPE_ALIASES.get(source_type, source_type)
 
 
+def source_provenance_rows(value: Any) -> list[dict[str, Any]]:
+    if isinstance(value, str):
+        try:
+            value = json.loads(value)
+        except json.JSONDecodeError:
+            return []
+    if not isinstance(value, list):
+        return []
+    rows = [row for row in value if isinstance(row, dict) and str(row.get("source_id") or "")]
+    unique = {json.dumps(row, ensure_ascii=False, sort_keys=True): row for row in rows}
+    return [unique[key] for key in sorted(unique)]
+
+
 @dataclass
 class ContentItem:
     source_type: str
@@ -143,6 +156,8 @@ class ContentItem:
     raw_text_length: int = 0
     body_truncated: str = ""
     parse_hint: str = ""
+    raw_payload_path: str = ""
+    source_provenance: list[dict[str, Any]] = field(default_factory=list)
 
 
 class TextExtractor(HTMLParser):
@@ -626,12 +641,37 @@ def aihot_items(
     source: dict[str, Any],
     fetch: bool,
     source_db: Path | str = DEFAULT_SOURCE_DB,
-) -> tuple[list[ContentItem], list[str]]:
+) -> tuple[list[ContentItem], list[str], dict[str, Any]]:
     label = str(source.get("account_name") or "AIHOT")
+    source_id = str(source.get("source_control_id") or "")
+    source_key = str(source.get("id") or "")
+    verified_identity = str(source.get("verified_identity") or "")
+    attempted_at = datetime.now(timezone.utc).isoformat()
+
+    def outcome(attempted: bool, status: str, rows: list[ContentItem], reason: str = "") -> dict[str, Any]:
+        db_outcome = {
+            "completed": "success", "completed_empty": "updated_no_new_items",
+            "partial": "partial", "failed": "failed",
+        }.get(status, "not_attempted")
+        return {
+            "id": source_key, "source": source_key, "source_id": source_id,
+            "verified_identity": verified_identity, "attempted": attempted,
+            "attempted_at": attempted_at if attempted else "", "attempt_count": 1 if attempted else 0,
+            "status": status, "outcome": db_outcome,
+            "succeeded_count": 1 if db_outcome in {"success", "updated_no_new_items"} else 0,
+            "failed_count": 1 if db_outcome in {"failed", "partial"} else 0,
+            "item_count": len(rows), "artifact_count": len(rows),
+            "error_summary": reason, "failure_class": reason if reason else "",
+            "substitute_count": 0,
+        }
+
+    if source.get("source_control_identity_error"):
+        reason = str(source["source_control_identity_error"])
+        return [], [f"{label}: blocked:{reason}"], outcome(False, "blocked", [], reason)
     if not fetch:
-        return [], ["AIHOT: skipped"]
+        return [], ["AIHOT: skipped"], outcome(False, "not_attempted", [])
     if not source.get("url"):
-        return [], [f"{label}: skipped_missing_url"]
+        return [], [f"{label}: skipped_missing_url"], outcome(False, "blocked", [], "source_url_missing")
     rows, status, detail = fetch_aihot_payload(source, source_db)
     endpoint = str(source["url"])
     entry_kind = "daily" if source.get("id") == "aihot_daily" else "selected"
@@ -640,7 +680,19 @@ def aihot_items(
         logs[-1] += f" | detail={detail[:240]}"
     if status in {"ok", "not_modified_cache_reused"}:
         logs.append(f"{label}: parsed_{entry_kind}_items={len(rows)}")
-    return rows, logs
+    for item in rows:
+        item.source_provenance = [{
+            "source_id": source_id, "source": source_key, "source_type": "AIHOT热点",
+            "platform": "AIHOT", "account": item.account_name, "title": item.title,
+            "url": item.url, "published_at": item.published_at,
+        }]
+    if status == "ok" and not rows:
+        source_status, reason = "completed_empty", ""
+    elif status in {"ok", "not_modified_cache_reused"}:
+        source_status, reason = "completed", ""
+    else:
+        source_status, reason = "failed", status
+    return rows, logs, outcome(True, source_status, rows, reason or detail[:120])
 
 
 def load_manual_items(path: Path) -> list[dict[str, Any]]:
@@ -663,9 +715,15 @@ def collect_items(
     *,
     source_db: Path | str = DEFAULT_SOURCE_DB,
     source_ids: set[str] | None = None,
+    source_outcomes: list[dict[str, Any]] | None = None,
 ) -> tuple[list[ContentItem], list[str]]:
     config = load_json(CONTENT_SOURCES)
     sources = config["sources"]
+    runtime_config = SourceControl(source_db).export_runtime_config()
+    runtime_by_id = {
+        str(row.get("id") or ""): row
+        for row in runtime_config.get("sources", []) if isinstance(row, dict)
+    }
     items: list[ContentItem] = []
     logs: list[str] = []
     source_by_name = {source["account_name"]: source for source in sources}
@@ -676,9 +734,25 @@ def collect_items(
         if normalize_source_type(source["source_type"]) == "AIHOT热点":
             if source_ids is not None and str(source.get("id") or "") not in source_ids:
                 continue
-            rows, source_logs = aihot_items(source, fetch_aihot, source_db)
+            control_id = str(source.get("source_control_id") or "")
+            control_source = runtime_by_id.get(control_id)
+            if not control_source:
+                source["source_control_identity_error"] = "source_control_identity_missing"
+            elif not control_source.get("default_enabled", True):
+                source["source_control_identity_error"] = "source_disabled"
+            else:
+                source["verified_identity"] = str(control_source.get("verified_identity") or "")
+                verified_url = str(control_source.get("verified_identity") or "")
+                if urlsplit(verified_url).scheme in {"http", "https"}:
+                    source["url"] = verified_url
+                elif control_source.get("url"):
+                    source["url"] = str(control_source["url"])
+            rows, source_logs, outcome = aihot_items(source, fetch_aihot, source_db)
             items.extend(rows)
             logs.extend(source_logs)
+            if source_outcomes is not None:
+                outcome["config_revision"] = runtime_config.get("config_revision")
+                source_outcomes.append(outcome)
 
     manual_rows = load_manual_items(manual_path)
     for raw in manual_rows:
@@ -697,6 +771,7 @@ def collect_items(
             "rss_atom_xml",
             "jina_reader",
             "owned_staging_input",
+            "source_package_raw",
         }
         if is_resolved_url_item:
             fp = raw.get("内容指纹") or fingerprint(url, raw.get("内容标题", ""), account)
@@ -719,6 +794,7 @@ def collect_items(
                 raw_text_length=int(raw.get("正文原始长度") or len(raw.get("正文/字幕/简介片段", ""))),
                 body_truncated=raw.get("正文是否截断", ""),
                 parse_hint=raw.get("解析说明", ""),
+                raw_payload_path=str(raw.get("原始payload路径") or raw.get("raw_artifact_path") or ""),
             )
         elif source_type == "公众号文章" and url:
             item = extract_article(url, raw)
@@ -743,7 +819,15 @@ def collect_items(
                 failure_reason=raw.get("失败原因", ""),
                 fingerprint=fp,
                 parse_hint=raw.get("解析说明", ""),
+                raw_payload_path=str(raw.get("原始payload路径") or raw.get("raw_artifact_path") or ""),
             )
+        item.source_provenance = source_provenance_rows(raw.get("source_provenance"))
+        if not item.source_provenance and raw.get("source_id"):
+            item.source_provenance = [{
+                "source_id": str(raw.get("source_id") or ""),
+                "source": str(raw.get("source_key") or ""),
+                "url": str(url or ""),
+            }]
         item.source_type = normalize_source_type(item.source_type)
         item.column = normalize_column(item.column)
         item.learn_focus = item.learn_focus or source_meta.get("learn_focus", "")
@@ -2277,7 +2361,13 @@ def item_row(item: ContentItem) -> dict[str, Any]:
         "内容指纹": item.fingerprint,
         "正文长度": item.raw_text_length or len(item.body_snippet or ""),
         "是否全文解析": is_full_text_item(item),
-        "原始payload路径": item.ocr_text,
+        "原始payload路径": item.raw_payload_path or (
+            item.ocr_text if item.fetch_method in {
+                "wechat_public_html_js_content", "wechat_feed", "douyin_public_router_data",
+                "douyin_paraformer_transcript", "rss_atom_xml", "jina_reader",
+            } else ""
+        ),
+        "source_provenance": json.dumps(item.source_provenance, ensure_ascii=False, sort_keys=True) if item.source_provenance else "",
         "解析说明": parse_note(item),
         "对应栏目": normalize_column(item.column),
         "重点学习": item.learn_focus,
@@ -2308,7 +2398,7 @@ def content_item_from_row(row: dict[str, Any]) -> ContentItem:
         body_snippet=body,
         published_at=cell_text(row.get("发布时间")),
         comment_questions=cell_text(row.get("评论区问题")),
-        ocr_text=cell_text(row.get("原始payload路径")) or cell_text(row.get("截图/OCR文本")),
+        ocr_text=cell_text(row.get("截图/OCR文本")),
         fetch_method=cell_text(row.get("抓取方式")) or "run_scoped_csv",
         fetch_status=cell_text(row.get("抓取状态")) or "ok",
         failure_reason=cell_text(row.get("失败原因")),
@@ -2317,6 +2407,7 @@ def content_item_from_row(row: dict[str, Any]) -> ContentItem:
             cell_text(row.get("内容标题")),
             cell_text(row.get("账号名/公众号名")),
         ),
+        raw_payload_path=cell_text(row.get("原始payload路径")),
         column=normalize_column(cell_text(row.get("对应栏目"))),
         learn_focus=cell_text(row.get("重点学习")),
         do_not_copy=cell_text(row.get("不能照搬")),
@@ -2324,6 +2415,7 @@ def content_item_from_row(row: dict[str, Any]) -> ContentItem:
         raw_text_length=raw_len or len(body),
         body_truncated="否" if cell_text(row.get("是否全文解析")) == "是" else "",
         parse_hint=cell_text(row.get("解析说明")),
+        source_provenance=source_provenance_rows(row.get("source_provenance")),
     )
 
 
@@ -2424,7 +2516,12 @@ def item_to_content_inbox_fields(item: ContentItem, run_id: str, is_new: bool, d
         "正文/全文": body[:20000],
         "正文长度": str(raw_len),
         "是否全文解析": is_full_text_item(item),
-        "原始payload路径": item.ocr_text if item.fetch_method in {"wechat_public_html_js_content", "wechat_feed", "douyin_public_router_data", "douyin_paraformer_transcript", "rss_atom_xml", "jina_reader"} else "",
+        "原始payload路径": item.raw_payload_path or (
+            item.ocr_text if item.fetch_method in {
+                "wechat_public_html_js_content", "wechat_feed", "douyin_public_router_data",
+                "douyin_paraformer_transcript", "rss_atom_xml", "jina_reader",
+            } else ""
+        ),
         "解析说明": parse_note(item),
         "运行日期": date,
         "运行批次": run_id if is_new else "",
@@ -3120,11 +3217,13 @@ def main() -> int:
         else run_output_dir(run_id, args.write_feishu, args.local_authority_output)
     )
     output_dir.mkdir(parents=True, exist_ok=True)
+    source_run_rows: list[dict[str, Any]] = []
     items, logs = collect_items(
         not args.no_fetch_aihot,
         Path(args.manual),
         source_db=args.source_db,
         source_ids=set(args.source_id) if args.source_id is not None else None,
+        source_outcomes=source_run_rows,
     )
     item_rows = [item_row(item) for item in items]
     breakdown_rows = [breakdown(item) for item in items]
@@ -3156,6 +3255,7 @@ def main() -> int:
         "breakdowns": len(breakdown_rows),
         "today_candidates": len(today10),
         "logs": logs,
+        "source_runs": source_run_rows,
         "outputs": {
             "content_items": str(output_dir / "content_items.csv"),
             "content_breakdowns": str(output_dir / "content_breakdowns.csv"),

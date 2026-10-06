@@ -60,7 +60,7 @@ class AR047SourceReliabilityTests(unittest.TestCase):
             config = root / "config.json"
             config.write_text(json.dumps({
                 "sources": [{
-                    "source_id": "wechat:kazike",
+                    "source_id": "feishu_recvlm0QvTIDMe",
                     "account_name": "数字生命卡兹克",
                     "discovery_url": "https://discovery.invalid/",
                     "enabled": True,
@@ -79,7 +79,7 @@ class AR047SourceReliabilityTests(unittest.TestCase):
                 "--seen-ledger", str(root / "seen.json"),
             ]
             with mock.patch.object(wechat.sys, "argv", argv), \
-                 mock.patch.object(wechat, "fetch_text", return_value=page), \
+                 mock.patch.object(wechat, "fetch_text", return_value=page) as fetch_text, \
                  mock.patch.object(wechat, "resolve_wechat", return_value=[Item()]):
                 self.assertEqual(0, wechat.main())
                 first = json.loads((root / "out" / "result.json").read_text())
@@ -87,18 +87,29 @@ class AR047SourceReliabilityTests(unittest.TestCase):
                 self.assertFalse(first["legacy_wewe_used"])
                 self.assertEqual(0, wechat.main())
                 second = json.loads((root / "out" / "result.json").read_text())
-                self.assertEqual(0, second["rows"])
-                self.assertEqual("updated_no_new_items", second["outcomes"][0]["status"])
+                self.assertEqual(1, second["rows"])
+                self.assertEqual(first["outcomes"], second["outcomes"])
+                self.assertEqual(1, fetch_text.call_count)
+                self.assertEqual("feishu_recvlm0QvTIDMe", second["outcomes"][0]["source_id"])
 
     def test_public_source_rejects_stale_article_without_substitute(self) -> None:
         stale = Item()
-        stale.published_at = "2026-07-22T08:00:00"
+        stale.published_at = "2026-07-17T08:00:00"
         outcome, rows = self._collect(stale)
         self.assertEqual([], rows)
-        self.assertEqual("no_current_day_article", outcome["status"])
+        self.assertEqual("no_article_within_7d", outcome["status"])
         self.assertFalse(outcome["ok"])
         self.assertEqual(0, outcome["artifact_count"])
         self.assertEqual(0, outcome["substitute_count"])
+
+    def test_public_source_accepts_latest_article_within_seven_day_window(self) -> None:
+        recent = Item()
+        recent.published_at = "2026-07-19T08:00:00"
+        outcome, rows = self._collect(recent)
+        self.assertTrue(outcome["ok"])
+        self.assertEqual("success", outcome["status"])
+        self.assertEqual(1, outcome["artifact_count"])
+        self.assertEqual("feishu_recvlm0QvTIDMe", rows[0]["source_id"])
 
     def test_public_source_has_one_terminal_outcome_for_each_failure(self) -> None:
         cases = [
@@ -118,7 +129,7 @@ class AR047SourceReliabilityTests(unittest.TestCase):
                 self.assertNotEqual("updated_no_new_items", outcome["status"])
 
         source = {
-            "source_id": "wechat:kazike",
+            "source_id": "feishu_recvlm0QvTIDMe",
             "account_name": "数字生命卡兹克",
             "discovery_url": "https://discovery.invalid/",
         }
@@ -141,7 +152,7 @@ class AR047SourceReliabilityTests(unittest.TestCase):
 
     def _collect(self, item: Item) -> tuple[dict, list[dict]]:
         source = {
-            "source_id": "wechat:kazike",
+            "source_id": "feishu_recvlm0QvTIDMe",
             "account_name": "数字生命卡兹克",
             "discovery_url": "https://discovery.invalid/",
         }

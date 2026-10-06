@@ -41,6 +41,8 @@ from trend_hotspot_cards import (
     validate_candidate_specific_decisions,
 )
 from source_claim_validation import claim_contract, validate_claim_dependencies
+from source_control import SourceControl
+from source_assembly import import_source_package
 from video_evidence_quality import evidence_quality as video_quality
 from website_publisher_client import publish_terminal
 from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
@@ -261,6 +263,23 @@ def normalize_source_fields(row: dict[str, Any]) -> dict[str, Any]:
     value = source_url(row)
     if value:
         row["source_url"] = value
+    provenance = row.get("source_provenance")
+    if isinstance(provenance, str):
+        try:
+            provenance = json.loads(provenance)
+        except json.JSONDecodeError:
+            provenance = []
+    if isinstance(provenance, list):
+        unique = {
+            canonical(source): source
+            for source in provenance
+            if isinstance(source, dict) and str(source.get("source_id") or "")
+        }
+        row["source_provenance"] = [unique[key] for key in sorted(unique)]
+        if row["source_provenance"]:
+            row["source_ids"] = sorted({
+                str(source["source_id"]) for source in row["source_provenance"]
+            })
     match = re.search(r"douyin\.com/video/(\d+)", value)
     if match and not str(row.get("aweme_id") or "").strip():
         row["aweme_id"] = match.group(1)
@@ -607,10 +626,17 @@ def collect(args: argparse.Namespace) -> dict[str, Any]:
         if value.get("run_id") != args.run_id:
             raise WorkflowConflict("collection_wrong_run")
         return value
+    pipeline_command = [
+        sys.executable, str(ROOT / "scripts/daily_pipeline.py"),
+        "--run-id", args.run_id, "--business-date", args.business_date,
+        "--source-db", args.source_db,
+        "--defer-editorial", "--no-feishu-runtime",
+        "--fetch-wechat-public-fulltext",
+    ]
+    if args.source_package:
+        pipeline_command.extend(["--source-package", args.source_package])
     result = subprocess.run(
-        [sys.executable, str(ROOT / "scripts/daily_pipeline.py"),
-         "--run-id", args.run_id, "--source-db", args.source_db,
-         "--defer-editorial", "--no-feishu-runtime"],
+        pipeline_command,
         text=True, capture_output=True,
     )
     if result.returncode:
@@ -667,6 +693,15 @@ def merge_candidate_rows(current: dict[str, Any], incoming: dict[str, Any]) -> d
                 str(value) for values in (left, right)
                 if isinstance(values, list) for value in values if str(value)
             })
+            continue
+        if key == "source_provenance":
+            rows = [
+                source for values in (left, right) if isinstance(values, list)
+                for source in values if isinstance(source, dict) and source.get("source_id")
+            ]
+            unique = {canonical(source): source for source in rows}
+            output[key] = [unique[value] for value in sorted(unique)]
+            output["source_ids"] = sorted({str(source["source_id"]) for source in output[key]})
             continue
         left_empty = left is None or left == ""
         right_empty = right is None or right == ""
@@ -1667,6 +1702,14 @@ def compact_source_material(
         "candidate_id": first_context_value([candidate], "candidate_id"),
         "source_id": first_context_value(rows, "source_id"),
     }
+    source_ids = sorted({
+        str(source.get("source_id") or "")
+        for row in rows
+        for source in (row.get("source_provenance") if isinstance(row.get("source_provenance"), list) else [])
+        if isinstance(source, dict) and str(source.get("source_id") or "")
+    })
+    if source_ids:
+        identities["source_ids"] = source_ids
     material["source_record"] = {
         key: value for key, value in identities.items()
         if value not in (None, "", [], {})
@@ -1691,6 +1734,9 @@ def compact_source_material(
         value = first_context_value(rows, *aliases)
         if value not in (None, "", [], {}):
             material[name] = value
+    provenance = first_context_value(rows, "source_provenance")
+    if isinstance(provenance, list):
+        material["source_provenance"] = provenance
     raw_path = first_context_value(
         rows, "原始payload路径", "raw_artifact_path", "raw_payload_path", "payload_path",
     )
@@ -2433,9 +2479,35 @@ def collect_with_checkpoint(args: argparse.Namespace) -> dict[str, Any]:
         ):
             raise WorkflowConflict("collection_checkpoint_wrong_run")
         if collection_checkpoint_reusable(args, path):
-            return merge_exact_today_new_rows(
-                value, run_dir=path.parent, run_id=args.run_id,
-            )
+            source_package_path = str(getattr(args, "source_package", "") or "")
+            if source_package_path:
+                package = import_source_package(
+                    source_package_path, run_id=args.run_id,
+                    business_date=args.business_date,
+                    run_root=ROOT / "output" / "runs" / args.run_id,
+                    runtime_config=SourceControl(args.source_db).export_runtime_config(),
+                )
+                existing_digest = str(value.get("source_package_input_sha256") or "")
+                run_status = DailyWorkflow.read_business_date(
+                    Path(args.workflow_db).resolve(), args.business_date,
+                )
+                committed = bool(
+                    run_status
+                    and run_status["run"]["run_id"] == args.run_id
+                    and "collection_enrichment" in run_status["committed_stages"]
+                )
+                incoming_digest = str((package or {}).get("input_sha256") or "")
+                if existing_digest != incoming_digest:
+                    if committed:
+                        raise WorkflowConflict("source_package_committed_checkpoint_conflict")
+                else:
+                    return merge_exact_today_new_rows(
+                        value, run_dir=path.parent, run_id=args.run_id,
+                    )
+            else:
+                return merge_exact_today_new_rows(
+                    value, run_dir=path.parent, run_id=args.run_id,
+                )
     value = collect(args)
     if (
         value.get("run_id") != args.run_id
@@ -2485,6 +2557,7 @@ def main() -> int:
     parser.add_argument("--source-db", default=str(ROOT / "output/state/source_control.sqlite3"))
     parser.add_argument("--artifact-root", type=Path, default=ROOT / "output/runs")
     parser.add_argument("--collection-fixture")
+    parser.add_argument("--source-package", help="Validated exact-run public source package directory.")
     parser.add_argument("--adopt-collected-artifacts")
     parser.add_argument("--adoption-log")
     parser.add_argument("--qa-frozen-packages")
@@ -2501,6 +2574,8 @@ def main() -> int:
     parser.add_argument("--search-query", default="")
     parser.add_argument("--cdp", default="http://127.0.0.1:9333")
     args = parser.parse_args()
+    if args.source_package and (args.collection_fixture or args.adopt_collected_artifacts):
+        parser.error("--source-package cannot be combined with a collection fixture or adopted artifacts")
     if args.scripts_only_terminal_refresh:
         args.terminal_refresh = True
     workflow: DailyWorkflow | None = None

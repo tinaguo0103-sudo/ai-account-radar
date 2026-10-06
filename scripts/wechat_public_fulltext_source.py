@@ -9,7 +9,7 @@ import json
 import re
 import sys
 import urllib.request
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo
@@ -56,18 +56,36 @@ def urllib_host(url: str) -> str:
     return urlparse(url).hostname or ""
 
 
-def item_row(item: Any, run_id: str) -> dict[str, Any]:
+def item_row(item: Any, run_id: str, source_id: str) -> dict[str, Any]:
+    raw_path = str(item.raw_payload_path or "")
+    raw_sha256 = ""
+    try:
+        raw_sha256 = hashlib.sha256(Path(raw_path).read_bytes()).hexdigest()
+    except OSError:
+        pass
+    provenance = {
+        "source_id": source_id, "source": "wechat", "source_type": item.source_type,
+        "platform": item.platform, "account": item.account_name,
+        "title": item.content_title, "url": item.content_url,
+        "published_at": item.published_at, "raw_artifact_path": raw_path,
+        "raw_sha256": raw_sha256,
+    }
     return {
+        "source_id": source_id,
+        "source_key": "wechat",
+        "source_provenance": [provenance],
         "来源类型": item.source_type,
         "平台": item.platform,
         "账号名/公众号名": item.account_name,
         "内容标题": item.content_title,
         "内容链接": item.content_url,
         "内容形态": item.content_shape,
-        "正文/口播": item.body_or_transcript,
+        "正文/字幕/简介片段": item.body_or_transcript,
         "摘要/描述": item.summary_or_description,
         "发布时间": item.published_at,
-        "原始载荷路径": item.raw_payload_path,
+        "原始payload路径": raw_path,
+        "raw_artifact_path": raw_path,
+        "raw_sha256": raw_sha256,
         "抓取方式": item.fetch_method,
         "抓取状态": item.fetch_status,
         "失败原因": item.failure_reason,
@@ -112,42 +130,50 @@ def collect_source(
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     source_id = str(source["source_id"])
     account = str(source["account_name"])
+    attempted_at = datetime.now(timezone.utc).isoformat()
+
+    def outcome(status: str, *, ok: bool, rows: int = 0, **details: Any) -> dict[str, Any]:
+        return source_outcome(
+            source_id, status, ok=ok, rows=rows, attempted_at=attempted_at, **details,
+        )
+
     try:
         discovered = discover_articles(fetch_text(str(source["discovery_url"])), account)
     except Exception as exc:
-        return source_outcome(source_id, "discovery_failed", ok=False, reason=type(exc).__name__), []
+        return outcome("discovery_failed", ok=False, reason=type(exc).__name__), []
     if not discovered:
-        return source_outcome(source_id, "discovery_empty", ok=False), []
+        return outcome("discovery_empty", ok=False), []
 
     business_date = run_business_date(run_id)
     current_items: list[Any] = []
     stale_count = 0
     for article in discovered:
         if urllib_host(article["url"]) != "mp.weixin.qq.com":
-            return source_outcome(source_id, "article_url_wrong_host", ok=False), []
+            return outcome("article_url_wrong_host", ok=False), []
         try:
             resolved = resolve_wechat(article["url"], raw_dir)
         except Exception as exc:
-            return source_outcome(source_id, "fulltext_failed", ok=False, reason=type(exc).__name__), []
+            return outcome("fulltext_failed", ok=False, reason=type(exc).__name__), []
         item = resolved[0] if resolved else None
         if not item or item.fetch_status != "success":
-            return source_outcome(
-                source_id,
+            return outcome(
                 "fulltext_failed",
                 ok=False,
                 reason=getattr(item, "failure_reason", "empty"),
             ), []
         if item.account_name != account:
-            return source_outcome(source_id, "article_account_mismatch", ok=False), []
+            return outcome("article_account_mismatch", ok=False), []
         if item.content_title != article["title"]:
-            return source_outcome(source_id, "article_title_mismatch", ok=False), []
+            return outcome("article_title_mismatch", ok=False), []
         if len(item.body_or_transcript) < 500:
-            return source_outcome(source_id, "article_fulltext_too_short", ok=False), []
+            return outcome("article_fulltext_too_short", ok=False), []
         try:
             item_date = published_business_date(item.published_at)
         except (TypeError, ValueError):
-            return source_outcome(source_id, "article_published_at_invalid", ok=False), []
-        if item_date != business_date:
+            return outcome("article_published_at_invalid", ok=False), []
+        if item_date > business_date:
+            return outcome("article_published_in_future", ok=False), []
+        if item_date < business_date - timedelta(days=7):
             stale_count += 1
             continue
         current_items.append(item)
@@ -155,9 +181,8 @@ def collect_source(
             break
 
     if not current_items:
-        return source_outcome(
-            source_id,
-            "no_current_day_article",
+        return outcome(
+            "no_article_within_7d",
             ok=False,
             discovered=len(discovered),
             stale_articles=stale_count,
@@ -168,21 +193,19 @@ def collect_source(
     for item in current_items:
         if item.content_url in seen.get("urls", {}):
             continue
-        new_rows.append(item_row(item, run_id))
+        new_rows.append(item_row(item, run_id, source_id))
         seen.setdefault("urls", {})[item.content_url] = {
             "source_id": source_id,
             "content_fingerprint": item.content_fingerprint,
             "first_run_id": run_id,
         }
     if not new_rows:
-        return source_outcome(
-            source_id,
+        return outcome(
             "updated_no_new_items",
             ok=True,
             discovered=len(discovered),
         ), []
-    return source_outcome(
-        source_id,
+    return outcome(
         "success",
         ok=True,
         rows=len(new_rows),
@@ -212,6 +235,28 @@ def main() -> int:
         return 0
 
     out_dir = Path(args.out_dir)
+    existing_result = out_dir / "result.json"
+    if existing_result.exists():
+        try:
+            payload = json.loads(existing_result.read_text(encoding="utf-8"))
+            manual = out_dir / "content_items_manual.jsonl"
+            artifact = payload.get("manual_artifact") if isinstance(payload, dict) else None
+            raw = manual.read_bytes()
+            rows = [line for line in raw.decode("utf-8").splitlines() if line.strip()]
+            if (
+                payload.get("run_id") != args.run_id
+                or not isinstance(artifact, dict)
+                or str(artifact.get("path") or "") != str(manual.resolve())
+                or int(artifact.get("row_count") or -1) != len(rows)
+                or str(artifact.get("sha256") or "") != hashlib.sha256(raw).hexdigest()
+            ):
+                raise ValueError("wechat_run_checkpoint_identity_mismatch")
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError, TypeError, ValueError) as exc:
+            print(json.dumps({"ok": False, "status": "run_checkpoint_invalid", "reason": type(exc).__name__}, ensure_ascii=False))
+            return 2
+        print(json.dumps(payload, ensure_ascii=False))
+        return 0 if payload.get("ok") is True else 4
+
     raw_dir = out_dir / "raw"
     outcomes: list[dict[str, Any]] = []
     rows: list[dict[str, Any]] = []

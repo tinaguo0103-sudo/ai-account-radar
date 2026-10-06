@@ -2,7 +2,7 @@
   "schema_version": 1,
   "sources": [
     {
-      "source_id": "wechat:kazike",
+      "source_id": "feishu_recvlm0QvTIDMe",
       "account_name": "数字生命卡兹克",
       "discovery_url": "https://weixin.imaseo.com/",
       "enabled": true,

@@ -27,6 +27,7 @@
   "sources": [
     {
       "id": "aihot_selected",
+      "source_control_id": "feishu_recvl4uBak1aBQ",
       "source_group": "system_hotspot_source",
       "source_role": "system_hotspot_source",
       "is_main_competitor": false,
@@ -48,6 +49,7 @@
     },
     {
       "id": "aihot_daily",
+      "source_control_id": "feishu_recvl4uBakCutL",
       "source_group": "system_hotspot_source",
       "source_role": "system_hotspot_source",
       "is_main_competitor": false,

@@ -235,6 +235,7 @@ export async function probeSourcesWithTailRetry(client, sources, options, probe 
     const row = await probe(client, source, options);
     row.source_id = sourceId;
     row.attempts = 1;
+    row.attempted_at = new Date().toISOString();
     rows.push(row);
     riskSignal = sourceGlobalRisk(row, rows.filter((_item, index) => index < rows.length - 1));
     if (riskSignal) {
@@ -1552,6 +1553,13 @@ export function buildHomepageCardContentItem(row, link, index) {
     "正文是否截断": "否",
     "解析说明": "从登录态主页作品区提取标题/文案卡片；未做口播转写、评论抓取或视频理解。适合标题先筛选，人工确认后再转写。",
     "source_url": link,
+    "source_id": row.source_id || "",
+    "source_key": "douyin",
+    "source_provenance": row.source_id ? [{
+      source_id: row.source_id, source: "douyin", source_type: "对标视频",
+      platform: "抖音", account: row.account_name || "", title: title || body,
+      url: link, published_at: publishedAt,
+    }] : [],
     "aweme_id": String(card.video_id || ""),
     "published_at": publishedAt,
     "likes": card.likes ?? null,
@@ -2234,11 +2242,11 @@ async function main() {
     String(source.account_name || source.name || ""),
     source,
   ]));
-  const healthEvents = rows.map((row) => {
+  const healthEvents = rows.filter((row) => row.attempted_at).map((row) => {
     const source = sourcesByName.get(String(row.account_name || ""));
     return {
       source_id: String(source?.id || ""),
-      attempted_at: new Date().toISOString(),
+      attempted_at: String(row.attempted_at),
       outcome: String(row.status || "failed"),
       failure_class: String(row.failure_code || row.failure_reason || ""),
       artifact_count: Number(row.artifact_count || 0),

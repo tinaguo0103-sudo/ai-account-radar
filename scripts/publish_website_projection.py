@@ -18,17 +18,82 @@ class ProjectionError(RuntimeError):
     pass
 
 
+SOURCE_ID_TO_KEY = {
+    "feishu_recvl4uBak1aBQ": "aihot_selected",
+    "feishu_recvl4uBakCutL": "aihot_daily",
+    "feishu_recvl4uBak96UM": "openai_news",
+    "feishu_recvl4uBakM7LI": "anthropic_newsroom",
+    "feishu_recvl4uBakDz73": "product_hunt_ai",
+    "feishu_recvl4uBakYAzP": "hn_ai_discussion",
+    "feishu_recvl4uBakTUDT": "x",
+    "feishu_recvlm0QvTIDMe": "wechat",
+}
+SOURCE_RUN_KEYS = frozenset({
+    "aihot_selected", "aihot_daily", "openai_news", "anthropic_newsroom",
+    "product_hunt_ai", "hn_ai_discussion", "douyin", "wechat", "x",
+})
+
+
 def stable_id(kind: str, run_id: str, identity: str) -> str:
     return f"{kind}_{hashlib.sha256(f'{run_id}|{identity}'.encode()).hexdigest()[:24]}"
 
 
-def source_name(platform: str) -> str:
-    text = platform.lower()
+def source_name(platform: str, source_id: str = "", source_key: str = "") -> str:
+    if source_id in SOURCE_ID_TO_KEY:
+        key = SOURCE_ID_TO_KEY[source_id]
+        if key.startswith("aihot_"):
+            return "aihot"
+        if key in {"openai_news", "anthropic_newsroom", "product_hunt_ai", "hn_ai_discussion"}:
+            return "public_web"
+        return key
+    if source_key in SOURCE_RUN_KEYS:
+        if source_key.startswith("aihot_"):
+            return "aihot"
+        if source_key in {"openai_news", "anthropic_newsroom", "product_hunt_ai", "hn_ai_discussion"}:
+            return "public_web"
+        return source_key
+    text = platform.lower().strip()
     if "抖音" in platform or "douyin" in text:
         return "douyin"
     if "公众号" in platform or "微信" in platform or "wechat" in text:
         return "wechat"
-    return "aihot"
+    if "x.com" in text or text == "x" or "twitter" in text:
+        return "x"
+    if any(value in text for value in ("openai", "anthropic", "product hunt", "hacker news", "hn ai")):
+        return "public_web"
+    if "aihot" in text:
+        return "aihot"
+    raise ProjectionError("unknown_source_platform")
+
+
+def normalize_provenance(value: Any, *, item_source: str) -> list[dict[str, Any]]:
+    if isinstance(value, str):
+        if not value.strip():
+            value = []
+        else:
+            try:
+                value = json.loads(value)
+            except json.JSONDecodeError:
+                raise ProjectionError("source_provenance_invalid") from None
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ProjectionError("source_provenance_invalid")
+    rows: dict[str, dict[str, Any]] = {}
+    for raw in value:
+        if not isinstance(raw, dict):
+            raise ProjectionError("source_provenance_invalid")
+        source_id = str(raw.get("source_id") or "")
+        if not source_id:
+            raise ProjectionError("source_provenance_identity_missing")
+        row = dict(raw)
+        row["source_id"] = source_id
+        for local_path_key in ("raw_artifact_path", "raw_path", "original_payload_path"):
+            row.pop(local_path_key, None)
+        rows[json.dumps(row, ensure_ascii=False, sort_keys=True)] = row
+    if not rows and item_source not in {"douyin", "wechat", "aihot", "public_web", "x"}:
+        raise ProjectionError("source_provenance_identity_missing")
+    return [rows[key] for key in sorted(rows)]
 
 
 def normalize_video_understanding(value: Any) -> Any:
@@ -78,18 +143,47 @@ def build_workflow_projection(
         str(result.get("package", {}).get("source_url") or ""): result.get("package")
         for result in collection.get("understanding_results", [])
     }
+    runtime_sources: dict[str, dict[str, Any]] = {}
+    run_artifacts = Path(artifact_root).resolve() / run_id if artifact_root is not None else None
+    if run_artifacts is not None:
+        try:
+            config = json.loads((run_artifacts / "sources" / "douyin" / "source_plan_config.json").read_text(encoding="utf-8"))
+        except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+            config = {}
+        runtime_sources = {
+            str(source.get("account_name") or source.get("name") or ""): source
+            for source in config.get("sources", []) if isinstance(source, dict)
+        }
     content: list[dict[str, Any]] = []
     by_identity: dict[str, dict[str, Any]] = {}
     for row in collection.get("content_items", []):
         identity = str(row.get("item_id") or row.get("id") or "")
         if not identity or identity in by_identity:
             raise ProjectionError("stable_item_identity_conflict")
+        raw_platform = str(row.get("source") or row.get("平台") or "")
+        raw_source_ids = row.get("source_ids") if isinstance(row.get("source_ids"), list) else []
+        source_id = str(row.get("source_id") or (raw_source_ids[0] if raw_source_ids else ""))
+        source_key = str(row.get("source_key") or "")
+        account = str(row.get("account") or row.get("账号名/公众号名") or "")
+        if not source_id and account in runtime_sources:
+            source_id = str(runtime_sources[account].get("id") or runtime_sources[account].get("source_id") or "")
+        content_source = source_name(raw_platform, source_id, source_key)
+        provenance = normalize_provenance(row.get("source_provenance"), item_source=content_source)
+        if not provenance and source_id:
+            provenance = [{
+                "source_id": source_id, "source": source_key or content_source,
+                "platform": raw_platform, "account": account,
+                "title": str(row.get("title") or row.get("内容标题") or ""),
+                "url": str(row.get("source_url") or row.get("内容链接") or ""),
+                "published_at": str(row.get("published_at") or row.get("发布时间") or ""),
+            }]
         item = {
             "id": stable_id("content", run_id, identity), "run_id": run_id,
             # Website retains this legacy column name internally. It stores the
             # stable item ID and is not a Radar runtime fingerprint contract.
-            "content_fingerprint": identity, "source": source_name(str(row.get("source") or row.get("平台") or "")),
-            "account": str(row.get("account") or row.get("账号名/公众号名") or ""),
+            "content_fingerprint": identity, "source": content_source,
+            "source_provenance": provenance,
+            "account": account,
             "title": str(row.get("title") or row.get("内容标题") or ""),
             "summary": str(row.get("summary") or row.get("正文/字幕/简介片段") or "")[:360],
             "body": str(row.get("body") or row.get("正文/字幕/简介片段") or ""),
@@ -255,35 +349,67 @@ def build_workflow_projection(
     for item in content:
         source = str(item["source"])
         content_source_counts[source] = content_source_counts.get(source, 0) + 1
-    source_rows = collection.get("source_runs", [])
+    source_rows = list(collection.get("source_runs", []) or [])
     if not source_rows:
-        source_rows = collection.get("source_ledger", [])
+        source_rows = list(collection.get("source_ledger", []) or [])
+    grouped_source_rows: dict[str, list[dict[str, Any]]] = {}
     for row in source_rows:
-        raw_source = str(row.get("source") or "")
-        source = raw_source if raw_source in {
-            "configured_account", "recommendation", "dynamic_search",
-        } else source_name(raw_source)
+        raw_source = str(row.get("source") or row.get("source_key") or "")
+        source_id = str(row.get("source_id") or "")
+        if raw_source in {"configured_account", "recommendation", "dynamic_search"}:
+            source = "douyin"
+        elif raw_source in SOURCE_RUN_KEYS:
+            source = raw_source
+        else:
+            mapped = source_name(str(row.get("platform") or raw_source), source_id, raw_source)
+            source = "aihot_selected" if mapped == "aihot" and "selected" in raw_source else (
+                "aihot_daily" if mapped == "aihot" and "daily" in raw_source else mapped
+            )
+        if source not in SOURCE_RUN_KEYS:
+            raise ProjectionError("unknown_source_run_identity")
+        grouped_source_rows.setdefault(source, []).append(row)
+    for source, rows_for_source in sorted(grouped_source_rows.items()):
+        row = rows_for_source[0]
         counts = row.get("counts") if isinstance(row.get("counts"), dict) else {}
-        item_count = int(
-            row.get("item_count")
-            if row.get("item_count") is not None
-            else row.get("discovered_count", content_source_counts.get(source, 0))
-        )
-        succeeded_count = int(row.get("succeeded_count") or counts.get("new") or item_count)
-        failed_count = int(
-            row.get("failed_count") or counts.get("failed")
-            or (1 if row.get("status") == "failed" else 0)
-        )
+        item_count = sum(int(
+            candidate.get("item_count") if candidate.get("item_count") is not None
+            else candidate.get("discovered_count", content_source_counts.get(source, 0))
+        ) for candidate in rows_for_source)
+        succeeded_count = sum(int(
+            candidate.get("succeeded_count") if candidate.get("succeeded_count") is not None
+            else counts.get("new", candidate.get("discovered_count", item_count))
+        ) for candidate in rows_for_source)
+        failed_count = sum(int(
+            candidate.get("failed_count") if candidate.get("failed_count") is not None
+            else (counts.get("failed") or (1 if candidate.get("status") in {"failed", "partial", "blocked"} else 0))
+        ) for candidate in rows_for_source)
+        statuses = {str(candidate.get("status") or "") for candidate in rows_for_source}
+        if statuses <= {"not_attempted", "blocked"}:
+            status = "not_attempted" if statuses == {"not_attempted"} else "blocked"
+        elif failed_count and succeeded_count:
+            status = "partial"
+        elif failed_count:
+            status = "failed"
+        elif statuses == {"completed_empty"}:
+            status = "completed_empty"
+        elif "partial" in statuses:
+            status = "partial"
+        else:
+            status = "completed"
+        planned_count = sum(int(candidate.get("planned_count") or 0) for candidate in rows_for_source)
+        if planned_count == 0:
+            planned_count = sum(int(candidate.get("attempt_count") or (1 if candidate.get("attempted") else 0)) for candidate in rows_for_source)
+        errors = sorted({str(candidate.get("error_summary") or candidate.get("reason") or "") for candidate in rows_for_source if candidate.get("error_summary") or candidate.get("reason")})
         source_runs.append({
-            "id": str(row.get("id") or f"{run_id}:{row.get('source')}"),
+            "id": f"{run_id}:{source}",
             "run_id": run_id, "source": source,
-            "status": str(row.get("status") or "completed"),
-            "planned_count": int(row.get("planned_count") or succeeded_count + failed_count),
+            "status": status,
+            "planned_count": planned_count or succeeded_count + failed_count,
             "succeeded_count": succeeded_count,
             "failed_count": failed_count,
             "item_count": item_count,
-            "error_summary": str(row.get("error_summary") or row.get("reason") or ""),
-            "completed_at": str(row.get("completed_at") or run["updated_at"]),
+            "error_summary": ";".join(errors)[:500],
+            "completed_at": str(max((candidate.get("completed_at") or candidate.get("attempted_at") or "" for candidate in rows_for_source), default="") or run["updated_at"]),
         })
     payload = {
         "run_id": run_id, "business_date": run["business_date"], "revision": 1,
