@@ -6,6 +6,12 @@
   "target_duration_seconds": 1800,
   "maximum_duration_seconds": 2700,
   "maximum_video_duration_seconds": 600,
+  "long_source_segmentation": {
+    "maximum_source_seconds": 1200,
+    "maximum_processed_media_seconds": 6500,
+    "segment_seconds": 480,
+    "overlap_seconds": 5
+  },
   "title_value_patterns": [
     "\\bAI\\b",
     "人工智能",

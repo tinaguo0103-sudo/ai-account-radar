@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import hashlib
 import json
+import math
 import os
 import re
 import shutil
@@ -24,6 +25,14 @@ from douyin_video_understanding import (
     digest,
     fold_near_duplicates,
     merge_candidates,
+)
+from video_evidence_merge import (
+    reconcile_ocr,
+    reconcile_primary_asr,
+    reconcile_whisper,
+    segment_coverage,
+    segment_intervals,
+    shift_whisper_times,
 )
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -322,17 +331,20 @@ def command(
     *,
     env: dict[str, str] | None = None,
 ) -> subprocess.CompletedProcess[str]:
-    result = subprocess.run(args, text=True, capture_output=True, env=env)
+    try:
+        result = subprocess.run(args, text=True, capture_output=True, env=env, timeout=600)
+    except subprocess.TimeoutExpired as timeout_error:
+        raise ProducerError(f"{error}:bounded_stage_timeout") from timeout_error
     if result.returncode != 0:
         raise ProducerError(f"{error}:{result.returncode}")
     return result
 
 
 def dedupe_ocr(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    output, prior = [], ""
+    output = []
     for row in rows:
         text = compact(str(row.get("text") or ""))
-        if not text or text == prior:
+        if not text:
             continue
         match = re.search(r"(\d+)$", Path(str(row["path"])).stem)
         second = max(0, int(match.group(1)) - 1) if match else len(output)
@@ -342,7 +354,6 @@ def dedupe_ocr(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
             "text": text,
             "frame_sha256": file_hash(Path(row["path"])),
         })
-        prior = text
     return output
 
 
@@ -383,11 +394,9 @@ def screen_facts(title: str, timeline: list[dict[str, Any]]) -> tuple[list[dict[
 
 def asr_worker(config: dict[str, Any], audio: Path) -> dict[str, Any]:
     result_path = audio.with_suffix(".sensevoice.json")
-    runtime_bin = audio.parent / "runtime_bin"
-    runtime_bin.mkdir()
-    (runtime_bin / "ffmpeg").symlink_to(Path(config["ffmpeg"]))
     env = os.environ.copy()
-    env["PATH"] = f"{runtime_bin}{os.pathsep}{env.get('PATH', '')}"
+    configured_ffmpeg_dir = str(Path(config["ffmpeg"]).resolve().parent)
+    env["PATH"] = f"{configured_ffmpeg_dir}{os.pathsep}{env.get('PATH', '')}"
     args = [
         str(config["sensevoice_python"]), str(Path(__file__).resolve()), "asr-worker",
         "--audio", str(audio), "--result", str(result_path),
@@ -417,6 +426,344 @@ def representative_frame_indices(frame_count: int) -> list[int]:
     return sorted({0, frame_count // 2, frame_count - 1})
 
 
+def measured_media_duration(ffmpeg: Path, media: Path) -> float:
+    """Measure decoded media duration using the configured ffmpeg toolchain."""
+    probe = ffmpeg.resolve().with_name("ffprobe")
+    try:
+        if probe.is_file():
+            result = subprocess.run(
+                [str(probe), "-v", "error", "-show_entries", "format=duration", "-of", "json", str(media)],
+                text=True, capture_output=True, timeout=20,
+            )
+            if result.returncode:
+                raise ProducerError("video_media_duration_unavailable")
+            seconds = float(json.loads(result.stdout)["format"]["duration"])
+        else:
+            result = subprocess.run(
+                [str(ffmpeg), "-hide_banner", "-i", str(media)],
+                text=True, capture_output=True, timeout=20,
+            )
+            match = re.search(r"Duration:\s*(\d+):(\d+):(\d+(?:\.\d+)?)", result.stderr)
+            if not match:
+                raise ProducerError("video_media_duration_unavailable")
+            seconds = int(match[1]) * 3600 + int(match[2]) * 60 + float(match[3])
+    except (OSError, ValueError, TypeError, KeyError, subprocess.TimeoutExpired) as error:
+        raise ProducerError("video_media_duration_unavailable") from error
+    if not math.isfinite(seconds) or seconds <= 0:
+        raise ProducerError("video_media_duration_unavailable")
+    return seconds
+
+
+def _owned_media_identity(candidate: dict[str, Any]) -> bool:
+    identity = str(candidate.get("aweme_id") or "")
+    ownership = candidate.get("media_ownership") if isinstance(candidate.get("media_ownership"), dict) else {}
+    return bool(
+        identity
+        and ownership.get("status") == "response_media_identity_verified"
+        and all(str(ownership.get(key) or "") == identity for key in ("requested_id", "landed_id", "response_id"))
+    )
+
+
+def _unprocessed_resolution(candidate: dict[str, Any], run_id: str, trigger: str) -> dict[str, Any]:
+    status = str(candidate.get("media_resolution_status") or "media_not_extracted")
+    reasons = {
+        "identity_conflict": "video_identity_conflict",
+        "non_video_article": "non_video_article_typed_no_media_playback",
+        "non_video_image_text": "non_video_image_text_typed_no_media_playback",
+        "source_not_found": "site_reported_source_not_found",
+        "access_restricted": "site_reported_access_restricted",
+        "playback_error_visible": "site_reported_playback_error",
+        "media_not_extracted": "video_media_not_extracted",
+    }
+    return {
+        "run_id": run_id,
+        "aweme_id": str(candidate.get("aweme_id") or ""),
+        "source_url": candidate.get("source_url"),
+        "status": "failed",
+        "failure": reasons.get(status, f"video_resolution_not_processable:{status}"),
+        "media_resolution_status": status,
+        "media_ownership": candidate.get("media_ownership"),
+        "media_processing_attempted": False,
+        "trigger": trigger,
+        "substitute_count": 0,
+        "temporary_media_remaining": 0,
+        "evidence_quality": {
+            "actual_item_type": candidate.get("item_type", "unknown"),
+            "media_access": "not_verified",
+            "ocr": "not_attempted",
+            "asr": "not_attempted",
+            "visual_understanding": "not_available",
+            "fact_confirmation": "pending",
+            "fully_verified": False,
+        },
+    }
+
+
+def process_audio_only(
+    candidate: dict[str, Any],
+    *,
+    run_id: str,
+    config: dict[str, Any],
+    runtime: dict[str, Path],
+    work_root: Path,
+    trigger: str,
+) -> dict[str, Any]:
+    """Transcribe only exact response-owned audio; never infer visual evidence."""
+    identity = str(candidate["aweme_id"])
+    package: dict[str, Any] = {
+        "run_id": run_id, "aweme_id": identity, "source_url": candidate["source_url"],
+        "status": "failed", "media_resolution_status": "audio_only",
+        "trigger": trigger, "substitute_count": 0, "temporary_media_remaining": 0,
+        "media_processing_attempted": False,
+    }
+    if not _owned_media_identity(candidate):
+        package["failure"] = "audio_media_identity_unverified"
+        return package
+    work = work_root / identity
+    try:
+        work.mkdir(parents=True, exist_ok=False)
+    except OSError:
+        package["failure"] = "audio_work_checkpoint_conflict"
+        return package
+    try:
+        cap = float(candidate.get("safety_maximum_duration_seconds") or config.get("maximum_audio_duration_seconds") or 600)
+        if not math.isfinite(cap) or cap <= 0 or cap > 600:
+            raise ProducerError("audio_safety_policy_invalid")
+        media = work / "audio-media.mp4"
+        wav = work / "audio.wav"
+        package["media_processing_attempted"] = True
+        info = download(
+            str(candidate.get("audio_url") or ""), media,
+            int(config.get("timeout", 90)), int(config.get("maximum_media_bytes", 300 * 1024 * 1024)),
+            str(candidate["source_url"]),
+        )
+        duration = measured_media_duration(runtime["ffmpeg"], media)
+        if duration > cap:
+            raise ProducerError("video_audio_duration_exceeds_policy")
+        command([
+            str(runtime["ffmpeg"]), "-hide_banner", "-loglevel", "error", "-y",
+            "-i", str(media), "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(wav),
+        ], "video_audio_extract_failed")
+        asr = asr_worker({**config, **runtime}, wav)
+        package.update({
+            "status": "completed_with_failures",
+            "asr": asr,
+            "caption_timeline": [],
+            "ocr": {"status": "unavailable", "frame_count": 0},
+            "keyframes": [],
+            "screen_text": [],
+            "unresolved_terms": [],
+            "failures": [{"type": "visual_track_unavailable"}],
+            "audio_duration_seconds_actual": duration,
+            "duration_seconds_actual": None,
+            "audio_media_sha256": info["sha256"],
+            "media_ownership": candidate.get("media_ownership"),
+            "evidence_quality": {
+                "actual_item_type": "audio_only",
+                "media_access": "owned_audio_accessible",
+                "asr": "completed" if asr.get("text") else "completed_empty",
+                "ocr": "unavailable",
+                "visual_understanding": "unavailable",
+                "fact_confirmation": "pending",
+                "fully_verified": False,
+                "claim_boundaries": [
+                    "仅有音频，不得据此断言画面、机位运动、视觉还原或完整视频验收。"
+                ],
+            },
+        })
+    except Exception as error:
+        package.update({
+            "status": "failed",
+            "failure": str(error) if isinstance(error, ProducerError) else f"audio_processing_failed:{type(error).__name__}",
+        })
+    finally:
+        try:
+            shutil.rmtree(work)
+        except OSError:
+            package.update({"status": "failed", "failure": "audio_cleanup_failed", "temporary_media_remaining": 1})
+    return package
+
+
+def process_long_video(
+    candidate: dict[str, Any],
+    *,
+    run_id: str,
+    config: dict[str, Any],
+    runtime: dict[str, Path],
+    work: Path,
+    media: Path,
+    audio_input: Path,
+    media_info: dict[str, Any],
+    audio_info: dict[str, Any] | None,
+    duration: float,
+    keyframe_root: Path,
+    trigger: str,
+    remaining_budget_seconds: float,
+) -> dict[str, Any]:
+    policy = config.get("long_source_segmentation") if isinstance(config.get("long_source_segmentation"), dict) else {}
+    segment_seconds = float(policy.get("segment_seconds", 480))
+    overlap_seconds = float(policy.get("overlap_seconds", 5))
+    maximum_source_seconds = float(policy.get("maximum_source_seconds", 1200))
+    planned = segment_intervals(
+        duration,
+        segment_seconds=segment_seconds,
+        overlap_seconds=overlap_seconds,
+        maximum_source_seconds=maximum_source_seconds,
+    )
+    segments: list[dict[str, Any]] = []
+    failures: list[dict[str, Any]] = []
+    pending_intervals: list[dict[str, float]] = []
+    keyframes: list[dict[str, Any]] = []
+    screen_rows: list[dict[str, Any]] = []
+    processed_seconds = 0.0
+    maximum_processed = float(policy.get("maximum_processed_media_seconds", 6500))
+    if remaining_budget_seconds < 0 or remaining_budget_seconds > maximum_processed:
+        raise ProducerError("long_media_budget_state_invalid")
+    for index, interval in enumerate(planned):
+        expected_duration = interval["end"] - interval["start"]
+        if processed_seconds + expected_duration > remaining_budget_seconds:
+            pending_intervals.extend(planned[index:])
+            break
+        segment_root = work / f"segment_{index:03d}"
+        frames = segment_root / "frames"
+        frames.mkdir(parents=True, exist_ok=False)
+        audio = segment_root / "audio.wav"
+        try:
+            command([
+                str(runtime["ffmpeg"]), "-hide_banner", "-loglevel", "error", "-y",
+                "-ss", str(interval["start"]), "-i", str(audio_input), "-t", str(expected_duration),
+                "-vn", "-ac", "1", "-ar", "16000", "-c:a", "pcm_s16le", str(audio),
+            ], "video_audio_segment_extract_failed")
+            actual_segment_duration = measured_media_duration(runtime["ffmpeg"], audio)
+            if actual_segment_duration > 600 or abs(actual_segment_duration - expected_duration) > 0.15:
+                raise ProducerError("video_audio_segment_duration_mismatch")
+            command([
+                str(runtime["ffmpeg"]), "-hide_banner", "-loglevel", "error", "-y",
+                "-ss", str(interval["start"]), "-i", str(media), "-t", str(expected_duration),
+                "-vf", "fps=1,scale=960:-2", str(frames / "frame_%05d.jpg"),
+            ], "video_frame_segment_extract_failed")
+            frame_paths = sorted(frames.glob("*.jpg"))
+            if not frame_paths:
+                raise ProducerError("video_frames_empty")
+            ocr = command([str(runtime["vision_ocr_binary"]), *map(str, frame_paths)], "video_ocr_failed")
+            timeline = dedupe_ocr(json.loads(ocr.stdout))
+            for row in timeline:
+                row["start"] = float(row["start"]) + interval["start"]
+                row["end"] = min(interval["end"], float(row["end"]) + interval["start"])
+            asr = asr_worker({**config, **runtime}, audio)
+            screen, unresolved = screen_facts(str(candidate.get("title") or ""), timeline)
+            full = full_worker(config, audio) if unresolved else None
+            if full:
+                full = shift_whisper_times(full, interval["start"])
+                unresolved = [{**row, "full_large_v3_text_sha256": full["text_sha256"]} for row in unresolved]
+            saved = keyframe_root / f"{candidate['aweme_id']}_segment_{index:03d}"
+            selected_frames = []
+            for frame_index in representative_frame_indices(len(frame_paths)):
+                frame = frame_paths[frame_index]
+                target = saved / frame.name
+                target.parent.mkdir(parents=True, exist_ok=True)
+                shutil.copy2(frame, target)
+                selected_frames.append({
+                    "time_second": min(interval["end"], interval["start"] + frame_index),
+                    "path": str(target), "sha256": file_hash(target),
+                })
+            keyframes.extend(selected_frames)
+            screen_rows.extend(screen)
+            segments.append({
+                "index": index,
+                "start": interval["start"], "end": interval["end"],
+                "status": "media_read_complete_fact_review_pending",
+                "caption_timeline": timeline,
+                "asr": asr,
+                "full_large_v3_fallback": full,
+                "screen_text": screen,
+                "unresolved_terms": unresolved,
+                "keyframes": selected_frames,
+                "audio_duration_seconds_actual": actual_segment_duration,
+            })
+            processed_seconds += actual_segment_duration
+        except Exception as error:
+            failures.append({"type": "segment_processing_failed", "segment_index": index,
+                             "start": interval["start"], "end": interval["end"],
+                             "detail": str(error) if isinstance(error, ProducerError) else type(error).__name__})
+            pending_intervals.extend(planned[index + 1:])
+            break
+        finally:
+            shutil.rmtree(segment_root, ignore_errors=True)
+
+    timeline, ocr_trace = reconcile_ocr(segments)
+    primary = reconcile_primary_asr(segments)
+    fallback = reconcile_whisper(segments) if any(row.get("full_large_v3_fallback") for row in segments) else None
+    coverage = segment_coverage(
+        [{"start": row["start"], "end": row["end"]} for row in segments], duration,
+    )
+    unresolved = [
+        {**warning, "source_segment_start": row["start"], "source_segment_end": row["end"]}
+        for row in segments for warning in row.get("unresolved_terms", [])
+    ]
+    if pending_intervals:
+        failures.append({"type": "long_media_budget_or_segment_pending", "pending_intervals": pending_intervals})
+    if not coverage["full_coverage"] and not failures:
+        failures.append({"type": "long_media_coverage_incomplete"})
+    return {
+        "run_id": run_id,
+        "aweme_id": candidate["aweme_id"],
+        "source_url": candidate["source_url"],
+        "author": candidate.get("author", ""),
+        "title": candidate.get("title", ""),
+        "published_at": candidate.get("published_at", ""),
+        "status": (
+            "media_read_pending_resource_budget" if not segments and pending_intervals
+            else "completed_with_failures" if failures or unresolved
+            else "completed"
+        ),
+        "media_resolution_status": candidate.get("media_resolution_status", "resolved"),
+        "media_ownership": candidate.get("media_ownership"),
+        "media_duration_seconds_actual": duration,
+        "audio_duration_seconds_actual": measured_media_duration(runtime["ffmpeg"], audio_input),
+        "processed_media_seconds": processed_seconds,
+        "media_processing_attempted": bool(segments),
+        "planned_intervals": planned,
+        "coverage": coverage,
+        "pending_intervals": pending_intervals,
+        "segments": segments,
+        "caption_timeline": timeline,
+        "ocr_duplicate_trace": ocr_trace,
+        "asr": {
+            "primary_model": "iic/SenseVoiceSmall",
+            **primary,
+        },
+        "full_large_v3_fallback": fallback,
+        "screen_text": list({canonical(row): row for row in screen_rows}.values()),
+        "keyframes": keyframes,
+        "unresolved_terms": unresolved,
+        "failures": failures,
+        "ocr": {
+            "engine": "macOS Vision accurate zh-Hans/en-US",
+            "binary_sha256": file_hash(runtime["vision_ocr_binary"]),
+            "frame_rate_fps": 1,
+            "frame_count": sum(len(row.get("caption_timeline", [])) for row in segments),
+            "media_sha256": media_info["sha256"],
+            "audio_media_sha256": audio_info["sha256"] if audio_info else media_info["sha256"],
+        },
+        "evidence_quality": {
+            "actual_item_type": "video",
+            "media_access": "owned_media_accessible",
+            "ocr": "completed" if segments else "not_verified",
+            "asr": "completed" if segments and any((row.get("asr") or {}).get("text") for row in segments) else "completed_empty",
+            "visual_understanding": "not_reviewed",
+            "fact_confirmation": "pending",
+            "fully_verified": False,
+            "coverage": coverage,
+            "ocr_duplicate_trace": ocr_trace,
+            "claim_boundaries": ["OCR/ASR 是识别观察，不等同于语义事实核实；静帧不证明连续运动。"],
+        },
+        "trigger": trigger,
+        "substitute_count": 0,
+        "temporary_media_remaining": 0,
+    }
+
+
 def process_one(
     candidate: dict[str, Any],
     *,
@@ -426,8 +773,30 @@ def process_one(
     work_root: Path,
     keyframe_root: Path,
     trigger: str,
+    remaining_long_budget_seconds: float | None = None,
 ) -> dict[str, Any]:
     aweme_id = candidate["aweme_id"]
+    resolution_status = str(candidate.get("media_resolution_status") or "")
+    if resolution_status == "audio_only":
+        return process_audio_only(
+            candidate, run_id=run_id, config=config, runtime=runtime,
+            work_root=work_root, trigger=trigger,
+        )
+    if resolution_status != "resolved":
+        return _unprocessed_resolution(candidate, run_id, trigger)
+    if not _owned_media_identity(candidate):
+        result = _unprocessed_resolution(candidate, run_id, trigger)
+        result["failure"] = "video_media_identity_unverified"
+        return result
+    segmentation = config.get("long_source_segmentation") if isinstance(config.get("long_source_segmentation"), dict) else {}
+    maximum_source_seconds = float(segmentation.get("maximum_source_seconds", 1200))
+    reported_duration = candidate.get("response_duration_seconds")
+    if isinstance(reported_duration, (int, float)) and math.isfinite(float(reported_duration)) and float(reported_duration) > maximum_source_seconds:
+        result = _unprocessed_resolution(candidate, run_id, trigger)
+        result["failure"] = "video_source_exceeds_long_source_policy"
+        result["reported_duration_seconds"] = float(reported_duration)
+        result["maximum_source_duration_seconds"] = maximum_source_seconds
+        return result
     work = work_root / aweme_id
     work.mkdir(parents=True, exist_ok=False)
     media = work / "video.mp4"
@@ -436,6 +805,7 @@ def process_one(
     frames = work / "frames"
     frames.mkdir()
     package: dict[str, Any]
+    actual_duration = None
     try:
         media_info = download(
             str(candidate.get("playable_url") or ""),
@@ -444,6 +814,9 @@ def process_one(
             int(config.get("maximum_media_bytes", 300 * 1024 * 1024)),
             str(candidate.get("source_url") or ""),
         )
+        actual_duration = measured_media_duration(runtime["ffmpeg"], media)
+        if actual_duration > maximum_source_seconds:
+            raise ProducerError("video_source_exceeds_long_source_policy")
         audio_info = None
         audio_input = media
         if candidate.get("audio_url"):
@@ -455,6 +828,31 @@ def process_one(
                 str(candidate.get("source_url") or ""),
             )
             audio_input = audio_media
+        actual_audio_duration = measured_media_duration(runtime["ffmpeg"], audio_input)
+        if abs(actual_audio_duration - actual_duration) > 2:
+            raise ProducerError("source_video_audio_duration_conflict")
+        maximum_regular_seconds = float(candidate.get("safety_maximum_duration_seconds") or config.get("maximum_video_duration_seconds") or 600)
+        if actual_duration > maximum_regular_seconds:
+            package = process_long_video(
+                candidate,
+                run_id=run_id,
+                config=config,
+                runtime=runtime,
+                work=work,
+                media=media,
+                audio_input=audio_input,
+                media_info=media_info,
+                audio_info=audio_info,
+                duration=actual_duration,
+                keyframe_root=keyframe_root,
+                trigger=trigger,
+                remaining_budget_seconds=(
+                    float(remaining_long_budget_seconds)
+                    if remaining_long_budget_seconds is not None
+                    else float(segmentation.get("maximum_processed_media_seconds", 6500))
+                ),
+            )
+            return package
         command([
             str(runtime["ffmpeg"]), "-hide_banner", "-loglevel", "error", "-y",
             "-i", str(audio_input), "-vn", "-ac", "1", "-ar", "16000",
@@ -503,6 +901,10 @@ def process_one(
             },
             "discovery_source": candidate["discovery_source"],
             "status": "completed_with_failures" if unresolved else "completed",
+            "media_resolution_status": candidate.get("media_resolution_status", "resolved"),
+            "media_ownership": candidate.get("media_ownership"),
+            "duration_seconds_actual": actual_duration,
+            "audio_duration_seconds_actual": actual_audio_duration,
             "caption_timeline": timeline,
             "ocr": {
                 "engine": "macOS Vision accurate zh-Hans/en-US",
@@ -522,6 +924,18 @@ def process_one(
             "failures": (
                 [{"type": "screen_text_unresolved", "count": len(unresolved)}] if unresolved else []
             ),
+            "evidence_quality": {
+                "actual_item_type": "video",
+                "media_access": "owned_media_accessible" if resolution_status == "resolved" else "accessible_identity_not_reported",
+                "ocr": "completed" if frame_paths else "not_verified",
+                "asr": "completed" if asr.get("text") else "completed_empty",
+                "visual_understanding": "not_reviewed",
+                "fact_confirmation": "pending",
+                "fully_verified": False,
+                "claim_boundaries": [
+                    "OCR/ASR 是识别观察，不等同于语义事实核实；静帧不证明连续运动。"
+                ],
+            },
             "trigger": trigger,
             "substitute_count": 0,
             "temporary_media_remaining": 0,
@@ -537,6 +951,7 @@ def process_one(
             "run_id": run_id,
             "candidate_raw_identity": candidate["raw_identity"],
             "media_sha256": media_info["sha256"],
+            "duration_seconds_actual": actual_duration,
             "audio_media_sha256": (
                 audio_info["sha256"] if audio_info else media_info["sha256"]
             ),
@@ -661,6 +1076,20 @@ def produce(
     if not policy_path:
         raise ProducerError("video_policy_missing")
     policy = json.loads(Path(policy_path).read_text())
+    policy_segmentation = policy.get("long_source_segmentation") if isinstance(policy.get("long_source_segmentation"), dict) else {}
+    config["maximum_video_duration_seconds"] = float(policy.get("maximum_video_duration_seconds") or 600)
+    config["long_source_segmentation"] = {
+        **{
+            "maximum_source_seconds": 1200,
+            "maximum_processed_media_seconds": 6500,
+            "segment_seconds": 480,
+            "overlap_seconds": 5,
+        },
+        **policy_segmentation,
+        **(config.get("long_source_segmentation") if isinstance(config.get("long_source_segmentation"), dict) else {}),
+    }
+    for row in candidates:
+        row.setdefault("safety_maximum_duration_seconds", config["maximum_video_duration_seconds"])
     decisions = policy_decisions(candidates, policy)
     plan = budget_selection(
         fold_near_duplicates(apply_policy_decisions(merged, decisions, policy)),
@@ -707,6 +1136,13 @@ def produce(
             raise ProducerError("video_package_checkpoint_identity_conflict")
         checkpoint_by_id[identity] = package
     unresolved = selected - set(aggregate_by_id) - set(checkpoint_by_id)
+    maximum_long_processed = float(config["long_source_segmentation"]["maximum_processed_media_seconds"])
+    long_processed = sum(
+        float(row.get("processed_media_seconds") or 0)
+        for row in [*aggregate_by_id.values(), *checkpoint_by_id.values()]
+    )
+    if long_processed > maximum_long_processed:
+        raise ProducerError("long_media_checkpoint_budget_conflict")
     mode = getattr(args, "mode", "") or args.video_mode
     if mode == "normal" and unresolved:
         producer_root = output_root / args.run_id / "video_producer"
@@ -755,6 +1191,7 @@ def produce(
         elif identity in checkpoint_by_id:
             package = checkpoint_by_id[identity]
         else:
+            remaining_long_budget = max(0.0, maximum_long_processed - long_processed)
             package = process_one(
                 candidate,
                 run_id=args.run_id,
@@ -763,8 +1200,10 @@ def produce(
                 work_root=work_root,
                 keyframe_root=keyframe_root,
                 trigger="on_demand" if identity in (on_demand_ids or set()) else "automatic",
+                remaining_long_budget_seconds=remaining_long_budget,
             )
             atomic_json(checkpoint, package)
+            long_processed += float(package.get("processed_media_seconds") or 0)
         packages.append(package)
         cleanup_blocked = package.get("temporary_media_remaining") != 0
     if work_root.exists() and any(work_root.iterdir()):
@@ -775,9 +1214,22 @@ def produce(
         "decisions": decisions,
         "packages": packages,
         "plan": plan,
+        "long_media_budget": {
+            "maximum_processed_media_seconds": maximum_long_processed,
+            "processed_media_seconds": long_processed,
+            "remaining_media_seconds": max(0.0, maximum_long_processed - long_processed),
+        },
         "failures": [
-            {"candidate_id": f"douyin:{row.get('aweme_id')}", "failure": row.get("failure")}
-            for row in packages if row.get("status") == "failed"
+            {
+                "candidate_id": f"douyin:{row.get('aweme_id')}",
+                "source_url": row.get("source_url"),
+                "failure": row.get("failure") or (
+                    "long_media_pending_resource_budget"
+                    if row.get("status") == "media_read_pending_resource_budget" else ""
+                ),
+            }
+            for row in packages
+            if row.get("status") in {"failed", "media_read_pending_resource_budget"}
         ],
     }
     producer_root = output_root / args.run_id / "video_producer"

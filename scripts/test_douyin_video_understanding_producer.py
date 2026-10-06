@@ -12,6 +12,27 @@ import run_daily_workflow as workflow
 
 
 class ProducerTest(unittest.TestCase):
+    @staticmethod
+    def owned_candidate(**overrides):
+        row = {
+            "aweme_id": "12345678901",
+            "source_url": "https://www.douyin.com/video/12345678901",
+            "title": "同 run 长视频",
+            "author": "合成作者",
+            "published_at": "2026-10-06T00:00:00Z",
+            "discovery_source": "recommendation",
+            "raw_identity": {"aweme_id": "12345678901"},
+            "media_resolution_status": "resolved",
+            "playable_url": "https://media.invalid/video.mp4",
+            "media_ownership": {
+                "status": "response_media_identity_verified",
+                "requested_id": "12345678901", "landed_id": "12345678901",
+                "response_id": "12345678901",
+            },
+        }
+        row.update(overrides)
+        return row
+
     def test_policy_is_or_semantics_without_fixed_engagement_threshold(self):
         rows = [
             {"aweme_id": "1", "title": "AI 工作流", "discovery_source": "recommendation",
@@ -152,16 +173,172 @@ class ProducerTest(unittest.TestCase):
         self.assertLess(recommendation, dynamic)
 
     def test_media_resolver_preserves_exact_video_and_audio_tracks(self):
-        text = (Path(__file__).parent / "douyin_video_media_resolver.mjs").read_text()
-        self.assertIn("media-video-", text)
-        self.assertIn("media-audio-", text)
+        root = Path(__file__).parent
+        text = (root / "douyin_video_media_resolver.mjs").read_text()
+        identity = (root / "douyin_video_media_identity.mjs").read_text()
+        self.assertIn("Network.getResponseBody", text)
+        self.assertIn("response_media_identity_verified", identity)
+        self.assertIn("collectVideoUrls", identity)
+        self.assertIn("collectAudioUrls", identity)
         self.assertIn("audio_url", text)
+        self.assertIn("observedResources", text)
+
+    def test_wrong_id_and_typed_nonvideo_are_rejected_before_download(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "work").mkdir()
+            for status, ownership in (
+                ("resolved", {"status": "response_media_identity_conflict", "requested_id": "12345678901", "landed_id": "12345678901", "response_id": "10987654321"}),
+                ("non_video_article", None),
+                ("", None),
+            ):
+                candidate = {
+                    "aweme_id": "12345678901",
+                    "source_url": "https://www.douyin.com/video/12345678901",
+                    "media_resolution_status": status,
+                    "playable_url": "https://media.invalid/video.mp4",
+                    "media_ownership": ownership,
+                }
+                with mock.patch.object(producer, "download") as download:
+                    package = producer.process_one(
+                        candidate,
+                        run_id="run_20261006_120000",
+                        config={}, runtime={}, work_root=root / "work",
+                        keyframe_root=root / "keyframes", trigger="on_demand",
+                    )
+                download.assert_not_called()
+                self.assertEqual(package["status"], "failed")
+                self.assertFalse(package.get("media_processing_attempted", False))
+
+    def test_audio_only_requires_owned_audio_and_never_runs_ocr(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            (root / "work").mkdir()
+            candidate = {
+                "aweme_id": "12345678901",
+                "source_url": "https://www.douyin.com/video/12345678901",
+                "media_resolution_status": "audio_only",
+                "audio_url": "https://media.invalid/audio.mp4",
+                "media_ownership": {
+                    "status": "response_media_identity_verified",
+                    "requested_id": "12345678901", "landed_id": "12345678901",
+                    "response_id": "12345678901",
+                },
+            }
+            def fake_download(_url, destination, *_args):
+                destination.write_bytes(b"audio")
+                return {"sha256": "a" * 64, "bytes": 5}
+            with mock.patch.object(producer, "download", side_effect=fake_download), \
+                    mock.patch.object(producer, "measured_media_duration", return_value=12), \
+                    mock.patch.object(producer, "command") as command, \
+                    mock.patch.object(producer, "asr_worker", return_value={"text": "audio words"}):
+                package = producer.process_one(
+                    candidate,
+                    run_id="run_20261006_120000",
+                    config={"maximum_audio_duration_seconds": 30},
+                    runtime={"ffmpeg": root / "ffmpeg"},
+                    work_root=root / "work", keyframe_root=root / "keyframes",
+                    trigger="on_demand",
+                )
+            self.assertEqual(package["status"], "completed_with_failures")
+            self.assertEqual(package["evidence_quality"]["actual_item_type"], "audio_only")
+            self.assertEqual(package["ocr"]["status"], "unavailable")
+            self.assertEqual(package["keyframes"], [])
+            self.assertEqual(package["asr"]["text"], "audio words")
+            command.assert_called_once()
+
+    def test_long_source_uses_measured_duration_and_processes_segments(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work, keyframes = root / "work", root / "keyframes"
+            work.mkdir()
+            ffmpeg, vision = root / "ffmpeg", root / "vision"
+            ffmpeg.write_bytes(b"ffmpeg")
+            vision.write_bytes(b"vision")
+            runtime = {"ffmpeg": ffmpeg, "vision_ocr_binary": vision}
+            config = {
+                "timeout": 1, "maximum_media_bytes": 1000,
+                "maximum_video_duration_seconds": 600,
+                "long_source_segmentation": {
+                    "segment_seconds": 480, "overlap_seconds": 5,
+                    "maximum_source_seconds": 1200,
+                    "maximum_processed_media_seconds": 6500,
+                },
+            }
+
+            def fake_command(args, _error, *, env=None):
+                del env
+                if args[0] == str(vision):
+                    frame = Path(args[1])
+                    return mock.Mock(stdout=json.dumps([{"path": str(frame), "text": "同一画面事实"}]))
+                target = str(args[-1])
+                if "%05d" in target:
+                    frame = Path(target.replace("%05d", "00001"))
+                    frame.parent.mkdir(parents=True, exist_ok=True)
+                    frame.write_bytes(b"frame")
+                else:
+                    Path(target).parent.mkdir(parents=True, exist_ok=True)
+                    Path(target).write_bytes(b"derived")
+                return mock.Mock(stdout="")
+
+            def fake_download(_url, destination, *_args):
+                destination.write_bytes(b"video")
+                return {"sha256": "b" * 64, "bytes": 5}
+
+            with mock.patch.object(producer, "download", side_effect=fake_download), \
+                    mock.patch.object(producer, "measured_media_duration", side_effect=[901, 901, 480, 426, 901]), \
+                    mock.patch.object(producer, "command", side_effect=fake_command), \
+                    mock.patch.object(producer, "asr_worker", return_value={"text": "分段口播"}):
+                package = producer.process_one(
+                    self.owned_candidate(safety_maximum_duration_seconds=600),
+                    run_id="run_20261006_120001", config=config, runtime=runtime,
+                    work_root=work, keyframe_root=keyframes, trigger="on_demand",
+                )
+            self.assertEqual(package["media_duration_seconds_actual"], 901)
+            self.assertEqual(len(package["planned_intervals"]), 2)
+            self.assertEqual([row["audio_duration_seconds_actual"] for row in package["segments"]], [480, 426])
+            self.assertTrue(package["coverage"]["full_coverage"])
+            self.assertEqual(package["status"], "completed")
+            self.assertEqual(list(work.iterdir()), [])
+
+    def test_long_source_with_zero_budget_remains_pending_without_segment_processing(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            work = root / "work"
+            work.mkdir()
+            ffmpeg, vision = root / "ffmpeg", root / "vision"
+            ffmpeg.write_bytes(b"ffmpeg")
+            vision.write_bytes(b"vision")
+            config = {
+                "timeout": 1, "maximum_media_bytes": 1000,
+                "maximum_video_duration_seconds": 600,
+                "long_source_segmentation": {
+                    "segment_seconds": 480, "overlap_seconds": 5,
+                    "maximum_source_seconds": 1200,
+                    "maximum_processed_media_seconds": 6500,
+                },
+            }
+            def fake_download(_url, destination, *_args):
+                destination.write_bytes(b"video")
+                return {"sha256": "b" * 64, "bytes": 5}
+            with mock.patch.object(producer, "download", side_effect=fake_download), \
+                    mock.patch.object(producer, "measured_media_duration", side_effect=[901, 901, 901]), \
+                    mock.patch.object(producer, "command") as command:
+                package = producer.process_one(
+                    self.owned_candidate(safety_maximum_duration_seconds=600),
+                    run_id="run_20261006_120002", config=config,
+                    runtime={"ffmpeg": ffmpeg, "vision_ocr_binary": vision},
+                    work_root=work, keyframe_root=root / "keyframes", trigger="on_demand",
+                    remaining_long_budget_seconds=0,
+                )
+            self.assertEqual(package["status"], "media_read_pending_resource_budget")
+            self.assertEqual(len(package["pending_intervals"]), 2)
+            self.assertFalse(package["media_processing_attempted"])
+            self.assertEqual(package["processed_media_seconds"], 0)
+            command.assert_not_called()
 
     def test_candidate_unexpected_failure_is_local_and_cleanup_remains_zero(self):
-        candidate = {
-            "aweme_id": "12345678901",
-            "source_url": "https://www.douyin.com/video/12345678901",
-        }
+        candidate = self.owned_candidate()
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             (root / "work").mkdir()
@@ -520,6 +697,12 @@ class ProducerTest(unittest.TestCase):
             "aweme_id": "123", "source_url": "https://www.douyin.com/video/123",
             "author": "A", "title": "AI", "published_at": "1",
             "discovery_source": "dynamic_search", "raw_identity": "raw",
+            "media_resolution_status": "resolved",
+            "media_ownership": {
+                "status": "response_media_identity_verified",
+                "requested_id": "123", "landed_id": "123", "response_id": "123",
+            },
+            "playable_url": "https://media.invalid/video.mp4",
         }
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
@@ -573,7 +756,7 @@ class ProducerTest(unittest.TestCase):
                         "https://www.douyin.com/video/12345678901",
                     )
 
-    def test_asr_worker_uses_exact_configured_ffmpeg_in_run_scoped_path(self):
+    def test_asr_worker_uses_configured_ffmpeg_parent_without_runtime_symlink(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             audio = root / "audio.wav"
@@ -584,8 +767,8 @@ class ProducerTest(unittest.TestCase):
 
             def fake_command(args, error, *, env=None):
                 self.assertEqual(error, "video_asr_failed")
-                self.assertEqual((audio.parent / "runtime_bin/ffmpeg").resolve(), ffmpeg.resolve())
-                self.assertEqual(str(audio.parent / "runtime_bin"), env["PATH"].split(":")[0])
+                self.assertEqual(str(ffmpeg.parent.resolve()), env["PATH"].split(":")[0])
+                self.assertFalse((audio.parent / "runtime_bin/ffmpeg").exists())
                 result.write_text(json.dumps({"text": "ok"}))
                 return mock.Mock(returncode=0)
 

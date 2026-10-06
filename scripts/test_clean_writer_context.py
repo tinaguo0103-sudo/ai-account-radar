@@ -10,6 +10,7 @@ from types import SimpleNamespace
 import clean_writer_context as clean
 import spoken_script_runtime as script_runtime
 from daily_workflow import WorkflowConflict
+from source_claim_validation import claim_contract, digest
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -51,9 +52,31 @@ class CleanWriterContextTest(unittest.TestCase):
                     value["article"] = {"topic_id": topic_id, "title": f"{topic_id} article", "body": f"{topic_id} article body"}
                 else:
                     value["script"] = {"topic_id": topic_id, "title": f"{topic_id} script", "hook": f"{topic_id} hook", "structure": "事实；判断；收束", "body": f"{topic_id} spoken body"}
+            if phase == "article_required":
+                current_topic = json.loads((input_root / "current_topic.json").read_text(encoding="utf-8"))["topic"]
+                claim = ((current_topic.get("source_evidence") or {}).get("claim_contract") or {})
+            else:
+                claim = json.loads((input_root / "claim_authority.json").read_text(encoding="utf-8"))
+            if claim.get("required") is True:
+                content = value["article"] if phase == "article_required" else value["script"]
+                bound = {key: str(content[key]) for key in ("title", "hook", "structure", "body") if key in content}
+                anchor = next(row for row in claim["anchors"] if "interpretation" in row["allowed_scopes"])
+                import re
+                claims = [
+                    {"field": field, "text": paragraph.strip(), "scope": "interpretation", "evidence_ids": [anchor["evidence_id"]]}
+                    for field, text in bound.items()
+                    for paragraph in re.split(r"\n\s*\n", text)
+                    if paragraph.strip()
+                ]
+                content["claim_review"] = {
+                    "evidence_sha256": claim["evidence_sha256"],
+                    "content_sha256": digest(bound),
+                    "excluded_warning_ids": [row["warning_id"] for row in claim.get("warnings", [])],
+                    "claims": claims,
+                }
             output_path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")
             started = "" if any("thread-synthetic-1" in str(row["command"]) for row in calls[:-1]) else '{"type":"thread.started","thread_id":"thread-synthetic-1"}\n'
-            reads = ["skill/SKILL.md"] + (list(script_runtime.ARTICLE_REQUIRED_REFERENCES) if phase == "article_required" else ["references/spoken-adaptation.md"])
+            reads = ["skill/SKILL.md"] + (list(script_runtime.ARTICLE_REQUIRED_REFERENCES) if phase == "article_required" else ["references/spoken-adaptation.md", "claim_authority.json"])
             reads.append("current_topic.json" if phase == "article_required" else "frozen_article.json")
             if read_plans is not None and call_index < len(read_plans):
                 reads = list(read_plans[call_index])
@@ -82,6 +105,36 @@ class CleanWriterContextTest(unittest.TestCase):
         self.assertTrue(contract["controlled_turns"])
         self.assertTrue(contract["batch_output_forbidden"])
         self.assertIn("necessary_public_first_party_read_only_research_when_capable", contract["input_scope"])
+
+    def test_claim_contract_flows_to_both_phases_and_spoken_gets_only_bounded_authority(self):
+        evidence = {
+            "source": {"url": "https://example.com", "summary": "固定来源摘要支持这个主题。"},
+            "video": {"keyframes": [{"time_second": 8, "path": "frame.jpg", "sha256": "abc"}]},
+        }
+        evidence["claim_contract"] = claim_contract(evidence)
+        topics = [{"topic_id": "synthetic:claim", "source_evidence": evidence}]
+        calls = []
+        article_result = self._run(root_name="claim-contract", topics=topics, calls=calls)
+        article = article_result["output"]["article"]
+        self.assertIn("claim_review", article)
+        self.assertEqual(article["claim_review"]["evidence_sha256"], evidence["claim_contract"]["evidence_sha256"])
+        self.assertIn("claim_review", calls[0]["prompt"])
+
+        article_meta = script_runtime.write_article_artifact(
+            self.root / "claim-contract", RUN_ID, BUSINESS_DATE, article,
+        )
+        article_meta.pop("created", None)
+        spoken = self._run(
+            root_name="claim-contract", topics=topics, current_index=0,
+            phase="spoken_adaptation_required", calls=calls, frozen_article=article_meta,
+        )
+        self.assertIn("claim_review", spoken["output"]["script"])
+        context = self.root / "claim-contract" / RUN_ID / "clean_writer_context" / "clean_root"
+        authority = json.loads((context / "claim_authority.json").read_text(encoding="utf-8"))
+        self.assertEqual(authority["evidence_sha256"], evidence["claim_contract"]["evidence_sha256"])
+        self.assertNotIn("source", authority)
+        self.assertFalse((context / "current_topic.json").exists())
+        self.assertIn("claim_authority.json", calls[1]["prompt"])
 
     def test_one_context_multiple_turns_and_article_before_spoken(self):
         calls = []
@@ -174,8 +227,8 @@ class CleanWriterContextTest(unittest.TestCase):
 
     def test_spoken_requires_frozen_article_and_spoken_reference(self):
         for root_name, reads in (
-            ("trace-spoken-reference", ["frozen_article.json"]),
-            ("trace-spoken-frozen", ["skill/references/spoken-adaptation.md"]),
+            ("trace-spoken-reference", ["frozen_article.json", "claim_authority.json"]),
+            ("trace-spoken-frozen", ["skill/references/spoken-adaptation.md", "claim_authority.json"]),
         ):
             calls = []
             first = self._run(root_name=root_name, calls=calls)

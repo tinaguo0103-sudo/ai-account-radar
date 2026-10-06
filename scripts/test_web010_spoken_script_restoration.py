@@ -276,7 +276,7 @@ class SpokenScriptRestorationTests(unittest.TestCase):
         topic = workflow.build_scripts_handoff(
             "run_20260808_121000", "2026-08-08", fixture, self.editorial()
         )["selected_topics"][0]
-        sources = topic["source_evidence"]["video"]["representative_sources"]
+        sources = topic["source_evidence"]["video"]["additional_sources"]
         self.assertEqual(len(sources), 1)
         self.assertEqual(sources[0]["asr_supplement"], "available same-run ASR")
 

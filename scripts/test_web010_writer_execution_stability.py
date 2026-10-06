@@ -23,6 +23,7 @@ from spoken_script_runtime import (
     validate_checkpoint,
     writer_authority_manifest,
 )
+from source_claim_validation import claim_contract, digest
 
 
 RUN_ID = "run_20260912_155500"
@@ -75,6 +76,47 @@ class WriterExecutionStabilityTest(unittest.TestCase):
                 "body": body,
             },
         }
+
+    @staticmethod
+    def source_claim_topic():
+        evidence = {
+            "source": {"url": "https://example.com/source", "summary": "来源摘要支持本主题的事实背景。"},
+            "source_facts": {"details": "同 run 来源细节可供逐段引用。"},
+            "video": {
+                "status": "completed_with_failures",
+                "evidence_quality": {
+                    "actual_item_type": "video", "fact_confirmation": "pending",
+                    "visual_understanding": "not_reviewed", "fully_verified": False,
+                },
+                "keyframes": [{"time_second": 4, "path": "same-run/frame.jpg", "sha256": "abc"}],
+                "unresolved_terms": [{"term": "GPT-4", "aliases": ["GPT‑4"]}],
+            },
+        }
+        evidence["claim_contract"] = claim_contract(evidence)
+        return {"topic_id": "topic:claim", "source_evidence": evidence}
+
+    @staticmethod
+    def attach_claim_review(content, evidence, *, motion=False):
+        contract = evidence["claim_contract"]
+        bound = {key: str(content[key]) for key in ("title", "hook", "structure", "body") if key in content}
+        anchor = next(row for row in contract["anchors"] if "interpretation" in row["allowed_scopes"])
+        claims = []
+        for field, value in bound.items():
+            import re
+            for paragraph in re.split(r"\n\s*\n", value):
+                if paragraph.strip():
+                    claims.append({
+                        "field": field, "text": paragraph.strip(),
+                        "scope": "motion_observation" if motion and field == "body" else "interpretation",
+                        "evidence_ids": [anchor["evidence_id"]],
+                    })
+        content["claim_review"] = {
+            "evidence_sha256": contract["evidence_sha256"],
+            "content_sha256": digest(bound),
+            "excluded_warning_ids": [row["warning_id"] for row in contract["warnings"]],
+            "claims": claims,
+        }
+        return content
 
     def test_positive_two_phase_identity_and_publisher_boundary(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -160,6 +202,58 @@ class WriterExecutionStabilityTest(unittest.TestCase):
                     {"packet_id": "x", "article_sha256": "x", "script": {}}, artifact_root=root,
                 )
             self.assertFalse(article_artifact_path(root, RUN_ID, "topic:one").exists())
+
+    def test_claim_dependencies_bound_at_article_and_spoken_commits(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            topic = self.source_claim_topic()
+            workflow, checkpoint, topics = self.workflow(root, [topic])
+            contract = load_writer_contract()
+            packet = topic_packet(RUN_ID, BUSINESS_DATE, topic, 0, 1, 0, contract, checkpoint=checkpoint)
+            self.assertTrue(packet["claim_dependency_authority"]["still_frames_do_not_verify_motion"])
+
+            invalid_article = {"topic_id": topic["topic_id"], "title": "围绕 GPT‑4 的主题", "body": "来源细节可供逐段引用。"}
+            self.attach_claim_review(invalid_article, topic["source_evidence"])
+            with self.assertRaisesRegex(WorkflowConflict, "script_claim_uses_unconfirmed_term"):
+                submit_article(
+                    workflow, RUN_ID, BUSINESS_DATE, topics, checkpoint, contract,
+                    {"packet_id": packet["topic_input"]["packet_id"], "article": invalid_article},
+                    artifact_root=root,
+                )
+            self.assertFalse(article_artifact_path(root, RUN_ID, topic["topic_id"]).exists())
+
+            article = {"topic_id": topic["topic_id"], "title": "来源支持的主题判断", "body": "来源细节可供逐段引用。"}
+            self.attach_claim_review(article, topic["source_evidence"])
+            article_outcome = submit_article(
+                workflow, RUN_ID, BUSINESS_DATE, topics, checkpoint, contract,
+                {"packet_id": packet["topic_input"]["packet_id"], "article": article},
+                artifact_root=root,
+            )
+            spoken_packet = article_outcome["handoff"]
+            self.assertNotIn("source_evidence", spoken_packet["topic_input"])
+            self.assertIn("claim_dependency_authority", spoken_packet)
+            checkpoint = workflow.stage(RUN_ID, "scripts")["payload"]
+
+            script = {
+                "topic_id": topic["topic_id"], "title": "口播主题", "hook": "从来源看这件事",
+                "structure": "先说明来源，再给出判断。", "body": "来源细节可供逐段引用。",
+            }
+            self.attach_claim_review(script, topic["source_evidence"], motion=True)
+            submission = {
+                "packet_id": spoken_packet["topic_input"]["packet_id"],
+                "article_sha256": spoken_packet["topic_input"]["article_artifact"]["sha256"],
+                "script": script,
+            }
+            with self.assertRaisesRegex(WorkflowConflict, "script_claim_evidence_scope_conflict"):
+                submit_spoken_adaptation(
+                    workflow, RUN_ID, BUSINESS_DATE, topics, checkpoint, contract,
+                    submission, artifact_root=root,
+                )
+
+            self.assertNotEqual(
+                self.source_claim_topic()["source_evidence"]["claim_contract"]["anchors"],
+                [{"kind": "motion_observation"}],
+            )
 
     def test_resume_duplicate_article_does_not_regenerate_and_wrong_article_hash_is_rejected(self):
         with tempfile.TemporaryDirectory() as directory:

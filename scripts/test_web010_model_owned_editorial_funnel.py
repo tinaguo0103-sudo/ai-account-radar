@@ -180,6 +180,7 @@ class ModelOwnedEditorialFunnelTests(unittest.TestCase):
                 "run_id": RUN_ID,
                 "source_url": cards[0]["editorial_screening"]["available_video_source_ids"][0],
                 "status": "completed",
+                "temporary_media_remaining": 0,
                 "keyframes": [{
                     "path": str(frame),
                     "time_second": 0,

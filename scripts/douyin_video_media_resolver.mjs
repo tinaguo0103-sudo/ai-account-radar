@@ -7,6 +7,7 @@ import {
   fixedDouyinTarget,
   runDouyinPreflight,
 } from "./douyin_cdp_source_watch_probe.mjs";
+import { awemeIdFromUrl, resolveOwnedMedia } from "./douyin_video_media_identity.mjs";
 
 function parseArgs(argv) {
   const out = { cdp: "http://127.0.0.1:9333", input: "", output: "", waitMs: 5000 };
@@ -88,6 +89,54 @@ async function main() {
   const session = new FixedPageSession(options.cdp, target, { maxReattachments: 1 });
   const resolved = [];
   await session.open();
+  if (typeof session.client.on !== "function") throw new Error("media_network_capture_unavailable");
+  let activeCapture = null;
+  session.client.on("Network.requestWillBeSent", ({ requestId, request }) => {
+    if (!activeCapture || !request?.url) return;
+    try {
+      const parsed = new URL(request.url);
+      const requestedId = parsed.searchParams.get("aweme_id") || parsed.searchParams.get("item_id") || "";
+      if (
+        request.method === "GET"
+        && requestedId === activeCapture.requestedId
+        && /\/aweme\/v\d+\/web\/aweme\/detail\/?$/i.test(parsed.pathname)
+      ) {
+        activeCapture.requests.set(requestId, { requestUrl: request.url });
+      }
+    } catch {
+      // Malformed or unrelated request URLs are not ownership evidence.
+    }
+  });
+  session.client.on("Network.responseReceived", (params) => {
+    const request = activeCapture?.requests.get(params.requestId);
+    if (!request || !["XHR", "FETCH"].includes(String(params.type || "").toUpperCase())) return;
+    request.responseUrl = params.response?.url || request.requestUrl;
+    request.httpStatus = params.response?.status || 0;
+    request.mimeType = params.response?.mimeType || "";
+  });
+  session.client.on("Network.loadingFinished", ({ requestId }) => {
+    const request = activeCapture?.requests.get(requestId);
+    if (!request || !request.responseUrl) return;
+    activeCapture.requests.delete(requestId);
+    const capture = activeCapture;
+    const pending = session.client.send("Network.getResponseBody", { requestId })
+      .then((response) => capture.details.push({
+        requestUrl: request.requestUrl,
+        responseUrl: request.responseUrl,
+        httpStatus: request.httpStatus,
+        mimeType: request.mimeType,
+        body: response?.body || "",
+        base64Encoded: Boolean(response?.base64Encoded),
+      }))
+      .catch(() => capture.details.push({
+        requestUrl: request.requestUrl,
+        responseUrl: request.responseUrl,
+        httpStatus: request.httpStatus,
+        mimeType: request.mimeType,
+        body: "",
+      }));
+    capture.pending.push(pending);
+  });
   const risk = async (stage) => {
     const state = decode(
       await session.send("Runtime.evaluate", {
@@ -101,8 +150,13 @@ async function main() {
     await risk("before_first_navigation");
     for (const candidate of candidates) {
       await risk(`before_${candidate.aweme_id}`);
+      activeCapture = {
+        requestedId: String(candidate.aweme_id || ""),
+        requests: new Map(), details: [], pending: [],
+      };
       await session.send("Page.navigate", { url: candidate.source_url });
       await sleep(options.waitMs);
+      await Promise.allSettled(activeCapture.pending);
       await risk(`after_${candidate.aweme_id}`);
       const media = decode(
         await session.send("Runtime.evaluate", {
@@ -112,31 +166,50 @@ async function main() {
             media: [
               ...[...document.querySelectorAll('video')]
                 .map((video) => video.currentSrc || video.src || ''),
+              ...[...document.querySelectorAll('audio')]
+                .map((audio) => audio.currentSrc || audio.src || ''),
               ...performance.getEntriesByType('resource')
                 .map((entry) => entry.name)
                 .filter((value) => /douyinvod\\.com/.test(value)
-                  && (/\\/video\\/tos\\//.test(value) || /mime_type=video_mp4/.test(value)))
+                  && (/\\/video\\/tos\\//.test(value) || /mime_type=video_mp4/.test(value)
+                    || /media-audio-/i.test(value)))
             ].filter((value) => /^https?:\\/\\//.test(value))
           })`,
           returnByValue: true,
         }),
         `media_dom_indeterminate:${candidate.aweme_id}`,
       );
-      const exactPath = new URL(media.url).pathname.replace(/\/$/, "");
-      const expectedPath = new URL(candidate.source_url).pathname.replace(/\/$/, "");
-      const publicMedia = [...new Set(media.media)];
-      const videoUrl = publicMedia.find((value) => /media-video-/i.test(value))
-        || publicMedia.find((value) => !/media-audio-/i.test(value)) || "";
-      const audioUrl = publicMedia.find((value) => /media-audio-/i.test(value)) || "";
+      const ownedResults = activeCapture.details.map((detail) => resolveOwnedMedia({
+        ...detail,
+        requestedId: candidate.aweme_id,
+        landedUrl: media.url,
+        observedResources: media.media,
+      }));
+      const verified = ownedResults.find((row) => row.media_ownership?.status === "response_media_identity_verified");
+      const conflict = ownedResults.find((row) => row.media_resolution_status === "identity_conflict");
+      const ownershipResult = verified || conflict || null;
+      const resolution = ownershipResult || {
+        media_resolution_status: "media_not_extracted",
+        item_type: "unknown",
+        playable_url: "",
+        audio_url: "",
+        media_ownership: {
+          status: "owned_detail_response_missing",
+          requested_id: String(candidate.aweme_id || ""),
+          landed_id: awemeIdFromUrl(media.url),
+          response_id: "",
+        },
+      };
       resolved.push({
         ...candidate,
-        playable_url: exactPath === expectedPath ? videoUrl : "",
-        audio_url: exactPath === expectedPath ? audioUrl : "",
-        media_resolution_status: (
-          exactPath !== expectedPath ? "identity_conflict"
-            : videoUrl ? "resolved" : "media_unavailable"
-        ),
+        landed_url: media.url,
+        item_type: resolution.item_type,
+        playable_url: resolution.playable_url,
+        audio_url: resolution.audio_url,
+        media_resolution_status: resolution.media_resolution_status,
+        media_ownership: resolution.media_ownership,
       });
+      activeCapture = null;
     }
   } finally {
     session.close();

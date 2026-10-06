@@ -14,6 +14,7 @@ from unittest import mock
 
 from daily_workflow import DailyWorkflow, WorkflowConflict
 from run_daily_workflow import build_scripts_handoff, enrich
+from source_claim_validation import digest
 from spoken_script_runtime import (
     load_writer_contract,
     new_checkpoint,
@@ -191,6 +192,7 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                 "item_id": "item:source-facts",
                 "source_url": "https://example.test/source-facts",
                 "正文/字幕/简介片段": "Source-owned caption and fact excerpt.",
+                "transcript": "Source-owned explicit transcript field.",
                 "解析说明": "Metadata-only boundary.",
             }],
             "understanding_results": [],
@@ -217,10 +219,49 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             "Source-owned summary with the concrete event detail.",
         )
         self.assertEqual(
+            selected["source_evidence"]["source_facts"]["details"],
+            "Source-owned summary with the concrete event detail.",
+        )
+        self.assertEqual(
             selected["source_evidence"]["source_facts"]["transcript"],
+            "Source-owned explicit transcript field.",
+        )
+        self.assertEqual(
+            selected["source_evidence"]["source_material"]["raw_text"],
             "Source-owned caption and fact excerpt.",
         )
         self.assertNotIn("cannot_claim", selected["source_evidence"])
+
+    @staticmethod
+    def add_claim_review(content: dict, authority: dict | None) -> None:
+        if not isinstance(authority, dict):
+            return
+        bound = {
+            key: str(content[key])
+            for key in ("title", "hook", "structure", "body")
+            if key in content
+        }
+        anchors = authority.get("anchors") or []
+        if not anchors:
+            raise AssertionError("writer fixture unexpectedly has no evidence anchors")
+        content["claim_review"] = {
+            "evidence_sha256": authority["evidence_sha256"],
+            "content_sha256": digest(bound),
+            "excluded_warning_ids": [
+                row["warning_id"] for row in authority.get("warnings", [])
+            ],
+            "claims": [
+                {
+                    "field": field,
+                    "text": paragraph.strip(),
+                    "scope": "interpretation",
+                    "evidence_ids": [anchors[0]["evidence_id"]],
+                }
+                for field, value in bound.items()
+                for paragraph in value.split("\n\n")
+                if paragraph.strip()
+            ],
+        }
 
     def editorial_file(self, root: Path, topic_ids: list[str], run_id: str = RUN_ID) -> Path:
         path = root / f"editorial-{run_id}.json"
@@ -275,28 +316,32 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
                     "detail": "该题的同一 run 材料不足以支撑独特的公开判断。",
                 }
         elif handoff["action"] == "article_required":
+            article = {
+                "topic_id": topic["topic_id"],
+                "title": f"题目 {index} 的完整文章",
+                "body": f"这是题目 {index} 的同题完整文章，先讲清楚事实，再展开判断。",
+            }
+            self.add_claim_review(article, handoff.get("claim_dependency_authority"))
             payload = {
                 "packet_id": handoff["topic_input"]["packet_id"],
-                "article": {
-                    "topic_id": topic["topic_id"],
-                    "title": f"题目 {index} 的完整文章",
-                    "body": f"这是题目 {index} 的同题完整文章，先讲清楚事实，再展开判断。",
-                },
+                "article": article,
             }
         else:
+            script = {
+                "topic_id": topic["topic_id"],
+                "title": f"题目 {index} 的判断",
+                "hook": f"先看题目 {index} 里真正发生了什么。",
+                "structure": "从来源事实推进到题目自己的判断。",
+                "body": (
+                    f"这是题目 {index} 自己的连续口播正文。先把这条材料里的变化讲清楚，"
+                    "再给出只属于它的判断和下一步，不借用另一题的现场。"
+                ),
+            }
+            self.add_claim_review(script, handoff.get("claim_dependency_authority"))
             payload = {
                 "packet_id": handoff["topic_input"]["packet_id"],
                 "article_sha256": handoff["topic_input"]["article_artifact"]["sha256"],
-                "script": {
-                    "topic_id": topic["topic_id"],
-                    "title": f"题目 {index} 的判断",
-                    "hook": f"先看题目 {index} 里真正发生了什么。",
-                    "structure": "从来源事实推进到题目自己的判断。",
-                    "body": (
-                        f"这是题目 {index} 自己的连续口播正文。先把这条材料里的变化讲清楚，"
-                        "再给出只属于它的判断和下一步，不借用另一题的现场。"
-                    ),
-                },
+                "script": script,
             }
         write_json(path, payload)
         return path

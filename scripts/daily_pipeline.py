@@ -584,7 +584,11 @@ def main() -> int:
         OUT / "runs" / run_id / "sources" / "current_run_rows.jsonl",
     ))
 
-    sampler_cmd = [py, str(ROOT / "scripts" / "content_sampler.py"), "--manual", manual_path, "--run-id", run_id]
+    sampler_cmd = [
+        py, str(ROOT / "scripts" / "content_sampler.py"),
+        "--manual", manual_path, "--run-id", run_id,
+        "--source-db", str(args.source_db),
+    ]
     if args.no_feishu_runtime:
         sampler_cmd.append("--local-authority-output")
     if args.no_fetch_aihot:

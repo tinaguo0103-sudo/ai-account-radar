@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import hashlib
 import json
 import os
 import subprocess
@@ -13,7 +14,8 @@ from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
 from daily_workflow import DailyWorkflow
-from run_daily_workflow import build_scripts_handoff, enrich
+from run_daily_workflow import build_scripts_handoff, editorial_handoff_candidates, enrich
+from source_claim_validation import claim_contract, digest
 from spoken_script_runtime import load_writer_contract, topic_packet
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -73,6 +75,34 @@ def last_json(output: str) -> dict:
     return json.loads(output.strip().splitlines()[-1])
 
 
+def add_claim_review(content: dict, evidence: dict) -> None:
+    contract = claim_contract(evidence)
+    bound = {
+        key: str(content[key])
+        for key in ("title", "hook", "structure", "body")
+        if key in content
+    }
+    references = [row["evidence_id"] for row in contract["anchors"]]
+    if not references:
+        raise AssertionError("compatibility fixture unexpectedly has no evidence anchors")
+    content["claim_review"] = {
+        "evidence_sha256": contract["evidence_sha256"],
+        "content_sha256": digest(bound),
+        "excluded_warning_ids": [row["warning_id"] for row in contract["warnings"]],
+        "claims": [
+            {
+                "field": field,
+                "text": paragraph.strip(),
+                "scope": "interpretation",
+                "evidence_ids": references[:1],
+            }
+            for field, value in bound.items()
+            for paragraph in value.split("\n\n")
+            if paragraph.strip()
+        ],
+    }
+
+
 class PublicV2FlowTest(unittest.TestCase):
     def setUp(self):
         TerminalProjectionHandler.posts = 0
@@ -98,13 +128,22 @@ class PublicV2FlowTest(unittest.TestCase):
         return path
 
     def command(self, root: Path, run_id: str, fixture: Path) -> list[str]:
-        return [
+        command = [
             sys.executable, str(ROOT / "scripts/run_daily_workflow.py"),
             "--run-id", run_id, "--business-date", "2026-07-28",
             "--workflow-db", str(root / "workflow.sqlite3"),
             "--artifact-root", str(root / "runs"),
             "--collection-fixture", str(fixture), "--video-mode", "disabled",
         ]
+        frozen_packages = root / "qa-packages.json"
+        if frozen_packages.is_file():
+            command.extend(["--qa-frozen-packages", str(frozen_packages)])
+        return command
+
+    @staticmethod
+    def failure_details(root: Path, run_id: str) -> str:
+        path = root / "runs" / run_id / "workflow_handoff.json"
+        return path.read_text(encoding="utf-8") if path.is_file() else ""
 
     def execute(self, command: list[str], config: Path, extra_env: dict[str, str] | None = None):
         env = os.environ.copy()
@@ -133,6 +172,35 @@ class PublicV2FlowTest(unittest.TestCase):
                 ],
                 "source_runs": [{"source": "Douyin", "status": "completed", "item_count": 6}],
             })
+            frame = root / "frozen-frame.jpg"
+            frame.write_bytes(b"qa-private-fixed-frame")
+            write(root / "qa-packages.json", [{
+                "run_id": run_id,
+                "source_url": content[0]["source_url"],
+                "status": "completed_with_failures",
+                "media_resolution_status": "resolved",
+                "evidence_quality": {
+                    "actual_item_type": "video",
+                    "media_access": "accessible",
+                    "ocr": "completed",
+                    "asr": "completed",
+                    "visual_understanding": "not_reviewed",
+                    "fact_confirmation": "pending",
+                    "unresolved_terms": [{"term": "GPT‑5"}],
+                    "failures": [],
+                    "fully_verified": False,
+                },
+                "asr": {"text": "同 run 的来源口播事实"},
+                "screen_text": [{
+                    "kind": "tool", "value": "Codex", "time_second": 2.0,
+                }],
+                "keyframes": [{
+                    "time_second": 2.0,
+                    "path": str(frame),
+                    "sha256": hashlib.sha256(frame.read_bytes()).hexdigest(),
+                }],
+                "unresolved_terms": [{"term": "GPT‑5"}],
+            }])
             command = self.command(root, run_id, fixture)
             config = self.config(root)
             normalized = enrich(
@@ -140,17 +208,24 @@ class PublicV2FlowTest(unittest.TestCase):
                     run_id=run_id,
                     business_date="2026-07-28",
                     video_mode="disabled",
-                    qa_frozen_packages=None,
+                    qa_frozen_packages=str(root / "qa-packages.json"),
                 ),
                 json.loads(fixture.read_text(encoding="utf-8")),
             )
             identities = [row["candidate_id"] for row in normalized["candidates"]]
+            handoff_by_id = {
+                row["candidate_id"]: row
+                for row in editorial_handoff_candidates(normalized)
+            }
             editorial = root / "editorial.json"
             write(editorial, {
                 "run_id": run_id, "topics": [{
                     "candidate_id": identities[0], "decision": "select",
                     "title": "选题", "hook": "钩子", "structure": "结构",
                     "selection_reason": "理由",
+                    "evidence_source_ids": [
+                        handoff_by_id[identities[0]]["sources"][0]["source_id"]
+                    ],
                     "editorial_thesis": {
                         "thesis": "这条来源事实支持一个具体判断。",
                         "audience_conflict": "受众在事实和旧做法之间有明确冲突。",
@@ -163,14 +238,26 @@ class PublicV2FlowTest(unittest.TestCase):
                     },
                 }] + [{
                     "candidate_id": identity, "decision": "observe",
-                    "selection_reason": "未达到本轮选择标准",
+                    "selection_reason": f"未达到本轮选择标准：{identity}",
+                    "evidence_source_ids": [
+                        handoff_by_id[identity]["sources"][0]["source_id"]
+                    ],
                 } for identity in identities[1:]],
             })
             first = self.execute(command + ["--editorial-result-file", str(editorial)], config)
-            self.assertEqual(first.returncode, 0, first.stderr + first.stdout)
+            self.assertEqual(
+                first.returncode, 0,
+                first.stderr + first.stdout + self.failure_details(root, run_id),
+            )
             self.assertEqual(last_json(first.stdout)["action"], "article_required")
             workflow = DailyWorkflow(root / "workflow.sqlite3")
             collection_stage = workflow.stage(run_id, "collection_enrichment")
+            package = collection_stage["payload"]["understanding_results"][0]["package"]
+            available_package = package["available_packages"][0]
+            self.assertEqual(available_package["status"], "completed_with_failures")
+            self.assertEqual(package["run_id"], run_id)
+            self.assertEqual(available_package["asr"]["text"], "同 run 的来源口播事实")
+            self.assertFalse(package["evidence_quality"]["fully_verified"])
             editorial_stage = workflow.stage(run_id, "editorial")
             scripts_stage = workflow.stage(run_id, "scripts")
             all_handoff = build_scripts_handoff(
@@ -180,14 +267,33 @@ class PublicV2FlowTest(unittest.TestCase):
                 run_id, "2026-07-28", all_handoff["selected_topics"][0], 0, 1,
                 len(scripts_stage["payload"]["completed_items"]), load_writer_contract(),
             )
+            self.assertEqual(
+                article_handoff["claim_dependency_authority"]["still_frames_do_not_verify_motion"],
+                True,
+            )
+            self.assertTrue(any(
+                row.get("kind") == "recognized_audio"
+                and row.get("text") == "同 run 的来源口播事实"
+                for row in article_handoff["claim_dependency_authority"]["anchors"]
+            ))
+            self.assertTrue(any(
+                row.get("kind") == "recognized_screen_text"
+                and row.get("text") == "Codex"
+                for row in article_handoff["claim_dependency_authority"]["anchors"]
+            ))
             article = root / "article.json"
-            write(article, {
+            article_value = {
                 "packet_id": article_handoff["topic_input"]["packet_id"],
                 "article": {
                     "topic_id": identities[0], "title": "完整文章标题",
                     "body": "这是同一题的完整文章，先展开事实，再形成判断。",
                 },
-            })
+            }
+            add_claim_review(
+                article_value["article"],
+                all_handoff["selected_topics"][0]["source_evidence"],
+            )
+            write(article, article_value)
             article_call = self.execute(command + [
                 "--editorial-result-file", str(editorial),
                 "--article-item-file", str(article),
@@ -197,14 +303,19 @@ class PublicV2FlowTest(unittest.TestCase):
                 (root / "runs" / run_id / "workflow_handoff.json").read_text(encoding="utf-8")
             )
             scripts = root / "scripts.json"
-            write(scripts, {
+            script_value = {
                 "packet_id": handoff["topic_input"]["packet_id"],
                 "article_sha256": handoff["topic_input"]["article_artifact"]["sha256"],
                 "script": {
                     "topic_id": identities[0], "title": "稿件", "hook": "钩子",
                     "structure": "结构", "body": "完整正文",
                 },
-            })
+            }
+            add_claim_review(
+                script_value["script"],
+                all_handoff["selected_topics"][0]["source_evidence"],
+            )
+            write(scripts, script_value)
             second = self.execute(command + [
                 "--editorial-result-file", str(editorial),
                 "--script-item-file", str(scripts),
@@ -235,7 +346,10 @@ class PublicV2FlowTest(unittest.TestCase):
             offline = self.config(root, 1)
             command = self.command(root, run_id, fixture)
             first = self.execute(command, offline)
-            self.assertEqual(first.returncode, 0)
+            self.assertEqual(
+                first.returncode, 0,
+                first.stderr + first.stdout + self.failure_details(root, run_id),
+            )
             result = last_json(first.stdout)
             self.assertEqual(result["action"], "completed_publish_pending")
             self.assertEqual(result["status"], "completed_empty")

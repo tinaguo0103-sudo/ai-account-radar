@@ -332,7 +332,8 @@ class TrendHotspotCardsTest(unittest.TestCase):
         self.assertEqual(deep_read_counts(cards), {
             "high_potential_total": 2,
             "deep_read_attempted_total": 2,
-            "deep_read_completed_total": 1,
+            "deep_read_completed_total": 0,
+            "deep_read_partial_total": 1,
             "deep_read_failed_total": 1,
             "editorial_candidate_total": 1,
         })

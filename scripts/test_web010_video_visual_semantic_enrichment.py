@@ -110,7 +110,12 @@ class VideoVisualSemanticEnrichmentTests(unittest.TestCase):
         self.assertEqual(cards[0]["review_stage"], "understanding_failed")
         self.assertEqual(cards[0]["deep_read"]["failed_count"], 1)
         self.assertEqual(cards[0]["sources"][0]["understanding_failure"], "video_keyframes_missing")
-        self.assertEqual(results, [])
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0]["package"]["status"], "failed")
+        self.assertEqual(
+            results[0]["package"]["requested_sources"][0]["reason"],
+            "video_keyframes_missing",
+        )
 
     def test_aggregate_run_id_uses_explicit_run_when_tail_source_has_no_package(self):
         with tempfile.TemporaryDirectory() as tmp:
@@ -172,7 +177,9 @@ class VideoVisualSemanticEnrichmentTests(unittest.TestCase):
                 run_id=RUN_ID,
             )
             self.assertEqual(cards[0]["review_stage"], "ready_for_editorial")
-            self.assertEqual(cards[0]["deep_read"]["completed_count"], 2)
+            self.assertEqual(cards[0]["deep_read"]["completed_count"], 0)
+            self.assertEqual(cards[0]["deep_read"]["partial_count"], 2)
+            self.assertEqual(results[0]["package"]["status"], "completed_with_failures")
             self.assertEqual(results[0]["package"]["run_id"], RUN_ID)
 
     def test_wrong_run_package_remains_item_local_failure(self):
@@ -196,7 +203,12 @@ class VideoVisualSemanticEnrichmentTests(unittest.TestCase):
             )
             self.assertEqual(cards[0]["review_stage"], "understanding_failed")
             self.assertEqual(cards[0]["sources"][0]["understanding_failure"], "video_keyframe_run_mismatch")
-            self.assertEqual(results, [])
+            self.assertEqual(len(results), 1)
+            self.assertEqual(results[0]["package"]["status"], "failed")
+            self.assertEqual(
+                results[0]["package"]["requested_sources"][0]["reason"],
+                "video_keyframe_run_mismatch",
+            )
 
     def test_paths_survive_editorial_and_writer_handoffs(self):
         with tempfile.TemporaryDirectory() as tmp:

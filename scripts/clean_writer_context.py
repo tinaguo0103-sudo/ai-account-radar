@@ -27,7 +27,7 @@ from daily_workflow import DailyWorkflow, WorkflowConflict, canonical
 import spoken_script_runtime as script_runtime
 
 
-CONTEXT_SCHEMA_VERSION = 2
+CONTEXT_SCHEMA_VERSION = 3
 WRITER_MODEL = "gpt-5.6-luna"
 WRITER_REASONING_EFFORT = "max"
 CONTEXT_KIND = "fresh_non_user_visible_content_only"
@@ -47,6 +47,7 @@ _ARTICLE_REFERENCE_FILES = tuple(script_runtime.ARTICLE_REQUIRED_REFERENCES)
 _REFERENCE_FILES = tuple(script_runtime.ALL_REQUIRED_REFERENCES)
 _PATH_LINK_RE = re.compile(r"(?:^|[`( ])((?:cases|voice-samples)/[A-Za-z0-9._-]+\.md)(?:[`), .]|$)")
 _READ_TRACE_VERSION = 1
+_CLAIM_REVIEW_FIELDS = {"evidence_sha256", "content_sha256", "excluded_warning_ids", "claims"}
 
 
 Runner = Callable[[list[str], str, Path, Path], Any]
@@ -230,6 +231,7 @@ def _context_paths(artifact_root: Path | str, run_id: str) -> dict[str, Path]:
         "context": context, "input": context / "clean_root",
         "manifest": context / "clean_root" / "manifest.json", "prompt": context / "clean_root" / "writer_prompt.md",
         "schema": context / "clean_root" / "turn_output_schema.json", "output": context / "output.json",
+        "claim_authority": context / "clean_root" / "claim_authority.json",
         "events": context / "events_summary.json", "event_ledger": context / "events.jsonl", "identity": context / "identity.json",
         "receipt": context / "receipt.json", "turns": context / "turns",
         "stderr": context / "app_server_stderr.log",
@@ -286,7 +288,7 @@ def _prepare_context(artifact_root: Path | str, run_id: str, business_date: str,
         "schema_version": CONTEXT_SCHEMA_VERSION, "identity_hash": identity_hash, "run_id": run_id, "business_date": business_date,
         "model": WRITER_MODEL, "reasoning_effort": WRITER_REASONING_EFFORT, "ephemeral": True, "context_kind": CONTEXT_KIND,
         "selected_topic_ids": _topic_ids(topics), "static_allowed_files": sorted(expected_static),
-        "dynamic_current_files": ["current_topic.json", "frozen_article.json"], "forbidden_paths": list(_FORBIDDEN_PATH_TOKENS),
+        "dynamic_current_files": ["current_topic.json", "frozen_article.json", "claim_authority.json"], "forbidden_paths": list(_FORBIDDEN_PATH_TOKENS),
         "controlled_case_files": case_files, "voice_sample_files": voice_files,
         "skill_files": [
             {"relative_path": relative, "sha256": _sha256((input_root / ("skill/SKILL.md" if relative == "SKILL.md" else f"skill/{relative}")).read_bytes()), "bytes": (input_root / ("skill/SKILL.md" if relative == "SKILL.md" else f"skill/{relative}")).stat().st_size, "optional": relative.startswith("references/cases/") or relative.startswith("references/voice-samples/")}
@@ -304,9 +306,38 @@ def _prepare_context(artifact_root: Path | str, run_id: str, business_date: str,
 
 def _output_schema() -> dict[str, Any]:
     failure = {"type": "object", "additionalProperties": False, "required": ["topic_id", "reason", "detail"], "properties": {"topic_id": {"type": "string"}, "reason": {"type": "string", "enum": ["material_or_angle_insufficiency"]}, "detail": {"type": "string"}}}
-    article = {"type": "object", "additionalProperties": False, "required": ["topic_id", "title", "body"], "properties": {"topic_id": {"type": "string"}, "title": {"type": "string"}, "body": {"type": "string"}}}
-    script = {"type": "object", "additionalProperties": False, "required": ["topic_id", "title", "hook", "structure", "body"], "properties": {"topic_id": {"type": "string"}, "title": {"type": "string"}, "hook": {"type": "string"}, "structure": {"type": "string"}, "body": {"type": "string"}}}
+    claim_review = {
+        "type": "object", "additionalProperties": False,
+        "required": sorted(_CLAIM_REVIEW_FIELDS),
+        "properties": {
+            "evidence_sha256": {"type": "string"},
+            "content_sha256": {"type": "string"},
+            "excluded_warning_ids": {"type": "array", "items": {"type": "string"}},
+            "claims": {"type": "array", "items": {
+                "type": "object", "additionalProperties": False,
+                "required": ["field", "text", "scope", "evidence_ids"],
+                "properties": {
+                    "field": {"type": "string", "enum": ["title", "hook", "structure", "body"]},
+                    "text": {"type": "string"},
+                    "scope": {"type": "string", "enum": ["source_quote", "source_context", "interpretation", "motion_observation", "external_fact"]},
+                    "evidence_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+                },
+            }},
+        },
+    }
+    article = {"type": "object", "additionalProperties": False, "required": ["topic_id", "title", "body"], "properties": {"topic_id": {"type": "string"}, "title": {"type": "string"}, "body": {"type": "string"}, "claim_review": claim_review}}
+    script = {"type": "object", "additionalProperties": False, "required": ["topic_id", "title", "hook", "structure", "body"], "properties": {"topic_id": {"type": "string"}, "title": {"type": "string"}, "hook": {"type": "string"}, "structure": {"type": "string"}, "body": {"type": "string"}, "claim_review": claim_review}}
     return {"type": "object", "additionalProperties": False, "required": ["run_id", "business_date", "topic_id", "phase", "article", "script", "failure"], "properties": {"run_id": {"type": "string"}, "business_date": {"type": "string"}, "topic_id": {"type": "string"}, "phase": {"type": "string", "enum": sorted(_TURN_PHASES)}, "article": {"anyOf": [{"type": "null"}, article]}, "script": {"anyOf": [{"type": "null"}, script]}, "failure": {"anyOf": [{"type": "null"}, failure]}}}
+
+
+def _claim_authority(topic: Mapping[str, Any]) -> dict[str, Any]:
+    evidence = topic.get("source_evidence") if isinstance(topic.get("source_evidence"), dict) else {}
+    contract = evidence.get("claim_contract") if isinstance(evidence.get("claim_contract"), dict) else {}
+    keys = (
+        "required", "evidence_sha256", "anchors", "warnings", "claim_review_keys",
+        "claim_keys", "content_hash_fields", "content_hash_rule", "still_frames_do_not_verify_motion",
+    )
+    return {key: contract[key] for key in keys if key in contract}
 
 
 def _prompt(run_id: str, business_date: str, topic: Mapping[str, Any], phase: str, *, common_references_read: bool = False) -> str:
@@ -324,10 +355,24 @@ def _prompt(run_id: str, business_date: str, topic: Mapping[str, Any], phase: st
         stage = "article"
     else:
         skill_instruction = "The active R4 Skill and shared managed references were already read earlier in this same context." if common_references_read else "Read skill/SKILL.md completely and follow the active R4 contract."
-        source_instruction = "Read frozen_article.json completely; it is the only current-topic prose input."
+        source_instruction = "Read frozen_article.json completely; it is the only current-topic prose input. Read claim_authority.json only for bounded dependency and warning authority; do not read current_topic.json or any raw topic material."
         output_instruction = "Return one object with script set and article/failure null."
         stage = "spoken adaptation"
         extra = "Read references/spoken-adaptation.md completely and use the frozen article as the sole source for facts and argument. Do not read current_topic.json or any prior topic body."
+    claim_contract = _claim_authority(topic)
+    claim_instruction = ""
+    if claim_contract.get("required") is True:
+        claim_instruction = (
+            "\nA source claim contract is required. Add claim_review to the article/script. "
+            "Use the exact evidence_sha256, list every warning ID in excluded_warning_ids, "
+            "and provide one claim row per non-empty paragraph for each available content "
+            "field in field order. Each row must repeat the paragraph exactly, choose a "
+            "scope allowed by every cited anchor, and cite only evidence_ids in the bounded "
+            "claim authority. Compute content_sha256 from available title/hook/structure/body "
+            "keys as UTF-8 JSON with ensure_ascii=False, sorted keys, and compact separators. "
+            "Do not treat OCR/ASR or still frames as semantic verification; still frames never "
+            "support motion_observation. Dependency bookkeeping does not replace semantic judgment."
+        )
     return f"""You are the sole prose owner in one fresh, non-user-visible, content-only Writer context.
 
 Exact run: {run_id}
@@ -350,6 +395,7 @@ material. Never read AGENTS.md, Git, PM/QA/Production material, SQLite, publishe
 drafts, failed drafts, another run, or private/retired references.
 
 {output_instruction}
+{claim_instruction}
 Return exactly this JSON shape and no markdown fences or commentary:
 {{
   "run_id": "{run_id}", "business_date": "{business_date}",
@@ -386,16 +432,20 @@ def _validate_turn_output(value: Any, run_id: str, business_date: str, topic: Ma
         if (article is None) == (failure is None) or script is not None:
             raise WorkflowConflict("clean_writer_context_output_phase_invalid")
         if article is not None:
-            if not isinstance(article, dict) or set(article) != {"topic_id", "title", "body"} or article.get("topic_id") != topic_id:
+            if not isinstance(article, dict) or set(article) not in ({"topic_id", "title", "body"}, {"topic_id", "title", "body", "claim_review"}) or article.get("topic_id") != topic_id:
                 raise WorkflowConflict("clean_writer_context_output_article_invalid")
+            if _claim_authority(topic).get("required") is True and not isinstance(article.get("claim_review"), dict):
+                raise WorkflowConflict("clean_writer_context_output_claim_review_missing")
             _required_text(article.get("title"), "article_title")
             _required_text(article.get("body"), "article_body")
     else:
         if article is not None or (script is None) == (failure is None):
             raise WorkflowConflict("clean_writer_context_output_phase_invalid")
         if script is not None:
-            if not isinstance(script, dict) or set(script) != {"topic_id", "title", "hook", "structure", "body"} or script.get("topic_id") != topic_id:
+            if not isinstance(script, dict) or set(script) not in ({"topic_id", "title", "hook", "structure", "body"}, {"topic_id", "title", "hook", "structure", "body", "claim_review"}) or script.get("topic_id") != topic_id:
                 raise WorkflowConflict("clean_writer_context_output_script_invalid")
+            if _claim_authority(topic).get("required") is True and not isinstance(script.get("claim_review"), dict):
+                raise WorkflowConflict("clean_writer_context_output_claim_review_missing")
             for field in ("title", "hook", "structure", "body"):
                 _required_text(script.get(field), f"script_{field}")
     if failure is not None:
@@ -525,7 +575,7 @@ def _validate_read_trace(events: list[dict[str, Any]], phase: str, state: Mappin
         if not next_state.get("common_references_read"):
             required = ["skill/SKILL.md", *[f"skill/{relative}" for relative in _ARTICLE_REFERENCE_FILES], *required]
     else:
-        required = ["skill/references/spoken-adaptation.md", "frozen_article.json"]
+        required = ["skill/references/spoken-adaptation.md", "frozen_article.json", "claim_authority.json"]
     missing = [relative for relative in required if not any(relative in command for command in commands)]
     if missing:
         raise WorkflowConflict("clean_writer_context_skill_read_trace_incomplete")
@@ -989,10 +1039,18 @@ def _write_turn_input(paths: Mapping[str, Path], run_id: str, business_date: str
         _atomic_json(frozen, {"run_id": run_id, "business_date": business_date, "phase": phase, "article": article})
         frozen.chmod(0o444)
         active = frozen
+        _atomic_json(paths["claim_authority"], _claim_authority(topic))
+        paths["claim_authority"].chmod(0o444)
     prompt = _prompt(run_id, business_date, topic, phase, common_references_read=common_references_read)
     _atomic_text(paths["prompt"], prompt)
     paths["prompt"].chmod(0o444)
-    return _sha256(prompt.encode("utf-8")), _sha256(active.read_bytes())
+    input_digest = _sha256(active.read_bytes())
+    if phase == "spoken_adaptation_required":
+        input_digest = _sha256(canonical({
+            "frozen_article_sha256": input_digest,
+            "claim_authority_sha256": _sha256(paths["claim_authority"].read_bytes()),
+        }).encode("utf-8"))
+    return _sha256(prompt.encode("utf-8")), input_digest
 
 
 def _turn_records(paths: Mapping[str, Path]) -> list[dict[str, Any]]:

@@ -40,6 +40,8 @@ from trend_hotspot_cards import (
     select_representative_sources,
     validate_candidate_specific_decisions,
 )
+from source_claim_validation import claim_contract, validate_claim_dependencies
+from video_evidence_quality import evidence_quality as video_quality
 from website_publisher_client import publish_terminal
 from video_runtime_readiness import RuntimeReadinessError, check_runtime_readiness
 import spoken_script_runtime as script_runtime
@@ -1153,15 +1155,38 @@ def enrich(
     elif args.video_mode == "normal" and requested_candidate_ids is not None and not representative_video_candidates:
         packages, producer_failures = [], []
     elif args.video_mode == "normal":
-        produced = produce(args, discovered_candidates=representative_video_candidates)
+        produced = (
+            produce(
+                args,
+                discovered_candidates=representative_video_candidates,
+                on_demand_ids={f"douyin:{row['aweme_id']}" for row in representative_video_candidates},
+                include_automatic=False,
+            )
+            if requested_candidate_ids is not None
+            else produce(args, discovered_candidates=representative_video_candidates)
+        )
         packages = produced["packages"]
         producer_failures = [{
             "item_id": str(row.get("item_id") or row.get("candidate_id") or ""),
-            "source_url": row.get("source_url"),
+            "source_url": row.get("source_url") or row.get("source_url"),
             "reason": str(row.get("reason") or row.get("failure") or "video_understanding_failed"),
         } for row in produced["failures"]]
     else:
         packages, producer_failures = [], []
+    if args.video_mode == "normal" and requested_candidate_ids is not None and not args.qa_frozen_packages:
+        allowed_statuses = {
+            "completed", "completed_with_failures", "failed", "media_read_pending_resource_budget",
+        }
+        if (
+            len(packages) != len(requested_source_ids)
+            or {str(row.get("source_url") or "") for row in packages} != requested_source_ids
+            or any(
+                row.get("status") not in allowed_statuses
+                or row.get("temporary_media_remaining") != 0
+                for row in packages
+            )
+        ):
+            raise WorkflowConflict("model_requested_media_coverage_incomplete")
     package_by_url = {
         str(row.get("source_url") or ""): row for row in packages
         if row.get("status") in {"completed", "completed_with_failures"}
@@ -1385,7 +1410,12 @@ def validate_editorial_understanding_consistency(
             raise WorkflowConflict("editorial_completed_evidence_missing")
 
 
-def validate_scripts(run_id: str, result: dict[str, Any], selected: set[str]) -> None:
+def validate_scripts(
+    run_id: str,
+    result: dict[str, Any],
+    selected: set[str],
+    source_evidence_by_topic: dict[str, dict[str, Any]] | None = None,
+) -> None:
     if result.get("run_id") != run_id or not isinstance(result.get("scripts"), list):
         raise WorkflowConflict("scripts_result_invalid")
     seen: set[str] = set()
@@ -1396,6 +1426,10 @@ def validate_scripts(run_id: str, result: dict[str, Any], selected: set[str]) ->
         seen.add(identity)
         if not all(str(row.get(key) or "") for key in ("title", "hook", "structure", "body")):
             raise WorkflowConflict("script_result_incomplete")
+        evidence = (source_evidence_by_topic or {}).get(identity)
+        contract = evidence.get("claim_contract") if isinstance(evidence, dict) else None
+        if isinstance(contract, dict) and contract.get("required"):
+            validate_claim_dependencies(row, evidence, row.get("claim_review"))
     failed: set[str] = set()
     for row in result.get("failures", []):
         identity = str(row.get("topic_id") or "")
@@ -1479,7 +1513,9 @@ def compact_video_understanding(package: dict[str, Any] | None) -> dict[str, Any
 
 def compact_video_evidence(package: dict[str, Any] | None) -> dict[str, Any] | None:
     """Expose same-run observations as evidence, never as a writing outline."""
-    if not package or package.get("status") not in {"completed", "completed_with_failures"}:
+    if not package or package.get("status") not in {
+        "completed", "completed_with_failures", "media_read_pending_resource_budget", "failed",
+    }:
         return None
     asr = package.get("asr") if isinstance(package.get("asr"), dict) else {}
     screen_rows = package.get("screen_facts")
@@ -1491,6 +1527,14 @@ def compact_video_evidence(package: dict[str, Any] | None) -> dict[str, Any] | N
     if not isinstance(keyframes, list):
         keyframes = []
     evidence = {
+        "status": package.get("status"),
+        "media_resolution_status": package.get("media_resolution_status"),
+        "actual_item_type": (package.get("evidence_quality") or {}).get("actual_item_type")
+        if isinstance(package.get("evidence_quality"), dict) else None,
+        "evidence_quality": video_quality(package),
+        "unresolved_terms": package.get("unresolved_terms") or [],
+        "failures": package.get("failures") or [],
+        "requested_sources": package.get("requested_sources") or [],
         "caption_timeline": package.get("caption_timeline") or [],
         "asr_supplement": asr.get("text") or package.get("asr_supplement") or None,
         "screen_facts": [
@@ -1512,26 +1556,32 @@ def compact_video_evidence(package: dict[str, Any] | None) -> dict[str, Any] | N
             if isinstance(row, dict)
         ],
     }
+    fallback = package.get("full_large_v3_fallback")
+    if isinstance(fallback, dict):
+        evidence["whisper_fallback"] = {
+            key: fallback[key]
+            for key in ("text", "segments", "timestamp_basis", "text_sha256")
+            if fallback.get(key) is not None
+        }
     representatives = package.get("representative_packages")
-    if isinstance(representatives, list) and representatives:
+    if isinstance(representatives, list):
         evidence["representative_sources"] = [
             compact_video_evidence(row)
             for row in representatives
             if isinstance(row, dict)
         ]
-    else:
-        # A selected topic can be below the traffic/deep-read threshold while
-        # still carrying a committed same-run package. Do not drop that
-        # source-owned ASR/OCR/keyframe evidence merely because no
-        # representative was budgeted; the writer must be able to read the
-        # material that editorial selected.
-        available = package.get("available_packages")
-        if isinstance(available, list):
-            evidence["representative_sources"] = [
-                compact_video_evidence(row)
-                for row in available
-                if isinstance(row, dict)
-            ]
+    available = package.get("available_packages")
+    if isinstance(available, list):
+        representative_urls = {
+            str(row.get("source_url") or "") for row in representatives or []
+            if isinstance(row, dict)
+        }
+        additional = [
+            row for row in available
+            if isinstance(row, dict) and str(row.get("source_url") or "") not in representative_urls
+        ]
+        if additional:
+            evidence["additional_sources"] = [compact_video_evidence(row) for row in additional]
     return evidence
 
 
@@ -1546,7 +1596,7 @@ def compact_source_facts(rows: list[dict[str, Any]]) -> dict[str, Any]:
         ),
         "caption": ("caption", "caption_text", "字幕", "caption_timeline"),
         "transcript": (
-            "transcript", "asr_text", "正文/字幕/简介片段", "口播转写", "ASR",
+            "transcript", "asr_text", "口播转写", "ASR",
         ),
         "public_claims": (
             "public_claims", "supported_claims", "公开事实", "解析说明",
@@ -1729,6 +1779,7 @@ def build_scripts_handoff(
             ],
             "video": compact_video_evidence(understanding.get(topic_id)),
         }
+        source_evidence["claim_contract"] = claim_contract(source_evidence)
         selected_topics.append({
             "topic_id": topic_id,
             "trend_event_id": candidate.get("trend_event_id") or topic_id,
@@ -2845,6 +2896,10 @@ def main() -> int:
                 artifact_root=args.artifact_root,
             )
             script_topics = all_handoff["selected_topics"]
+            source_evidence_by_topic = {
+                str(topic.get("topic_id") or ""): topic.get("source_evidence") or {}
+                for topic in script_topics
+            }
             writer_authority = script_runtime.writer_authority_manifest(
                 source_root=ROOT / "skills" / WRITER_SKILL,
                 require_source_parity=True,
@@ -2896,7 +2951,7 @@ def main() -> int:
                     emit_handoff(args, next_handoff)
                     return 0
                 scripts = outcome["scripts"]
-                validate_scripts(args.run_id, scripts, selected)
+                validate_scripts(args.run_id, scripts, selected, source_evidence_by_topic)
                 for name, diagnostic in zip(WRITER_SKILLS, skill_diagnostics()[1:]):
                     workflow.record_skill_diagnostic(
                         args.run_id, "scripts", "batch", name,
@@ -2944,7 +2999,7 @@ def main() -> int:
                     emit_handoff(args, next_handoff)
                     return 0
                 scripts = outcome["scripts"]
-                validate_scripts(args.run_id, scripts, selected)
+                validate_scripts(args.run_id, scripts, selected, source_evidence_by_topic)
                 for name, diagnostic in zip(WRITER_SKILLS, skill_diagnostics()[1:]):
                     workflow.record_skill_diagnostic(
                         args.run_id, "scripts", "batch", name,

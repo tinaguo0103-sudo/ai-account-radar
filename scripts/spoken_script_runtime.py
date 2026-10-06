@@ -16,6 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from daily_workflow import WorkflowConflict, canonical
+from source_claim_validation import validate_claim_dependencies
 
 
 RUNTIME_SCHEMA_VERSION = 4
@@ -203,20 +204,23 @@ def new_checkpoint(
     }
 
 
-def _validate_article(article: Any, topic_id: str) -> dict[str, str]:
-    if not isinstance(article, dict) or set(article) != {"topic_id", "title", "body"}:
+def _validate_article(article: Any, topic_id: str) -> dict[str, Any]:
+    required = {"topic_id", "title", "body"}
+    if not isinstance(article, dict) or set(article) - (required | {"claim_review"}) or not required.issubset(article):
         raise WorkflowConflict("article_topic_submission_schema_invalid")
     if article.get("topic_id") != topic_id:
         raise WorkflowConflict("article_topic_not_current")
     if not all(str(article.get(key) or "").strip() for key in ("title", "body")):
         raise WorkflowConflict("article_topic_submission_incomplete")
-    return {key: str(article[key]) for key in ("topic_id", "title", "body")}
+    value = {key: str(article[key]) for key in ("topic_id", "title", "body")}
+    if "claim_review" in article:
+        value["claim_review"] = article["claim_review"]
+    return value
 
 
-def _validate_script(script: Any, topic_id: str) -> dict[str, str]:
-    if not isinstance(script, dict) or set(script) != {
-        "topic_id", "title", "hook", "structure", "body",
-    }:
+def _validate_script(script: Any, topic_id: str) -> dict[str, Any]:
+    required = {"topic_id", "title", "hook", "structure", "body"}
+    if not isinstance(script, dict) or set(script) - (required | {"claim_review"}) or not required.issubset(script):
         raise WorkflowConflict("script_topic_submission_schema_invalid")
     if script.get("topic_id") != topic_id:
         raise WorkflowConflict("script_topic_not_current")
@@ -224,9 +228,12 @@ def _validate_script(script: Any, topic_id: str) -> dict[str, str]:
         "title", "hook", "structure", "body",
     )):
         raise WorkflowConflict("script_topic_submission_incomplete")
-    return {key: str(script[key]) for key in (
+    value = {key: str(script[key]) for key in (
         "topic_id", "title", "hook", "structure", "body",
     )}
+    if "claim_review" in script:
+        value["claim_review"] = script["claim_review"]
+    return value
 
 
 def _validate_failure(failure: Any, topic_id: str) -> dict[str, str]:
@@ -650,13 +657,25 @@ def topic_packet(
             },
         }
     if phase == "article_required":
+        contract = (topic.get("source_evidence") or {}).get("claim_contract") or {}
         packet["required_article_input"] = {
             "keys": ["packet_id", "article"],
-            "article_keys": ["topic_id", "title", "body"],
+            "article_keys": [
+                "topic_id", "title", "body",
+                *( ["claim_review"] if contract.get("required") else [] ),
+            ],
             "failure_keys": ["packet_id", "failure"],
             "current_topic_only": True,
             "material_or_angle_insufficiency_is_item_local": True,
         }
+        if contract.get("required"):
+            packet["claim_dependency_authority"] = {
+                key: contract[key]
+                for key in (
+                    "evidence_sha256", "anchors", "warnings", "still_frames_do_not_verify_motion", "claim_review_keys",
+                    "claim_keys", "content_hash_fields", "content_hash_rule",
+                )
+            }
     else:
         article_item = _topic_entries(checkpoint or {}, topic_id)["article"]
         if not article_item:
@@ -682,11 +701,23 @@ def topic_packet(
         packet["required_spoken_adaptation_input"] = {
             "keys": ["packet_id", "article_sha256", "script"],
             "failure_keys": ["packet_id", "article_sha256", "failure"],
-            "script_keys": ["topic_id", "title", "hook", "structure", "body"],
+            "script_keys": [
+                "topic_id", "title", "hook", "structure", "body",
+                *( ["claim_review"] if ((topic.get("source_evidence") or {}).get("claim_contract") or {}).get("required") else [] ),
+            ],
             "current_topic_only": True,
             "frozen_article_only": True,
             "material_or_angle_insufficiency_is_item_local": True,
         }
+        contract = (topic.get("source_evidence") or {}).get("claim_contract") or {}
+        if contract.get("required"):
+            packet["claim_dependency_authority"] = {
+                key: contract[key]
+                for key in (
+                    "evidence_sha256", "anchors", "warnings", "still_frames_do_not_verify_motion", "claim_review_keys",
+                    "claim_keys", "content_hash_fields", "content_hash_rule",
+                )
+            }
     return packet
 
 
@@ -780,6 +811,10 @@ def submit_article(
                 writer_authority=writer_authority, artifact_root=artifact_root,
             )
             article = _validate_article(submitted.get("article"), topic_id)
+            evidence = topic.get("source_evidence") if isinstance(topic.get("source_evidence"), dict) else None
+            contract = evidence.get("claim_contract") if isinstance(evidence, dict) else None
+            if isinstance(contract, dict) and contract.get("required"):
+                validate_claim_dependencies(article, evidence, article.get("claim_review"))
             if (
                 submitted.get("packet_id")
                 == _packet_id(run_id, business_date, topic, "article_required")
@@ -810,6 +845,10 @@ def submit_article(
     created_path: Path | None = None
     if valid_article:
         article = _validate_article(submitted.get("article"), topic_id)
+        evidence = topic.get("source_evidence") if isinstance(topic.get("source_evidence"), dict) else None
+        contract = evidence.get("claim_contract") if isinstance(evidence, dict) else None
+        if isinstance(contract, dict) and contract.get("required"):
+            validate_claim_dependencies(article, evidence, article.get("claim_review"))
         metadata = write_article_artifact(artifact_root, run_id, business_date, article)
         if metadata.get("created"):
             created_path = Path(metadata["path"])
@@ -879,6 +918,10 @@ def submit_spoken_adaptation(
     )
     if valid_script:
         script = _validate_script(submitted.get("script"), topic_id)
+        evidence = topic.get("source_evidence") if isinstance(topic.get("source_evidence"), dict) else None
+        contract = evidence.get("claim_contract") if isinstance(evidence, dict) else None
+        if isinstance(contract, dict) and contract.get("required"):
+            validate_claim_dependencies(script, evidence, script.get("claim_review"))
         item = {
             "kind": "spoken", "topic_id": topic_id,
             "article": metadata, "script": script,

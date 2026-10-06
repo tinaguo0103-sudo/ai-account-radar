@@ -19,15 +19,18 @@ import sys
 import time
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
+from email.utils import parsedate_to_datetime
 from html.parser import HTMLParser
 from pathlib import Path
 from typing import Any, Callable
 from urllib.error import HTTPError, URLError
+from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from urllib.request import Request, urlopen
 
 import push_to_feishu as feishu
 import topic_flow_rework as flow
 from feishu_table_registry import configured_table_id, resolve_table_id, table_name
+from source_control import DEFAULT_DB as DEFAULT_SOURCE_DB, SourceControl
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -40,6 +43,9 @@ DEFAULT_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
 )
+AIHOT_PARSER_VERSION = "content-items-v2"
+AIHOT_MAX_ATTEMPTS = 3
+AIHOT_RETRY_BUDGET_SECONDS = 30.0
 
 
 BUSINESS_KEYWORDS = {
@@ -248,17 +254,63 @@ def fetch_json(url: str) -> tuple[dict[str, Any] | None, str, str]:
         return None, f"failed:JSONDecodeError line={exc.lineno} col={exc.colno} msg={exc.msg}", preview
 
 
+class AIHOTParseError(ValueError):
+    pass
+
+
+def aihot_source_name(item: dict[str, Any], fallback: str) -> str:
+    value = item.get("source", item.get("sourceName", ""))
+    if isinstance(value, dict):
+        value = value.get("name") or value.get("displayName") or ""
+    return cell_text(value).strip() or fallback
+
+
+def aihot_original_url(item: dict[str, Any]) -> str:
+    links = item.get("links")
+    if isinstance(links, dict):
+        original = links.get("original")
+        if isinstance(original, dict):
+            original = original.get("url") or original.get("href")
+        if original:
+            return cell_text(original).strip()
+    return cell_text(item.get("sourceUrl") or item.get("url") or "").strip()
+
+
+def aihot_sections(data: dict[str, Any], source: dict[str, Any]) -> tuple[list[dict[str, Any]], str, str]:
+    report = data.get("report")
+    if report is not None:
+        if not isinstance(report, dict):
+            raise AIHOTParseError("daily_report_invalid")
+        sections = report.get("sections")
+        generated_at = cell_text(report.get("generatedAt") or "")
+        daily_date = cell_text(report.get("date") or "")
+    else:
+        sections = data.get("sections")
+        generated_at = cell_text(data.get("generatedAt") or "")
+        daily_date = cell_text(data.get("date") or "")
+    if not isinstance(sections, list):
+        raise AIHOTParseError("daily_sections_missing")
+    return sections, generated_at, daily_date
+
+
 def aihot_daily_rows(data: dict[str, Any], source: dict[str, Any]) -> list[ContentItem]:
+    sections, generated_at, daily_date = aihot_sections(data, source)
     rows: list[ContentItem] = []
-    generated_at = data.get("generatedAt", "")
-    daily_date = data.get("date", "")
-    for section in data.get("sections", []) or []:
-        label = section.get("label", "") or "AIHOT日报"
-        for item in section.get("items", []) or []:
-            title = item.get("title", "")
-            url = item.get("sourceUrl", "") or item.get("url", "")
-            summary = item.get("summary", "") or ""
-            source_name = item.get("sourceName", "") or source["account_name"]
+    for section in sections:
+        if not isinstance(section, dict):
+            raise AIHOTParseError("daily_section_invalid")
+        label = cell_text(section.get("label") or "AIHOT日报")
+        section_items = section.get("items")
+        if not isinstance(section_items, list):
+            raise AIHOTParseError("daily_section_items_invalid")
+        for item in section_items:
+            if not isinstance(item, dict):
+                raise AIHOTParseError("daily_item_invalid")
+            title = cell_text(item.get("title") or item.get("originalTitle") or "")
+            url = aihot_original_url(item)
+            summary = cell_text(item.get("summary") or item.get("description") or "")
+            source_name = aihot_source_name(item, source["account_name"])
+            published_at = cell_text(item.get("publishedAt") or generated_at or daily_date)
             body = f"{summary} {label}".strip()
             rows.append(ContentItem(
                 source_type="AIHOT热点",
@@ -269,7 +321,7 @@ def aihot_daily_rows(data: dict[str, Any], source: dict[str, Any]) -> list[Conte
                 content_shape=f"日报条目/{label}",
                 cover_text="",
                 body_snippet=body,
-                published_at=generated_at or daily_date,
+                published_at=published_at,
                 comment_questions="",
                 ocr_text="",
                 fetch_method="aihot_daily_api",
@@ -284,6 +336,94 @@ def aihot_daily_rows(data: dict[str, Any], source: dict[str, Any]) -> list[Conte
                 body_truncated="否",
             ))
     return rows
+
+
+def aihot_selected_rows(data: dict[str, Any], source: dict[str, Any]) -> list[ContentItem]:
+    values = data.get("items")
+    if not isinstance(values, list):
+        raise AIHOTParseError("selected_items_missing")
+    rows: list[ContentItem] = []
+    for item in values:
+        if not isinstance(item, dict):
+            raise AIHOTParseError("selected_item_invalid")
+        title = cell_text(item.get("title") or item.get("originalTitle") or "")
+        url = aihot_original_url(item)
+        summary = cell_text(item.get("summary") or item.get("description") or "")
+        category = cell_text(item.get("category") or item.get("categoryName") or "")
+        source_name = aihot_source_name(item, source["account_name"])
+        published_at = cell_text(item.get("publishedAt") or "")
+        body = f"{summary} {category}".strip()
+        rows.append(ContentItem(
+            source_type="AIHOT热点",
+            platform="AIHOT",
+            account_name=source_name,
+            title=title,
+            url=url,
+            content_shape="热点条目",
+            cover_text="",
+            body_snippet=body,
+            published_at=published_at,
+            comment_questions="",
+            ocr_text="",
+            fetch_method="aihot_api",
+            fetch_status="ok",
+            failure_reason="",
+            fingerprint=fingerprint(url, title, source_name),
+            column="",
+            learn_focus=source.get("learn_focus", ""),
+            do_not_copy=source.get("do_not_copy", ""),
+            convert_direction=source.get("convert_direction", ""),
+            raw_text_length=len(body),
+            body_truncated="否",
+        ))
+    return rows
+
+
+def parse_aihot_payload(data: Any, source: dict[str, Any]) -> tuple[list[ContentItem], str]:
+    if not isinstance(data, dict):
+        raise AIHOTParseError("payload_not_object")
+    is_daily = source.get("id") == "aihot_daily" or "/dailies/" in urlsplit(str(source.get("url") or "")).path
+    if is_daily:
+        return aihot_daily_rows(data, source), "daily"
+    return aihot_selected_rows(data, source), "selected"
+
+
+def canonical_aihot_request(url: str) -> tuple[str, str, str, str]:
+    parsed = urlsplit(url)
+    endpoint = urlunsplit((parsed.scheme.lower(), parsed.netloc.lower(), parsed.path, "", ""))
+    query_pairs = sorted(parse_qsl(parsed.query, keep_blank_values=True))
+    query_json = json.dumps(query_pairs, ensure_ascii=False, separators=(",", ":"))
+    query = urlencode(query_pairs, doseq=True)
+    versioned_key = f"{endpoint}?{query}|{AIHOT_PARSER_VERSION}"
+    cache_key = hashlib.sha256(versioned_key.encode("utf-8")).hexdigest()
+    return endpoint, query_json, cache_key, AIHOT_PARSER_VERSION
+
+
+def retry_after_seconds(value: str | None, *, now_value: datetime) -> float | None:
+    if not value:
+        return None
+    try:
+        return max(0.0, float(int(value.strip())))
+    except (TypeError, ValueError):
+        pass
+    try:
+        retry_at = parsedate_to_datetime(value)
+    except (TypeError, ValueError, OverflowError):
+        return None
+    if retry_at.tzinfo is None:
+        retry_at = retry_at.replace(tzinfo=timezone.utc)
+    return max(0.0, (retry_at.astimezone(timezone.utc) - now_value).total_seconds())
+
+
+def parse_aihot_json(raw: bytes, charset: str = "utf-8") -> tuple[str, Any]:
+    try:
+        body = raw.decode(charset)
+    except (LookupError, UnicodeDecodeError) as exc:
+        raise AIHOTParseError("response_charset_invalid") from exc
+    try:
+        return body, json.loads(body)
+    except json.JSONDecodeError as exc:
+        raise AIHOTParseError(f"response_json_invalid_line_{exc.lineno}_col_{exc.colno}") from exc
 
 
 def meta_content(page: str, names: list[str]) -> str:
@@ -380,53 +520,126 @@ def extract_video_shallow(url: str, fallback: dict[str, Any]) -> ContentItem:
     )
 
 
-def aihot_items(source: dict[str, Any], fetch: bool) -> tuple[list[ContentItem], list[str]]:
-    logs: list[str] = []
+def fetch_aihot_payload(
+    source: dict[str, Any],
+    source_db: Path | str,
+    *,
+    opener: Callable[..., Any] | None = None,
+    sleeper: Callable[[float], None] = time.sleep,
+    monotonic: Callable[[], float] = time.monotonic,
+    wall_clock: Callable[[], datetime] = lambda: datetime.now(timezone.utc),
+) -> tuple[list[ContentItem], str, str]:
+    url = str(source.get("url") or "").strip()
+    if not url:
+        return [], "skipped_missing_url", ""
+    endpoint, query_json, cache_key, parser_version = canonical_aihot_request(url)
+    cache = SourceControl(source_db)
+    entry = cache.get_http_cache(cache_key)
+    cache_identity_matches = bool(entry) and (
+        entry.get("endpoint") == endpoint
+        and entry.get("query_json") == query_json
+        and entry.get("parser_version") == parser_version
+    )
+    conditional_etag = str(entry.get("etag") or "") if cache_identity_matches and entry else ""
+
+    def rows_from_cache() -> tuple[list[ContentItem] | None, str]:
+        if not entry or not cache_identity_matches:
+            return None, "aihot_304_without_exact_cache"
+        body = str(entry.get("body") or "")
+        expected_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+        if not body or expected_hash != entry.get("body_sha256"):
+            return None, "aihot_cache_body_hash_mismatch"
+        try:
+            rows, _kind = parse_aihot_payload(json.loads(body), source)
+        except (json.JSONDecodeError, AIHOTParseError, TypeError, KeyError) as exc:
+            reason = str(exc) if isinstance(exc, AIHOTParseError) else "aihot_cache_payload_invalid"
+            return None, f"aihot_cache_invalid:{reason}"
+        return rows, ""
+
+    opener = opener or urlopen
+    started = monotonic()
+    attempt = 0
+    while attempt < AIHOT_MAX_ATTEMPTS:
+        headers = {"User-Agent": DEFAULT_UA, "Accept": "application/json"}
+        if conditional_etag:
+            headers["If-None-Match"] = conditional_etag
+        request = Request(url, headers=headers)
+        attempt += 1
+        try:
+            with opener(request, timeout=20) as response:
+                status_code = int(getattr(response, "status", 200) or 200)
+                response_headers = getattr(response, "headers", {})
+                if status_code == 304:
+                    rows, cache_error = rows_from_cache()
+                    if cache_error:
+                        return [], "failed:aihot_304_cache_invalid", cache_error
+                    return rows or [], "not_modified_cache_reused", ""
+                if status_code != 200:
+                    return [], f"failed:aihot_http_{status_code}", ""
+                charset = (
+                    response_headers.get_content_charset()
+                    if hasattr(response_headers, "get_content_charset")
+                    else None
+                ) or "utf-8"
+                try:
+                    body, data = parse_aihot_json(response.read(), charset)
+                    rows, _kind = parse_aihot_payload(data, source)
+                except AIHOTParseError as exc:
+                    return [], f"failed:{exc}", normalize_space(body[:300]) if "body" in locals() else ""
+                raw_hash = hashlib.sha256(body.encode("utf-8")).hexdigest()
+                cache.put_http_cache(
+                    cache_key=cache_key,
+                    endpoint=endpoint,
+                    query_json=query_json,
+                    parser_version=parser_version,
+                    etag=str(response_headers.get("ETag") or ""),
+                    body_sha256=raw_hash,
+                    body=body,
+                )
+                return rows, "ok", ""
+        except HTTPError as exc:
+            if exc.code == 304:
+                rows, cache_error = rows_from_cache()
+                if cache_error:
+                    return [], "failed:aihot_304_cache_invalid", cache_error
+                return rows or [], "not_modified_cache_reused", ""
+            if exc.code not in {429, 503}:
+                return [], f"failed:aihot_http_{exc.code}", ""
+            if attempt >= AIHOT_MAX_ATTEMPTS:
+                return [], f"failed:aihot_rate_limited_attempts_exhausted_http_{exc.code}", ""
+            retry_after = retry_after_seconds(
+                exc.headers.get("Retry-After") if exc.headers else None,
+                now_value=wall_clock().astimezone(timezone.utc),
+            )
+            if retry_after is None:
+                return [], f"failed:aihot_rate_limited_retry_after_missing_http_{exc.code}", ""
+            remaining = AIHOT_RETRY_BUDGET_SECONDS - (monotonic() - started)
+            if retry_after > remaining:
+                return [], f"failed:aihot_rate_limited_retry_budget_exhausted_http_{exc.code}", ""
+            sleeper(retry_after)
+        except (URLError, TimeoutError, OSError) as exc:
+            return [], f"failed:aihot_network_{exc.__class__.__name__}", ""
+    return [], "failed:aihot_attempts_exhausted", ""
+
+
+def aihot_items(
+    source: dict[str, Any],
+    fetch: bool,
+    source_db: Path | str = DEFAULT_SOURCE_DB,
+) -> tuple[list[ContentItem], list[str]]:
+    label = str(source.get("account_name") or "AIHOT")
     if not fetch:
         return [], ["AIHOT: skipped"]
     if not source.get("url"):
-        return [], [f"{source.get('account_name', 'AIHOT')}: skipped_missing_url"]
-    data, status, preview = fetch_json(source["url"])
-    if preview:
-        logs.append(f"{source['account_name']}: {status} | url={source['url']} | preview={preview[:300]}")
-    else:
-        logs.append(f"{source['account_name']}: {status} | url={source['url']}")
-    if not data:
-        return [], logs
-    if isinstance(data.get("sections"), list):
-        rows = aihot_daily_rows(data, source)
-        logs.append(f"{source['account_name']}: parsed_daily_sections={len(rows)}")
-        return rows, logs
-    rows: list[ContentItem] = []
-    for item in data.get("items", []):
-        title = item.get("title", "")
-        url = item.get("url", "")
-        summary = item.get("summary", "") or ""
-        category = item.get("category", "") or ""
-        source_name = item.get("source", "") or source["account_name"]
-        rows.append(ContentItem(
-            source_type="AIHOT热点",
-            platform="AIHOT",
-            account_name=source_name,
-            title=title,
-            url=url,
-            content_shape="热点条目",
-            cover_text="",
-            body_snippet=f"{summary} {category}".strip(),
-            published_at=item.get("publishedAt", ""),
-            comment_questions="",
-            ocr_text="",
-            fetch_method="aihot_api",
-            fetch_status="ok",
-            failure_reason="",
-            fingerprint=fingerprint(url, title, source_name),
-            column="",
-            learn_focus=source.get("learn_focus", ""),
-            do_not_copy=source.get("do_not_copy", ""),
-            convert_direction=source.get("convert_direction", ""),
-            raw_text_length=len(f"{summary} {category}".strip()),
-            body_truncated="否",
-        ))
+        return [], [f"{label}: skipped_missing_url"]
+    rows, status, detail = fetch_aihot_payload(source, source_db)
+    endpoint = str(source["url"])
+    entry_kind = "daily" if source.get("id") == "aihot_daily" else "selected"
+    logs = [f"{label}: {status} | endpoint={endpoint}"]
+    if detail:
+        logs[-1] += f" | detail={detail[:240]}"
+    if status in {"ok", "not_modified_cache_reused"}:
+        logs.append(f"{label}: parsed_{entry_kind}_items={len(rows)}")
     return rows, logs
 
 
@@ -444,7 +657,13 @@ def load_manual_items(path: Path) -> list[dict[str, Any]]:
     return rows
 
 
-def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentItem], list[str]]:
+def collect_items(
+    fetch_aihot: bool,
+    manual_path: Path,
+    *,
+    source_db: Path | str = DEFAULT_SOURCE_DB,
+    source_ids: set[str] | None = None,
+) -> tuple[list[ContentItem], list[str]]:
     config = load_json(CONTENT_SOURCES)
     sources = config["sources"]
     items: list[ContentItem] = []
@@ -455,7 +674,9 @@ def collect_items(fetch_aihot: bool, manual_path: Path) -> tuple[list[ContentIte
         if not source.get("default_enabled", True):
             continue
         if normalize_source_type(source["source_type"]) == "AIHOT热点":
-            rows, source_logs = aihot_items(source, fetch_aihot)
+            if source_ids is not None and str(source.get("id") or "") not in source_ids:
+                continue
+            rows, source_logs = aihot_items(source, fetch_aihot, source_db)
             items.extend(rows)
             logs.extend(source_logs)
 
@@ -2883,6 +3104,9 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--no-fetch-aihot", action="store_true")
     parser.add_argument("--manual", default=str(MANUAL_ITEMS))
+    parser.add_argument("--source-db", default=str(DEFAULT_SOURCE_DB), help="Source-control SQLite authority, including the AIHOT response cache.")
+    parser.add_argument("--source-id", action="append", default=None, help="Collect only the named source ID; may be repeated for isolated collection checks.")
+    parser.add_argument("--artifact-root", default="", help="Write this run's local artifacts beneath an explicit isolated root.")
     parser.add_argument("--write-feishu", action="store_true", help="Write all analyzed ContentItems into Feishu 03 内容收件箱 as the content ledger.")
     parser.add_argument("--local-authority-output", action="store_true", help="Write run-scoped local authority artifacts without Feishu.")
     parser.add_argument("--run-id", default="", help="Stable run id shared by 03 内容收件箱 and 04 分析与选题.")
@@ -2890,9 +3114,18 @@ def main() -> int:
     args = parser.parse_args()
 
     run_id = args.run_id or default_run_id()
-    output_dir = run_output_dir(run_id, args.write_feishu, args.local_authority_output)
+    output_dir = (
+        Path(args.artifact_root).resolve() / run_id
+        if args.artifact_root
+        else run_output_dir(run_id, args.write_feishu, args.local_authority_output)
+    )
     output_dir.mkdir(parents=True, exist_ok=True)
-    items, logs = collect_items(not args.no_fetch_aihot, Path(args.manual))
+    items, logs = collect_items(
+        not args.no_fetch_aihot,
+        Path(args.manual),
+        source_db=args.source_db,
+        source_ids=set(args.source_id) if args.source_id is not None else None,
+    )
     item_rows = [item_row(item) for item in items]
     breakdown_rows = [breakdown(item) for item in items]
     item_by_fp = {item.fingerprint: item for item in items}

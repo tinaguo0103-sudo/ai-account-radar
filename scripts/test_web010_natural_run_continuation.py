@@ -14,6 +14,7 @@ from pathlib import Path
 from daily_workflow import DailyWorkflow
 from run_daily_workflow import build_scripts_handoff, enrich
 from run_daily_workflow import WorkflowExecutionLock
+from source_claim_validation import digest
 from spoken_script_runtime import load_writer_contract, topic_packet
 
 
@@ -29,6 +30,37 @@ def write_json(path: Path, value: object) -> None:
 
 def last_json(output: str) -> dict:
     return json.loads(output.strip().splitlines()[-1])
+
+
+def add_claim_review(content: dict, authority: dict | None) -> None:
+    if not isinstance(authority, dict):
+        return
+    bound = {
+        key: str(content[key])
+        for key in ("title", "hook", "structure", "body")
+        if key in content
+    }
+    anchors = authority.get("anchors") or []
+    if not anchors:
+        raise AssertionError("workflow fixture unexpectedly has no evidence anchors")
+    content["claim_review"] = {
+        "evidence_sha256": authority["evidence_sha256"],
+        "content_sha256": digest(bound),
+        "excluded_warning_ids": [
+            row["warning_id"] for row in authority.get("warnings", [])
+        ],
+        "claims": [
+            {
+                "field": field,
+                "text": paragraph.strip(),
+                "scope": "interpretation",
+                "evidence_ids": [anchors[0]["evidence_id"]],
+            }
+            for field, value in bound.items()
+            for paragraph in value.split("\n\n")
+            if paragraph.strip()
+        ],
+    }
 
 
 class ProjectionHandler(BaseHTTPRequestHandler):
@@ -298,14 +330,19 @@ class NaturalRunContinuationTest(unittest.TestCase):
                 load_writer_contract(),
             )
             article = root / "article.json"
-            write_json(article, {
+            article_value = {
                 "packet_id": article_handoff["topic_input"]["packet_id"],
                 "article": {
                     "topic_id": candidate_ids[0],
                     "title": "AI workflow article",
                     "body": "这是一篇先展开事实和判断、再进入口播适配的完整文章。",
                 },
-            })
+            }
+            add_claim_review(
+                article_value["article"],
+                article_handoff.get("claim_dependency_authority"),
+            )
+            write_json(article, article_value)
             article_result = self.execute(command + [
                 "--editorial-result-file",
                 str(editorial),
@@ -315,7 +352,7 @@ class NaturalRunContinuationTest(unittest.TestCase):
             self.assertEqual(article_result.returncode, 0, article_result.stderr + article_result.stdout)
             scripts_handoff = json.loads(handoff_path.read_text(encoding="utf-8"))
             scripts = root / "scripts.json"
-            write_json(scripts, {
+            script_value = {
                 "packet_id": scripts_handoff["topic_input"]["packet_id"],
                 "article_sha256": scripts_handoff["topic_input"]["article_artifact"]["sha256"],
                 "script": {
@@ -325,7 +362,12 @@ class NaturalRunContinuationTest(unittest.TestCase):
                     "structure": "场景到动作",
                     "body": "这是一篇可以继续进入提词器修改的完整正文。",
                 },
-            })
+            }
+            add_claim_review(
+                script_value["script"],
+                scripts_handoff.get("claim_dependency_authority"),
+            )
+            write_json(scripts, script_value)
             third = self.execute(command + [
                 "--editorial-result-file",
                 str(editorial),

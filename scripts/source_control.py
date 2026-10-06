@@ -119,6 +119,16 @@ CREATE TABLE IF NOT EXISTS douyin_run_checkpoints (
   updated_at TEXT NOT NULL,
   PRIMARY KEY(run_id, source_id)
 );
+CREATE TABLE IF NOT EXISTS http_response_cache (
+  cache_key TEXT PRIMARY KEY,
+  endpoint TEXT NOT NULL,
+  query_json TEXT NOT NULL,
+  parser_version TEXT NOT NULL,
+  etag TEXT NOT NULL,
+  body_sha256 TEXT NOT NULL,
+  body TEXT NOT NULL,
+  stored_at TEXT NOT NULL
+);
 CREATE INDEX IF NOT EXISTS source_accounts_plan_idx
   ON source_accounts(enabled, participates_sampling, channel_id, priority);
 CREATE INDEX IF NOT EXISTS source_events_account_idx
@@ -221,6 +231,47 @@ class SourceControl:
             return int(row["revision"])
         with self.connect() as connection:
             return self.current_revision(connection)
+
+    def get_http_cache(self, cache_key: str) -> dict[str, Any] | None:
+        """Read an exact-key public HTTP response cache entry."""
+        self.initialize()
+        with self.connect() as db:
+            row = db.execute(
+                """SELECT cache_key,endpoint,query_json,parser_version,etag,
+                body_sha256,body,stored_at FROM http_response_cache WHERE cache_key=?""",
+                (cache_key,),
+            ).fetchone()
+        return dict(row) if row else None
+
+    def put_http_cache(
+        self,
+        *,
+        cache_key: str,
+        endpoint: str,
+        query_json: str,
+        parser_version: str,
+        etag: str,
+        body_sha256: str,
+        body: str,
+    ) -> None:
+        """Persist a response only after the caller has validated its payload."""
+        self.initialize()
+        with self.connect() as db:
+            db.execute(
+                """INSERT INTO http_response_cache
+                (cache_key,endpoint,query_json,parser_version,etag,body_sha256,body,stored_at)
+                VALUES(?,?,?,?,?,?,?,?)
+                ON CONFLICT(cache_key) DO UPDATE SET
+                  endpoint=excluded.endpoint, query_json=excluded.query_json,
+                  parser_version=excluded.parser_version, etag=excluded.etag,
+                  body_sha256=excluded.body_sha256, body=excluded.body,
+                  stored_at=excluded.stored_at""",
+                (
+                    cache_key, endpoint, query_json, parser_version, etag,
+                    body_sha256, body, now(),
+                ),
+            )
+            db.commit()
 
     def import_accounts(self, rows: list[dict[str, Any]], *, actor: str = "feishu_read_only_migration") -> dict[str, Any]:
         accounts = [normalized_account(row) for row in rows]

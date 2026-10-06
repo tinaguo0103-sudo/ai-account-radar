@@ -9,6 +9,8 @@ from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit, urlunsplit
 
+from video_evidence_quality import evidence_quality, source_is_partial, unresolved_evidence
+
 
 MAX_REPRESENTATIVES = 5
 DEFAULT_REPRESENTATIVES = 3
@@ -657,6 +659,10 @@ def attach_understanding(
         representative_set = set(card.get("representative_source_ids", []))
         for source in card["sources"]:
             package = package_by_source.get(source["url"])
+            if package and package.get("status") == "media_read_pending_resource_budget":
+                source["understanding_status"] = "pending"
+                source["understanding_failure"] = "long_media_pending_resource_budget"
+                continue
             visual_failure = (
                 viewable_keyframe_failure(package, run_id=run_id)
                 if package and require_viewable_keyframes else ""
@@ -686,13 +692,15 @@ def attach_understanding(
             }
         ]
         requested = len(representative_set)
-        completed = len(representative_understood)
+        completed = sum(not source_is_partial(package) for package in representative_understood)
+        partial_count = sum(source_is_partial(package) for package in representative_understood)
         failed = sum(
             source["understanding_status"] == "failed"
             for source in card["sources"]
             if source["source_id"] in representative_set
         )
-        attempted = completed + failed
+        attempted = completed + partial_count + failed
+        pending_count = max(0, requested - attempted)
         if not card.get("qualification", {}).get("eligible_for_deep_read"):
             if "editorial_screening" in card:
                 deep_status = "not_requested"
@@ -702,9 +710,9 @@ def attach_understanding(
                 deep_status = "not_qualified"
                 deep_reason = "not_high_potential"
                 card["review_stage"] = "signal_only"
-        elif completed and failed:
+        elif partial_count or (completed and (failed or pending_count)):
             deep_status = "completed_with_failures"
-            deep_reason = "representative_sources_partially_completed"
+            deep_reason = "source_evidence_unresolved" if partial_count else "representative_sources_partially_completed"
             card["review_stage"] = "ready_for_editorial"
         elif completed:
             deep_status = "completed"
@@ -722,14 +730,16 @@ def attach_understanding(
             "requested_count": requested,
             "attempted_count": attempted,
             "completed_count": completed,
+            "partial_count": partial_count,
             "failed_count": failed,
+            "pending_count": pending_count,
             "status": deep_status,
             "reason": deep_reason,
             "information_gain_stop": True,
             "max_sources": MAX_REPRESENTATIVES,
         }
         card["cluster_synthesis"] = synthesize_card(card, representative_understood)
-        if understood:
+        if understood or requested:
             aggregate_run_id = run_id or next(
                 (
                     candidate.get("run_id")
@@ -738,19 +748,58 @@ def attach_understanding(
                 ),
                 None,
             )
+            requested_source_statuses = [
+                {
+                    "source_id": source.get("source_id"),
+                    "source_url": source.get("url"),
+                    "status": source.get("understanding_status", "not_attempted"),
+                    "reason": source.get("understanding_failure") or None,
+                }
+                for source in card["sources"]
+                if source.get("source_id") in representative_set
+            ]
+            aggregate_status = (
+                "completed" if not partial_count and not failed and not pending_count
+                else "media_read_pending_resource_budget"
+                if not understood and not failed and pending_count
+                else "failed" if not understood and failed and not pending_count
+                else "completed_with_failures"
+            )
             understanding_results.append({
                 "candidate_id": card["candidate_id"],
                 "base_item_id": card["representative_item_id"],
                 "package": {
-                    "status": (
-                        "completed" if card["deep_read"]["failed_count"] == 0
-                        else "completed_with_failures"
-                    ),
+                    "status": aggregate_status,
                     "run_id": aggregate_run_id,
                     "source_url": card["source_url"],
                     "representative_packages": representative_understood,
                     "available_packages": understood,
+                    "requested_sources": requested_source_statuses,
                     "cluster_synthesis": card["cluster_synthesis"],
+                    "unresolved_terms": [
+                        unresolved_evidence(term, row.get("source_url", ""))
+                        for row in understood for term in (row.get("unresolved_terms") or [])
+                    ],
+                    "failures": [
+                        unresolved_evidence(failure, row.get("source_url", ""))
+                        for row in understood for failure in (row.get("failures") or [])
+                    ],
+                    "evidence_quality": {
+                        "sources": [
+                            {"source_url": row.get("source_url"), **evidence_quality(row)}
+                            for row in understood
+                        ],
+                        "fully_verified": bool(understood)
+                        and not pending_count and not failed
+                        and all(evidence_quality(row).get("fully_verified") for row in understood),
+                        "requested_count": requested,
+                        "attempted_count": attempted,
+                        "completed_count": completed,
+                        "partial_count": partial_count,
+                        "failed_count": failed,
+                        "pending_count": pending_count,
+                        "fully_verified": False,
+                    },
                 },
             })
     return cards, understanding_results
@@ -764,6 +813,10 @@ def viewable_keyframe_failure(
     """Check the local image handoff without persisting image bytes."""
     if run_id and str(package.get("run_id") or "") != run_id:
         return "video_keyframe_run_mismatch"
+    quality = package.get("evidence_quality") if isinstance(package.get("evidence_quality"), dict) else {}
+    asr = package.get("asr") if isinstance(package.get("asr"), dict) else {}
+    if quality.get("actual_item_type") == "audio_only" and asr.get("text"):
+        return ""
     rows = package.get("keyframes")
     if not isinstance(rows, list) or not rows:
         return "video_keyframes_missing"
@@ -806,7 +859,11 @@ def deep_read_counts(
     ]
     completed = [
         card for card in attempted
-        if int(card.get("deep_read", {}).get("completed_count") or 0) > 0
+        if card.get("deep_read", {}).get("status") == "completed"
+    ]
+    partial = [
+        card for card in attempted
+        if card.get("deep_read", {}).get("status") == "completed_with_failures"
     ]
     failed = [
         card for card in attempted
@@ -816,14 +873,17 @@ def deep_read_counts(
         "high_potential_total": len(high_potential),
         "deep_read_attempted_total": len(attempted),
         "deep_read_completed_total": len(completed),
+        "deep_read_partial_total": len(partial),
         "deep_read_failed_total": len(failed),
         "editorial_candidate_total": (
             len(cards) if model_owned_pool else len(editorial_candidates(cards))
         ),
     }
-    if summary["deep_read_completed_total"] + summary["deep_read_failed_total"] > summary["deep_read_attempted_total"]:
+    if summary["deep_read_completed_total"] + summary["deep_read_partial_total"] + summary["deep_read_failed_total"] > summary["deep_read_attempted_total"]:
         raise ValueError("deep_read_count_conflict")
-    if not model_owned_pool and summary["editorial_candidate_total"] != summary["deep_read_completed_total"]:
+    if not model_owned_pool and summary["editorial_candidate_total"] != (
+        summary["deep_read_completed_total"] + summary["deep_read_partial_total"]
+    ):
         raise ValueError("editorial_deep_read_count_conflict")
     return summary
 
