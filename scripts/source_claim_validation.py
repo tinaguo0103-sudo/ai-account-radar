@@ -10,8 +10,18 @@ import json
 import re
 import unicodedata
 from typing import Any
+from urllib.parse import urlsplit
 
 from daily_workflow import WorkflowConflict
+
+
+RESEARCH_MATERIAL_KEYS = (
+    "run_id", "business_date", "topic_id", "source_url", "title", "excerpt",
+)
+CLAIM_SCOPES = frozenset({
+    "source_quote", "source_context", "interpretation",
+    "motion_observation", "external_fact",
+})
 
 
 def normalized_known_name(value: str) -> str:
@@ -30,7 +40,85 @@ def evidence_digest(evidence: dict[str, Any]) -> str:
     return digest({key: value for key, value in evidence.items() if key != "claim_contract"})
 
 
-def claim_contract(evidence: dict[str, Any]) -> dict[str, Any]:
+def research_evidence_id(material: dict[str, Any]) -> str:
+    """Derive a source identity from the exact current-topic material record."""
+    record = {key: material[key] for key in RESEARCH_MATERIAL_KEYS}
+    return "public-research:" + digest(record)
+
+
+def _research_binding(evidence: dict[str, Any], topic_id: str) -> dict[str, str]:
+    source_material = evidence.get("source_material")
+    source_material = source_material if isinstance(source_material, dict) else {}
+    same_run = source_material.get("same_run")
+    same_run = same_run if isinstance(same_run, dict) else {}
+    source_record = source_material.get("source_record")
+    source_record = source_record if isinstance(source_record, dict) else {}
+    run_id = same_run.get("run_id")
+    business_date = same_run.get("business_date")
+    if (
+        not isinstance(run_id, str) or not run_id
+        or not isinstance(business_date, str) or not business_date
+        or not topic_id
+        or source_record.get("candidate_id") != topic_id
+    ):
+        raise WorkflowConflict("script_claim_research_material_identity_conflict")
+    return {
+        "run_id": run_id,
+        "business_date": business_date,
+        "topic_id": topic_id,
+    }
+
+
+def validate_research_materials(
+    evidence: dict[str, Any], topic_id: str, materials: Any,
+) -> list[dict[str, str]]:
+    """Validate traceable source records without asserting source truth."""
+    if not isinstance(materials, list):
+        raise WorkflowConflict("script_claim_research_material_schema_invalid")
+    if not materials:
+        return []
+    binding = _research_binding(evidence, topic_id)
+    validated: list[dict[str, str]] = []
+    seen: set[str] = set()
+    for material in materials:
+        if not isinstance(material, dict) or set(material) != set(RESEARCH_MATERIAL_KEYS):
+            raise WorkflowConflict("script_claim_research_material_schema_invalid")
+        if any(
+            not isinstance(material.get(key), str)
+            or not material[key]
+            or material[key] != material[key].strip()
+            for key in RESEARCH_MATERIAL_KEYS
+        ):
+            raise WorkflowConflict("script_claim_research_material_schema_invalid")
+        if any(material[key] != value for key, value in binding.items()):
+            raise WorkflowConflict("script_claim_research_material_identity_conflict")
+        url = material["source_url"]
+        if any(char.isspace() for char in url):
+            raise WorkflowConflict("script_claim_research_material_schema_invalid")
+        try:
+            parsed = urlsplit(url)
+        except ValueError as exc:
+            raise WorkflowConflict("script_claim_research_material_schema_invalid") from exc
+        if (
+            parsed.scheme.lower() not in {"http", "https"}
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+        ):
+            raise WorkflowConflict("script_claim_research_material_schema_invalid")
+        identity = research_evidence_id(material)
+        if identity in seen:
+            raise WorkflowConflict("script_claim_research_material_duplicate")
+        seen.add(identity)
+        validated.append({key: material[key] for key in RESEARCH_MATERIAL_KEYS})
+    return validated
+
+
+def claim_contract(
+    evidence: dict[str, Any], *,
+    research_materials: Any = None,
+    topic_id: str = "",
+) -> dict[str, Any]:
     anchors: list[dict[str, Any]] = []
     warnings: list[dict[str, Any]] = []
 
@@ -96,17 +184,66 @@ def claim_contract(evidence: dict[str, Any]) -> dict[str, Any]:
         if isinstance(facts.get(key), str):
             add(source_url, f"source_{key}", facts[key], ["source_quote", "interpretation"])
 
+    materials = validate_research_materials(
+        evidence, topic_id, [] if research_materials is None else research_materials,
+    )
+    for material in materials:
+        row = {
+            "source_url": material["source_url"],
+            "kind": "public_research_material",
+            "text": material["excerpt"],
+            "allowed_scopes": ["source_quote", "source_context", "interpretation"],
+            "title": material["title"],
+            "run_id": material["run_id"],
+            "business_date": material["business_date"],
+            "topic_id": material["topic_id"],
+        }
+        row["evidence_id"] = research_evidence_id(material)
+        if row not in anchors:
+            anchors.append(row)
+
+    source_material = evidence.get("source_material")
+    source_material = source_material if isinstance(source_material, dict) else {}
+    same_run = source_material.get("same_run")
+    same_run = same_run if isinstance(same_run, dict) else {}
+    source_record = source_material.get("source_record")
+    source_record = source_record if isinstance(source_record, dict) else {}
+    research_binding = None
+    if (
+        same_run.get("run_id")
+        and same_run.get("business_date")
+        and source_record.get("candidate_id")
+    ):
+        research_binding = {
+            "run_id": str(same_run["run_id"]),
+            "business_date": str(same_run["business_date"]),
+            "topic_id": str(source_record["candidate_id"]),
+        }
+
     return {
         "evidence_sha256": evidence_digest(evidence),
         "anchors": anchors,
         "warnings": warnings,
+        "research_materials": materials,
+        "research_material_binding": research_binding,
+        "research_material_keys": list(RESEARCH_MATERIAL_KEYS),
+        "research_evidence_id_rule": (
+            "public-research:<sha256 of canonical JSON record with ensure_ascii=False, "
+            "sort_keys=True and compact separators>"
+        ),
+        "research_truth_verified": False,
         # Keep legacy and evidence-free topics on the existing writer envelope.
         # Once source evidence or an unresolved warning is present, its declared
         # dependencies become part of both article and spoken submission gates.
         "required": bool(anchors or warnings),
-        "paragraph_dependencies_required": True,
+        "paragraph_coverage_required": True,
+        "source_scoped_claims_require_evidence": True,
+        "interpretation_may_be_unanchored": True,
         "still_frames_do_not_verify_motion": True,
-        "claim_review_keys": ["evidence_sha256", "content_sha256", "excluded_warning_ids", "claims"],
+        "claim_review_keys": [
+            "evidence_sha256", "content_sha256", "excluded_warning_ids",
+            "research_materials", "claims",
+        ],
         "claim_keys": ["field", "text", "scope", "evidence_ids"],
         "content_hash_fields": ["title", "hook", "structure", "body"],
         "content_hash_rule": (
@@ -117,10 +254,29 @@ def claim_contract(evidence: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def validate_claim_dependencies(content: dict[str, Any], evidence: dict[str, Any] | None, review: Any) -> None:
+def validate_claim_dependencies(
+    content: dict[str, Any],
+    evidence: dict[str, Any] | None,
+    review: Any,
+    *,
+    frozen_research_materials: Any = None,
+) -> None:
     if not isinstance(evidence, dict):
         raise WorkflowConflict("script_claim_authority_missing")
-    contract = claim_contract(evidence)
+    if not isinstance(review, dict):
+        raise WorkflowConflict("script_claim_dependencies_missing")
+    topic_id = str(content.get("topic_id") or "")
+    research_materials = review.get("research_materials", [])
+    contract = claim_contract(
+        evidence,
+        research_materials=research_materials,
+        topic_id=topic_id,
+    )
+    if (
+        frozen_research_materials is not None
+        and research_materials != frozen_research_materials
+    ):
+        raise WorkflowConflict("script_claim_research_material_conflict")
     if not isinstance(review, dict) or review.get("evidence_sha256") != contract["evidence_sha256"]:
         raise WorkflowConflict("script_claim_dependencies_missing")
     bound = {key: str(content[key]) for key in ("title", "hook", "structure", "body") if key in content}
@@ -152,11 +308,20 @@ def validate_claim_dependencies(content: dict[str, Any], evidence: dict[str, Any
         raise WorkflowConflict("script_claim_paragraph_coverage_incomplete")
     anchors = {row["evidence_id"]: row for row in contract["anchors"]}
     for claim in claims:
+        if not isinstance(claim, dict):
+            raise WorkflowConflict("script_claim_paragraph_coverage_incomplete")
+        scope = claim.get("scope")
+        if not isinstance(scope, str) or scope not in CLAIM_SCOPES:
+            raise WorkflowConflict("script_claim_evidence_scope_conflict")
         refs = claim.get("evidence_ids")
-        if not isinstance(refs, list) or not refs:
+        if not isinstance(refs, list):
+            raise WorkflowConflict("script_claim_evidence_missing")
+        if any(not isinstance(reference, str) for reference in refs):
+            raise WorkflowConflict("script_claim_evidence_identity_conflict")
+        if not refs and scope != "interpretation":
             raise WorkflowConflict("script_claim_evidence_missing")
         for reference in refs:
             if reference not in anchors:
                 raise WorkflowConflict("script_claim_evidence_identity_conflict")
-            if claim.get("scope") not in anchors[reference]["allowed_scopes"]:
+            if scope not in anchors[reference]["allowed_scopes"]:
                 raise WorkflowConflict("script_claim_evidence_scope_conflict")

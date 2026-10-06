@@ -47,7 +47,10 @@ _ARTICLE_REFERENCE_FILES = tuple(script_runtime.ARTICLE_REQUIRED_REFERENCES)
 _REFERENCE_FILES = tuple(script_runtime.ALL_REQUIRED_REFERENCES)
 _PATH_LINK_RE = re.compile(r"(?:^|[`( ])((?:cases|voice-samples)/[A-Za-z0-9._-]+\.md)(?:[`), .]|$)")
 _READ_TRACE_VERSION = 1
-_CLAIM_REVIEW_FIELDS = {"evidence_sha256", "content_sha256", "excluded_warning_ids", "claims"}
+_CLAIM_REVIEW_FIELDS = {
+    "evidence_sha256", "content_sha256", "excluded_warning_ids",
+    "research_materials", "claims",
+}
 
 
 Runner = Callable[[list[str], str, Path, Path], Any]
@@ -313,6 +316,20 @@ def _output_schema() -> dict[str, Any]:
             "evidence_sha256": {"type": "string"},
             "content_sha256": {"type": "string"},
             "excluded_warning_ids": {"type": "array", "items": {"type": "string"}},
+            "research_materials": {"type": "array", "items": {
+                "type": "object", "additionalProperties": False,
+                "required": [
+                    "run_id", "business_date", "topic_id", "source_url", "title", "excerpt",
+                ],
+                "properties": {
+                    "run_id": {"type": "string"},
+                    "business_date": {"type": "string"},
+                    "topic_id": {"type": "string"},
+                    "source_url": {"type": "string"},
+                    "title": {"type": "string"},
+                    "excerpt": {"type": "string"},
+                },
+            }},
             "claims": {"type": "array", "items": {
                 "type": "object", "additionalProperties": False,
                 "required": ["field", "text", "scope", "evidence_ids"],
@@ -320,7 +337,7 @@ def _output_schema() -> dict[str, Any]:
                     "field": {"type": "string", "enum": ["title", "hook", "structure", "body"]},
                     "text": {"type": "string"},
                     "scope": {"type": "string", "enum": ["source_quote", "source_context", "interpretation", "motion_observation", "external_fact"]},
-                    "evidence_ids": {"type": "array", "minItems": 1, "items": {"type": "string"}},
+                    "evidence_ids": {"type": "array", "items": {"type": "string"}},
                 },
             }},
         },
@@ -336,6 +353,9 @@ def _claim_authority(topic: Mapping[str, Any]) -> dict[str, Any]:
     keys = (
         "required", "evidence_sha256", "anchors", "warnings", "claim_review_keys",
         "claim_keys", "content_hash_fields", "content_hash_rule", "still_frames_do_not_verify_motion",
+        "paragraph_coverage_required", "source_scoped_claims_require_evidence",
+        "interpretation_may_be_unanchored", "research_materials", "research_material_binding",
+        "research_material_keys", "research_evidence_id_rule", "research_truth_verified",
     )
     return {key: contract[key] for key in keys if key in contract}
 
@@ -366,9 +386,19 @@ def _prompt(run_id: str, business_date: str, topic: Mapping[str, Any], phase: st
             "\nA source claim contract is required. Add claim_review to the article/script. "
             "Use the exact evidence_sha256, list every warning ID in excluded_warning_ids, "
             "and provide one claim row per non-empty paragraph for each available content "
-            "field in field order. Each row must repeat the paragraph exactly, choose a "
-            "scope allowed by every cited anchor, and cite only evidence_ids in the bounded "
-            "claim authority. Compute content_sha256 from available title/hook/structure/body "
+            "field in field order. Each row must repeat the paragraph exactly. Cite an "
+            "evidence_id for source-dependent scopes, choosing a scope allowed by every cited "
+            "anchor; an independent model interpretation may use scope=interpretation with "
+            "evidence_ids=[]. Do not classify source facts as interpretation to avoid a dependency. "
+            "If permitted public read-only research was actually read, add its current-topic "
+            "records to research_materials with the exact run_id, business_date, topic_id, "
+            "public source_url, page title, and inspected excerpt from claim_dependency_authority. "
+            "Do not add an evidence_id to a material record: derive its reference as "
+            "public-research:<sha256 of the canonical JSON record using ensure_ascii=False, "
+            "sorted keys, and compact separators>. These records are traceability context only; "
+            "runtime validation does not verify source authenticity or factual truth. Use [] when "
+            "no such research was read. Cite only evidence_ids present in the bounded authority. "
+            "Compute content_sha256 from available title/hook/structure/body "
             "keys as UTF-8 JSON with ensure_ascii=False, sorted keys, and compact separators. "
             "Do not treat OCR/ASR or still frames as semantic verification; still frames never "
             "support motion_observation. Dependency bookkeeping does not replace semantic judgment."

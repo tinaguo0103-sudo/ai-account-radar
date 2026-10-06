@@ -60,10 +60,9 @@ class CleanWriterContextTest(unittest.TestCase):
             if claim.get("required") is True:
                 content = value["article"] if phase == "article_required" else value["script"]
                 bound = {key: str(content[key]) for key in ("title", "hook", "structure", "body") if key in content}
-                anchor = next(row for row in claim["anchors"] if "interpretation" in row["allowed_scopes"])
                 import re
                 claims = [
-                    {"field": field, "text": paragraph.strip(), "scope": "interpretation", "evidence_ids": [anchor["evidence_id"]]}
+                    {"field": field, "text": paragraph.strip(), "scope": "interpretation", "evidence_ids": []}
                     for field, text in bound.items()
                     for paragraph in re.split(r"\n\s*\n", text)
                     if paragraph.strip()
@@ -72,6 +71,7 @@ class CleanWriterContextTest(unittest.TestCase):
                     "evidence_sha256": claim["evidence_sha256"],
                     "content_sha256": digest(bound),
                     "excluded_warning_ids": [row["warning_id"] for row in claim.get("warnings", [])],
+                    "research_materials": [],
                     "claims": claims,
                 }
             output_path.write_text(json.dumps(value, ensure_ascii=False), encoding="utf-8")

@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 from daily_workflow import WorkflowConflict, canonical
-from source_claim_validation import validate_claim_dependencies
+from source_claim_validation import claim_contract, validate_claim_dependencies
 
 
 RUNTIME_SCHEMA_VERSION = 4
@@ -252,12 +252,15 @@ def _validate_failure(failure: Any, topic_id: str) -> dict[str, str]:
     }
 
 
-def article_sha256(article: dict[str, str]) -> str:
-    return _sha256_bytes(canonical({
+def article_sha256(article: dict[str, Any]) -> str:
+    value = {
         "topic_id": article["topic_id"],
         "title": article["title"],
         "body": article["body"],
-    }).encode("utf-8"))
+    }
+    if "claim_review" in article:
+        value["claim_review"] = article["claim_review"]
+    return _sha256_bytes(canonical(value).encode("utf-8"))
 
 
 def article_artifact_path(root: Path | str, run_id: str, topic_id: str) -> Path:
@@ -268,7 +271,7 @@ def article_artifact_path(root: Path | str, run_id: str, topic_id: str) -> Path:
 
 
 def _article_artifact_text(
-    run_id: str, business_date: str, article: dict[str, str], digest: str,
+    run_id: str, business_date: str, article: dict[str, Any], digest: str,
 ) -> str:
     metadata = {
         "schema_version": ARTICLE_ARTIFACT_SCHEMA_VERSION,
@@ -279,9 +282,12 @@ def _article_artifact_text(
         "title": article["title"],
         "article_sha256": digest,
     }
+    if "claim_review" in article:
+        metadata["claim_review"] = article["claim_review"]
+    serialized_metadata = canonical(metadata).replace(">", "\\u003e")
     return (
         "# 完整文章 artifact\n\n"
-        f"<!-- writer_article_metadata {canonical(metadata)} -->\n\n"
+        f"<!-- writer_article_metadata {serialized_metadata} -->\n\n"
         "## 标题\n\n"
         f"{article['title']}\n\n"
         "## 正文\n\n"
@@ -320,14 +326,14 @@ def write_article_artifact(
     root: Path | str,
     run_id: str,
     business_date: str,
-    article: dict[str, str],
+    article: dict[str, Any],
 ) -> dict[str, Any]:
     digest = article_sha256(article)
     target = article_artifact_path(root, run_id, article["topic_id"])
     text = _article_artifact_text(run_id, business_date, article, digest)
     created = _atomic_write_text_once(target, text)
     artifact_digest = _sha256_bytes(text.encode("utf-8"))
-    return {
+    metadata = {
         "run_id": run_id,
         "business_date": business_date,
         "topic_id": article["topic_id"],
@@ -338,6 +344,9 @@ def write_article_artifact(
         "title": article["title"],
         "created": created,
     }
+    if "claim_review" in article:
+        metadata["claim_review"] = article["claim_review"]
+    return metadata
 
 
 def read_article_artifact(
@@ -347,7 +356,7 @@ def read_article_artifact(
     business_date: str,
     topic_id: str,
     artifact_root: Path | str | None = None,
-) -> dict[str, str]:
+) -> dict[str, Any]:
     if not isinstance(metadata, dict):
         raise WorkflowConflict("article_checkpoint_metadata_invalid")
     if (
@@ -370,10 +379,18 @@ def read_article_artifact(
         raise WorkflowConflict("article_artifact_missing")
     try:
         text = path.read_text(encoding="utf-8")
-        match = re.search(r"<!-- writer_article_metadata (\{.*?\}) -->", text)
-        if match is None:
+        metadata_prefix = "<!-- writer_article_metadata "
+        metadata_suffix = " -->"
+        metadata_line = next(
+            (
+                line for line in text.splitlines()
+                if line.startswith(metadata_prefix) and line.endswith(metadata_suffix)
+            ),
+            None,
+        )
+        if metadata_line is None:
             raise ValueError
-        stored = json.loads(match.group(1))
+        stored = json.loads(metadata_line[len(metadata_prefix):-len(metadata_suffix)])
         body_marker = "## 正文\n\n"
         if body_marker not in text:
             raise ValueError
@@ -385,6 +402,8 @@ def read_article_artifact(
             "title": str(stored.get("title") or ""),
             "body": body,
         }
+        if "claim_review" in stored:
+            article["claim_review"] = stored["claim_review"]
         if (
             stored.get("schema_version") != ARTICLE_ARTIFACT_SCHEMA_VERSION
             or stored.get("kind") != "austin_writer_article"
@@ -674,6 +693,9 @@ def topic_packet(
                 for key in (
                     "evidence_sha256", "anchors", "warnings", "still_frames_do_not_verify_motion", "claim_review_keys",
                     "claim_keys", "content_hash_fields", "content_hash_rule",
+                    "paragraph_coverage_required", "source_scoped_claims_require_evidence",
+                    "interpretation_may_be_unanchored", "research_materials", "research_material_binding",
+                    "research_material_keys", "research_evidence_id_rule", "research_truth_verified",
                 )
             }
     else:
@@ -682,8 +704,9 @@ def topic_packet(
             raise WorkflowConflict("spoken_before_article")
         metadata = article_item["article"]
         _validate_article_metadata(metadata, run_id, business_date, topic_id)
+        frozen_article = None
         if artifact_root is not None:
-            read_article_artifact(
+            frozen_article = read_article_artifact(
                 metadata, run_id=run_id, business_date=business_date, topic_id=topic_id,
                 artifact_root=artifact_root,
             )
@@ -709,13 +732,44 @@ def topic_packet(
             "frozen_article_only": True,
             "material_or_angle_insufficiency_is_item_local": True,
         }
-        contract = (topic.get("source_evidence") or {}).get("claim_contract") or {}
-        if contract.get("required"):
+        evidence = topic.get("source_evidence") if isinstance(topic.get("source_evidence"), dict) else {}
+        frozen_review = (
+            frozen_article.get("claim_review")
+            if isinstance(frozen_article, dict)
+            else metadata.get("claim_review")
+        )
+        frozen_research_materials = (
+            frozen_review.get("research_materials", [])
+            if isinstance(frozen_review, dict) else []
+        )
+        declared_contract = (
+            evidence.get("claim_contract")
+            if isinstance(evidence.get("claim_contract"), dict) else {}
+        )
+        dependency_contract_required = declared_contract.get("required") is True
+        contract = claim_contract(
+            evidence,
+            research_materials=frozen_research_materials,
+            topic_id=topic_id,
+        )
+        if (
+            contract.get("required")
+            and isinstance(frozen_article, dict)
+            and (dependency_contract_required or isinstance(frozen_review, dict))
+        ):
+            validate_claim_dependencies(
+                frozen_article, evidence, frozen_review,
+                frozen_research_materials=frozen_research_materials,
+            )
+        if contract.get("required") and (dependency_contract_required or isinstance(frozen_review, dict)):
             packet["claim_dependency_authority"] = {
                 key: contract[key]
                 for key in (
                     "evidence_sha256", "anchors", "warnings", "still_frames_do_not_verify_motion", "claim_review_keys",
                     "claim_keys", "content_hash_fields", "content_hash_rule",
+                    "paragraph_coverage_required", "source_scoped_claims_require_evidence",
+                    "interpretation_may_be_unanchored", "research_materials", "research_material_binding",
+                    "research_material_keys", "research_evidence_id_rule", "research_truth_verified",
                 )
             }
     return packet
@@ -912,7 +966,7 @@ def submit_spoken_adaptation(
         raise WorkflowConflict("spoken_adaptation_input_conflict")
     if submitted.get("article_sha256") != metadata.get("sha256"):
         raise WorkflowConflict("spoken_adaptation_article_identity_conflict")
-    read_article_artifact(
+    frozen_article = read_article_artifact(
         metadata, run_id=run_id, business_date=business_date, topic_id=topic_id,
         artifact_root=artifact_root,
     )
@@ -921,7 +975,15 @@ def submit_spoken_adaptation(
         evidence = topic.get("source_evidence") if isinstance(topic.get("source_evidence"), dict) else None
         contract = evidence.get("claim_contract") if isinstance(evidence, dict) else None
         if isinstance(contract, dict) and contract.get("required"):
-            validate_claim_dependencies(script, evidence, script.get("claim_review"))
+            frozen_review = frozen_article.get("claim_review")
+            frozen_research_materials = (
+                frozen_review.get("research_materials", [])
+                if isinstance(frozen_review, dict) else []
+            )
+            validate_claim_dependencies(
+                script, evidence, script.get("claim_review"),
+                frozen_research_materials=frozen_research_materials,
+            )
         item = {
             "kind": "spoken", "topic_id": topic_id,
             "article": metadata, "script": script,

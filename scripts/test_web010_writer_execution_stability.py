@@ -59,22 +59,54 @@ class WriterExecutionStabilityTest(unittest.TestCase):
         return workflow, checkpoint, topics
 
     def article_submission(self, packet, topic_id="topic:one", body="同题完整文章"):
+        article = {"topic_id": topic_id, "title": "同题标题", "body": body}
+        authority = packet.get("claim_dependency_authority")
+        if isinstance(authority, dict):
+            bound = {key: str(article[key]) for key in ("title", "body")}
+            article["claim_review"] = {
+                "evidence_sha256": authority["evidence_sha256"],
+                "content_sha256": digest(bound),
+                "excluded_warning_ids": [row["warning_id"] for row in authority["warnings"]],
+                "research_materials": [],
+                "claims": [
+                    {"field": field, "text": paragraph.strip(), "scope": "interpretation", "evidence_ids": []}
+                    for field, value in bound.items()
+                    for paragraph in value.split("\n\n")
+                    if paragraph.strip()
+                ],
+            }
         return {
             "packet_id": packet["topic_input"]["packet_id"],
-            "article": {"topic_id": topic_id, "title": "同题标题", "body": body},
+            "article": article,
         }
 
     def spoken_submission(self, packet, topic_id="topic:one", body="同题完整口播"):
+        script = {
+            "topic_id": topic_id,
+            "title": "同题标题",
+            "hook": "同题钩子",
+            "structure": "同题推进",
+            "body": body,
+        }
+        authority = packet.get("claim_dependency_authority")
+        if isinstance(authority, dict):
+            bound = {key: str(script[key]) for key in ("title", "hook", "structure", "body")}
+            script["claim_review"] = {
+                "evidence_sha256": authority["evidence_sha256"],
+                "content_sha256": digest(bound),
+                "excluded_warning_ids": [row["warning_id"] for row in authority["warnings"]],
+                "research_materials": [],
+                "claims": [
+                    {"field": field, "text": paragraph.strip(), "scope": "interpretation", "evidence_ids": []}
+                    for field, value in bound.items()
+                    for paragraph in value.split("\n\n")
+                    if paragraph.strip()
+                ],
+            }
         return {
             "packet_id": packet["topic_input"]["packet_id"],
             "article_sha256": packet["topic_input"]["article_artifact"]["sha256"],
-            "script": {
-                "topic_id": topic_id,
-                "title": "同题标题",
-                "hook": "同题钩子",
-                "structure": "同题推进",
-                "body": body,
-            },
+            "script": script,
         }
 
     @staticmethod
@@ -108,12 +140,16 @@ class WriterExecutionStabilityTest(unittest.TestCase):
                     claims.append({
                         "field": field, "text": paragraph.strip(),
                         "scope": "motion_observation" if motion and field == "body" else "interpretation",
-                        "evidence_ids": [anchor["evidence_id"]],
+                        "evidence_ids": (
+                            [anchor["evidence_id"]]
+                            if motion and field == "body" else []
+                        ),
                     })
         content["claim_review"] = {
             "evidence_sha256": contract["evidence_sha256"],
             "content_sha256": digest(bound),
             "excluded_warning_ids": [row["warning_id"] for row in contract["warnings"]],
+            "research_materials": [],
             "claims": claims,
         }
         return content

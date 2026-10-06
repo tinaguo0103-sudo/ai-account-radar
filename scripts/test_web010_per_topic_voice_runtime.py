@@ -241,21 +241,19 @@ class PerTopicVoiceRuntimeTest(unittest.TestCase):
             for key in ("title", "hook", "structure", "body")
             if key in content
         }
-        anchors = authority.get("anchors") or []
-        if not anchors:
-            raise AssertionError("writer fixture unexpectedly has no evidence anchors")
         content["claim_review"] = {
             "evidence_sha256": authority["evidence_sha256"],
             "content_sha256": digest(bound),
             "excluded_warning_ids": [
                 row["warning_id"] for row in authority.get("warnings", [])
             ],
+            "research_materials": [],
             "claims": [
                 {
                     "field": field,
                     "text": paragraph.strip(),
                     "scope": "interpretation",
-                    "evidence_ids": [anchors[0]["evidence_id"]],
+                    "evidence_ids": [],
                 }
                 for field, value in bound.items()
                 for paragraph in value.split("\n\n")

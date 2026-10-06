@@ -15,8 +15,13 @@ from pathlib import Path
 
 from daily_workflow import DailyWorkflow
 from run_daily_workflow import build_scripts_handoff, editorial_handoff_candidates, enrich
-from source_claim_validation import claim_contract, digest
-from spoken_script_runtime import load_writer_contract, topic_packet
+from source_claim_validation import claim_contract, digest, research_evidence_id
+from spoken_script_runtime import (
+    article_sha256,
+    load_writer_contract,
+    read_article_artifact,
+    topic_packet,
+)
 
 ROOT = Path(__file__).resolve().parents[1]
 
@@ -75,31 +80,42 @@ def last_json(output: str) -> dict:
     return json.loads(output.strip().splitlines()[-1])
 
 
-def add_claim_review(content: dict, evidence: dict) -> None:
-    contract = claim_contract(evidence)
+def add_claim_review(
+    content: dict,
+    evidence: dict,
+    *,
+    research_materials: list[dict] | None = None,
+    claims: list[dict] | None = None,
+) -> None:
+    materials = research_materials or []
+    contract = claim_contract(
+        evidence,
+        research_materials=materials,
+        topic_id=content["topic_id"],
+    )
     bound = {
         key: str(content[key])
         for key in ("title", "hook", "structure", "body")
         if key in content
     }
-    references = [row["evidence_id"] for row in contract["anchors"]]
-    if not references:
-        raise AssertionError("compatibility fixture unexpectedly has no evidence anchors")
-    content["claim_review"] = {
-        "evidence_sha256": contract["evidence_sha256"],
-        "content_sha256": digest(bound),
-        "excluded_warning_ids": [row["warning_id"] for row in contract["warnings"]],
-        "claims": [
+    if claims is None:
+        claims = [
             {
                 "field": field,
                 "text": paragraph.strip(),
                 "scope": "interpretation",
-                "evidence_ids": references[:1],
+                "evidence_ids": [],
             }
             for field, value in bound.items()
             for paragraph in value.split("\n\n")
             if paragraph.strip()
-        ],
+        ]
+    content["claim_review"] = {
+        "evidence_sha256": contract["evidence_sha256"],
+        "content_sha256": digest(bound),
+        "excluded_warning_ids": [row["warning_id"] for row in contract["warnings"]],
+        "research_materials": materials,
+        "claims": claims,
     }
 
 
@@ -286,12 +302,50 @@ class PublicV2FlowTest(unittest.TestCase):
                 "packet_id": article_handoff["topic_input"]["packet_id"],
                 "article": {
                     "topic_id": identities[0], "title": "完整文章标题",
-                    "body": "这是同一题的完整文章，先展开事实，再形成判断。",
+                    "body": (
+                        "同 run 的来源口播事实\n\n"
+                        "这是一段不依赖来源的新解读。\n\n"
+                        "Synthetic excerpt for traceability plumbing; not factual content."
+                    ),
                 },
             }
+            evidence = all_handoff["selected_topics"][0]["source_evidence"]
+            source_anchor = next(
+                row for row in claim_contract(evidence)["anchors"]
+                if row.get("kind") == "recognized_audio"
+                and row.get("text") == "同 run 的来源口播事实"
+            )
+            synthetic_research = {
+                "run_id": run_id,
+                "business_date": "2026-07-28",
+                "topic_id": identities[0],
+                "source_url": "https://research.example/qa/synthetic-web010",
+                "title": "Synthetic QA-only public research record",
+                "excerpt": "Synthetic excerpt for traceability plumbing; not factual content.",
+            }
+            research_reference = research_evidence_id(synthetic_research)
             add_claim_review(
                 article_value["article"],
-                all_handoff["selected_topics"][0]["source_evidence"],
+                evidence,
+                research_materials=[synthetic_research],
+                claims=[
+                    {
+                        "field": "title", "text": "完整文章标题",
+                        "scope": "interpretation", "evidence_ids": [],
+                    },
+                    {
+                        "field": "body", "text": "同 run 的来源口播事实",
+                        "scope": "source_quote", "evidence_ids": [source_anchor["evidence_id"]],
+                    },
+                    {
+                        "field": "body", "text": "这是一段不依赖来源的新解读。",
+                        "scope": "interpretation", "evidence_ids": [],
+                    },
+                    {
+                        "field": "body", "text": "Synthetic excerpt for traceability plumbing; not factual content.",
+                        "scope": "source_context", "evidence_ids": [research_reference],
+                    },
+                ],
             )
             write(article, article_value)
             article_call = self.execute(command + [
@@ -302,18 +356,47 @@ class PublicV2FlowTest(unittest.TestCase):
             handoff = json.loads(
                 (root / "runs" / run_id / "workflow_handoff.json").read_text(encoding="utf-8")
             )
+            frozen_article = read_article_artifact(
+                handoff["topic_input"]["article_artifact"],
+                run_id=run_id,
+                business_date="2026-07-28",
+                topic_id=identities[0],
+                artifact_root=root / "runs",
+            )
+            self.assertEqual(frozen_article["claim_review"]["research_materials"], [synthetic_research])
+            self.assertEqual(article_sha256(frozen_article), handoff["topic_input"]["article_artifact"]["sha256"])
+            self.assertTrue(any(
+                row.get("evidence_id") == research_reference
+                and row.get("kind") == "public_research_material"
+                for row in handoff["claim_dependency_authority"]["anchors"]
+            ))
             scripts = root / "scripts.json"
             script_value = {
                 "packet_id": handoff["topic_input"]["packet_id"],
                 "article_sha256": handoff["topic_input"]["article_artifact"]["sha256"],
                 "script": {
                     "topic_id": identities[0], "title": "稿件", "hook": "钩子",
-                    "structure": "结构", "body": "完整正文",
+                    "structure": "结构",
+                    "body": "Synthetic excerpt for traceability plumbing; not factual content.\n\n这是另一段独立解读。",
                 },
             }
             add_claim_review(
                 script_value["script"],
-                all_handoff["selected_topics"][0]["source_evidence"],
+                evidence,
+                research_materials=[synthetic_research],
+                claims=[
+                    {"field": "title", "text": "稿件", "scope": "interpretation", "evidence_ids": []},
+                    {"field": "hook", "text": "钩子", "scope": "interpretation", "evidence_ids": []},
+                    {"field": "structure", "text": "结构", "scope": "interpretation", "evidence_ids": []},
+                    {
+                        "field": "body", "text": "Synthetic excerpt for traceability plumbing; not factual content.",
+                        "scope": "source_context", "evidence_ids": [research_reference],
+                    },
+                    {
+                        "field": "body", "text": "这是另一段独立解读。",
+                        "scope": "interpretation", "evidence_ids": [],
+                    },
+                ],
             )
             write(scripts, script_value)
             second = self.execute(command + [
