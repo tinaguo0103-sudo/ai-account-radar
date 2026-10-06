@@ -599,7 +599,7 @@ def main() -> int:
         print(json.dumps({"ok": False, "reason": str(exc), "run_id": run_id}, ensure_ascii=False))
         return 2
     source_package_runs = list(source_package.get("source_runs") or []) if source_package else []
-    source_events = [
+    source_package_events = [
         {
             "source_id": row["source_id"],
             "attempted_at": row["attempted_at"],
@@ -611,9 +611,9 @@ def main() -> int:
         }
         for row in source_package_runs if row.get("attempted") is True
     ]
-    if source_events:
+    if source_package_events:
         try:
-            SourceControl(args.source_db).record_run_outcomes(run_id, source_events)
+            SourceControl(args.source_db).record_run_outcomes(run_id, source_package_events)
         except Exception:
             print(json.dumps({
                 "ok": False, "reason": "source_package_event_record_failed",

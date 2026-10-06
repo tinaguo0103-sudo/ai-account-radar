@@ -377,11 +377,13 @@ def build_workflow_projection(
         ) for candidate in rows_for_source)
         succeeded_count = sum(int(
             candidate.get("succeeded_count") if candidate.get("succeeded_count") is not None
-            else counts.get("new", candidate.get("discovered_count", item_count))
+            else counts["new"] if "new" in counts
+            else int(str(candidate.get("status") or "") in {"completed", "completed_empty", "partial"})
         ) for candidate in rows_for_source)
         failed_count = sum(int(
             candidate.get("failed_count") if candidate.get("failed_count") is not None
-            else (counts.get("failed") or (1 if candidate.get("status") in {"failed", "partial", "blocked"} else 0))
+            else counts["failed"] if "failed" in counts
+            else int(str(candidate.get("status") or "") in {"failed", "partial", "blocked"})
         ) for candidate in rows_for_source)
         statuses = {str(candidate.get("status") or "") for candidate in rows_for_source}
         if statuses <= {"not_attempted", "blocked"}:
@@ -398,7 +400,13 @@ def build_workflow_projection(
             status = "completed"
         planned_count = sum(int(candidate.get("planned_count") or 0) for candidate in rows_for_source)
         if planned_count == 0:
-            planned_count = sum(int(candidate.get("attempt_count") or (1 if candidate.get("attempted") else 0)) for candidate in rows_for_source)
+            planned_count = sum(int(
+                candidate.get("attempt_count") if candidate.get("attempt_count") is not None
+                else bool(candidate.get("attempted")) if candidate.get("attempted") is not None
+                else str(candidate.get("status") or "") in {
+                    "completed", "completed_empty", "partial", "failed", "blocked",
+                }
+            ) for candidate in rows_for_source)
         errors = sorted({str(candidate.get("error_summary") or candidate.get("reason") or "") for candidate in rows_for_source if candidate.get("error_summary") or candidate.get("reason")})
         source_runs.append({
             "id": f"{run_id}:{source}",

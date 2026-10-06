@@ -289,7 +289,7 @@ class WebsiteProjectionTest(unittest.TestCase):
                 topics[1]["differentiation"]["primary_angle"],
             )
 
-    def test_source_ledger_is_preserved_when_legacy_source_runs_are_empty(self):
+    def test_legacy_discovery_ledger_aggregates_under_douyin_without_losing_stage_facts(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "workflow.sqlite3"
             flow = DailyWorkflow(path)
@@ -313,8 +313,10 @@ class WebsiteProjectionTest(unittest.TestCase):
                     },
                     {
                         "source": "dynamic_search", "attempted": True,
-                        "status": "completed", "discovered_count": 16,
-                        "reason": "", "captured_at": "2026-07-29T00:00:02Z",
+                        "status": "partial", "discovered_count": 16,
+                        "succeeded_count": 1, "failed_count": 1,
+                        "reason": "dynamic_search_partial_reason",
+                        "captured_at": "2026-07-29T00:00:02Z",
                     },
                 ],
                 "understanding_results": [],
@@ -327,16 +329,16 @@ class WebsiteProjectionTest(unittest.TestCase):
             )
             flow.complete(run_id, "completed", f"terminal:{run_id}")
             payload = build_workflow_projection(path, run_id, "qa-private")
+            self.assertEqual([row["source"] for row in payload["source_runs"]], ["douyin"])
+            aggregate = payload["source_runs"][0]
+            self.assertEqual(aggregate["status"], "partial")
+            self.assertEqual(aggregate["planned_count"], 3)
+            self.assertEqual(aggregate["succeeded_count"], 3)
+            self.assertEqual(aggregate["failed_count"], 1)
+            self.assertEqual(aggregate["item_count"], 18)
             self.assertEqual(
-                [row["source"] for row in payload["source_runs"]],
-                ["configured_account", "recommendation", "dynamic_search"],
-            )
-            self.assertEqual(
-                [row["item_count"] for row in payload["source_runs"]], [2, 0, 16],
-            )
-            self.assertEqual(
-                payload["source_runs"][1]["error_summary"],
-                "no_safe_visible_candidates",
+                aggregate["error_summary"],
+                "dynamic_search_partial_reason;no_safe_visible_candidates",
             )
 
 
