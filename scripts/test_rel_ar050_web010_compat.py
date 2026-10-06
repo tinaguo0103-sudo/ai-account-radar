@@ -54,6 +54,9 @@ class TerminalProjectionHandler(BaseHTTPRequestHandler):
                 "topics": len(payload["topics"]),
                 "scripts": len(payload["scripts"]),
             },
+            "article_count": len(payload.get("articles", [])),
+            "articles": payload.get("articles", []),
+            "scripts": payload["scripts"],
         }
 
     def do_POST(self):

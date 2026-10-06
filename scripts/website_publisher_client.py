@@ -32,10 +32,13 @@ def load_config() -> dict[str, str]:
     return {key: str(value[key]).strip() for key in required}
 
 
-def publish_terminal(db_path: Path, run_id: str) -> dict[str, Any]:
+def publish_terminal(
+    db_path: Path, run_id: str, *, artifact_root: Path | str | None = None,
+) -> dict[str, Any]:
     config = load_config()
     payload = build_workflow_projection(
         db_path.resolve(), run_id, config["authority_identity"],
+        artifact_root=artifact_root,
     )
     endpoint = config["website_url"].rstrip("/") + "/api/business-projection"
     previous_app = os.environ.get("WEBSITE_PROJECTION_BEARER")
@@ -75,12 +78,37 @@ def publish_terminal(db_path: Path, run_id: str) -> dict[str, Any]:
         "topics": len(payload["topics"]),
         "scripts": len(payload["scripts"]),
     }
+    def exact_rows(expected_rows: list[dict[str, Any]], actual_rows: Any, keys: tuple[str, ...]) -> bool:
+        if not isinstance(actual_rows, list) or len(actual_rows) != len(expected_rows):
+            return False
+        expected_by_id = {str(row.get("id") or ""): row for row in expected_rows}
+        actual_by_id = {str(row.get("id") or ""): row for row in actual_rows if isinstance(row, dict)}
+        if len(expected_by_id) != len(expected_rows) or len(actual_by_id) != len(actual_rows):
+            return False
+        if expected_by_id.keys() != actual_by_id.keys():
+            return False
+        return all(
+            all(expected_by_id[row_id].get(key) == actual_by_id[row_id].get(key) for key in keys)
+            for row_id in expected_by_id
+        )
+
+    article_keys = (
+        "id", "run_id", "topic_id", "source_topic_id", "title", "body",
+        "artifact_path", "article_sha256", "artifact_sha256", "claim_review",
+    )
+    script_keys = (
+        "id", "run_id", "topic_id", "script_version", "title", "hook",
+        "content_structure", "body", "updated_at", "current_revision_number", "saved_at",
+    )
     if (
         readback.get("run_id") != payload["run_id"]
         or readback.get("business_date") != payload["business_date"]
         or readback.get("run_status") != payload["run"]["status"]
         or readback.get("counts") != expected
+        or readback.get("article_count") != len(payload["articles"])
         or readback.get("authority_identity") != config["authority_identity"]
+        or not exact_rows(payload["articles"], readback.get("articles"), article_keys)
+        or not exact_rows(payload["scripts"], readback.get("scripts"), script_keys)
     ):
         raise ProjectionError("business_projection_readback_mismatch")
     return {

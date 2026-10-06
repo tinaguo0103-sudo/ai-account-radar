@@ -246,7 +246,7 @@ class TerminalRunRefreshTests(unittest.TestCase):
                 "--video-mode", "disabled",
             ]
 
-            def fake_publish(db_path: Path, run_id: str) -> None:
+            def fake_publish(db_path: Path, run_id: str, **_kwargs) -> None:
                 posts.append((Path(db_path), run_id))
 
             with patch.object(run_daily_workflow, "publish_terminal", side_effect=fake_publish), \
@@ -430,7 +430,7 @@ class TerminalRunRefreshTests(unittest.TestCase):
             "--video-mode", "disabled",
         ]
         replay_posts: list[tuple[Path, str]] = []
-        with patch.object(run_daily_workflow, "publish_terminal", side_effect=lambda db, run: replay_posts.append((Path(db), run))), \
+        with patch.object(run_daily_workflow, "publish_terminal", side_effect=lambda db, run, **_kwargs: replay_posts.append((Path(db), run))), \
                 patch.object(sys, "argv", replay_argv), contextlib.redirect_stdout(replay_output):
             self.assertEqual(run_daily_workflow.main(), 0)
         self.workflow = DailyWorkflow(self.db_path)

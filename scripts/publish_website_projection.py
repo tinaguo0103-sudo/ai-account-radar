@@ -11,6 +11,9 @@ import urllib.request
 from pathlib import Path
 from typing import Any
 
+from daily_workflow import WorkflowConflict
+from spoken_script_runtime import read_article_artifact
+
 class ProjectionError(RuntimeError):
     pass
 
@@ -54,6 +57,7 @@ def normalize_video_understanding(value: Any) -> Any:
 def build_workflow_projection(
     db_path: Path, run_id: str, authority_identity: str,
     scripts_override: dict[str, Any] | None = None,
+    artifact_root: Path | str | None = None,
 ) -> dict[str, Any]:
     database = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)
     database.row_factory = sqlite3.Row
@@ -68,7 +72,8 @@ def build_workflow_projection(
     payloads = {row["stage"]: json.loads(row["payload_json"]) for row in rows}
     collection = payloads.get("collection_enrichment", {})
     editorial = payloads.get("editorial", {})
-    scripts_stage = scripts_override if scripts_override is not None else payloads.get("scripts", {})
+    checkpoint_scripts = payloads.get("scripts", {})
+    scripts_stage = scripts_override if scripts_override is not None else checkpoint_scripts
     understanding_by_url = {
         str(result.get("package", {}).get("source_url") or ""): result.get("package")
         for result in collection.get("understanding_results", [])
@@ -188,6 +193,63 @@ def build_workflow_projection(
         if topic:
             topic["generation_status"] = "failed"
             topic["generation_error"] = str(failure.get("reason") or "script_generation_failed")
+    resolved_artifact_root = (
+        Path(artifact_root).resolve() if artifact_root is not None
+        else Path(db_path).resolve().parent.parent / "runs"
+    )
+    article_rows: list[dict[str, Any]] = []
+    article_metadata_rows = checkpoint_scripts.get("article_artifacts", [])
+    if not isinstance(article_metadata_rows, list):
+        raise ProjectionError("article_checkpoint_metadata_invalid")
+    seen_article_topics: set[str] = set()
+    for metadata in article_metadata_rows:
+        if not isinstance(metadata, dict):
+            raise ProjectionError("article_checkpoint_metadata_invalid")
+        identity = str(metadata.get("topic_id") or "")
+        topic = topic_by_identity.get(identity)
+        if not identity or identity in seen_article_topics:
+            raise ProjectionError("article_checkpoint_identity_conflict")
+        if not topic or topic.get("status") not in {"select", "selected"}:
+            raise ProjectionError("article_topic_mapping_missing")
+        expected_relative_path = (
+            Path("articles")
+            / f"{hashlib.sha256(identity.encode('utf-8')).hexdigest()[:20]}.md"
+        ).as_posix()
+        if (
+            metadata.get("run_id") != run_id
+            or metadata.get("business_date") != run["business_date"]
+            or metadata.get("relative_path") != expected_relative_path
+            or not str(metadata.get("sha256") or "")
+            or not str(metadata.get("artifact_sha256") or "")
+            or not str(metadata.get("title") or "")
+        ):
+            raise ProjectionError("article_checkpoint_identity_conflict")
+        try:
+            article = read_article_artifact(
+                metadata, run_id=run_id, business_date=str(run["business_date"]),
+                topic_id=identity, artifact_root=resolved_artifact_root,
+            )
+        except WorkflowConflict as error:
+            reason = str(error) if str(error) else "article_artifact_identity_conflict"
+            raise ProjectionError(reason) from None
+        if article.get("title") != metadata.get("title"):
+            raise ProjectionError("article_artifact_identity_conflict")
+        article_row = {
+            "id": stable_id("article", run_id, identity),
+            "run_id": run_id,
+            "topic_id": topic["id"],
+            "source_topic_id": identity,
+            "title": article["title"],
+            "body": article["body"],
+            "artifact_path": expected_relative_path,
+            "article_sha256": metadata["sha256"],
+            "artifact_sha256": metadata["artifact_sha256"],
+            "claim_review": article.get("claim_review"),
+        }
+        if "claim_review" not in article:
+            article_row.pop("claim_review")
+        article_rows.append(article_row)
+        seen_article_topics.add(identity)
     source_runs = []
     content_source_counts: dict[str, int] = {}
     for item in content:
@@ -230,7 +292,8 @@ def build_workflow_projection(
             "status": run["status"],
             "candidate_count": len(collection.get("hotspot_cards") or collection.get("candidates", [])),
         },
-        "source_runs": source_runs, "collected_items": content, "topics": topics, "scripts": scripts,
+        "source_runs": source_runs, "collected_items": content, "topics": topics,
+        "scripts": scripts, "articles": article_rows,
     }
     database.close()
     return payload

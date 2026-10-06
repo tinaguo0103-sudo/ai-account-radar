@@ -210,12 +210,73 @@ class WriterExecutionStabilityTest(unittest.TestCase):
             self.assertFalse(spoken_outcome["complete"])
             self.assertEqual(spoken_outcome["handoff"]["action"], "article_required")
             self.assertEqual(spoken_outcome["handoff"]["topic_input"]["topic_id"], "topic:two")
+            second_article = submit_article(
+                workflow, RUN_ID, BUSINESS_DATE, topics, workflow.stage(RUN_ID, "scripts")["payload"],
+                contract, self.article_submission(spoken_outcome["handoff"], "topic:two", "第二篇冻结文章"),
+                artifact_root=root,
+            )
+            second_spoken = submit_spoken_adaptation(
+                workflow, RUN_ID, BUSINESS_DATE, topics, workflow.stage(RUN_ID, "scripts")["payload"],
+                contract, self.spoken_submission(second_article["handoff"], "topic:two", "第二篇口播稿"),
+                artifact_root=root,
+            )
+            self.assertTrue(second_spoken["complete"])
             final = workflow.stage(RUN_ID, "scripts")["payload"]
-            self.assertEqual(final["completed_items"][1]["kind"], "spoken")
+            self.assertEqual(len(final["article_artifacts"]), 2)
+            self.assertEqual(final["article_artifacts"][0]["topic_id"], "topic:one")
+            self.assertEqual(final["article_artifacts"][1]["topic_id"], "topic:two")
             # Publishing is owned by the caller only after the scripts stage is
             # terminal; the article-only/partial stages expose no scripts result.
             self.assertNotIn("publisher", article_outcome)
             self.assertNotIn("publisher", spoken_outcome)
+
+    def test_spoken_failure_keeps_the_frozen_article_in_the_terminal_checkpoint(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            workflow, checkpoint, topics = self.workflow(root)
+            contract = load_writer_contract()
+            article_packet = topic_packet(
+                RUN_ID, BUSINESS_DATE, topics[0], 0, 2, 0, contract,
+                checkpoint=checkpoint, artifact_root=root,
+            )
+            article_outcome = submit_article(
+                workflow, RUN_ID, BUSINESS_DATE, topics, checkpoint, contract,
+                self.article_submission(article_packet), artifact_root=root,
+            )
+            spoken_packet = article_outcome["handoff"]
+            failure = {
+                "packet_id": spoken_packet["topic_input"]["packet_id"],
+                "article_sha256": spoken_packet["topic_input"]["article_artifact"]["sha256"],
+                "failure": {
+                    "topic_id": "topic:one", "reason": "material_or_angle_insufficiency",
+                    "detail": "isolated synthetic spoken-stage failure",
+                },
+            }
+            partial = submit_spoken_adaptation(
+                workflow, RUN_ID, BUSINESS_DATE, topics,
+                workflow.stage(RUN_ID, "scripts")["payload"], contract, failure,
+                artifact_root=root,
+            )
+            checkpoint = workflow.stage(RUN_ID, "scripts")["payload"]
+            validate_checkpoint(checkpoint, RUN_ID, BUSINESS_DATE, topics, contract)
+            self.assertEqual(partial["handoff"]["topic_input"]["topic_id"], "topic:two")
+
+            second_article = submit_article(
+                workflow, RUN_ID, BUSINESS_DATE, topics, checkpoint, contract,
+                self.article_submission(partial["handoff"], "topic:two", "第二篇冻结文章"),
+                artifact_root=root,
+            )
+            complete = submit_spoken_adaptation(
+                workflow, RUN_ID, BUSINESS_DATE, topics,
+                workflow.stage(RUN_ID, "scripts")["payload"], contract,
+                self.spoken_submission(second_article["handoff"], "topic:two", "第二篇口播稿"),
+                artifact_root=root,
+            )
+            terminal = workflow.stage(RUN_ID, "scripts")["payload"]
+            self.assertTrue(complete["complete"])
+            self.assertEqual([row["topic_id"] for row in terminal["article_artifacts"]], ["topic:one", "topic:two"])
+            self.assertEqual([row["topic_id"] for row in terminal["failures"]], ["topic:one"])
+            self.assertEqual([row["topic_id"] for row in terminal["scripts"]], ["topic:two"])
 
     def test_wrong_identity_and_spoken_before_article_fail_closed(self):
         with tempfile.TemporaryDirectory() as directory:

@@ -1819,9 +1819,12 @@ def skill_diagnostics() -> list[dict[str, str]]:
     return output
 
 
-def publish(workflow: DailyWorkflow, db_path: Path, run_id: str) -> str:
+def publish(
+    workflow: DailyWorkflow, db_path: Path, run_id: str,
+    artifact_root: Path | str | None = None,
+) -> str:
     try:
-        publish_terminal(db_path, run_id)
+        publish_terminal(db_path, run_id, artifact_root=artifact_root)
     except ProjectionError as error:
         status = "conflict" if str(error) not in {
             "publisher_config_missing", "publisher_config_incomplete",
@@ -2623,11 +2626,11 @@ def main() -> int:
         if mode == "new":
             pending = workflow.latest_pending(args.business_date)
             if pending:
-                publish(workflow, args.workflow_db, pending["run_id"])
+                publish(workflow, args.workflow_db, pending["run_id"], args.artifact_root)
         if mode == "terminal_replay":
             row = workflow.read_run(args.run_id)["run"]
             if row["publish_status"] == "pending":
-                publish(workflow, args.workflow_db, args.run_id)
+                publish(workflow, args.workflow_db, args.run_id, args.artifact_root)
                 emit_handoff(
                     args,
                     terminal_handoff(
@@ -3050,7 +3053,7 @@ def main() -> int:
             "completed" if collection["content_items"] else "completed_empty"
         )
         workflow.complete(args.run_id, status, f"terminal:{args.run_id}")
-        publish_status = publish(workflow, args.workflow_db, args.run_id)
+        publish_status = publish(workflow, args.workflow_db, args.run_id, args.artifact_root)
         emit_handoff(
             args,
             terminal_handoff(

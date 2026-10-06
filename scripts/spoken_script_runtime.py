@@ -449,6 +449,7 @@ def _validate_completed_items(
         raise WorkflowConflict("scripts_checkpoint_shape_invalid")
     selected = set(selected_ids)
     phases: dict[str, set[str]] = {identity: set() for identity in selected_ids}
+    article_metadata: dict[str, dict[str, Any]] = {}
     for item in items:
         if not isinstance(item, dict):
             raise WorkflowConflict("scripts_checkpoint_item_invalid")
@@ -457,32 +458,41 @@ def _validate_completed_items(
         if topic_id not in selected:
             raise WorkflowConflict("scripts_checkpoint_item_identity_conflict")
         if kind == "article":
-            if set(item) != {"kind", "topic_id", "article"} or "article" in phases[topic_id]:
+            if (
+                set(item) != {"kind", "topic_id", "article"}
+                or phases[topic_id] & {"article", "failure"}
+            ):
                 raise WorkflowConflict("scripts_checkpoint_item_invalid")
             _validate_article_metadata(item.get("article"), run_id, business_date, topic_id)
+            article_metadata[topic_id] = item["article"]
             phases[topic_id].add("article")
         elif kind == "spoken":
-            if set(item) != {"kind", "topic_id", "article", "script"} or "spoken" in phases[topic_id]:
+            if (
+                set(item) != {"kind", "topic_id", "article", "script"}
+                or phases[topic_id] & {"spoken", "failure"}
+            ):
                 raise WorkflowConflict("scripts_checkpoint_item_invalid")
             _validate_article_metadata(item.get("article"), run_id, business_date, topic_id)
             _validate_script(item.get("script"), topic_id)
-            if "article" not in phases[topic_id]:
+            if "article" not in phases[topic_id] or item["article"] != article_metadata.get(topic_id):
                 raise WorkflowConflict("scripts_checkpoint_item_identity_conflict")
             phases[topic_id].add("spoken")
         elif kind == "failure":
-            if set(item) != {"kind", "topic_id", "phase", "failure"} or phases[topic_id] & {"failure", "spoken"}:
+            if (
+                set(item) != {"kind", "topic_id", "phase", "failure"}
+                or phases[topic_id] & {"failure", "spoken"}
+            ):
                 raise WorkflowConflict("scripts_checkpoint_item_invalid")
             if item.get("phase") not in {"article", "spoken"}:
                 raise WorkflowConflict("scripts_checkpoint_item_phase_invalid")
+            if item.get("phase") == "article" and phases[topic_id] & {"article", "spoken"}:
+                raise WorkflowConflict("scripts_checkpoint_item_identity_conflict")
             if item.get("phase") == "spoken" and "article" not in phases[topic_id]:
                 raise WorkflowConflict("scripts_checkpoint_item_identity_conflict")
             _validate_failure(item.get("failure"), topic_id)
             phases[topic_id].add("failure")
         else:
             raise WorkflowConflict("scripts_checkpoint_item_kind_invalid")
-    for topic_id, state in phases.items():
-        if "failure" in state and ("article" in state or "spoken" in state):
-            raise WorkflowConflict("scripts_checkpoint_item_identity_conflict")
 
 
 def validate_checkpoint(
@@ -820,11 +830,22 @@ def _result_or_next(
         }
     scripts = [row["script"] for row in updated["completed_items"] if row.get("kind") == "spoken"]
     failures = [row["failure"] for row in updated["completed_items"] if row.get("kind") == "failure"]
+    article_artifacts: list[dict[str, Any]] = []
+    seen_article_topics: set[str] = set()
+    for item in updated["completed_items"]:
+        if item.get("kind") not in {"article", "spoken"}:
+            continue
+        topic_id = str(item.get("topic_id") or "")
+        if topic_id in seen_article_topics:
+            continue
+        seen_article_topics.add(topic_id)
+        article_artifacts.append(item["article"])
     result = {
         "run_id": run_id,
         "business_date": business_date,
         "scripts": scripts,
         "failures": failures,
+        "article_artifacts": article_artifacts,
     }
     workflow.commit_stage(
         run_id, "scripts", result,

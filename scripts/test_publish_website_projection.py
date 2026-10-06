@@ -8,9 +8,116 @@ from publish_website_projection import (
     ProjectionError,
     build_workflow_projection,
 )
+from spoken_script_runtime import write_article_artifact
 
 
 class WebsiteProjectionTest(unittest.TestCase):
+    def test_frozen_article_projects_full_body_and_distinct_hashes(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact_root = root / "runs"
+            workflow_path = root / "state" / "daily_workflow.sqlite3"
+            workflow_path.parent.mkdir(parents=True)
+            run_id = "run_20261006_101010"
+            business_date = "2026-10-06"
+            topic_id = "topic:synthetic"
+            flow = DailyWorkflow(workflow_path)
+            flow.begin(run_id, business_date)
+            flow.commit_stage(run_id, "collection_enrichment", {
+                "content_items": [{
+                    "item_id": "item:synthetic", "source": "aihot", "title": "来源标题",
+                    "body": "来源原文必须与生成文章区分。", "source_url": "https://example.test/source",
+                }],
+                "candidates": [{
+                    "candidate_id": topic_id, "item_id": "item:synthetic",
+                    "representative_item_id": "item:synthetic",
+                }],
+                "source_runs": [],
+            }, "completed")
+            flow.commit_stage(run_id, "editorial", {"topics": [{
+                "candidate_id": topic_id, "decision": "select", "title": "合成选题",
+                "selection_reason": "测试身份绑定", "hook": "钩子", "structure": "结构",
+            }]}, "completed")
+            body = "第一段：中文保留。\n\n## 第二段\n\n`Markdown` 不裁剪。\n"
+            claim_review = {
+                "evidence_sha256": "e" * 64,
+                "content_sha256": "c" * 64,
+                "excluded_warning_ids": [],
+                "research_materials": [],
+                "claims": [{"field": "body", "text": "第一段：中文保留。", "scope": "interpretation", "evidence_ids": []}],
+            }
+            metadata = write_article_artifact(artifact_root, run_id, business_date, {
+                "topic_id": topic_id, "title": "冻结文章标题", "body": body,
+                "claim_review": claim_review,
+            })
+            metadata.pop("created", None)
+            flow.commit_stage(run_id, "scripts", {
+                "run_id": run_id,
+                "scripts": [{
+                    "topic_id": topic_id, "title": "口播标题", "hook": "口播钩子",
+                    "structure": "口播结构", "body": "完整口播稿，不是文章。",
+                }],
+                "failures": [], "article_artifacts": [metadata],
+            }, "completed")
+            flow.complete(run_id, "completed", f"terminal:{run_id}")
+
+            payload = build_workflow_projection(
+                workflow_path, run_id, "qa-private", artifact_root=artifact_root,
+            )
+            article = payload["articles"][0]
+            self.assertEqual(article["body"], body)
+            self.assertEqual(article["title"], "冻结文章标题")
+            self.assertEqual(article["source_topic_id"], topic_id)
+            self.assertEqual(article["article_sha256"], metadata["sha256"])
+            self.assertEqual(article["artifact_sha256"], metadata["artifact_sha256"])
+            self.assertNotEqual(article["article_sha256"], article["artifact_sha256"])
+            self.assertEqual(article["artifact_path"], metadata["relative_path"])
+            self.assertEqual(article["claim_review"], claim_review)
+            self.assertEqual(payload["scripts"][0]["body"], "完整口播稿，不是文章。")
+            self.assertNotIn(str(artifact_root), json.dumps(payload, ensure_ascii=False))
+
+    def test_article_checkpoint_wrong_topic_or_changed_bytes_fail_closed(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            artifact_root = root / "runs"
+            workflow_path = root / "state" / "daily_workflow.sqlite3"
+            workflow_path.parent.mkdir(parents=True)
+            run_id = "run_20261006_111010"
+            business_date = "2026-10-06"
+            topic_id = "topic:synthetic"
+            flow = DailyWorkflow(workflow_path)
+            flow.begin(run_id, business_date)
+            flow.commit_stage(run_id, "collection_enrichment", {
+                "content_items": [{"item_id": "item:synthetic", "source": "aihot", "title": "来源"}],
+                "candidates": [{"candidate_id": topic_id, "item_id": "item:synthetic"}],
+                "source_runs": [],
+            }, "completed")
+            flow.commit_stage(run_id, "editorial", {"topics": [{
+                "candidate_id": topic_id, "decision": "select", "title": "选题",
+            }]}, "completed")
+            metadata = write_article_artifact(artifact_root, run_id, business_date, {
+                "topic_id": topic_id, "title": "文章", "body": "未改正文。",
+            })
+            metadata.pop("created", None)
+            wrong_topic = {**metadata, "topic_id": "topic:other"}
+            flow.commit_stage(run_id, "scripts", {
+                "run_id": run_id, "scripts": [], "failures": [],
+                "article_artifacts": [wrong_topic],
+            }, "completed")
+            flow.complete(run_id, "completed", f"terminal:{run_id}")
+            with self.assertRaisesRegex(ProjectionError, "article_topic_mapping_missing"):
+                build_workflow_projection(workflow_path, run_id, "qa-private", artifact_root=artifact_root)
+
+            flow.db.execute("UPDATE stage_results SET payload_json=? WHERE run_id=? AND stage='scripts'", (
+                json.dumps({"run_id": run_id, "scripts": [], "failures": [], "article_artifacts": [metadata]}, ensure_ascii=False),
+                run_id,
+            ))
+            flow.db.commit()
+            artifact_path = Path(metadata["path"])
+            artifact_path.write_text(artifact_path.read_text(encoding="utf-8") + "changed", encoding="utf-8")
+            with self.assertRaisesRegex(ProjectionError, "article_artifact_identity_conflict"):
+                build_workflow_projection(workflow_path, run_id, "qa-private", artifact_root=artifact_root)
+
     def test_video_understanding_is_bound_to_exact_content_url(self):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "workflow.sqlite3"
