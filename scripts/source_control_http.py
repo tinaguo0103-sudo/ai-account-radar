@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 import argparse
+import hmac
 import json
+import os
 import subprocess
 from pathlib import Path
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -13,6 +15,15 @@ from source_control import DEFAULT_DB, SourceControl, SourceControlError
 
 ROOT = Path(__file__).resolve().parents[1]
 CANONICAL_PROFILE_IDENTITY = "fixed_douyin_profile_9333"
+MAX_BODY_BYTES = 1 * 1024 * 1024
+ALLOWED_LOOPBACK_HOSTS = {"127.0.0.1", "localhost", "::1"}
+
+
+class HttpGuardError(Exception):
+    def __init__(self, status: int, code: str) -> None:
+        super().__init__(code)
+        self.status = status
+        self.code = code
 
 
 def run_preflight() -> dict:
@@ -80,6 +91,7 @@ def start_exact_resume(run_id: str, database: Path) -> dict:
 class Handler(BaseHTTPRequestHandler):
     service: SourceControl
     instance_id: str
+    shared_secret: str = ""
     request_counts: dict[str, int] = {}
 
     def count_request(self, path: str) -> None:
@@ -93,9 +105,34 @@ class Handler(BaseHTTPRequestHandler):
         self.end_headers()
         self.wfile.write(payload)
 
+    def check_guard(self, *, write: bool) -> None:
+        origin = (self.headers.get("Origin") or "").strip()
+        if origin:
+            parsed_origin = urlparse(origin)
+            if parsed_origin.scheme != "http" or parsed_origin.hostname not in ALLOWED_LOOPBACK_HOSTS:
+                raise HttpGuardError(403, "forbidden_origin")
+        if self.shared_secret:
+            provided = (self.headers.get("X-Source-Control-Token") or "").strip()
+            if not provided or not hmac.compare_digest(provided, self.shared_secret):
+                raise HttpGuardError(401, "unauthorized_source_control_token")
+        if write:
+            content_type = (self.headers.get("Content-Type") or "").split(";", 1)[0].strip().lower()
+            if content_type != "application/json":
+                raise HttpGuardError(415, "unsupported_content_type")
+
     def body(self) -> dict:
-        length = int(self.headers.get("Content-Length") or 0)
-        value = json.loads(self.rfile.read(length) or b"{}")
+        raw_length = self.headers.get("Content-Length") or "0"
+        try:
+            length = int(raw_length)
+        except ValueError as error:
+            raise HttpGuardError(400, "invalid_content_length") from error
+        if length < 0 or length > MAX_BODY_BYTES:
+            raise HttpGuardError(413, "request_body_too_large")
+        raw = self.rfile.read(length) if length > 0 else b""
+        try:
+            value = json.loads(raw or b"{}")
+        except json.JSONDecodeError as error:
+            raise HttpGuardError(400, "invalid_json_body") from error
         if not isinstance(value, dict):
             raise SourceControlError("request_body_invalid")
         return value
@@ -104,6 +141,7 @@ class Handler(BaseHTTPRequestHandler):
         route = urlparse(self.path)
         self.count_request(route.path)
         try:
+            self.check_guard(write=False)
             if route.path == "/v1/sources":
                 value = self.service.get_source_snapshot()
             elif route.path == "/v1/identity":
@@ -119,6 +157,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 return self.send_json(404, {"error": "not_found"})
             self.send_json(200, value)
+        except HttpGuardError as error:
+            if error.status == 413:
+                self.close_connection = True
+            self.send_json(error.status, {"error": error.code})
         except SourceControlError as error:
             self.send_json(409, {"error": str(error)})
 
@@ -126,6 +168,7 @@ class Handler(BaseHTTPRequestHandler):
         route = urlparse(self.path)
         self.count_request(route.path)
         try:
+            self.check_guard(write=True)
             payload = self.body()
             if route.path == "/v1/commands":
                 value = self.service.apply_config_command(
@@ -166,6 +209,10 @@ class Handler(BaseHTTPRequestHandler):
             else:
                 return self.send_json(404, {"error": "not_found"})
             self.send_json(200, value)
+        except HttpGuardError as error:
+            if error.status == 413:
+                self.close_connection = True
+            self.send_json(error.status, {"error": error.code})
         except (SourceControlError, ValueError, TypeError) as error:
             self.send_json(409, {"error": str(error)})
 
@@ -179,11 +226,13 @@ def main() -> int:
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=4180)
     parser.add_argument("--instance-id", required=True)
+    parser.add_argument("--secret", default=os.environ.get("SOURCE_CONTROL_TOKEN", ""))
     args = parser.parse_args()
     if args.host not in {"127.0.0.1", "localhost"}:
         raise SystemExit("source_control_http_must_bind_loopback")
     Handler.service = SourceControl(args.db)
     Handler.instance_id = args.instance_id
+    Handler.shared_secret = str(args.secret or "").strip()
     Handler.request_counts = {}
     Handler.service.initialize()
     ThreadingHTTPServer((args.host, args.port), Handler).serve_forever()

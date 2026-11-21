@@ -1118,78 +1118,16 @@ def callback_response(status: str, content: str) -> bytes:
 
 
 def serve_callback(host: str, port: int, write: bool) -> None:
-    token = feishu.tenant_token()
-    app_token = require_app_token()
-    table_id = get_topic_table(token, app_token)
-    verification_token = os.getenv("FEISHU_VERIFICATION_TOKEN", "")
-    receipts = load_receipts()
-    receipt_lock = threading.Lock()
-
-    class Handler(BaseHTTPRequestHandler):
-        def do_POST(self) -> None:  # noqa: N802 - stdlib callback name
-            length = int(self.headers.get("Content-Length", "0") or "0")
-            payload = json.loads(self.rfile.read(length).decode("utf-8") or "{}")
-            if "challenge" in payload:
-                body = json.dumps({"challenge": payload["challenge"]}, ensure_ascii=False).encode("utf-8")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
-            if verification_token and payload.get("header", {}).get("token") != verification_token:
-                body = callback_response("error", "回调 token 校验失败")
-                self.send_response(200)
-                self.send_header("Content-Type", "application/json; charset=utf-8")
-                self.send_header("Content-Length", str(len(body)))
-                self.end_headers()
-                self.wfile.write(body)
-                return
-            event = payload.get("event", {})
-            action = event.get("action", {})
-            value = action.get("value") if isinstance(action.get("value"), dict) else {}
-            form_value = action.get("form_value") or {}
-            if value.get("action") not in SUPPORTED_SUBMIT_ACTIONS:
-                body = callback_response("warning", "不是选题速选提交")
-            else:
-                summary = process_card_submission(
-                    token,
-                    app_token,
-                    table_id,
-                    value,
-                    form_value,
-                    write=write,
-                    receipts=receipts,
-                    receipt_lock=receipt_lock,
-                )
-                count = summary["updated_count"] if write else summary["candidate_update_count"]
-                if summary.get("duplicate"):
-                    body = callback_response("warning", "这次提交已经处理过")
-                else:
-                    verb = "已回写" if write else "已接收预演"
-                    body = callback_response("success", f"{verb} {count} 条选择")
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json; charset=utf-8")
-            self.send_header("Content-Length", str(len(body)))
-            self.end_headers()
-            self.wfile.write(body)
-
-        def log_message(self, fmt: str, *args: Any) -> None:
-            print(fmt % args, file=sys.stderr)
-
-    server = ThreadingHTTPServer((host, port), Handler)
-    print(json.dumps({"ok": True, "listening": f"http://{host}:{port}", "mode": "write" if write else "dry-run"}, ensure_ascii=False))
-    server.serve_forever()
+    raise RuntimeError(
+        "feishu_callback_retired: Feishu interactive callback server has been decommissioned; "
+        "do not expose or run this legacy endpoint."
+    )
 
 
 def serve_long_connection(write: bool) -> None:
-    try:
-        import lark_oapi as lark
-        from lark_oapi.core.enum import LogLevel
-    except ModuleNotFoundError as exc:
-        raise SystemExit("Missing dependency: install lark-oapi in the project environment first.") from exc
-
-    app_id = os.getenv("FEISHU_APP_ID", "")
+    raise RuntimeError(
+        "feishu_callback_retired: Feishu long-connection callback has been decommissioned."
+    )
     app_secret = os.getenv("FEISHU_APP_SECRET", "")
     if not app_id or not app_secret:
         raise SystemExit("FEISHU_APP_ID and FEISHU_APP_SECRET are required")

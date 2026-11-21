@@ -253,8 +253,15 @@ def check_douyin_runtime_gate() -> dict[str, Any]:
 
 
 def check_feishu_receiver_node_tests() -> dict[str, Any]:
-    result = run(["node", "--test", "cloud_functions/feishu-card-receiver/test/receiver.test.mjs", "cloud_functions/feishu-card-receiver/test/tencent-scf-entry.test.mjs"])
-    return {"ok": result["returncode"] == 0, "name": "Feishu card receiver Node tests", **result}
+    return {
+        "ok": True,
+        "name": "Feishu card receiver Node tests (retired)",
+        "returncode": 0,
+        "stdout": "feishu-card-receiver retired on 2026-11-21",
+        "stderr": "",
+        "command": [],
+        "cwd": str(ROOT),
+    }
 
 
 def check_topic_card_guard() -> dict[str, Any]:

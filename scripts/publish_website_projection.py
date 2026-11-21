@@ -125,6 +125,21 @@ def build_workflow_projection(
     artifact_root: Path | str | None = None,
 ) -> dict[str, Any]:
     database = sqlite3.connect(f"file:{db_path.resolve()}?mode=ro", uri=True)
+    try:
+        return _build_workflow_projection_from_db(
+            database, db_path, run_id, authority_identity,
+            scripts_override=scripts_override,
+            artifact_root=artifact_root,
+        )
+    finally:
+        database.close()
+
+
+def _build_workflow_projection_from_db(
+    database: sqlite3.Connection, db_path: Path, run_id: str, authority_identity: str,
+    scripts_override: dict[str, Any] | None = None,
+    artifact_root: Path | str | None = None,
+) -> dict[str, Any]:
     database.row_factory = sqlite3.Row
     run = database.execute("SELECT * FROM daily_runs WHERE run_id=?", (run_id,)).fetchone()
     rows = database.execute(
@@ -429,18 +444,28 @@ def build_workflow_projection(
         "source_runs": source_runs, "collected_items": content, "topics": topics,
         "scripts": scripts, "articles": article_rows,
     }
-    database.close()
     return payload
 
 
-def request_json(method: str, url: str, payload: dict[str, Any] | None = None) -> dict[str, Any]:
-    app_bearer = os.environ.get("WEBSITE_PROJECTION_BEARER", "").strip()
-    if not app_bearer:
+def request_json(
+    method: str,
+    url: str,
+    payload: dict[str, Any] | None = None,
+    *,
+    app_bearer: str | None = None,
+    sites_bearer: str | None = None,
+) -> dict[str, Any]:
+    resolved_app_bearer = (
+        app_bearer if app_bearer is not None else os.environ.get("WEBSITE_PROJECTION_BEARER", "")
+    ).strip()
+    if not resolved_app_bearer:
         raise ProjectionError("website_projection_bearer_missing")
-    headers = {"Authorization": f"Bearer {app_bearer}", "Content-Type": "application/json"}
-    sites_bearer = os.environ.get("WEBSITE_PROJECTION_SIWC_BYPASS_BEARER", "").strip()
-    if sites_bearer:
-        headers["OAI-Sites-Authorization"] = f"Bearer {sites_bearer}"
+    headers = {"Authorization": f"Bearer {resolved_app_bearer}", "Content-Type": "application/json"}
+    resolved_sites_bearer = (
+        sites_bearer if sites_bearer is not None else os.environ.get("WEBSITE_PROJECTION_SIWC_BYPASS_BEARER", "")
+    ).strip()
+    if resolved_sites_bearer:
+        headers["OAI-Sites-Authorization"] = f"Bearer {resolved_sites_bearer}"
     body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode()
     request = urllib.request.Request(url, data=body, headers=headers, method=method)
     try:

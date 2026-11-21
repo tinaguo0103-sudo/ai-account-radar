@@ -14,11 +14,17 @@ from publish_website_projection import (
 )
 
 
+REPO_ROOT = Path(__file__).resolve().parents[1]
+
+
 def config_path() -> Path:
     value = os.environ.get("WEBSITE_PUBLISHER_CONFIG", "").strip()
     if not value:
-        value = "output/state/website_publisher.json"
-    return Path(value).expanduser().resolve()
+        return (REPO_ROOT / "output" / "state" / "website_publisher.json").resolve()
+    candidate = Path(value).expanduser()
+    if not candidate.is_absolute():
+        candidate = REPO_ROOT / candidate
+    return candidate.resolve()
 
 
 def load_config() -> dict[str, str]:
@@ -26,10 +32,15 @@ def load_config() -> dict[str, str]:
     if not path.is_file():
         raise ProjectionError("publisher_config_missing")
     value = json.loads(path.read_text(encoding="utf-8"))
-    required = ("website_url", "authority_identity", "app_bearer", "sites_bearer")
+    required = ("website_url", "authority_identity", "app_bearer")
     if any(not str(value.get(key) or "").strip() for key in required):
         raise ProjectionError("publisher_config_incomplete")
-    return {key: str(value[key]).strip() for key in required}
+    return {
+        "website_url": str(value["website_url"]).strip(),
+        "authority_identity": str(value["authority_identity"]).strip(),
+        "app_bearer": str(value["app_bearer"]).strip(),
+        "sites_bearer": str(value.get("sites_bearer") or "").strip(),
+    }
 
 
 def publish_terminal(
@@ -41,38 +52,28 @@ def publish_terminal(
         artifact_root=artifact_root,
     )
     endpoint = config["website_url"].rstrip("/") + "/api/business-projection"
-    previous_app = os.environ.get("WEBSITE_PROJECTION_BEARER")
-    previous_sites = os.environ.get("WEBSITE_PROJECTION_SIWC_BYPASS_BEARER")
-    os.environ["WEBSITE_PROJECTION_BEARER"] = config["app_bearer"]
-    os.environ["WEBSITE_PROJECTION_SIWC_BYPASS_BEARER"] = config["sites_bearer"]
+    auth_kwargs = {
+        "app_bearer": config["app_bearer"],
+        "sites_bearer": config["sites_bearer"],
+    }
     request_ledger = {"precondition_get": 0, "terminal_post": 0, "readback_get": 0}
     try:
-        try:
-            request_ledger["precondition_get"] += 1
-            existing = request_json("GET", f"{endpoint}?run_id={run_id}")
-        except ProjectionError as error:
-            if str(error) != "business_projection_missing":
-                raise
-            existing = None
-        if existing:
-            payload["refresh_precondition"] = {
-                "business_date": existing.get("business_date"),
-                "authority_identity": existing.get("authority_identity"),
-                "projected_at": existing.get("projected_at"),
-            }
-        request_ledger["terminal_post"] += 1
-        result = request_json("POST", endpoint, payload)
-        request_ledger["readback_get"] += 1
-        readback = request_json("GET", f"{endpoint}?run_id={run_id}")
-    finally:
-        if previous_app is None:
-            os.environ.pop("WEBSITE_PROJECTION_BEARER", None)
-        else:
-            os.environ["WEBSITE_PROJECTION_BEARER"] = previous_app
-        if previous_sites is None:
-            os.environ.pop("WEBSITE_PROJECTION_SIWC_BYPASS_BEARER", None)
-        else:
-            os.environ["WEBSITE_PROJECTION_SIWC_BYPASS_BEARER"] = previous_sites
+        request_ledger["precondition_get"] += 1
+        existing = request_json("GET", f"{endpoint}?run_id={run_id}", **auth_kwargs)
+    except ProjectionError as error:
+        if str(error) != "business_projection_missing":
+            raise
+        existing = None
+    if existing:
+        payload["refresh_precondition"] = {
+            "business_date": existing.get("business_date"),
+            "authority_identity": existing.get("authority_identity"),
+            "projected_at": existing.get("projected_at"),
+        }
+    request_ledger["terminal_post"] += 1
+    result = request_json("POST", endpoint, payload, **auth_kwargs)
+    request_ledger["readback_get"] += 1
+    readback = request_json("GET", f"{endpoint}?run_id={run_id}", **auth_kwargs)
     expected = {
         "content": len(payload["collected_items"]),
         "topics": len(payload["topics"]),
